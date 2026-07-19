@@ -114,10 +114,14 @@ impl XaiProtoBuilder {
 
         // Can only process one input file when using --dependency_out=FILE.
         for proto in protos {
+            let temp_dir = tempfile::tempdir()?;
+            let dep_file = temp_dir.path().join("deps.txt");
+            let desc_file = temp_dir.path().join("desc.pbbin");
+
             let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
             command
-                .arg("--dependency_out=/dev/stdout")
-                .arg("--descriptor_set_out=/dev/null");
+                .arg(format!("--dependency_out={}", dep_file.display()))
+                .arg(format!("--descriptor_set_out={}", desc_file.display()));
 
             // Add protoc's well-known types include directory first (if found).
             // This is needed for Bazel sandboxed builds where protoc and its
@@ -143,15 +147,14 @@ impl XaiProtoBuilder {
                 return Err(anyhow::anyhow!("protoc command failed"));
             }
 
-            let output =
-                String::from_utf8(output.stdout).context("protoc command output not UTF-8")?;
-
-            let mut lines = output.lines();
-            let first_line = lines.next().context("protoc command output is empty")?;
-            let prefix = "/dev/null:";
-            let rem = first_line.strip_prefix(prefix).with_context(|| {
-                format!("protoc command output must start with /dev/null: {output:?}")
+            let dep_content = fs::read_to_string(&dep_file).context("failed to read dependency file")?;
+            let mut lines = dep_content.lines();
+            let first_line = lines.next().context("dependency file is empty")?;
+            let filename_with_colon = "desc.pbbin:";
+            let pos = first_line.find(filename_with_colon).with_context(|| {
+                format!("dependency output must contain {filename_with_colon:?}: {dep_content:?}")
             })?;
+            let rem = &first_line[pos + filename_with_colon.len()..];
             for line in iter::once(rem).chain(lines) {
                 let line = line.trim();
                 let line = line.strip_suffix("\\").unwrap_or(line);
