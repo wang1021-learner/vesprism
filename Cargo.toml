@@ -82,6 +82,7 @@ members = [
     "third_party/graphlib_rust",
     "third_party/mermaid-to-svg",
     "third_party/ordered_hashmap",
+    "crates/grok-gui-poc",
 ]
 
 [workspace.package]

@@ -1,0 +1,13 @@
+[package]
+name = "grok-gui-poc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xai-grok-shell = { workspace = true }
+agent-client-protocol = { workspace = true, features = ["unstable"] }
+tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["compat"] }
+futures = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

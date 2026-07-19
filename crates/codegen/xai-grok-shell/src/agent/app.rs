@@ -188,7 +188,7 @@ async fn prefetch_models(agent_config: &AgentConfig) -> Option<IndexMap<String, 
 }
 
 /// Spawn the agent inside a LocalSet and return a handle to the I/O future.
-fn spawn_agent_local(
+pub fn spawn_agent_local(
     agent_config: AgentConfig,
     auth_manager: Arc<AuthManager>,
     prefetched_models: Option<IndexMap<String, ModelEntry>>,
