@@ -11,3 +11,5 @@ tokio-util = { workspace = true, features = ["compat"] }
 futures = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+dotenvy = "0.15"
+async-trait = { workspace = true }
