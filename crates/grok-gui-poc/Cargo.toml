@@ -1,15 +1,11 @@
 [package]
 name = "grok-gui-poc"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+license = "Apache-2.0"
 
 [dependencies]
-xai-grok-shell = { workspace = true }
-agent-client-protocol = { workspace = true, features = ["unstable"] }
-tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true, features = ["compat"] }
-futures = { workspace = true }
-serde_json = { workspace = true }
+grok-session = { workspace = true }
+tokio = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = "0.15"
-async-trait = { workspace = true }

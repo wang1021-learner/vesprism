@@ -1,0 +1,13 @@
+/* 全局重置；主题样式在 App.css */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}

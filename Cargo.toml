@@ -82,7 +82,9 @@ members = [
     "third_party/graphlib_rust",
     "third_party/mermaid-to-svg",
     "third_party/ordered_hashmap",
+    "crates/grok-session",
     "crates/grok-gui-poc",
+    "crates/jike-grok-desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -293,6 +295,7 @@ xai-grok-models = { path = "crates/codegen/xai-grok-models" }
 xai-grok-sampler = { path = "crates/codegen/xai-grok-sampler" }
 xai-grok-secrets = { path = "crates/codegen/xai-grok-secrets" }
 xai-grok-shared = { path = "crates/codegen/xai-grok-shared" }
+grok-session = { path = "crates/grok-session" }
 xai-grok-shell = { path = "crates/codegen/xai-grok-shell" }
 xai-grok-shell-base = { path = "crates/codegen/xai-grok-shell-base" }
 xai-grok-shell-session-support = { path = "crates/codegen/xai-grok-shell-session-support" }

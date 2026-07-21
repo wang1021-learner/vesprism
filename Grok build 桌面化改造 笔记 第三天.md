@@ -1,4 +1,4 @@
-# Grok Build 二次开发 —— 认证打通 + 架构升级为 GrokSession 模块（第二天·下半场）
+# Grok Build 二次开发 —— 认证打通 + 架构升级为 GrokSession 模块（第三天）
 
 > 承接《Grok build桌面化改造笔记第二天.md》上半场（GUI crate 骨架搭建、
 > 内存双工管道验证成功、卡在 `Authentication required`）。
