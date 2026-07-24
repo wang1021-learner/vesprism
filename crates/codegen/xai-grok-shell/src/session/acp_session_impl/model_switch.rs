@@ -9,6 +9,7 @@ impl SessionActor {
         apply_prompt_override: bool,
         skip_prompt_rewrite: bool,
         auto_compact_threshold_percent: u8,
+        system_prompt_label: Option<String>,
     ) -> Result<acp::ModelId, acp::Error> {
         let model_id = acp::ModelId::new(sampling_config.model.clone());
         let new_context_window = self.compaction.context_window_override.unwrap_or_else(|| {
@@ -78,6 +79,28 @@ impl SessionActor {
         self.signals_handle()
             .record_model_usage(&sampling_config.model);
         if apply_prompt_override && !skip_prompt_rewrite {
+            // Update identity for the newly selected model, then rewrite system head.
+            // Without this, A→B mid-session keeps A's self-introduction label.
+            if let Some(label) = system_prompt_label.as_ref() {
+                let prev = self.agent.borrow().prompt_context().system_prompt_label.clone();
+                if prev != *label {
+                    tracing::info!(
+                        session_id = % self.session_info.id.0,
+                        model_id = % model_id.0,
+                        old_label = % prev,
+                        new_label = % label,
+                        "handle_set_session_model: re-rendering system prompt for new model identity"
+                    );
+                    self.agent
+                        .borrow_mut()
+                        .set_system_prompt_label(label.clone())
+                        .await;
+                    let mut ctx = self.agent.borrow().prompt_context().clone();
+                    ctx.normalize_for_persistence();
+                    save_prompt_context(&self.session_info, &ctx);
+                    save_system_prompt(&self.session_info, self.agent.borrow().system_prompt());
+                }
+            }
             let mut conversation = self.chat_state_handle.get_conversation().await;
             for item in conversation.iter_mut() {
                 if let ConversationItem::System(sys) = item {

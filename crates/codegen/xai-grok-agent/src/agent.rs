@@ -234,6 +234,14 @@ impl Agent {
             .unwrap_or_default();
     }
 
+    /// Mid-session model switch: update identity (`system_prompt_label`) and
+    /// re-render the primary system prompt so self-introduction matches the
+    /// newly selected model without rebuilding the whole harness.
+    pub async fn set_system_prompt_label(&mut self, label: impl Into<String>) {
+        self.prompt_context.system_prompt_label = label.into();
+        self.finalize_prompt().await;
+    }
+
     /// Re-render the system prompt for a different definition, reusing
     /// the existing ToolBridge. Used for mid-session mode switching.
     pub async fn render_prompt_for_definition(&self, definition: &AgentDefinition) -> String {

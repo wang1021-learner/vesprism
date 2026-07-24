@@ -23,4 +23,8 @@ tauri-plugin-log = "2"
 tokio = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = "0.15"
+dirs = "5"
 grok-session = { workspace = true }
+tauri-plugin-dialog = "2"
+toml = { workspace = true }
+

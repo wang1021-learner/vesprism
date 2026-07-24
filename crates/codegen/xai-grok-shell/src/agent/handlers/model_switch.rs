@@ -179,15 +179,25 @@ pub(crate) async fn apply(
         false
     };
     let model_unchanged = previous_model_id == model_id.0;
-    let new_threshold = {
+    let (new_threshold, system_prompt_label) = {
         let cfg = agent.cfg.borrow();
         let models = agent.models_manager.models();
-        let model = config::find_model_by_id(&models, model_sampling.model.as_str());
-        crate::util::config::resolve_auto_compact_threshold_percent(
+        // Prefer catalog id (session model id), then routing / API model slug.
+        let model = config::find_model_by_id(&models, model_id.0.as_ref()).or_else(|| {
+            config::find_model_by_id(&models, model_sampling.model.as_str())
+        });
+        let threshold = crate::util::config::resolve_auto_compact_threshold_percent(
             &cfg,
             model_sampling.model.as_str(),
             model.map(|e| &e.info),
-        )
+        );
+        // Mid-session A→B: resolve B's identity so self-intro updates with model switch.
+        let label = crate::util::config::resolve_system_prompt_label(
+            &cfg,
+            model_id.0.as_ref(),
+            model.map(|e| &e.info),
+        );
+        (threshold, Some(label))
     };
     let (tx, rx) = oneshot::channel();
     let _ = handle.cmd_tx.send(SessionCommand::SetSessionModel {
@@ -196,6 +206,7 @@ pub(crate) async fn apply(
         apply_prompt_override,
         skip_prompt_rewrite: did_rebuild || model_unchanged,
         auto_compact_threshold_percent: new_threshold,
+        system_prompt_label,
         responds_to: tx,
     });
     let updated_model = rx

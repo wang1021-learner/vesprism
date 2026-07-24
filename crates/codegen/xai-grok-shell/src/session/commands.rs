@@ -179,6 +179,10 @@ pub enum SessionCommand {
         /// `compaction.threshold_percent` (which is `Cell<u8>` so it can
         /// update without `&mut self`).
         auto_compact_threshold_percent: u8,
+        /// Per-model identity for `{{ system_prompt_label }}`. When set and
+        /// prompt rewrite runs, the session agent re-renders so self-intro
+        /// matches the newly selected model (A→B mid-session).
+        system_prompt_label: Option<String>,
         responds_to: oneshot::Sender<Result<acp::ModelId, acp::Error>>,
     },
     /// Zero-turn harness rebuild: build a brand-new `Agent` from the

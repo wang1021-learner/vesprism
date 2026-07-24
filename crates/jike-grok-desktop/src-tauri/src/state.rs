@@ -1,7 +1,9 @@
 //! 会话 Actor：在独立的 current-thread + LocalSet 线程上持有 `GrokSession`，
 //! 保证 `spawn_local` / `?Send` 的 ACP 客户端可以正常工作。
 
-use grok_session::{GrokSession, SessionEvent, SessionStatus};
+use grok_session::{
+    GrokSession, SessionEvent, SessionStatus, ToolCallInfo, ToolCallUpdateInfo,
+};
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
@@ -29,6 +31,32 @@ pub enum ActorCommand {
         option_id: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 重启会话（销毁旧会话并以新 cwd 启动）。
+    Restart {
+        cwd: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 恢复一个已有历史会话。
+    LoadSession {
+        session_id: String,
+        cwd: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 删除会话（若删的是当前会话，会先释放再开新会话）。
+    DeleteSession {
+        session_id: String,
+        cwd: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 切换当前会话使用的模型（不重启，协议原生支持）。
+    SetModel {
+        model_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 从磁盘热重载模型列表（不重启会话）。
+    ReloadModels {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// 由 Tauri 托管的应用状态；命令侧可廉价克隆。
@@ -54,6 +82,10 @@ pub enum FrontendEvent {
     Error { message: String },
     /// 其它调试信息。
     Other { debug: String },
+    /// 新工具调用（完整快照）。
+    ToolCall { tool: ToolCallInfo },
+    /// 工具调用增量更新。
+    ToolCallUpdate { update: ToolCallUpdateInfo },
     /// 权限请求（前端展示选项后通过 command 回传）。
     PermissionRequest {
         request_id: u64,
@@ -62,6 +94,8 @@ pub enum FrontendEvent {
     },
     /// 会话状态变更。
     StatusChanged { status: SessionStatus },
+    /// 当前会话 ID 变化（新建/重启/恢复后广播）。
+    SessionIdChanged { session_id: String },
 }
 
 /// 权限选项（可序列化）。
@@ -160,43 +194,13 @@ async fn handle_command(
 ) {
     match cmd {
         ActorCommand::Start { cwd, reply } => {
+            // 已有会话时按「新建」处理，避免前端报「会话已存在」
             if session.is_some() {
-                let _ = reply.send(Err("会话已存在，请先重启应用再开新会话".into()));
-                return;
-            }
-            emit(
-                app,
-                FrontendEvent::StatusChanged {
-                    status: SessionStatus::Initializing,
-                },
-            );
-            match GrokSession::start(cwd).await {
-                Ok(s) => {
-                    *status_rx = Some(s.subscribe_status());
-                    *session = Some(s);
-                    emit(
-                        app,
-                        FrontendEvent::StatusChanged {
-                            status: SessionStatus::Idle,
-                        },
-                    );
-                    let _ = reply.send(Ok(()));
-                }
-                Err(e) => {
-                    emit(
-                        app,
-                        FrontendEvent::Error {
-                            message: format!("启动会话失败: {e}"),
-                        },
-                    );
-                    emit(
-                        app,
-                        FrontendEvent::StatusChanged {
-                            status: SessionStatus::Ended,
-                        },
-                    );
-                    let _ = reply.send(Err(e.to_string()));
-                }
+                begin_fresh_session(app, session, status_rx, pending_permissions, cwd, reply, true)
+                    .await;
+            } else {
+                begin_fresh_session(app, session, status_rx, pending_permissions, cwd, reply, false)
+                    .await;
             }
         }
         ActorCommand::SendPrompt { text, reply } => {
@@ -227,6 +231,35 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::SetModel { model_id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.set_model(model_id).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::ReloadModels { reply } => {
+            let Some(s) = session.as_ref() else {
+                // 无会话时无需 reload；配置已在磁盘，下次 start 会读到
+                let _ = reply.send(Ok(()));
+                return;
+            };
+            match s.reload_models().await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
         ActorCommand::RespondPermission {
             request_id,
             option_id,
@@ -243,6 +276,169 @@ async fn handle_command(
                 let _ = reply.send(Err(format!("未知权限请求 id={request_id}")));
             }
         },
+        ActorCommand::Restart { cwd, reply } => {
+            begin_fresh_session(app, session, status_rx, pending_permissions, cwd, reply, true)
+                .await;
+        }
+        ActorCommand::LoadSession { session_id, cwd, reply } => {
+            // 切到历史会话前：若当前是空会话则删掉，避免列表残留
+            if let Some(old_session) = session.take() {
+                let old_id = old_session.session_id();
+                drop(old_session);
+                let _ = grok_session::delete_session_if_blank(&old_id, &cwd).await;
+            }
+            *status_rx = None;
+            pending_permissions.clear();
+
+            emit(app, FrontendEvent::StatusChanged { status: SessionStatus::Initializing });
+            match GrokSession::resume(session_id, cwd).await {
+                Ok(s) => {
+                    *status_rx = Some(s.subscribe_status());
+                    let sid = s.session_id();
+                    *session = Some(s);
+                    emit(app, FrontendEvent::StatusChanged { status: SessionStatus::Idle });
+                    emit(app, FrontendEvent::SessionIdChanged { session_id: sid });
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    emit(app, FrontendEvent::Error { message: format!("恢复会话失败: {e}") });
+                    emit(app, FrontendEvent::StatusChanged { status: SessionStatus::Ended });
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::DeleteSession {
+            session_id,
+            cwd,
+            reply,
+        } => {
+            let was_active = session
+                .as_ref()
+                .is_some_and(|s| s.session_id() == session_id);
+
+            // 必须先释放当前会话再删磁盘，否则 Windows 上文件锁会导致删除失败
+            if was_active {
+                if let Some(old) = session.take() {
+                    drop(old);
+                }
+                *status_rx = None;
+                pending_permissions.clear();
+            }
+
+            match grok_session::delete_session(&session_id, &cwd).await {
+                Ok(()) => {
+                    if was_active {
+                        // 删的是当前会话：开一个新的空会话（不再尝试删 blank，目录已没了）
+                        begin_fresh_session(
+                            app,
+                            session,
+                            status_rx,
+                            pending_permissions,
+                            cwd,
+                            reply,
+                            false,
+                        )
+                        .await;
+                    } else {
+                        let _ = reply.send(Ok(()));
+                    }
+                }
+                Err(e) => {
+                    // 删除失败时若已 drop 当前会话，尽量恢复一个新会话避免卡死
+                    if was_active && session.is_none() {
+                        begin_fresh_session(
+                            app,
+                            session,
+                            status_rx,
+                            pending_permissions,
+                            cwd,
+                            reply,
+                            false,
+                        )
+                        .await;
+                        emit(
+                            app,
+                            FrontendEvent::Error {
+                                message: format!("删除会话失败（已新建会话）: {e}"),
+                            },
+                        );
+                    } else {
+                        let _ = reply.send(Err(e.to_string()));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 丢弃当前会话（若有）并启动全新 `GrokSession`。
+///
+/// - `discard_blank_old`：若旧会话从未有用户输入，删除磁盘记录，避免历史列表堆「空对话」。
+async fn begin_fresh_session(
+    app: &AppHandle,
+    session: &mut Option<GrokSession>,
+    status_rx: &mut Option<tokio::sync::watch::Receiver<SessionStatus>>,
+    pending_permissions: &mut HashMap<u64, oneshot::Sender<String>>,
+    cwd: String,
+    reply: oneshot::Sender<Result<(), String>>,
+    discard_blank_old: bool,
+) {
+    // 销毁旧会话：drop 关闭内存双工管道，底层 agent 任务应随之退出
+    if let Some(old_session) = session.take() {
+        let old_id = old_session.session_id();
+        drop(old_session);
+        if discard_blank_old {
+            // 未说过话的会话不进历史；删除失败不阻断新建
+            let _ = grok_session::delete_session_if_blank(&old_id, &cwd).await;
+        }
+    }
+    *status_rx = None;
+    // oneshot::Sender 随 clear 被 drop，对端收到 RecvError 而非 panic
+    pending_permissions.clear();
+
+    // 批量清掉历史上堆积的空「新对话」（仅在无占用会话时安全）
+    if discard_blank_old {
+        let n = grok_session::purge_blank_sessions(&cwd).await;
+        if n > 0 {
+            eprintln!("[jike-grok-desktop] 已清理 {n} 个空会话");
+        }
+    }
+
+    emit(
+        app,
+        FrontendEvent::StatusChanged {
+            status: SessionStatus::Initializing,
+        },
+    );
+    match GrokSession::start(cwd).await {
+        Ok(s) => {
+            *status_rx = Some(s.subscribe_status());
+            let sid = s.session_id();
+            *session = Some(s);
+            emit(
+                app,
+                FrontendEvent::StatusChanged {
+                    status: SessionStatus::Idle,
+                },
+            );
+            emit(app, FrontendEvent::SessionIdChanged { session_id: sid });
+            let _ = reply.send(Ok(()));
+        }
+        Err(e) => {
+            emit(
+                app,
+                FrontendEvent::Error {
+                    message: format!("启动会话失败: {e}"),
+                },
+            );
+            emit(
+                app,
+                FrontendEvent::StatusChanged {
+                    status: SessionStatus::Ended,
+                },
+            );
+            let _ = reply.send(Err(e.to_string()));
+        }
     }
 }
 
@@ -271,6 +467,12 @@ fn forward_event(
         }
         SessionEvent::Other(debug) => {
             emit(app, FrontendEvent::Other { debug });
+        }
+        SessionEvent::ToolCall(tool) => {
+            emit(app, FrontendEvent::ToolCall { tool });
+        }
+        SessionEvent::ToolCallUpdate(update) => {
+            emit(app, FrontendEvent::ToolCallUpdate { update });
         }
         SessionEvent::PermissionRequest {
             description,
