@@ -1,12 +1,18 @@
+import { memo } from 'react'
 import type { ChatMessage } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { ToolCallCard } from './ToolCallCard'
 
 interface MessageItemProps {
   message: ChatMessage
+  /** 当前这条是否仍在流式输出（仅最后一条可能为 true） */
+  streaming?: boolean
 }
 
-export function MessageItem({ message }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({
+  message,
+  streaming = false,
+}: MessageItemProps) {
   const { role, text, tool } = message
 
   if (role === 'system') {
@@ -54,8 +60,8 @@ export function MessageItem({ message }: MessageItemProps) {
         <span className="badge-text">Assistant</span>
       </div>
       <div className="assistant-content">
-        <AssistantMarkdown text={text} />
+        <AssistantMarkdown text={text} streaming={streaming} />
       </div>
     </div>
   )
-}
+})

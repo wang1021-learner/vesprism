@@ -255,21 +255,36 @@ path = "tests/pty_auto_mode.rs"
 [[bin]]
 name = "mouse-events-playground"
 path = "src/bin/mouse_events_playground.rs"
+required-features = ["playground-tools"]
 
 [[bin]]
 name = "scrollback-selection-playground"
 path = "src/bin/scrollback_selection_playground.rs"
+required-features = ["playground-tools"]
+
+[[bin]]
+name = "scrollback-search-playground"
+path = "src/bin/scrollback_search_playground.rs"
+required-features = ["playground-tools"]
+
+[[bin]]
+name = "mermaid-playground"
+path = "src/bin/mermaid_playground.rs"
+required-features = ["playground-tools"]
 
 [[bin]]
 name = "question-view-playground"
 path = "src/bin/question_view_playground.rs"
+required-features = ["playground-tools"]
 
 [[bin]]
 name = "todo-pane-playground"
 path = "src/bin/todo_pane_playground.rs"
+required-features = ["playground-tools"]
 
 [features]
 default = ["jemalloc", "sandbox-enforce"]
+playground-tools = []
 default-bazel = [
     "jemalloc",
     "sandbox-enforce",

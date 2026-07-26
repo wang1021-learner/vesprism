@@ -5224,6 +5224,7 @@ dependencies = [
  "dotenvy",
  "grok-session",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

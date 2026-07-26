@@ -483,7 +483,10 @@ impl SessionActor {
             let update = acp::SessionUpdate::UserMessageChunk(
                 acp::ContentChunk::new(block.clone()).meta(user_chunk_meta.clone()),
             );
-            let notification_meta = self.build_notification_meta();
+            let mut notification_meta = self.build_notification_meta();
+            if let Some(obj) = notification_meta.as_object_mut() {
+                obj.insert("promptId".to_string(), serde_json::json!(prompt_id));
+            }
             let notification = acp::SessionNotification::new(self.session_info.id.clone(), update)
                 .meta(notification_meta.as_object().cloned());
             if echo_mode == UserEchoMode::PersistOnly {

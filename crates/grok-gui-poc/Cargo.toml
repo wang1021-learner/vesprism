@@ -9,3 +9,4 @@ grok-session = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = "0.15"
+uuid = { workspace = true }

@@ -19,6 +19,7 @@ pub enum ActorCommand {
     /// 发送用户消息。
     SendPrompt {
         text: String,
+        prompt_id: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 取消当前生成。
@@ -51,6 +52,8 @@ pub enum ActorCommand {
     /// 切换当前会话使用的模型（不重启，协议原生支持）。
     SetModel {
         model_id: String,
+        /// 可选推理强度：none/minimal/low/medium/high/xhigh
+        reasoning_effort: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 从磁盘热重载模型列表（不重启会话）。
@@ -64,6 +67,8 @@ pub enum ActorCommand {
 pub struct AppState {
     /// 发往会话 Actor 的命令通道。
     pub cmd_tx: mpsc::UnboundedSender<ActorCommand>,
+    /// 进程内覆盖的工作目录（通过设置页设置后写入，代替 unsafe 的环境变量）
+    pub workspace_cwd_override: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
 }
 
 /// 推给前端 `session-event` 监听器的 JSON 载荷。
@@ -75,17 +80,28 @@ pub enum FrontendEvent {
     /// AI 思考片段。
     AgentThoughtChunk { text: String },
     /// 用户消息回显。
-    UserTextChunk { text: String },
+    UserTextChunk {
+        text: String,
+        prompt_id: Option<String>,
+    },
     /// 本轮结束。
-    TurnEnded { stop_reason: String },
+    TurnEnded {
+        stop_reason: String,
+        prompt_id: Option<String>,
+    },
     /// 错误。
-    Error { message: String },
+    Error {
+        message: String,
+        prompt_id: Option<String>,
+    },
     /// 其它调试信息。
     Other { debug: String },
     /// 新工具调用（完整快照）。
     ToolCall { tool: ToolCallInfo },
     /// 工具调用增量更新。
     ToolCallUpdate { update: ToolCallUpdateInfo },
+    /// 上下文 token 用量（累计估计）。
+    TokenUsage { total_tokens: u64 },
     /// 权限请求（前端展示选项后通过 command 回传）。
     PermissionRequest {
         request_id: u64,
@@ -156,6 +172,7 @@ pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<Actor
                     None => {
                         emit(&app, FrontendEvent::Error {
                             message: "会话已断开".into(),
+                            prompt_id: None,
                         });
                         emit(&app, FrontendEvent::StatusChanged {
                             status: SessionStatus::Ended,
@@ -203,12 +220,12 @@ async fn handle_command(
                     .await;
             }
         }
-        ActorCommand::SendPrompt { text, reply } => {
+        ActorCommand::SendPrompt { text, prompt_id, reply } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
             };
-            match s.send_prompt(text).await {
+            match s.send_prompt(text, prompt_id).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
@@ -231,12 +248,19 @@ async fn handle_command(
                 }
             }
         }
-        ActorCommand::SetModel { model_id, reply } => {
+        ActorCommand::SetModel {
+            model_id,
+            reasoning_effort,
+            reply,
+        } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
             };
-            match s.set_model(model_id).await {
+            match s
+                .set_model(model_id, reasoning_effort.as_deref())
+                .await
+            {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
@@ -301,7 +325,7 @@ async fn handle_command(
                     let _ = reply.send(Ok(()));
                 }
                 Err(e) => {
-                    emit(app, FrontendEvent::Error { message: format!("恢复会话失败: {e}") });
+                    emit(app, FrontendEvent::Error { message: format!("恢复会话失败: {e}"), prompt_id: None });
                     emit(app, FrontendEvent::StatusChanged { status: SessionStatus::Ended });
                     let _ = reply.send(Err(e.to_string()));
                 }
@@ -360,6 +384,7 @@ async fn handle_command(
                             app,
                             FrontendEvent::Error {
                                 message: format!("删除会话失败（已新建会话）: {e}"),
+                                prompt_id: None,
                             },
                         );
                     } else {
@@ -429,6 +454,7 @@ async fn begin_fresh_session(
                 app,
                 FrontendEvent::Error {
                     message: format!("启动会话失败: {e}"),
+                    prompt_id: None,
                 },
             );
             emit(
@@ -456,14 +482,14 @@ fn forward_event(
         SessionEvent::AgentThoughtChunk(text) => {
             emit(app, FrontendEvent::AgentThoughtChunk { text });
         }
-        SessionEvent::UserTextChunk(text) => {
-            emit(app, FrontendEvent::UserTextChunk { text });
+        SessionEvent::UserTextChunk { text, prompt_id } => {
+            emit(app, FrontendEvent::UserTextChunk { text, prompt_id });
         }
-        SessionEvent::TurnEnded { stop_reason } => {
-            emit(app, FrontendEvent::TurnEnded { stop_reason });
+        SessionEvent::TurnEnded { stop_reason, prompt_id } => {
+            emit(app, FrontendEvent::TurnEnded { stop_reason, prompt_id });
         }
-        SessionEvent::Error(message) => {
-            emit(app, FrontendEvent::Error { message });
+        SessionEvent::Error { message, prompt_id } => {
+            emit(app, FrontendEvent::Error { message, prompt_id });
         }
         SessionEvent::Other(debug) => {
             emit(app, FrontendEvent::Other { debug });
@@ -473,6 +499,9 @@ fn forward_event(
         }
         SessionEvent::ToolCallUpdate(update) => {
             emit(app, FrontendEvent::ToolCallUpdate { update });
+        }
+        SessionEvent::TokenUsage { total_tokens } => {
+            emit(app, FrontendEvent::TokenUsage { total_tokens });
         }
         SessionEvent::PermissionRequest {
             description,

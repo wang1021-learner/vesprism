@@ -15,11 +15,12 @@ import type {
   ToolCallData,
   ToolCallUpdateData,
 } from './types'
+import { emptyModelEntry } from './types'
 
 import { Sidebar } from './components/Sidebar'
 import { Header } from './components/Header'
 import { MessageList } from './components/Chat/MessageList'
-import { Composer } from './components/Composer'
+import { Composer, type ComposerHandle } from './components/Composer'
 import { SettingsModal } from './components/Modals/SettingsModal'
 import { PermissionModal } from './components/Modals/PermissionModal'
 
@@ -45,6 +46,40 @@ function resolveEnvKey(entry: { id: string; env_key?: string }): string {
   const existing = entry.env_key?.trim()
   if (existing) return existing
   return autoEnvKey(entry.id)
+}
+
+/** 后端可能缺新字段，统一补齐默认值 */
+function normalizeModelFromDisk(m: ModelEntry): ModelEntry {
+  const model = (m.model || '').trim()
+  return emptyModelEntry({
+    ...m,
+    id: m.id,
+    model,
+    name: model, // 展示名 = 模型名称
+    env_key: resolveEnvKey(m),
+    api_backend: m.api_backend || 'chat_completions',
+    description: m.description ?? '',
+    temperature: m.temperature ?? 0,
+    top_p: m.top_p ?? 0,
+    max_completion_tokens: m.max_completion_tokens ?? 0,
+    extra_headers: m.extra_headers ?? {},
+    api_base_url: m.api_base_url ?? '',
+    max_retries: m.max_retries ?? 0,
+    inference_idle_timeout_secs: m.inference_idle_timeout_secs ?? 0,
+    stream_tool_calls:
+      m.stream_tool_calls === undefined ? null : m.stream_tool_calls,
+    agent_type: m.agent_type || 'grok-build',
+    use_concise: Boolean(m.use_concise),
+    auto_compact_threshold_percent: m.auto_compact_threshold_percent ?? 0,
+    supports_reasoning_effort: Boolean(m.supports_reasoning_effort),
+    reasoning_effort: m.reasoning_effort || (m.supports_reasoning_effort ? 'medium' : ''),
+    hidden: Boolean(m.hidden),
+    supported_in_api: m.supported_in_api !== false,
+    laziness_enabled: Boolean(m.laziness_enabled),
+    laziness_max_nudges: m.laziness_max_nudges ?? 0,
+    compactions_remaining: m.compactions_remaining ?? '',
+    compaction_at_tokens: m.compaction_at_tokens ?? '',
+  })
 }
 
 /** 系统提示标签：API 模型 ID + 固定后缀，用户无需填写 */
@@ -74,7 +109,23 @@ export default function App() {
   // 界面与布局状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [recentChats, setRecentChats] = useState<RecentChat[]>([])
+  /** 当前 Agent 工作目录（侧栏「当前工作空间」标记） */
+  const [workspaceCwd, setWorkspaceCwd] = useState('')
   const [activeChatId, setActiveChatId] = useState('1')
+
+  /** 从 recentChats + 当前 workspaceCwd 派生去重后的工作区列表 */
+  const workspaceOptions = useMemo(() => {
+    const seen = new Map<string, string>() // normalized -> original cwd
+    const add = (cwd?: string) => {
+      const c = (cwd || '').trim()
+      if (!c) return
+      const key = c.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      if (!seen.has(key)) seen.set(key, c)
+    }
+    add(workspaceCwd)
+    recentChats.forEach((c) => add(c.cwd))
+    return Array.from(seen.values())
+  }, [workspaceCwd, recentChats])
 
   // 会话与 IPC 状态
   const [status, setStatus] = useState<SessionStatus>('unknown')
@@ -84,7 +135,12 @@ export default function App() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [permission, setPermission] = useState<PermissionRequest | null>(null)
+
+  // 当前是否允许切换工作区：仅当会话已就绪、不在过度状态，且为空（还没有任何用户消息）时允许
+  const canSwitchWorkspace =
+    ready && !loadingSession && !starting && !messages.some((m) => m.role === 'user')
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([])
+  const permission = permissionQueue[0] ?? null
 
   // 设置面板状态
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -98,98 +154,224 @@ export default function App() {
   const [modelConfigPath, setModelConfigPath] = useState('')
   const [envFilePath, setEnvFilePath] = useState('')
   const [draftModelIds, setDraftModelIds] = useState<string[]>([])
+  /** 会话累计 token 用量（来自 meta.totalTokens） */
+  const [contextUsedTokens, setContextUsedTokens] = useState(0)
+  /** 当前会话推理强度（仅 supports_reasoning 模型使用） */
+  const [reasoningEffort, setReasoningEffort] = useState('medium')
 
+  const composerRef = useRef<ComposerHandle>(null)
   const nextId = useRef(1)
   const streamingRole = useRef<ChatRole | null>(null)
+  const pendingPromptIds = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const autoStarted = useRef(false)
+  /** 流式打字机缓释队列：同一角色的高频 chunk 在每帧匀速平滑吐字，完全消除文字突跳感 */
+  const typewriterRef = useRef<{
+    role: ChatRole
+    pendingText: string
+  } | null>(null)
+  const typewriterRafRef = useRef(0)
 
-  /** 追加或拼接聊天气泡 */
-  const pushMessage = useCallback((role: ChatRole, text: string, append = false) => {
+  /**
+   * 将打字机缓冲并入 messages。
+   * 追加判定以「末条消息 role」为准，不依赖 streamingRole：
+   * 避免工具卡片路径先把 streamingRole 置 null 后再 flush 时误拆成新气泡。
+   */
+  const flushTypewriterBufferInto = useCallback((prev: ChatMessage[]): ChatMessage[] => {
+    const state = typewriterRef.current
+    if (!state || !state.pendingText) {
+      typewriterRef.current = null
+      return prev
+    }
+    const { role, pendingText } = state
+    typewriterRef.current = null
+    if (prev.length > 0 && prev[prev.length - 1].role === role) {
+      const copy = [...prev]
+      const last = copy[copy.length - 1]
+      copy[copy.length - 1] = { ...last, text: last.text + pendingText }
+      return copy
+    }
+    streamingRole.current = role
+    return [...prev, { id: nextId.current++, role, text: pendingText }]
+  }, [])
+
+  /** 立刻冲刷打字机缓冲（角色切换 / turn 结束 / 工具卡片前），避免丢字 */
+  const flushTypewriterNow = useCallback(() => {
+    if (typewriterRafRef.current) {
+      cancelAnimationFrame(typewriterRafRef.current)
+      typewriterRafRef.current = 0
+    }
+    if (!typewriterRef.current?.pendingText) {
+      typewriterRef.current = null
+      return
+    }
+    setMessages((prev) => flushTypewriterBufferInto(prev))
+  }, [flushTypewriterBufferInto])
+
+  /** 丢弃打字机队列（切会话 / 新建 / 发送前），防止旧 rAF 往新会话灌字 */
+  const discardTypewriter = useCallback(() => {
+    if (typewriterRafRef.current) {
+      cancelAnimationFrame(typewriterRafRef.current)
+      typewriterRafRef.current = 0
+    }
+    typewriterRef.current = null
+  }, [])
+
+  /** 安全截取：按码点切片，避免 emoji 等代理对被拦腰截断 */
+  const takeCodePoints = (s: string, maxUnits: number): [string, string] => {
+    if (s.length <= maxUnits) return [s, '']
+    let i = 0
+    let taken = 0
+    while (i < s.length && taken < maxUnits) {
+      const cp = s.codePointAt(i)!
+      i += cp > 0xffff ? 2 : 1
+      taken += 1
+    }
+    return [s.slice(0, i), s.slice(i)]
+  }
+
+  /** 帧渲染回调：根据积压字数平滑匀速输出字符 */
+  const stepTypewriter = useCallback(() => {
+    typewriterRafRef.current = 0
+    const state = typewriterRef.current
+    if (!state || !state.pendingText) {
+      typewriterRef.current = null
+      return
+    }
+
+    // 动态计算本帧吐字数：大量积压时适当提速防落后，少量积压时匀速微量平滑打字
+    const len = state.pendingText.length
+    const takeCount = len > 40 ? Math.ceil(len / 3) : len > 15 ? 3 : len > 6 ? 2 : 1
+    const [chunk, rest] = takeCodePoints(state.pendingText, takeCount)
+    state.pendingText = rest
+
     setMessages((prev) => {
-      if (
-        append &&
-        streamingRole.current === role &&
-        prev.length > 0 &&
-        prev[prev.length - 1].role === role
-      ) {
+      if (prev.length > 0 && prev[prev.length - 1].role === state.role) {
         const copy = [...prev]
         const last = copy[copy.length - 1]
-        copy[copy.length - 1] = { ...last, text: last.text + text }
+        copy[copy.length - 1] = { ...last, text: last.text + chunk }
+        streamingRole.current = state.role
         return copy
       }
-      streamingRole.current = role
-      const id = nextId.current++
-      return [...prev, { id, role, text }]
+      streamingRole.current = state.role
+      return [...prev, { id: nextId.current++, role: state.role, text: chunk }]
     })
+
+    if (state.pendingText.length > 0) {
+      typewriterRafRef.current = requestAnimationFrame(stepTypewriter)
+    } else {
+      typewriterRef.current = null
+    }
   }, [])
+
+  /** 追加或拼接聊天气泡（流式 append 经过打字机缓释队列） */
+  const pushMessage = useCallback(
+    (role: ChatRole, text: string, append = false, promptId?: string) => {
+      // 同角色流式追加：入打字机缓释队列，逐帧匀速打印
+      if (append && (streamingRole.current === role || !streamingRole.current)) {
+        if (typewriterRef.current && typewriterRef.current.role === role) {
+          typewriterRef.current.pendingText += text
+        } else {
+          flushTypewriterNow()
+          typewriterRef.current = { role, pendingText: text }
+        }
+        if (!typewriterRafRef.current) {
+          typewriterRafRef.current = requestAnimationFrame(stepTypewriter)
+        }
+        return
+      }
+
+      // 新气泡 / 角色切换：先冲刷旧缓冲，再写入
+      flushTypewriterNow()
+      streamingRole.current = role
+      setMessages((prev) => [...prev, { id: nextId.current++, role, text, promptId }])
+    },
+    [flushTypewriterNow, stepTypewriter],
+  )
 
   /** 插入一条工具调用卡片（同一 toolCallId 若已存在则覆盖更新） */
-  const upsertToolCall = useCallback((tool: ToolCallData) => {
-    streamingRole.current = null
-    setMessages((prev) => {
-      const idx = prev.findIndex(
-        (m) => m.role === 'tool' && m.tool?.toolCallId === tool.toolCallId,
-      )
-      if (idx >= 0) {
-        const copy = [...prev]
-        copy[idx] = {
-          ...copy[idx],
-          text: tool.detail || tool.title,
-          tool: { ...copy[idx].tool!, ...tool },
-        }
-        return copy
+  const upsertToolCall = useCallback(
+    (tool: ToolCallData) => {
+      if (typewriterRafRef.current) {
+        cancelAnimationFrame(typewriterRafRef.current)
+        typewriterRafRef.current = 0
       }
-      const id = nextId.current++
-      return [
-        ...prev,
-        {
-          id,
-          role: 'tool',
-          text: tool.detail || tool.title,
-          tool,
-        },
-      ]
-    })
-  }, [])
+      // 先 flush（依赖末条 role），再清 streamingRole，避免误拆新气泡
+      setMessages((prev) => {
+        const base = flushTypewriterBufferInto(prev)
+        streamingRole.current = null
+        const idx = base.findIndex(
+          (m) => m.role === 'tool' && m.tool?.toolCallId === tool.toolCallId,
+        )
+        if (idx >= 0) {
+          const copy = [...base]
+          copy[idx] = {
+            ...copy[idx],
+            text: tool.detail || tool.title,
+            tool: { ...copy[idx].tool!, ...tool },
+          }
+          return copy
+        }
+        return [
+          ...base,
+          {
+            id: nextId.current++,
+            role: 'tool',
+            text: tool.detail || tool.title,
+            tool,
+          },
+        ]
+      })
+    },
+    [flushTypewriterBufferInto],
+  )
 
   /** 按 toolCallId 合并工具调用增量 */
-  const patchToolCall = useCallback((update: ToolCallUpdateData) => {
-    streamingRole.current = null
-    setMessages((prev) => {
-      const idx = prev.findIndex(
-        (m) => m.role === 'tool' && m.tool?.toolCallId === update.toolCallId,
-      )
-      if (idx < 0) {
-        // 更新先于创建到达：建一条占位卡片
-        const tool: ToolCallData = {
-          toolCallId: update.toolCallId,
-          kind: update.kind ?? 'other',
-          status: update.status ?? 'in_progress',
-          title: update.title ?? '工具调用',
-          detail: update.detail ?? '',
-          preview: update.preview ?? '',
+  const patchToolCall = useCallback(
+    (update: ToolCallUpdateData) => {
+      if (typewriterRafRef.current) {
+        cancelAnimationFrame(typewriterRafRef.current)
+        typewriterRafRef.current = 0
+      }
+      setMessages((prev) => {
+        const base = flushTypewriterBufferInto(prev)
+        streamingRole.current = null
+        const idx = base.findIndex(
+          (m) => m.role === 'tool' && m.tool?.toolCallId === update.toolCallId,
+        )
+        if (idx < 0) {
+          const tool: ToolCallData = {
+            toolCallId: update.toolCallId,
+            kind: update.kind ?? 'other',
+            status: update.status ?? 'in_progress',
+            title: update.title ?? '工具调用',
+            detail: update.detail ?? '',
+            preview: update.preview ?? '',
+          }
+          return [
+            ...base,
+            { id: nextId.current++, role: 'tool', text: tool.detail || tool.title, tool },
+          ]
         }
-        const id = nextId.current++
-        return [...prev, { id, role: 'tool', text: tool.detail || tool.title, tool }]
-      }
-      const copy = [...prev]
-      const old = copy[idx].tool!
-      const next: ToolCallData = {
-        toolCallId: old.toolCallId,
-        kind: update.kind ?? old.kind,
-        status: update.status ?? old.status,
-        title: update.title ?? old.title,
-        detail: update.detail ?? old.detail,
-        preview: update.preview ?? old.preview,
-      }
-      copy[idx] = {
-        ...copy[idx],
-        text: next.detail || next.title,
-        tool: next,
-      }
-      return copy
-    })
-  }, [])
+        const copy = [...base]
+        const old = copy[idx].tool!
+        const next: ToolCallData = {
+          toolCallId: old.toolCallId,
+          kind: update.kind ?? old.kind,
+          status: update.status ?? old.status,
+          title: update.title ?? old.title,
+          detail: update.detail ?? old.detail,
+          preview: update.preview ?? old.preview,
+        }
+        copy[idx] = {
+          ...copy[idx],
+          text: next.detail || next.title,
+          tool: next,
+        }
+        return copy
+      })
+    },
+    [flushTypewriterBufferInto],
+  )
 
   // 订阅 Tauri session-event
   useEffect(() => {
@@ -198,112 +380,131 @@ export default function App() {
     let unlisten: UnlistenFn | undefined
     let cancelled = false
 
-    ;(async () => {
-      unlisten = await listen<SessionEvent>('session-event', (event) => {
-        const payload = event.payload
-        switch (payload.type) {
-          case 'agent_text_chunk':
-            pushMessage('assistant', payload.text, true)
-            break
-          case 'agent_thought_chunk':
-            pushMessage('thought', payload.text, true)
-            break
-          case 'user_text_chunk':
-            // 发送时已乐观插入完整用户气泡；协议再回显整段时若再 append 会变成「你好你好」。
-            // 相同文案直接忽略；仅在真正流式分片（streamingRole===user）时拼接。
-            setMessages((prev) => {
-              const last = prev[prev.length - 1]
-              if (last?.role === 'user') {
-                if (last.text === payload.text) {
-                  return prev
-                }
-                if (streamingRole.current === 'user') {
-                  const copy = [...prev]
-                  copy[copy.length - 1] = { ...last, text: last.text + payload.text }
-                  return copy
-                }
-                // 乐观气泡已在、非流式回显：不重复建泡
-                if (last.text.length > 0) {
-                  return prev
-                }
+      ; (async () => {
+        unlisten = await listen<SessionEvent>('session-event', (event) => {
+          const payload = event.payload
+          switch (payload.type) {
+            case 'agent_text_chunk':
+              pushMessage('assistant', payload.text, true)
+              break
+            case 'agent_thought_chunk':
+              pushMessage('thought', payload.text, true)
+              break
+            case 'user_text_chunk': {
+              const pid = payload.prompt_id
+              if (pid && pendingPromptIds.current.has(pid)) {
+                // 命中自己主动发送的消息回显：忽略，避免重复渲染
+                break
               }
-              streamingRole.current = 'user'
-              const id = nextId.current++
-              return [...prev, { id, role: 'user', text: payload.text }]
-            })
-            break
-          case 'tool_call':
-            upsertToolCall(payload.tool)
-            break
-          case 'tool_call_update':
-            patchToolCall(payload.update)
-            break
-          case 'turn_ended':
-            streamingRole.current = null
-            break
-          case 'error':
-            streamingRole.current = null
-            setError(payload.message)
-            pushMessage('system', `错误: ${payload.message}`)
-            break
-          case 'other':
-            break
-          case 'permission_request':
-            setPermission({
-              request_id: payload.request_id,
-              description: payload.description,
-              options: payload.options,
-            })
-            break
-          case 'status_changed':
-            setStatus(payload.status)
-            break
-          case 'session_id_changed':
-            setActiveChatId(payload.session_id)
-            break
-        }
-      })
-      if (cancelled) unlisten?.()
-    })()
+              if (streamingRole.current === 'user') {
+                pushMessage('user', payload.text, true)
+              } else {
+                pushMessage('user', payload.text)
+                streamingRole.current = 'user'
+              }
+              break
+            }
+            case 'tool_call':
+              upsertToolCall(payload.tool)
+              break
+            case 'tool_call_update':
+              patchToolCall(payload.update)
+              break
+            case 'token_usage':
+              setContextUsedTokens(payload.total_tokens)
+              break
+            case 'turn_ended': {
+              const pid = payload.prompt_id
+              if (pid) {
+                const t = pendingPromptIds.current.get(pid)
+                if (t) clearTimeout(t)
+                pendingPromptIds.current.delete(pid)
+              }
+              flushTypewriterNow()
+              streamingRole.current = null
+              break
+            }
+            case 'error': {
+              const pid = payload.prompt_id
+              if (pid) {
+                const t = pendingPromptIds.current.get(pid)
+                if (t) clearTimeout(t)
+                pendingPromptIds.current.delete(pid)
+              }
+              flushTypewriterNow()
+              streamingRole.current = null
+              setError(payload.message)
+              pushMessage('system', `错误: ${payload.message}`)
+              break
+            }
+            case 'other':
+              break
+            case 'permission_request':
+              setPermissionQueue((prev) => [
+                ...prev,
+                {
+                  request_id: payload.request_id,
+                  description: payload.description,
+                  options: payload.options,
+                },
+              ])
+              break
+            case 'status_changed':
+              setStatus(payload.status)
+              break
+            case 'session_id_changed':
+              setActiveChatId(payload.session_id)
+              break
+          }
+        })
+        if (cancelled) unlisten?.()
+      })()
 
     return () => {
       cancelled = true
       unlisten?.()
     }
-  }, [inTauri, pushMessage, upsertToolCall, patchToolCall])
+  }, [inTauri, pushMessage, upsertToolCall, patchToolCall, flushTypewriterNow])
 
-/** 格式化时间戳为易读短文本 */
-function formatSessionTime(isoString: string): string {
-  if (!isoString) return ''
-  try {
-    const date = new Date(isoString)
-    if (isNaN(date.getTime())) return isoString
+  /** 格式化时间戳为易读短文本 */
+  function formatSessionTime(isoString: string): string {
+    if (!isoString) return ''
+    try {
+      const date = new Date(isoString)
+      if (isNaN(date.getTime())) return isoString
 
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffMin = Math.floor(diffMs / (1000 * 60))
-    const diffHour = Math.floor(diffMs / (1000 * 60 * 60))
+      const now = new Date()
+      const diffMs = now.getTime() - date.getTime()
+      const diffMin = Math.floor(diffMs / (1000 * 60))
+      const diffHour = Math.floor(diffMs / (1000 * 60 * 60))
 
-    if (diffMin < 1) return '刚刚'
-    if (diffMin < 60) return `${diffMin}分钟前`
-    if (diffHour < 24 && date.getDate() === now.getDate()) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+      if (diffMin < 1) return '刚刚'
+      if (diffMin < 60) return `${diffMin}分钟前`
+      if (diffHour < 24 && date.getDate() === now.getDate()) {
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+      }
+
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${month}-${day}`
+    } catch {
+      return isoString
     }
-
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    return `${month}-${day}`
-  } catch {
-    return isoString
   }
-}
 
-  /** 从后端刷新历史会话列表 */
+  /** 从后端刷新历史会话列表（全工作空间，供侧栏两层分组） */
   const refreshSessionList = useCallback(async () => {
     try {
       const cwd = await invoke<string>('workspace_cwd')
+      setWorkspaceCwd(cwd)
       const sessions = await invoke<
-        { id: string; title: string; updated_at: string; num_messages: number }[]
+        {
+          id: string
+          title: string
+          updated_at: string
+          num_messages: number
+          cwd: string
+        }[]
       >('list_sessions', { cwd })
       setRecentChats(
         sessions.map((s) => ({
@@ -312,6 +513,7 @@ function formatSessionTime(isoString: string): string {
           timestamp: formatSessionTime(s.updated_at),
           // 原始 ISO 时间供侧栏按日历日分组（今天 / 昨天 / 前天）
           rawTimestamp: s.updated_at,
+          cwd: s.cwd || cwd,
         })),
       )
     } catch (e) {
@@ -324,17 +526,18 @@ function formatSessionTime(isoString: string): string {
     if (!inTauri) return ''
     try {
       const modelSettings = await invoke<ModelSettings>('get_model_settings')
-      setModels(modelSettings.models)
+      const normalized = modelSettings.models.map(normalizeModelFromDisk)
+      setModels(normalized)
       setModelConfigPath(modelSettings.config_path)
       const pick =
         modelSettings.default_id &&
-        modelSettings.models.some((m) => m.id === modelSettings.default_id)
+          normalized.some((m) => m.id === modelSettings.default_id)
           ? modelSettings.default_id
-          : (modelSettings.models[0]?.id ?? '')
+          : (normalized[0]?.id ?? '')
       let resolved = pick
       if (pick) {
         setSelectedModelId((prev) => {
-          const next = modelSettings.models.some((m) => m.id === prev) ? prev : pick
+          const next = normalized.some((m) => m.id === prev) ? prev : pick
           resolved = next
           return next
         })
@@ -349,69 +552,72 @@ function formatSessionTime(isoString: string): string {
   /**
    * 把运行中会话的模型同步到 UI 选中项（含 system 人设）。
    * 启动/新会话后必须调用，否则下拉是 pro、引擎仍是默认 flash。
+   * 支持推理的模型会带上 meta.reasoningEffort。
    */
-  const syncSessionModel = useCallback(async (modelId: string) => {
-    const id = modelId.trim()
-    if (!id) return
-    try {
-      await invoke('set_current_model', { modelId: id })
-      setSelectedModelId(id)
-    } catch (e) {
-      console.warn('同步会话模型失败', e)
-    }
-  }, [])
+  const syncSessionModel = useCallback(
+    async (modelId: string, effortOverride?: string) => {
+      const id = modelId.trim()
+      if (!id) return
+      const entry = models.find((m) => m.id === id)
+      const effort = entry?.supports_reasoning_effort
+        ? (effortOverride || entry.reasoning_effort || reasoningEffort || 'medium')
+        : undefined
+      try {
+        await invoke('set_current_model', {
+          modelId: id,
+          reasoningEffort: effort ?? null,
+        })
+        setSelectedModelId(id)
+        if (effort) setReasoningEffort(effort)
+      } catch (e) {
+        console.warn('同步会话模型失败', e)
+      }
+    },
+    [models, reasoningEffort],
+  )
 
-  /** 启动进程内 Agent 会话（首次进入；若已有会话则后端会安全重建） */
+  /** 进应用静默拉起引擎；成功无提示，失败才 setError。 */
   const startSession = useCallback(async () => {
     if (!inTauri || starting) return
     setStarting(true)
     setError(null)
     try {
-      // 先拉模型列表，Composer 下拉立即可用
       const modelId = await loadModelsFromDisk()
       const cwd = await invoke<string>('workspace_cwd')
       await invoke('start_session', { cwd })
       setReady(true)
-      // 关键：会话模型与下拉/默认配置对齐（含自报家门）
       await syncSessionModel(modelId)
-      // 空会话不进列表，这里刷新是为了拿到历史；不强制插「新对话」
       void refreshSessionList()
     } catch (e) {
+      setReady(false)
       const msg = String(e)
       setError(msg)
-      pushMessage('system', `启动失败: ${msg}`)
     } finally {
       setStarting(false)
     }
-  }, [
-    inTauri,
-    starting,
-    pushMessage,
-    refreshSessionList,
-    loadModelsFromDisk,
-    syncSessionModel,
-  ])
+  }, [inTauri, starting, refreshSessionList, loadModelsFromDisk, syncSessionModel])
 
   /**
-   * 新建 / 重启会话：
-   * - 当前会话若从未发送用户消息，先从侧栏移除，后端会删除空磁盘记录
-   * - 防连点：starting 时忽略
+   * New chat：用户只看到「空白新对话」。
+   * 底层重建 agent 全程静默，不展示创建中/启动中文案。
    */
   const restartSession = useCallback(async () => {
     if (!inTauri || starting) return
     const hadUserMessage = messages.some((m) => m.role === 'user')
     const prevId = activeChatId
-    // 新会话沿用当前下拉模型；若为空再读默认
     const modelToUse = selectedModelId
 
+    discardTypewriter()
     streamingRole.current = null
     setMessages([])
-    setPermission(null)
+    setContextUsedTokens(0)
+    setPermissionQueue([])
     setError(null)
-    setReady(false)
+    setInput('')
+    // 保持界面像「已就绪的空对话」：不闪「请先…/创建中…」
+    // 发送仍由 canSend（ready && !starting）拦住，避免打到旧会话
     setStarting(true)
 
-    // 空会话：立刻从侧栏去掉，避免闪一下「新对话」
     if (!hadUserMessage && prevId) {
       setRecentChats((prev) => prev.filter((c) => c.id !== prevId))
     }
@@ -424,9 +630,11 @@ function formatSessionTime(isoString: string): string {
       await syncSessionModel(id)
       void refreshSessionList()
     } catch (e) {
+      setReady(false)
       const msg = String(e)
       setError(msg)
-      pushMessage('system', `新建会话失败: ${msg}`)
+      // 仅失败时提示；成功路径零系统消息
+      pushMessage('system', `出了点问题: ${msg}`)
     } finally {
       setStarting(false)
     }
@@ -440,6 +648,7 @@ function formatSessionTime(isoString: string): string {
     refreshSessionList,
     loadModelsFromDisk,
     syncSessionModel,
+    discardTypewriter,
   ])
 
   /** 首次挂载自动启动会话 */
@@ -450,27 +659,32 @@ function formatSessionTime(isoString: string): string {
     void startSession()
   }, [inTauri, startSession])
 
-  /** 新建会话（侧栏 New chat / Header 新会话） */
+  /** 新建会话（侧栏 New chat；顶栏不再重复「新会话」） */
   const handleNewChat = useCallback(() => {
     if (starting) return
     void restartSession()
   }, [restartSession, starting])
 
-  /** 选择会话 */
+  /** 选择会话（cwd 来自侧栏条目，跨工作空间打开时必须用会话自己的路径） */
   const handleSelectChat = useCallback(
-    async (id: string) => {
+    async (id: string, sessionCwd?: string) => {
       if (!inTauri || loadingSession || starting) return
       if (id === activeChatId && ready) return
 
       const hadUserMessage = messages.some((m) => m.role === 'user')
       const prevId = activeChatId
+      const fromList = recentChats.find((c) => c.id === id)
 
+      discardTypewriter()
       streamingRole.current = null
       setMessages([])
-      setPermission(null)
+      setContextUsedTokens(0)
+      setPermissionQueue([])
       setError(null)
       setReady(false)
       setLoadingSession(true)
+      // 立即高亮目标会话：侧栏可在 load 完成前完成展开/定位，避免等 session_id 事件才滚一次
+      setActiveChatId(id)
 
       // 从空会话切走：侧栏先去掉空项（后端也会删磁盘）
       if (!hadUserMessage && prevId && prevId !== id) {
@@ -478,18 +692,35 @@ function formatSessionTime(isoString: string): string {
       }
 
       try {
-        const cwd = await invoke<string>('workspace_cwd')
+        const fallbackCwd = await invoke<string>('workspace_cwd')
+        // 打开 B 的历史 = 现在就在 B 工作区操作（Agent + UI「当前」一致）
+        const cwd = (sessionCwd || fromList?.cwd || fallbackCwd).trim() || fallbackCwd
         await invoke('load_session', { sessionId: id, cwd })
         setReady(true)
+        try {
+          const appliedCwd = await invoke<string>('set_workspace_cwd', { cwd })
+          setWorkspaceCwd(appliedCwd)
+          setSettingsCwd(appliedCwd)
+        } catch (e) {
+          // 持久化失败不应该阻断会话已经成功加载这件事，
+          // 只是下次启动可能不会记住这次跨工作区打开的目录，
+          // 仍然用 load_session 返回时的 cwd 更新展示，兜底降级
+          console.warn('持久化跨工作区 cwd 失败', e)
+          setWorkspaceCwd(cwd)
+          setSettingsCwd(cwd)
+        }
+
         // 恢复会话后也与当前下拉模型对齐（避免人设仍是旧默认）
         const modelId = selectedModelId.trim() || (await loadModelsFromDisk())
         await syncSessionModel(modelId)
-        void refreshSessionList()
+        // 不在此处全量 refreshSessionList：列表数据已够用，整表刷新会打散侧栏 DOM/滚动。
       } catch (e) {
         const msg = String(e)
         setError(msg)
         pushMessage('system', `恢复会话失败: ${msg}`)
         setReady(false)
+        // 恢复失败时收回高亮，避免侧栏停在未加载成功的项上
+        setActiveChatId(prevId)
       } finally {
         setLoadingSession(false)
       }
@@ -501,11 +732,12 @@ function formatSessionTime(isoString: string): string {
       activeChatId,
       ready,
       messages,
+      recentChats,
       selectedModelId,
       pushMessage,
-      refreshSessionList,
       loadModelsFromDisk,
       syncSessionModel,
+      discardTypewriter,
     ],
   )
 
@@ -543,15 +775,11 @@ function formatSessionTime(isoString: string): string {
         setEnvFilePath('')
       }
       setDraftModelIds([])
-      // 补全缺失的 env_key（界面不展示，保存时写入）
-      const normalized = modelSettings.models.map((m) => ({
-        ...m,
-        env_key: resolveEnvKey(m),
-      }))
+      const normalized = modelSettings.models.map(normalizeModelFromDisk)
       setModels(normalized)
       const pick =
         modelSettings.default_id &&
-        normalized.some((m) => m.id === modelSettings.default_id)
+          normalized.some((m) => m.id === modelSettings.default_id)
           ? modelSettings.default_id
           : (normalized[0]?.id ?? '')
       setSelectedModelId(pick)
@@ -583,22 +811,99 @@ function formatSessionTime(isoString: string): string {
     [models, refreshKeyStatus],
   )
 
-  /** Header 快捷切模型：不重启会话，仅切换协议层当前使用的模型 */
+  /** 输入栏切换模型：不重启会话；支持推理则带上当前思考强度 */
   const switchCurrentModel = useCallback(
     async (modelId: string) => {
       if (!inTauri || !ready) return
+      const entry = models.find((m) => m.id === modelId)
+      const effort = entry?.supports_reasoning_effort
+        ? entry.reasoning_effort || reasoningEffort || 'medium'
+        : undefined
       try {
-        await invoke('set_current_model', { modelId })
+        await invoke('set_current_model', {
+          modelId,
+          reasoningEffort: effort ?? null,
+        })
         setSelectedModelId(modelId)
-        const entry = models.find((m) => m.id === modelId)
+        if (effort) setReasoningEffort(effort)
         const label = entry?.model || modelId
         pushMessage('system', `已切换模型 · ${label}`)
       } catch (e) {
         setError(String(e))
       }
     },
-    [inTauri, ready, models, pushMessage],
+    [inTauri, ready, models, pushMessage, reasoningEffort],
   )
+
+  /** 切换思考强度（同模型 + meta.reasoningEffort，Claude/Codex 交互） */
+  const switchReasoningEffort = useCallback(
+    async (effort: string) => {
+      if (!inTauri || !ready || !selectedModelId) return
+      const entry = models.find((m) => m.id === selectedModelId)
+      if (!entry?.supports_reasoning_effort) return
+      try {
+        await invoke('set_current_model', {
+          modelId: selectedModelId,
+          reasoningEffort: effort,
+        })
+        setReasoningEffort(effort)
+      } catch (e) {
+        setError(String(e))
+      }
+    },
+    [inTauri, ready, selectedModelId, models],
+  )
+
+  /** 应用一个新的工作目录（已知路径，不弹系统对话框），
+   *  必要时重启会话；这是"浏览选择"和"下拉选已知工作区"的共同落地逻辑 */
+  const applyWorkspaceCwd = useCallback(
+    async (nextCwd: string) => {
+      const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      if (norm(nextCwd) === norm(workspaceCwd)) return
+      try {
+        const appliedCwd = await invoke<string>('set_workspace_cwd', { cwd: nextCwd })
+        setWorkspaceCwd(appliedCwd)
+        setSettingsCwd(appliedCwd)
+        if (ready) {
+          streamingRole.current = null
+          setMessages([])
+          setContextUsedTokens(0)
+          setPermissionQueue([])
+          setReady(false)
+          setStarting(true)
+          try {
+            await invoke('restart_session', { cwd: appliedCwd })
+            setReady(true)
+            await syncSessionModel(selectedModelId)
+            pushMessage(
+              'system',
+              `工作目录已切换 · ${appliedCwd}`,
+            )
+          } finally {
+            setStarting(false)
+          }
+          void refreshSessionList()
+        } else {
+          void refreshSessionList()
+          pushMessage(
+            'system',
+            `工作目录已保存 · ${appliedCwd}（下次新对话生效）`,
+          )
+        }
+      } catch (e) {
+        setError(String(e))
+      }
+    },
+    [workspaceCwd, ready, selectedModelId, syncSessionModel, pushMessage, refreshSessionList],
+  )
+
+  /** 浏览选择一个全新的文件夹（弹系统对话框），选中后走公共应用逻辑 */
+  const browseWorkspace = useCallback(async () => {
+    const selected = await openDialog({ directory: true, defaultPath: workspaceCwd || undefined })
+    if (typeof selected === 'string' && selected.trim()) {
+      await applyWorkspaceCwd(selected.trim())
+    }
+  }, [workspaceCwd, applyWorkspaceCwd])
 
   /** 更新模型字段 */
   const updateSelectedModel = useCallback(
@@ -631,7 +936,7 @@ function formatSessionTime(isoString: string): string {
     }
     const template = models.find((m) => m.id === selectedModelId) ?? models[0]
     const envKey = autoEnvKey(id)
-    const draft: ModelEntry = {
+    const draft = emptyModelEntry({
       id,
       name: '',
       model: '',
@@ -639,7 +944,28 @@ function formatSessionTime(isoString: string): string {
       env_key: envKey,
       context_window: 0,
       system_prompt_label: '',
-    }
+      api_backend: template?.api_backend || 'chat_completions',
+      description: '',
+      temperature: 0,
+      top_p: 0,
+      max_completion_tokens: 0,
+      extra_headers: {},
+      api_base_url: '',
+      max_retries: 0,
+      inference_idle_timeout_secs: 0,
+      stream_tool_calls: null,
+      agent_type: template?.agent_type || 'grok-build',
+      use_concise: false,
+      auto_compact_threshold_percent: 0,
+      supports_reasoning_effort: false,
+      reasoning_effort: 'medium',
+      hidden: false,
+      supported_in_api: true,
+      laziness_enabled: false,
+      laziness_max_nudges: 0,
+      compactions_remaining: '',
+      compaction_at_tokens: '',
+    })
     setModels((prev) => [...prev, draft])
     setDraftModelIds((prev) => [...prev, id])
     setSelectedModelId(id)
@@ -680,9 +1006,9 @@ function formatSessionTime(isoString: string): string {
   }, [models, selectedModelId, refreshKeyStatus])
 
   /**
-   * 保存设置（市面常见体验）：
-   * 写盘 → 热重载模型目录 → 可选切换当前会话模型；
-   * **不** restart_session，**不**清空聊天。
+   * 保存设置：
+   * - 工作目录：持久化；若变更且会话已就绪则 restart_session（清空当前聊天）
+   * - 模型：写盘 → reload_models → set_current_model（不中断对话，除非 cwd 也变了）
    */
   const saveSettings = useCallback(async () => {
     setSavingSettings(true)
@@ -690,7 +1016,24 @@ function formatSessionTime(isoString: string): string {
       if (models.length === 0) {
         throw new Error('至少需要配置一个模型')
       }
-      // 显示名 / env_key / 系统提示自动处理；上下文窗口由用户自行填写（单位 K）
+
+      // —— 工作目录 ——
+      const prevCwd = (await invoke<string>('workspace_cwd')).trim()
+      const nextCwdRaw = settingsCwd.trim()
+      if (!nextCwdRaw) {
+        throw new Error('请填写工作目录')
+      }
+      let appliedCwd = prevCwd
+      let cwdChanged = false
+      const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      if (norm(nextCwdRaw) !== norm(prevCwd)) {
+        appliedCwd = await invoke<string>('set_workspace_cwd', { cwd: nextCwdRaw })
+        setSettingsCwd(appliedCwd)
+        setWorkspaceCwd(appliedCwd)
+        cwdChanged = true
+      }
+
+      // —— 模型（对齐官方 [model.*] 常用字段）——
       const trimmedModels = models.map((m) => {
         const model = m.model.trim()
         const id = m.id.trim()
@@ -699,16 +1042,48 @@ function formatSessionTime(isoString: string): string {
             `模型「${model || id || '未命名'}」请填写上下文窗口 (K)，例如 128、256、1000`,
           )
         }
-        return {
+        const backend = (m.api_backend || 'chat_completions').trim() || 'chat_completions'
+        if (!['chat_completions', 'responses', 'messages'].includes(backend)) {
+          throw new Error(`模型「${model || id}」api_backend 无效`)
+        }
+        return emptyModelEntry({
           ...m,
           id,
           env_key: resolveEnvKey({ id, env_key: m.env_key }),
           base_url: m.base_url.trim(),
           model,
-          name: model,
+          name: model, // 展示名固定等于模型名称
+          description: (m.description || '').trim(),
           system_prompt_label: autoSystemPromptLabel(model),
           context_window: m.context_window,
-        }
+          api_backend: backend,
+          temperature: m.temperature > 0 ? m.temperature : 0,
+          top_p: m.top_p > 0 ? m.top_p : 0,
+          max_completion_tokens: m.max_completion_tokens > 0 ? m.max_completion_tokens : 0,
+          extra_headers: m.extra_headers || {},
+          api_base_url: (m.api_base_url || '').trim(),
+          max_retries: m.max_retries > 0 ? m.max_retries : 0,
+          inference_idle_timeout_secs:
+            m.inference_idle_timeout_secs > 0 ? m.inference_idle_timeout_secs : 0,
+          stream_tool_calls:
+            m.stream_tool_calls === undefined ? null : m.stream_tool_calls,
+          agent_type: (m.agent_type || 'grok-build').trim() || 'grok-build',
+          use_concise: Boolean(m.use_concise),
+          auto_compact_threshold_percent:
+            m.auto_compact_threshold_percent > 0
+              ? Math.min(100, m.auto_compact_threshold_percent)
+              : 0,
+          supports_reasoning_effort: Boolean(m.supports_reasoning_effort),
+          reasoning_effort: m.supports_reasoning_effort
+            ? (m.reasoning_effort || 'medium').trim() || 'medium'
+            : '',
+          hidden: Boolean(m.hidden),
+          supported_in_api: m.supported_in_api !== false,
+          laziness_enabled: Boolean(m.laziness_enabled),
+          laziness_max_nudges: m.laziness_max_nudges > 0 ? m.laziness_max_nudges : 0,
+          compactions_remaining: (m.compactions_remaining || '').trim(),
+          compaction_at_tokens: (m.compaction_at_tokens || '').trim(),
+        })
       })
       const selected = trimmedModels.find((m) => m.id === selectedModelId)
       if (keyInput.trim().length > 0) {
@@ -730,36 +1105,86 @@ function formatSessionTime(isoString: string): string {
         models: trimmedModels,
       })
 
-      // 热重载 catalog（官方 reload_models），不清会话
+      // 热重载 catalog
       await invoke('reload_models')
-
-      // 把当前会话切到选中的模型（若会话已就绪）
-      if (ready) {
-        try {
-          await invoke('set_current_model', { modelId: defaultId })
-        } catch (e) {
-          // catalog 已更新，切换失败不回滚写盘
-          console.warn('保存后切换会话模型失败', e)
-        }
-      }
 
       setModels(trimmedModels)
       setSelectedModelId(defaultId)
       setDraftModelIds([])
       setError(null)
+
       const entry = trimmedModels.find((m) => m.id === defaultId)
       const modelLabel = entry?.model || defaultId || '默认'
-      pushMessage(
-        'system',
-        `模型配置已保存 · 当前使用 ${modelLabel}（未中断对话）`,
-      )
+
+      if (cwdChanged && ready) {
+        // 工作区变了：必须重建会话，否则工具仍在旧目录
+        streamingRole.current = null
+        setMessages([])
+        setContextUsedTokens(0)
+        setPermissionQueue([])
+        setReady(false)
+        setStarting(true)
+        try {
+          await invoke('restart_session', { cwd: appliedCwd })
+          setReady(true)
+          await syncSessionModel(defaultId)
+          pushMessage(
+            'system',
+            `工作目录已切换 · ${appliedCwd}`,
+          )
+        } finally {
+          setStarting(false)
+        }
+        void refreshSessionList()
+      } else {
+        if (ready) {
+          try {
+            const ent = trimmedModels.find((m) => m.id === defaultId)
+            await invoke('set_current_model', {
+              modelId: defaultId,
+              reasoningEffort: ent?.supports_reasoning_effort
+                ? ent.reasoning_effort || 'medium'
+                : null,
+            })
+            if (ent?.supports_reasoning_effort) {
+              setReasoningEffort(ent.reasoning_effort || 'medium')
+            }
+          } catch (e) {
+            console.warn('保存后切换会话模型失败', e)
+          }
+        }
+        if (cwdChanged) {
+          // 尚未 start 过：只刷新列表与状态
+          setWorkspaceCwd(appliedCwd)
+          void refreshSessionList()
+          pushMessage(
+            'system',
+            `工作目录已保存 · ${appliedCwd}（下次新对话生效）`,
+          )
+        } else {
+          pushMessage(
+            'system',
+            `模型配置已保存 · 当前使用 ${modelLabel}（未中断对话）`,
+          )
+        }
+      }
+
       setSettingsOpen(false)
     } catch (e) {
       setError(String(e))
     } finally {
       setSavingSettings(false)
     }
-  }, [keyInput, pushMessage, models, selectedModelId, ready])
+  }, [
+    keyInput,
+    pushMessage,
+    models,
+    selectedModelId,
+    ready,
+    settingsCwd,
+    syncSessionModel,
+    refreshSessionList,
+  ])
 
   /** 发送消息 */
   const onSend = async () => {
@@ -767,6 +1192,7 @@ function formatSessionTime(isoString: string): string {
     if (!text || !ready || status === 'generating') return
     setInput('')
     setError(null)
+    discardTypewriter()
     streamingRole.current = null
     // 若是本会话第一条用户消息，同步更新侧栏标题（与 Header 标题一致）
     const isFirstUserMessage = !messages.some((m) => m.role === 'user')
@@ -784,17 +1210,31 @@ function formatSessionTime(isoString: string): string {
             title,
             timestamp: '刚刚',
             rawTimestamp: new Date().toISOString(),
+            cwd: workspaceCwd || undefined,
           },
           ...prev,
         ]
       })
     }
-    // 乐观展示用户气泡；立刻清掉 streamingRole，避免协议 UserMessage 回显再 append 成双份
-    pushMessage('user', text)
+    // 乐观展示用户气泡，并带上随机生成的 promptId
+    const promptId = crypto.randomUUID()
+    pushMessage('user', text, false, promptId)
     streamingRole.current = null
+
+    // 30 秒兜底超时清理
+    const timeoutId = setTimeout(() => {
+      pendingPromptIds.current.delete(promptId)
+    }, 30000)
+    pendingPromptIds.current.set(promptId, timeoutId)
+
     try {
-      await invoke('send_prompt', { text })
+      await invoke('send_prompt', { text, promptId })
     } catch (e) {
+      const t = pendingPromptIds.current.get(promptId)
+      if (t) clearTimeout(t)
+      pendingPromptIds.current.delete(promptId)
+      setMessages((prev) => prev.filter((m) => m.promptId !== promptId))
+      setInput(text)
       const msg = String(e)
       setError(msg)
       pushMessage('system', `发送失败: ${msg}`)
@@ -804,6 +1244,8 @@ function formatSessionTime(isoString: string): string {
   /** 取消生成 */
   const onCancel = async () => {
     try {
+      // 先冲刷已缓冲文字再取消，避免未展示内容丢失；后端 cancel 后 turn_ended 也会再 flush
+      flushTypewriterNow()
       await invoke('cancel_turn')
     } catch (e) {
       setError(String(e))
@@ -814,12 +1256,13 @@ function formatSessionTime(isoString: string): string {
   const onPermission = async (optionId: string) => {
     if (!permission) return
     const { request_id } = permission
-    setPermission(null)
+    setPermissionQueue((prev) => prev.slice(1))
     try {
       await invoke('respond_permission', {
         requestId: request_id,
         optionId,
       })
+      setTimeout(() => composerRef.current?.focus(), 0)
     } catch (e) {
       setError(String(e))
     }
@@ -827,24 +1270,28 @@ function formatSessionTime(isoString: string): string {
 
   /** 删除指定历史会话（当前会话由后端释放后自动开新会话，勿再调 New chat） */
   const handleDeleteChat = useCallback(
-    async (id: string) => {
+    async (id: string, sessionCwd?: string) => {
       if (!inTauri || starting || loadingSession) return
       const deletingActive = id === activeChatId
+      const fromList = recentChats.find((c) => c.id === id)
 
       // 乐观从侧栏移除
       setRecentChats((prev) => prev.filter((c) => c.id !== id))
 
       if (deletingActive) {
+        discardTypewriter()
         streamingRole.current = null
         setMessages([])
-        setPermission(null)
+        setContextUsedTokens(0)
+        setPermissionQueue([])
         setError(null)
         setReady(false)
         setStarting(true)
       }
 
       try {
-        const cwd = await invoke<string>('workspace_cwd')
+        const fallbackCwd = await invoke<string>('workspace_cwd')
+        const cwd = (sessionCwd || fromList?.cwd || fallbackCwd).trim() || fallbackCwd
         await invoke('delete_session', { sessionId: id, cwd })
         if (deletingActive) {
           setReady(true)
@@ -860,12 +1307,12 @@ function formatSessionTime(isoString: string): string {
         }
       }
     },
-    [inTauri, starting, loadingSession, activeChatId, refreshSessionList],
+    [inTauri, starting, loadingSession, activeChatId, recentChats, refreshSessionList, discardTypewriter],
   )
 
   /** 重命名历史会话标题（写入官方 summary.json） */
   const handleRenameChat = useCallback(
-    async (id: string, title: string) => {
+    async (id: string, title: string, sessionCwd?: string) => {
       if (!inTauri) {
         throw new Error('请在桌面应用中操作')
       }
@@ -873,7 +1320,9 @@ function formatSessionTime(isoString: string): string {
       if (!next) {
         throw new Error('标题不能为空')
       }
-      const cwd = await invoke<string>('workspace_cwd')
+      const fromList = recentChats.find((c) => c.id === id)
+      const fallbackCwd = await invoke<string>('workspace_cwd')
+      const cwd = (sessionCwd || fromList?.cwd || fallbackCwd).trim() || fallbackCwd
       await invoke('rename_session', {
         sessionId: id,
         cwd,
@@ -885,10 +1334,17 @@ function formatSessionTime(isoString: string): string {
       )
       void refreshSessionList()
     },
-    [inTauri, refreshSessionList],
+    [inTauri, recentChats, refreshSessionList],
   )
 
-  const canSend = inTauri && ready && status !== 'generating' && status !== 'initializing'
+  // starting 时静默重建：界面仍像空对话，但禁止发送打到旧引擎
+  const canSend =
+    inTauri &&
+    ready &&
+    !starting &&
+    !loadingSession &&
+    status !== 'generating' &&
+    status !== 'initializing'
 
   /**
    * 当前对话标题：
@@ -931,6 +1387,7 @@ function formatSessionTime(isoString: string): string {
         onOpenSettings={() => void openSettings()}
         recentChats={recentChats}
         activeChatId={activeChatId}
+        currentWorkspaceCwd={workspaceCwd}
         onSelectChat={handleSelectChat}
         onDeleteChat={handleDeleteChat}
         onRenameChat={handleRenameChat}
@@ -942,12 +1399,7 @@ function formatSessionTime(isoString: string): string {
         <Header
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
-          status={status}
-          ready={ready}
-          starting={starting}
           chatTitle={chatTitle}
-          onStartSession={() => void startSession()}
-          onRestartSession={() => void restartSession()}
         />
 
         {error && <div className="banner error">{error}</div>}
@@ -958,18 +1410,29 @@ function formatSessionTime(isoString: string): string {
           permission={permission}
           loadingSession={loadingSession}
           sessionKey={activeChatId}
+          streaming={status === 'generating'}
         />
 
         {/* 悬浮 Composer 输入框组件 */}
         <Composer
+          ref={composerRef}
           input={input}
           setInput={setInput}
           canSend={canSend}
           isGenerating={status === 'generating'}
           ready={ready}
+          starting={starting || loadingSession}
           models={models}
           selectedModelId={selectedModelId}
+          reasoningEffort={reasoningEffort}
+          workspaceCwd={workspaceCwd}
+          workspaceOptions={workspaceOptions}
+          contextUsedTokens={contextUsedTokens}
+          canSwitchWorkspace={canSwitchWorkspace}
           onSwitchModel={(id) => void switchCurrentModel(id)}
+          onSwitchReasoningEffort={(e) => void switchReasoningEffort(e)}
+          onSelectWorkspace={(cwd) => void applyWorkspaceCwd(cwd)}
+          onBrowseWorkspace={() => void browseWorkspace()}
           onSend={() => void onSend()}
           onCancel={() => void onCancel()}
         />
@@ -1001,6 +1464,7 @@ function formatSessionTime(isoString: string): string {
             setKeyVisible={setKeyVisible}
             envFilePath={envFilePath}
             savingSettings={savingSettings}
+            canSwitchWorkspace={canSwitchWorkspace}
             onClose={() => setSettingsOpen(false)}
             onSave={() => void saveSettings()}
           />

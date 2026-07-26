@@ -74,18 +74,32 @@ pub enum SessionEvent {
     AgentTextChunk(String),
     /// AI 思考过程片段（流式）。
     AgentThoughtChunk(String),
-    /// 用户消息回显。
-    UserTextChunk(String),
+    /// 用户消息回显。用户主动发送时会带上前端生成的 prompt_id，
+    /// 用于前端做乐观 UI 精确核销；系统/回放/无 meta 来源时为 None。
+    UserTextChunk {
+        text: String,
+        prompt_id: Option<String>,
+    },
     /// 本轮对话结束。
-    TurnEnded { stop_reason: String },
+    TurnEnded {
+        stop_reason: String,
+        prompt_id: Option<String>,
+    },
     /// 错误信息。
-    Error(String),
+    Error {
+        message: String,
+        prompt_id: Option<String>,
+    },
     /// 其它未专门映射的通知（调试用）。
     Other(String),
     /// 新工具调用（或完整快照）。
     ToolCall(ToolCallInfo),
     /// 工具调用状态/内容更新。
     ToolCallUpdate(ToolCallUpdateInfo),
+    /// 上下文用量（来自 session/update `_meta.totalTokens`，会话累计估计）。
+    TokenUsage {
+        total_tokens: u64,
+    },
     /// 工具权限门控：通过 `respond` 发送选中的 `option_id` 作答。
     PermissionRequest {
         description: String,
@@ -100,11 +114,15 @@ impl std::fmt::Debug for SessionEvent {
         match self {
             Self::AgentTextChunk(t) => write!(f, "AgentTextChunk({:?})", t),
             Self::AgentThoughtChunk(t) => write!(f, "AgentThoughtChunk({:?})", t),
-            Self::UserTextChunk(t) => write!(f, "UserTextChunk({:?})", t),
-            Self::TurnEnded { stop_reason } => {
-                write!(f, "TurnEnded {{ stop_reason: {:?} }}", stop_reason)
+            Self::UserTextChunk { text, prompt_id } => {
+                write!(f, "UserTextChunk {{ text: {:?}, prompt_id: {:?} }}", text, prompt_id)
             }
-            Self::Error(e) => write!(f, "Error({:?})", e),
+            Self::TurnEnded { stop_reason, prompt_id } => {
+                write!(f, "TurnEnded {{ stop_reason: {:?}, prompt_id: {:?} }}", stop_reason, prompt_id)
+            }
+            Self::Error { message, prompt_id } => {
+                write!(f, "Error {{ message: {:?}, prompt_id: {:?} }}", message, prompt_id)
+            }
             Self::Other(o) => write!(f, "Other({:?})", o),
             Self::ToolCall(t) => write!(
                 f,
@@ -116,6 +134,9 @@ impl std::fmt::Debug for SessionEvent {
                 "ToolCallUpdate {{ id: {:?}, status: {:?} }}",
                 t.tool_call_id, t.status
             ),
+            Self::TokenUsage { total_tokens } => {
+                write!(f, "TokenUsage {{ total_tokens: {} }}", total_tokens)
+            }
             Self::PermissionRequest {
                 description,
                 options,
@@ -149,7 +170,10 @@ impl Client for GuiClient {
         if options.is_empty() {
             let _ = self
                 .event_tx
-                .send(SessionEvent::Error("权限请求没有可选项".to_string()))
+                .send(SessionEvent::Error {
+                    message: "权限请求没有可选项".to_string(),
+                    prompt_id: None,
+                })
                 .await;
             return Err(agent_client_protocol::Error::invalid_params());
         }
@@ -186,8 +210,21 @@ impl Client for GuiClient {
         &self,
         args: SessionNotification,
     ) -> agent_client_protocol::Result<()> {
-        let event = session_update_to_event(args.update);
+        let meta = args.meta.as_ref();
+        let event = session_update_to_event(args.update, meta);
         let _ = self.event_tx.send(event).await;
+        // 官方在 notification meta 里带 totalTokens（会话累计估计）
+        if let Some(tokens) = meta
+            .and_then(|m| m.get("totalTokens"))
+            .and_then(|v| v.as_u64())
+        {
+            let _ = self
+                .event_tx
+                .send(SessionEvent::TokenUsage {
+                    total_tokens: tokens,
+                })
+                .await;
+        }
         Ok(())
     }
 }
@@ -476,7 +513,10 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
 }
 
 /// 将 ACP 的 `SessionUpdate` 映射为业务层 `SessionEvent`（纯函数，有单元测试）。
-pub fn session_update_to_event(update: SessionUpdate) -> SessionEvent {
+pub fn session_update_to_event(
+    update: SessionUpdate,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> SessionEvent {
     match update {
         SessionUpdate::AgentMessageChunk(chunk) => {
             SessionEvent::AgentTextChunk(content_block_to_text(&chunk.content))
@@ -485,7 +525,14 @@ pub fn session_update_to_event(update: SessionUpdate) -> SessionEvent {
             SessionEvent::AgentThoughtChunk(content_block_to_text(&chunk.content))
         }
         SessionUpdate::UserMessageChunk(chunk) => {
-            SessionEvent::UserTextChunk(content_block_to_text(&chunk.content))
+            let prompt_id = meta
+                .and_then(|m| m.get("promptId"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            SessionEvent::UserTextChunk {
+                text: content_block_to_text(&chunk.content),
+                prompt_id,
+            }
         }
         SessionUpdate::ToolCall(tc) => SessionEvent::ToolCall(tool_call_to_info(&tc)),
         SessionUpdate::ToolCallUpdate(tcu) => {
@@ -654,7 +701,11 @@ impl GrokSession {
     }
 
     /// 发送用户消息（不等待完成；流式结果通过 [`Self::next_event`] 获取）。
-    pub async fn send_prompt(&self, text: impl Into<String>) -> anyhow::Result<()> {
+    pub async fn send_prompt(
+        &self,
+        text: impl Into<String>,
+        prompt_id: String,
+    ) -> anyhow::Result<()> {
         let session_id = self.session_id.clone();
         let text = text.into();
         let connection = Arc::clone(&self.connection);
@@ -664,21 +715,35 @@ impl GrokSession {
         // 立刻切到 Generating，方便界面显示加载态并禁用输入。
         let _ = status_tx.send(SessionStatus::Generating);
 
+        let pid_for_task = prompt_id.clone();
         tokio::task::spawn_local(async move {
             let result = connection
-                .prompt(PromptRequest::new(session_id, vec![text.into()]))
+                .prompt(
+                    PromptRequest::new(session_id, vec![text.into()]).meta({
+                        let mut m = serde_json::Map::new();
+                        m.insert(
+                            "promptId".to_string(),
+                            serde_json::Value::String(pid_for_task.clone()),
+                        );
+                        m
+                    }),
+                )
                 .await;
             match result {
                 Ok(response) => {
                     let _ = event_tx
                         .send(SessionEvent::TurnEnded {
                             stop_reason: format!("{:?}", response.stop_reason),
+                            prompt_id: Some(prompt_id.clone()),
                         })
                         .await;
                 }
                 Err(e) => {
                     let _ = event_tx
-                        .send(SessionEvent::Error(format!("{:?}", e)))
+                        .send(SessionEvent::Error {
+                            message: format!("{:?}", e),
+                            prompt_id: Some(prompt_id.clone()),
+                        })
                         .await;
                 }
             }
@@ -697,13 +762,27 @@ impl GrokSession {
     }
 
     /// 在不重启会话的情况下，切换当前会话使用的模型（协议原生支持，无需重建连接）。
-    pub async fn set_model(&self, model_id: impl Into<String>) -> anyhow::Result<()> {
-        self.connection
-            .set_session_model(SetSessionModelRequest::new(
-                self.session_id.clone(),
-                ModelId::new(model_id.into()),
-            ))
-            .await?;
+    ///
+    /// `reasoning_effort` 可选：官方 meta 键 `reasoningEffort`
+    ///（none/minimal/low/medium/high/xhigh），仅当模型支持推理时生效。
+    pub async fn set_model(
+        &self,
+        model_id: impl Into<String>,
+        reasoning_effort: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut req = SetSessionModelRequest::new(
+            self.session_id.clone(),
+            ModelId::new(model_id.into()),
+        );
+        if let Some(effort) = reasoning_effort.map(str::trim).filter(|s| !s.is_empty()) {
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "reasoningEffort".into(),
+                serde_json::Value::String(effort.to_ascii_lowercase()),
+            );
+            req = req.meta(meta);
+        }
+        self.connection.set_session_model(req).await?;
         Ok(())
     }
 
@@ -740,6 +819,13 @@ pub async fn list_sessions(cwd: &str) -> anyhow::Result<Vec<Summary>> {
     xai_grok_shell::session::persistence::list_summaries(Some(cwd))
         .await
         .map_err(|e| anyhow::anyhow!("读取会话列表失败: {}", e))
+}
+
+/// 列出所有工作空间下的会话摘要（侧栏跨工作空间分组用）。
+pub async fn list_all_sessions() -> anyhow::Result<Vec<Summary>> {
+    xai_grok_shell::session::persistence::list_summaries(None)
+        .await
+        .map_err(|e| anyhow::anyhow!("读取全部会话列表失败: {}", e))
 }
 
 /// 删除指定 session_id 的本地持久化记录。
@@ -994,7 +1080,7 @@ mod tests {
     #[test]
     fn agent_message_chunk_becomes_agent_text_chunk() {
         let update = SessionUpdate::AgentMessageChunk(text_chunk("你好"));
-        let event = session_update_to_event(update);
+        let event = session_update_to_event(update, None);
         match event {
             SessionEvent::AgentTextChunk(text) => assert_eq!(text, "你好"),
             other => panic!("期望 AgentTextChunk，实际 {:?}", other),
@@ -1004,7 +1090,7 @@ mod tests {
     #[test]
     fn agent_thought_chunk_becomes_agent_thought_chunk() {
         let update = SessionUpdate::AgentThoughtChunk(text_chunk("思考中"));
-        let event = session_update_to_event(update);
+        let event = session_update_to_event(update, None);
         match event {
             SessionEvent::AgentThoughtChunk(text) => assert_eq!(text, "思考中"),
             other => panic!("期望 AgentThoughtChunk，实际 {:?}", other),
@@ -1014,9 +1100,14 @@ mod tests {
     #[test]
     fn user_message_chunk_becomes_user_text_chunk() {
         let update = SessionUpdate::UserMessageChunk(text_chunk("提问"));
-        let event = session_update_to_event(update);
+        let mut meta = serde_json::Map::new();
+        meta.insert("promptId".to_string(), serde_json::Value::String("p-123".to_string()));
+        let event = session_update_to_event(update, Some(&meta));
         match event {
-            SessionEvent::UserTextChunk(text) => assert_eq!(text, "提问"),
+            SessionEvent::UserTextChunk { text, prompt_id } => {
+                assert_eq!(text, "提问");
+                assert_eq!(prompt_id, Some("p-123".to_string()));
+            }
             other => panic!("期望 UserTextChunk，实际 {:?}", other),
         }
     }

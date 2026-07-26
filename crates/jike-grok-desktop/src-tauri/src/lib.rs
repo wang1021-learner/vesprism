@@ -71,12 +71,16 @@ pub fn run() {
 
             // 启动专用会话线程，并把命令发送端交给 Tauri 状态管理。
             let cmd_tx = spawn_session_actor(app.handle().clone());
-            app.manage(AppState { cmd_tx });
+            app.manage(AppState {
+                cmd_tx,
+                workspace_cwd_override: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::workspace_cwd,
+            commands::set_workspace_cwd,
             commands::start_session,
             commands::send_prompt,
             commands::cancel_turn,

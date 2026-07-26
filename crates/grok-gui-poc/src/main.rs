@@ -39,7 +39,7 @@ async fn run() -> anyhow::Result<()> {
             break;
         }
 
-        session.send_prompt(line).await?;
+        session.send_prompt(line, format!("poc-{}", uuid::Uuid::new_v4())).await?;
         print!("AI: ");
         std::io::stdout().flush().ok();
 
@@ -50,12 +50,12 @@ async fn run() -> anyhow::Result<()> {
                     std::io::stdout().flush().ok();
                 }
                 Some(SessionEvent::AgentThoughtChunk(_)) => {}
-                Some(SessionEvent::UserTextChunk(_)) => {}
+                Some(SessionEvent::UserTextChunk { .. }) => {}
                 Some(SessionEvent::TurnEnded { .. }) => {
                     println!("\n");
                     break;
                 }
-                Some(SessionEvent::Error(msg)) => {
+                Some(SessionEvent::Error { message: msg, .. }) => {
                     println!("\n--- 出错了: {}\n", msg);
                     break;
                 }
@@ -74,6 +74,9 @@ async fn run() -> anyhow::Result<()> {
                         let _ = respond.send(first_id.clone());
                     }
                 }
+                // SessionEvent 新增工具事件；POC 不展示详情，忽略即可
+                Some(SessionEvent::ToolCall(_)) | Some(SessionEvent::ToolCallUpdate(_)) => {}
+                Some(SessionEvent::TokenUsage { .. }) => {}
                 None => {
                     println!("\n--- 会话已断开 ---");
                     return Ok(());

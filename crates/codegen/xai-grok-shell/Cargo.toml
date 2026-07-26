@@ -8,6 +8,7 @@ edition.workspace = true
 default = []
 unstable = []
 default-bazel = []
+playground-tools = []
 
 [dependencies]
 dunce = { workspace = true }
@@ -220,3 +221,4 @@ tar = { workspace = true }
 [[bin]]
 name = "chat-history-downgrade"
 path = "src/bin/chat-history-downgrade.rs"
+required-features = ["playground-tools"]
