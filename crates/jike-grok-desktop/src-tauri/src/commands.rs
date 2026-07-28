@@ -287,6 +287,19 @@ pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<Str
     std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
 }
 
+/// 获取当前会话累计 token 用量拆分（输入/输出/缓存命中/推理 token 等）。
+#[tauri::command]
+pub async fn get_session_usage(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    state
+        .cmd_tx
+        .send(ActorCommand::GetUsage { reply: reply_tx })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 把 Artifact 预览内容写入用户通过系统"另存为"对话框选择的路径。
 /// 与 read_file_for_preview 不同，这里的目标路径完全由用户在
 /// 系统对话框中主动选择，不做工作区范围校验。
@@ -467,9 +480,12 @@ fn normalize_reasoning_effort(s: &str) -> Result<String, String> {
         "low" => Ok("low".into()),
         "medium" => Ok("medium".into()),
         "high" => Ok("high".into()),
-        "xhigh" | "max" => Ok("xhigh".into()),
+        // xhigh 与 max 是官方 ReasoningEffort 枚举里两个不同的变体
+        // （见 xai-grok-sampling-types），不再合并为别名。
+        "xhigh" => Ok("xhigh".into()),
+        "max" => Ok("max".into()),
         other => Err(format!(
-            "reasoning_effort 无效: {other}（none/minimal/low/medium/high/xhigh）"
+            "reasoning_effort 无效: {other}（none/minimal/low/medium/high/xhigh/max）"
         )),
     }
 }
@@ -898,9 +914,10 @@ fn upsert_model_entry(
             "reasoning_effort".into(),
             toml::Value::String(effort.clone()),
         );
-        // 标准档位菜单（官方支持 bare 字符串数组）
+        // 标准档位菜单（官方支持 bare 字符串数组）；xhigh/max 是官方
+        // ReasoningEffort 枚举里两个不同的变体，均需列出。
         let efforts = vec![
-            "none", "minimal", "low", "medium", "high", "xhigh",
+            "none", "minimal", "low", "medium", "high", "xhigh", "max",
         ]
         .into_iter()
         .map(|s| toml::Value::String(s.into()))

@@ -60,6 +60,10 @@ pub enum ActorCommand {
     ReloadModels {
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 获取当前会话累计 token 用量拆分。
+    GetUsage {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
 }
 
 /// 由 Tauri 托管的应用状态；命令侧可廉价克隆。
@@ -279,6 +283,25 @@ async fn handle_command(
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::GetUsage { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.get_usage().await {
+                Ok(usage) => match serde_json::to_value(&usage) {
+                    Ok(v) => {
+                        let _ = reply.send(Ok(v));
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(format!("序列化用量失败: {e}")));
+                    }
+                },
                 Err(e) => {
                     let _ = reply.send(Err(e.to_string()));
                 }

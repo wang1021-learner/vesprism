@@ -135,7 +135,8 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
             onClick={handlePreviewFile}
             disabled={previewLoading}
           >
-            {previewLoading ? '加载中…' : `预览 ${previewLang.toUpperCase()}`}
+            <span className="tool-preview-btn-icon" aria-hidden>🌐</span>
+            <span>{previewLoading ? '加载中…' : `预览 ${previewLang.toUpperCase()}`}</span>
           </button>
           {previewError && <span className="tool-preview-error">{previewError}</span>}
         </div>

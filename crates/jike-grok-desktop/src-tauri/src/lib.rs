@@ -100,6 +100,7 @@ pub fn run() {
             commands::set_current_model,
             commands::read_file_for_preview,
             commands::save_artifact_file,
+            commands::get_session_usage,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

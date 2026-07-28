@@ -803,6 +803,27 @@ impl GrokSession {
         Ok(())
     }
 
+    /// 获取当前会话累计 token 用量与拆分明细（x.ai/session/usage 扩展方法）。
+    /// 主动请求，非订阅；建议在收到 TurnEnded 后调用刷新。
+    pub async fn get_usage(&self) -> anyhow::Result<xai_grok_shell::extensions::notification::PromptUsage> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 get_usage 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/session/usage", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("get_usage 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 usage 响应失败: {e}"))?;
+        let usage = value
+            .get("usage")
+            .ok_or_else(|| anyhow::anyhow!("usage 响应缺少 usage 字段"))?;
+        serde_json::from_value(usage.clone())
+            .map_err(|e| anyhow::anyhow!("反序列化 PromptUsage 失败: {e}"))
+    }
+
     /// 订阅会话状态变化（如「正在生成中」指示器）。
     pub fn subscribe_status(&self) -> watch::Receiver<SessionStatus> {
         self.status_tx.subscribe()

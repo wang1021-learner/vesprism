@@ -158,6 +158,9 @@ export default function App() {
   const [draftModelIds, setDraftModelIds] = useState<string[]>([])
   /** 会话累计 token 用量（来自 meta.totalTokens） */
   const [contextUsedTokens, setContextUsedTokens] = useState(0)
+  const [usageDetail, setUsageDetail] = useState<Record<string, unknown> | null>(null)
+  const [usageDetailLoading, setUsageDetailLoading] = useState(false)
+
   /** 当前会话推理强度（仅 supports_reasoning 模型使用） */
   const [reasoningEffort, setReasoningEffort] = useState('medium')
 
@@ -289,6 +292,20 @@ export default function App() {
     },
     [flushTypewriterNow, stepTypewriter],
   )
+
+  /** 按需拉取当前会话详细用量（输入/输出/缓存/推理拆分），用户点击用量环时调用 */
+  const fetchUsageDetail = useCallback(async () => {
+    if (usageDetailLoading) return
+    setUsageDetailLoading(true)
+    try {
+      const detail = await invoke('get_session_usage')
+      setUsageDetail(detail as Record<string, unknown>)
+    } catch (e) {
+      pushMessage('system', `获取用量明细失败: ${String(e)}`)
+    } finally {
+      setUsageDetailLoading(false)
+    }
+  }, [usageDetailLoading, pushMessage])
 
   /** 插入一条工具调用卡片（同一 toolCallId 若已存在则覆盖更新） */
   const upsertToolCall = useCallback(
@@ -1433,6 +1450,9 @@ export default function App() {
           workspaceCwd={workspaceCwd}
           workspaceOptions={workspaceOptions}
           contextUsedTokens={contextUsedTokens}
+          usageDetail={usageDetail}
+          usageDetailLoading={usageDetailLoading}
+          onFetchUsageDetail={() => void fetchUsageDetail()}
           canSwitchWorkspace={canSwitchWorkspace}
           onSwitchModel={(id) => void switchCurrentModel(id)}
           onSwitchReasoningEffort={(e) => void switchReasoningEffort(e)}

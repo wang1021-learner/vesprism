@@ -50,6 +50,9 @@ interface ComposerProps {
   onBrowseWorkspace: () => void
   onSend: (text?: string) => void
   onCancel: () => void
+  usageDetail?: Record<string, unknown> | null
+  usageDetailLoading?: boolean
+  onFetchUsageDetail?: () => void
 }
 
 function formatTokenK(n: number): string {
@@ -59,6 +62,22 @@ function formatTokenK(n: number): string {
   if (k < 10) return `${k.toFixed(1)}K`
   if (k < 1000) return `${Math.round(k)}K`
   return `${(k / 1000).toFixed(1)}M`
+}
+
+// 字段名对应官方 PromptUsageModel 的 camelCase 序列化形式
+// （见 xai-grok-shell/src/extensions/notification.rs），不是 snake_case。
+function formatDetailKey(key: string): string {
+  const map: Record<string, string> = {
+    inputTokens: '输入 Tokens',
+    outputTokens: '输出 Tokens',
+    totalTokens: '总 Tokens',
+    cachedReadTokens: '缓存命中 Tokens',
+    reasoningTokens: '推理 Tokens',
+    modelCalls: '模型调用次数',
+    apiDurationMs: 'API 耗时 (ms)',
+    numTurns: '对话轮次',
+  }
+  return map[key] ?? key
 }
 
 function formatWorkspaceLabel(p: string): string {
@@ -217,6 +236,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onBrowseWorkspace,
     onSend,
     onCancel,
+    usageDetail,
+    usageDetailLoading,
+    onFetchUsageDetail,
   }: ComposerProps,
   ref,
 ) {
@@ -233,6 +255,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
+  const [showDetail, setShowDetail] = useState(false)
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -264,19 +287,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }, [wsOpen, modelOpen])
 
-  const effortIndex = useMemo(() => {
-    const i = REASONING_LEVELS.findIndex((x) => x.value === (reasoningEffort || 'medium'))
-    return i >= 0 ? i : 3 // medium
-  }, [reasoningEffort])
-
-  // textarea 自适应高度
-  useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }, [input])
-
   const contextWindow = useMemo(() => {
     const m = models.find((x) => x.id === selectedModelId)
     return m?.context_window && m.context_window > 0 ? m.context_window : 0
@@ -287,17 +297,40 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [models, selectedModelId],
   )
 
+  // 官方 messages backend（Claude 等）主动过滤掉 none/minimal 两档
+  // （见 xai-grok-sampling-types 的 to_messages_api），选了也不会
+  // 真正发给模型；这里同步隐藏，避免用户选中一个静默失效的档位。
+  const availableReasoningLevels = useMemo(() => {
+    if (selectedModel?.api_backend === 'messages') {
+      return REASONING_LEVELS.filter((lv) => lv.value !== 'none' && lv.value !== 'minimal')
+    }
+    return REASONING_LEVELS
+  }, [selectedModel])
+
+  const effortIndex = useMemo(() => {
+    const i = availableReasoningLevels.findIndex((x) => x.value === (reasoningEffort || 'medium'))
+    return i >= 0 ? i : 3 // medium
+  }, [reasoningEffort, availableReasoningLevels])
+
+  // textarea 自适应高度
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [input])
+
+  // chat_completions backend（DeepSeek 等第三方）官方代码对这个参数
+  // 不做任何过滤，是否真正生效取决于目标服务商是否支持，这里给用户
+  // 一个提示而非保证。
+  const reasoningEffortUnverified = selectedModel?.api_backend === 'chat_completions'
+
   const selectedModelLabel = useMemo(() => {
     return selectedModel?.model?.trim() || selectedModel?.id || '选择模型'
   }, [selectedModel])
 
   const showReasoning =
     Boolean(selectedModel?.supports_reasoning_effort) && ready
-
-  const effortLabel = useMemo(() => {
-    const lv = REASONING_LEVELS.find((x) => x.value === reasoningEffort)
-    return lv?.label || '中'
-  }, [reasoningEffort])
 
   const usage = useMemo(() => {
     const used = Math.max(0, contextUsedTokens || 0)
@@ -368,94 +401,94 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   return (
     <footer className="composer-container">
-      {/* 工作区芯片：可切换时下拉；不可切换时只读展示 */}
-      <div className="composer-meta-row">
-        <div className="composer-meta-left" ref={wsPickerRef}>
-          {canSwitchWorkspace ? (
-            <>
-              <button
-                type="button"
-                className={`composer-chip workspace-chip${wsOpen ? ' open' : ''}`}
-                title={`当前工作目录\n${workspaceCwd || '未设置'}\n\n点击切换`}
-                aria-expanded={wsOpen}
-                onClick={() => {
-                  setModelOpen(false)
-                  setWsOpen((v) => !v)
-                }}
+      <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
+        {/* 工作区芯片：可切换时下拉；不可切换时只读展示 */}
+        <div className="composer-meta-row">
+          <div className="composer-meta-left" ref={wsPickerRef}>
+            {canSwitchWorkspace ? (
+              <>
+                <button
+                  type="button"
+                  className={`composer-chip workspace-chip${wsOpen ? ' open' : ''}`}
+                  title={`当前工作目录\n${workspaceCwd || '未设置'}\n\n点击切换`}
+                  aria-expanded={wsOpen}
+                  onClick={() => {
+                    setModelOpen(false)
+                    setWsOpen((v) => !v)
+                  }}
+                >
+                  <span className="chip-icon">
+                    <FolderIcon open={wsOpen} />
+                  </span>
+                  <span className="chip-label">{wsLabel}</span>
+                  <ChevronIcon up={wsOpen} />
+                </button>
+                {wsOpen && (
+                  <div className="composer-menu workspace-menu" role="listbox">
+                    <div className="composer-menu-label">工作区</div>
+                    {workspaceOptions.map((cwd) => {
+                      const active = normPath(cwd) === currentWsKey
+                      return (
+                        <button
+                          key={cwd}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          className={`composer-menu-item${active ? ' active' : ''}`}
+                          title={cwd}
+                          onClick={() => {
+                            setWsOpen(false)
+                            onSelectWorkspace(cwd)
+                          }}
+                        >
+                          <span className="menu-item-icon">
+                            <FolderIcon />
+                          </span>
+                          <span className="menu-item-body">
+                            <span className="menu-item-title">{formatWorkspaceLabel(cwd)}</span>
+                            <span className="menu-item-sub">{cwd}</span>
+                          </span>
+                          {active && (
+                            <span className="menu-item-check">
+                              <CheckIcon />
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                    <div className="composer-menu-divider" />
+                    <button
+                      type="button"
+                      className="composer-menu-item menu-browse"
+                      onClick={() => {
+                        setWsOpen(false)
+                        onBrowseWorkspace()
+                      }}
+                    >
+                      <span className="menu-item-icon">
+                        <BrowseIcon />
+                      </span>
+                      <span className="menu-item-body">
+                        <span className="menu-item-title">浏览其他文件夹…</span>
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div
+                className="composer-chip workspace-chip readonly"
+                title={`当前工作目录\n${workspaceCwd || '未设置'}\n\n有对话内容时请从侧栏打开对应会话，或新建后再切换`}
               >
                 <span className="chip-icon">
-                  <FolderIcon open={wsOpen} />
+                  <FolderIcon />
                 </span>
                 <span className="chip-label">{wsLabel}</span>
-                <ChevronIcon up={wsOpen} />
-              </button>
-              {wsOpen && (
-                <div className="composer-menu workspace-menu" role="listbox">
-                  <div className="composer-menu-label">工作区</div>
-                  {workspaceOptions.map((cwd) => {
-                    const active = normPath(cwd) === currentWsKey
-                    return (
-                      <button
-                        key={cwd}
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        className={`composer-menu-item${active ? ' active' : ''}`}
-                        title={cwd}
-                        onClick={() => {
-                          setWsOpen(false)
-                          onSelectWorkspace(cwd)
-                        }}
-                      >
-                        <span className="menu-item-icon">
-                          <FolderIcon />
-                        </span>
-                        <span className="menu-item-body">
-                          <span className="menu-item-title">{formatWorkspaceLabel(cwd)}</span>
-                          <span className="menu-item-sub">{cwd}</span>
-                        </span>
-                        {active && (
-                          <span className="menu-item-check">
-                            <CheckIcon />
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
-                  <div className="composer-menu-divider" />
-                  <button
-                    type="button"
-                    className="composer-menu-item menu-browse"
-                    onClick={() => {
-                      setWsOpen(false)
-                      onBrowseWorkspace()
-                    }}
-                  >
-                    <span className="menu-item-icon">
-                      <BrowseIcon />
-                    </span>
-                    <span className="menu-item-body">
-                      <span className="menu-item-title">浏览其他文件夹…</span>
-                    </span>
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
-            <div
-              className="composer-chip workspace-chip readonly"
-              title={`当前工作目录\n${workspaceCwd || '未设置'}\n\n有对话内容时请从侧栏打开对应会话，或新建后再切换`}
-            >
-              <span className="chip-icon">
-                <FolderIcon />
-              </span>
-              <span className="chip-label">{wsLabel}</span>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
         {/* placeholder 固定；New chat 静默重建时不提示「创建中」 */}
         {pasteBlocks.length > 0 && (
           <div className="paste-blocks">
@@ -532,42 +565,44 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     {showReasoning && (
                       <div className="model-menu-reasoning-section">
                         <div className="model-menu-header">
-                          <span>智能</span>
-                          <span className="model-menu-reasoning-val">{effortLabel}</span>
+                          <span>推理挡位 (Reasoning Tier)</span>
+                          <span className="model-menu-reasoning-val-badge">Tier {effortIndex}</span>
                         </div>
-                        <div className="model-menu-slider-row">
+                        <div
+                          className="model-menu-slider-row"
+                          title={
+                            reasoningEffortUnverified
+                              ? '拖动调节思考强度（仅影响当前会话，不会修改该模型的默认档位；该服务商是否支持所有档位未经验证）'
+                              : '拖动调节思考强度（仅影响当前会话，不会修改该模型的默认档位）'
+                          }
+                        >
                           <input
                             type="range"
                             className="effort-slider"
                             min={0}
-                            max={REASONING_LEVELS.length - 1}
+                            max={availableReasoningLevels.length - 1}
                             step={1}
                             value={effortIndex}
                             disabled={!ready || isGenerating}
                             aria-label="思考强度"
-                            aria-valuetext={effortLabel}
+                            aria-valuetext={`Tier ${effortIndex}`}
                             onChange={(e) => {
                               const idx = Number(e.target.value)
-                              const lv = REASONING_LEVELS[idx]
+                              const lv = availableReasoningLevels[idx]
                               if (lv) onSwitchReasoningEffort(lv.value)
                             }}
                           />
                         </div>
-                        <div className="model-menu-effort-chips">
-                          {REASONING_LEVELS.map((lv) => {
-                            const active = lv.value === (reasoningEffort || 'medium')
-                            return (
-                              <button
-                                key={lv.value}
-                                type="button"
-                                className={`effort-quick-chip${active ? ' active' : ''}`}
-                                title={lv.value === 'medium' ? `${lv.label}（默认）` : lv.label}
-                                onClick={() => onSwitchReasoningEffort(lv.value)}
-                              >
-                                {lv.label}
-                              </button>
-                            )
-                          })}
+                        <div className="model-menu-effort-ticks">
+                          {availableReasoningLevels.map((lv, idx) => (
+                            <span
+                              key={lv.value}
+                              className={`effort-tick${idx === effortIndex ? ' active' : ''}`}
+                              onClick={() => onSwitchReasoningEffort(lv.value)}
+                            >
+                              {idx}
+                            </span>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -657,6 +692,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           <div
             className={`context-meter${usage.tone ? ` ${usage.tone}` : ''}`}
             title={usage.title}
+            onMouseEnter={() => {
+              setShowDetail(true)
+              onFetchUsageDetail?.()
+            }}
+            onMouseLeave={() => {
+              setShowDetail(false)
+            }}
           >
             {usage.total > 0 && (
               <span className="context-meter-ring" aria-hidden>
@@ -680,6 +722,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <span className="context-meter-pct"> · {usage.pct}%</span>
               ) : null}
             </span>
+
+            {showDetail && (
+              <div className="context-detail-tooltip">
+                {usageDetailLoading && <div className="tooltip-loading">加载中...</div>}
+                {!usageDetailLoading && usageDetail && (
+                  <div className="tooltip-grid">
+                    {Object.entries(usageDetail).map(([key, val]) => {
+                      if (typeof val !== 'number') return null
+                      return (
+                        <div key={key} className="tooltip-row">
+                          <span className="tooltip-label">{formatDetailKey(key)}</span>
+                          <span className="tooltip-value">{val.toLocaleString()}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {!usageDetailLoading && !usageDetail && (
+                  <div className="tooltip-empty">暂无明细</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
