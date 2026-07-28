@@ -1,22 +1,22 @@
-//! `run_terminal_cmd` (Bash) tool — new architecture (`Tool` trait).
+//! `run_terminal_cmd` (Bash/终端命令行) 工具 —— 基于 `Tool` Trait 的新架构实现。
 //!
-//! Executes bash commands in a persistent shell session with optional timeout.
-//! Supports both foreground (blocking) and background (returns task_id) execution.
+//! 在持久 Shell 会话中执行命令，支持可选的超时设置。
+//! 既支持前台阻塞式执行，也支持后台异步执行（返回 `task_id`）。
 //!
-//! Optional `find`→`bfs` / `grep`→`ugrep` shadows: see
-//! [`crate::computer::local::embedded_search_tools`].
+//! 针对 `find`→`bfs` / `grep`→`ugrep` 等局部命令影子覆写策略，参见：
+//! [`crate::computer::local::embedded_search_tools`]。
 //!
-//! ## Resources
+//! ## 依赖资源
 //!
-//! - `Terminal` — terminal backend for running commands (required)
-//! - `Cwd` — working directory (required)
-//! - `ToolCallId` — notification correlation + output file naming (required)
-//! - `SessionFolder` — output file path prefix (required)
-//! - `SessionEnv` — environment variables (optional, defaults empty)
-//! - `NotificationHandle` — bash execution notifications (optional, noop fallback)
-//! - `TruncationCfg` — max output bytes override (optional)
-//! - `TemplateRenderer` — resolve client-facing tool/param names in hints/errors (optional)
-//! - `Params<BashParams>` — timeout, output_byte_limit, cmd_prefix (optional, all have defaults)
+//! - `Terminal` —— 用于运行命令的终端后端（必需）
+//! - `Cwd` —— 命令执行的工作目录（必需）
+//! - `ToolCallId` —— 通知关联与输出文件名标识（必需）
+//! - `SessionFolder` —— 输出文件保存路径前缀（必需）
+//! - `SessionEnv` —— 环境变量键值对（可选，默认为空）
+//! - `NotificationHandle` —— 发送 Bash 执行各阶段通知（可选）
+//! - `TruncationCfg` —— 输出最大字节数截断覆写（可选）
+//! - `TemplateRenderer` —— 错误信息中客户端参数名解析（可选）
+//! - `Params<BashParams>` —— 超时时间、输出上限、命令前缀等（可选，均有默认值）
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -58,17 +58,11 @@ fn default_true() -> bool {
     true
 }
 
-/// Maximum size, in bytes, of a single emitted progress `delta`. Guards
-/// against a pathological single-tick burst (a large accumulation flushed in
-/// one ~100 ms tick) flooding the harness in one frame. A delta larger than
-/// this is cut on a UTF-8 char boundary and the remainder is held back for the
-/// next tick (append is lossless); `total_bytes` still reflects the true
-/// monotonic count.
+/// 单次发送的增量进度 `delta` 的最大字节限制（16 KiB）。
+/// 用于防止单次刷出的巨量日志卡顿 UI 帧。
 const MAX_PROGRESS_DELTA_BYTES: usize = 16 * 1024;
 
-/// Bash's capabilities incl. its streaming spec (single source of truth):
-/// raw stdout is the terminal projection, so `RawTerminal` / `Append`,
-/// capped per frame at [`MAX_PROGRESS_DELTA_BYTES`].
+/// Bash 工具的能力定义与流式输出规范。
 static BASH_CAPABILITIES: LazyLock<xai_tool_protocol::ToolCapabilities> =
     LazyLock::new(|| xai_tool_protocol::ToolCapabilities {
         is_read_only: false,
@@ -80,7 +74,7 @@ static BASH_CAPABILITIES: LazyLock<xai_tool_protocol::ToolCapabilities> =
         ..Default::default()
     });
 
-/// One `ToolProgress` delta from a `BashOutputChunk`; `None` when no new bytes.
+/// 从 `BashOutputChunk` 计算单次 `ToolProgress` 增量。若没有新字节则返回 `None`。
 fn bash_output_chunk_progress(
     spec: &xai_tool_protocol::StreamingSpec,
     chunk: &BashOutputChunk,

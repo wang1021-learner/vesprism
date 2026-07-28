@@ -43,7 +43,7 @@ interface SettingsModalProps {
   envFilePath: string
   savingSettings: boolean
   onClose: () => void
-  onSave: () => void
+  onSave: () => Promise<{ ok: boolean; error?: string }> | void
 }
 
 function headersToText(headers: Record<string, string> | undefined): string {
@@ -93,12 +93,26 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [tab, setTab] = useState<SettingsTab>('models')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const selectedModel = models.find((m) => m.id === selectedModelId)
   const isDraft = selectedModelId ? draftModelIds.includes(selectedModelId) : false
 
+  const handleSave = async () => {
+    setToast(null)
+    const res = await onSave()
+    if (res && res.ok) {
+      setToast({ message: '配置模型成功', type: 'success' })
+      setTimeout(() => {
+        setToast(null)
+      }, 3000)
+    } else if (res && res.error) {
+      setToast({ message: res.error, type: 'error' })
+    }
+  }
+
   const headersText = useMemo(
     () => headersToText(selectedModel?.extra_headers),
-    [selectedModel?.extra_headers, selectedModelId],
+    [selectedModel?.extra_headers],
   )
   const [headersDraft, setHeadersDraft] = useState<string | null>(null)
   const headersValue =
@@ -119,6 +133,12 @@ export function SettingsModal({
         aria-modal="true"
         aria-labelledby="settings-title"
       >
+        {toast && (
+          <div className={`settings-toast ${toast.type}`} role="alert">
+            <span className="toast-icon">{toast.type === 'success' ? '✓' : '✕'}</span>
+            <span className="toast-text">{toast.message}</span>
+          </div>
+        )}
         <div className="settings-shell-header">
           <div className="settings-shell-heading">
             <h2 id="settings-title">设置</h2>
@@ -928,7 +948,7 @@ export function SettingsModal({
             type="button"
             className="btn-primary"
             disabled={savingSettings}
-            onClick={onSave}
+            onClick={handleSave}
           >
             {savingSettings ? '保存中…' : '保存'}
           </button>

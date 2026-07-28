@@ -1,10 +1,9 @@
-//! `grep` tool — new architecture (`Tool` trait).
+//! `grep` 工具 —— 基于 `Tool` Trait 的新架构实现。
 //!
-//! Wraps ripgrep to search file contents. Reads `Cwd` from Resources and
-//! truncation settings from its own `Params<GrepParams>`.
+//! 包装 ripgrep 命令行工具在指定路径中对文件内容进行正则与文本搜索。
+//! 从 `Resources` 读取 `Cwd` 工作目录以及自身的 `Params<GrepParams>` 截断限制。
 //!
-//! The ripgrep binary resolution logic (`rg_path()`) is shared with the
-//! old implementation via `implementations::grep::ripgrep`.
+//! 包含 ripgrep 二进制可执行文件查找逻辑（`rg_path()`）。
 
 use std::process::Stdio;
 use std::sync::LazyLock;
@@ -24,14 +23,14 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::util::truncate::truncate_line;
 
 // ───────────────────────────────────────────────────────────────────────────
-// Input
+// 输入参数说明
 // ───────────────────────────────────────────────────────────────────────────
 
 use serde::{Deserialize, Serialize};
 
 pub mod ripgrep;
 
-// Re-export the shared GrokIntegerSchema from types module
+// 从 types 模块重新导出 GrokIntegerSchema
 pub use crate::types::GrokIntegerSchema;
 use ripgrep::rg_path;
 
@@ -47,21 +46,20 @@ pub enum OutputMode {
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct GrepSearchInput {
     #[schemars(
-        description = "The regular expression pattern to search for in file contents (rg --regexp)"
+        description = "要搜索的文件内容正则表达式模式 (rg --regexp)。"
     )]
     pub pattern: String,
 
     #[schemars(
-        description = "File or directory to search in (rg pattern -- PATH). Defaults to workspace path."
+        description = "要在其中进行搜索的文件或目录路径。默认为当前工作区根路径。"
     )]
     pub path: Option<String>,
 
     #[schemars(
-        description = r#"Glob pattern (rg --glob GLOB -- PATH) to filter files (e.g. "*.js", "*.{ts,tsx}")."#
+        description = r#"用于过滤搜索文件的 Glob 匹配模式 (如 "*.js", "*.{ts,tsx}")。"#
     )]
     pub glob: Option<String>,
 
-    /// Accepted on the wire when present; omitted from the JSON schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
     pub output_mode: Option<OutputMode>,
@@ -69,7 +67,7 @@ pub struct GrepSearchInput {
     #[schemars(
         rename = "-B",
         with = "GrokIntegerSchema",
-        description = "Number of lines to show before each match (rg -B)."
+        description = "在每个匹配项前显示的上下文行数 (rg -B)。"
     )]
     #[serde(rename = "-B")]
     #[serde(default, skip_serializing_if = "Option::is_none")]

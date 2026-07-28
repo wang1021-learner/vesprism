@@ -1,7 +1,9 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import type { ChatMessage } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { ToolCallCard } from './ToolCallCard'
+
+const USER_BUBBLE_FOLD_THRESHOLD = 600
 
 interface MessageItemProps {
   message: ChatMessage
@@ -24,13 +26,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   if (role === 'user') {
-    return (
-      <div className="message-row user-row">
-        <div className="bubble bubble-user">
-          <pre className="bubble-text">{text}</pre>
-        </div>
-      </div>
-    )
+    return <UserBubble text={text} />
   }
 
   if (role === 'thought') {
@@ -61,6 +57,30 @@ export const MessageItem = memo(function MessageItem({
       </div>
       <div className="assistant-content">
         <AssistantMarkdown text={text} streaming={streaming} />
+      </div>
+    </div>
+  )
+})
+
+const UserBubble = memo(function UserBubble({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const isLong = text.length > USER_BUBBLE_FOLD_THRESHOLD
+  const displayText =
+    isLong && !expanded ? text.split('\n').slice(0, 3).join('\n') : text
+
+  return (
+    <div className="message-row user-row">
+      <div className="bubble bubble-user">
+        <pre className="bubble-text">{displayText}</pre>
+        {isLong && (
+          <button
+            type="button"
+            className="bubble-expand-toggle"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? '收起' : `展开全部（${text.length.toLocaleString()} 字符）`}
+          </button>
+        )}
       </div>
     </div>
   )

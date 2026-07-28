@@ -1,8 +1,7 @@
-//! `web_search` tool — new architecture (`Tool` trait).
+//! `web_search` (Web 搜索引擎查询) 工具 —— 基于 `Tool` Trait 的新架构实现。
 //!
-//! Calls the Responses API with web search capability. Reads the
-//! pre-constructed `WebSearchClient` from Resources (inserted by
-//! `with_backend()` when the config is `Enabled`).
+//! 调用 Responses API 的 Web Search 能力。
+//! 当配置为 `Enabled` 时，从 Resources 中读取预先构建好的 `WebSearchClient`。
 
 use crate::implementations::web_search::client::WebSearchClient;
 use crate::types::output::WebSearchOutput;
@@ -10,19 +9,19 @@ use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::tool::{ToolKind, ToolNamespace};
 
 // ───────────────────────────────────────────────────────────────────────────
-// Input
+// 输入参数
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct WebSearchInput {
-    #[schemars(description = "The search query to perform.")]
+    #[schemars(description = "要执行的 Web 搜索查询关键字。")]
     pub query: String,
-    #[schemars(description = "Optional list of domains to restrict search to.")]
+    #[schemars(description = "可选的域名限制列表，指定搜索仅限定在特定域名范围内。")]
     pub allowed_domains: Option<Vec<String>>,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Tool implementation
+// 工具实现
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default)]

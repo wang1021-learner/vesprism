@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import type { ToolCallData } from '../../types'
+import { useArtifact } from '../../context/ArtifactContext'
 
 interface ToolCallCardProps {
   tool: ToolCallData
@@ -62,10 +64,43 @@ function statusLabel(status: string): string {
   }
 }
 
+const PREVIEWABLE_EXTENSIONS = new Set(['html', 'svg'])
+
+function getPreviewLanguage(filePath: string): 'html' | 'svg' | null {
+  const ext = filePath.split('.').pop()?.toLowerCase()
+  if (ext && PREVIEWABLE_EXTENSIONS.has(ext)) {
+    return ext as 'html' | 'svg'
+  }
+  return null
+}
+
 export function ToolCallCard({ tool }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const { openArtifact, workspaceRoot } = useArtifact()
   const hasPreview = Boolean(tool.preview?.trim())
   const headline = tool.detail?.trim() || tool.title?.trim() || tool.toolCallId
+
+  const previewLang =
+    tool.kind === 'edit' && tool.status === 'completed' ? getPreviewLanguage(tool.detail) : null
+
+  const handlePreviewFile = async () => {
+    if (!previewLang || previewLoading) return
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      const content = await invoke<string>('read_file_for_preview', {
+        path: tool.detail,
+        workspaceRoot,
+      })
+      openArtifact(previewLang, content)
+    } catch (e) {
+      setPreviewError(String(e))
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
 
   return (
     <div className={`tool-card status-${tool.status} kind-${tool.kind}`}>
@@ -92,6 +127,19 @@ export function ToolCallCard({ tool }: ToolCallCardProps) {
           </span>
         )}
       </button>
+      {previewLang && (
+        <div className="tool-card-preview-action">
+          <button
+            type="button"
+            className="tool-preview-open-btn"
+            onClick={handlePreviewFile}
+            disabled={previewLoading}
+          >
+            {previewLoading ? '加载中…' : `预览 ${previewLang.toUpperCase()}`}
+          </button>
+          {previewError && <span className="tool-preview-error">{previewError}</span>}
+        </div>
+      )}
       {expanded && hasPreview && (
         <pre className="tool-preview">{tool.preview}</pre>
       )}

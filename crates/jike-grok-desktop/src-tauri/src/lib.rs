@@ -57,6 +57,7 @@ pub fn run() {
                 secrets_env.display()
             );
         }
+        commands::harden_env_file_permissions(&secrets_env);
     }
 
     tauri::Builder::default()
@@ -97,6 +98,8 @@ pub fn run() {
             commands::delete_session,
             commands::rename_session,
             commands::set_current_model,
+            commands::read_file_for_preview,
+            commands::save_artifact_file,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

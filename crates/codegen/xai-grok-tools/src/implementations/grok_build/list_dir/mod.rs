@@ -1,24 +1,15 @@
-//! `list_dir` tool — new architecture (`Tool` trait).
+//! `list_dir` (目录列表) 工具 —— 基于 `Tool` Trait 的新架构实现。
 //!
-//! This is the new-architecture implementation of the directory listing tool.
-//! It reads `Cwd` from `Resources` and `max_output_chars` from its own
-//! `Params<ListDirParams>` instead of receiving them via `ToolContext`.
+//! 用于列出指定目录下的文件与子目录结构。
+//! 从 `Resources` 读取 `Cwd` 并在自身的 `Params<ListDirParams>` 中获取 `max_output_chars` 限制。
 //!
-//! Seeds depth-1 children (capped at `MAX_SEED_ITEMS`) before the budgeted deep walk
-//! so a fat early sibling cannot starve later top-level dirs (`MAX_GLOBAL_ITEMS`
-//! applies only to depth ≥ 2). Then BFS-expands dirs within the char budget
-//! (`continue` on fat dirs). When either seed or walk hits its item limit, the
-//! agent-visible cutoff notice is emitted (copy unchanged from `main`).
+//! 在受控深度广度搜索（BFS）展开前先种子化 Depth-1 的第一层子项（限制为 `MAX_SEED_ITEMS`），
+//! 防止早期的庞大兄弟目录剥夺后续顶层目录的搜索配额。
 //!
-//! Partial-output case: when `walk_truncated` is true, a sibling surfaced by the
-//! seed may be listed by name only while its descendants are absent (the walk cap
-//! was exhausted inside an earlier sibling). The agent-visible notice copy is
-//! intentionally left identical to `main`; this behavior is documented in the
-//! CHANGELOG rather than via new model-facing wording.
-//!
-//! Under `legacy-0.4.10`, the old depth-threshold algorithm is used instead
-//! (see `versions::legacy_0_4_10` module).
+//! 在 `legacy-0.4.10` 契约下，使用旧版深度阈值算法（详见 `versions::legacy_0_4_10`）。
+
 mod versions;
+
 use crate::types::output::{ListDirContent, ListDirOutput};
 #[allow(unused_imports)]
 use crate::types::resources::{
@@ -29,33 +20,32 @@ use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::collections::HashMap;
 use std::path::Path;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListDirInput {
     #[schemars(
-        description = "Path to directory to list contents of, relative to the workspace root or absolute."
+        description = "要列出内容的目录路径，支持工作区根目录相对路径或绝对路径。"
     )]
     pub target_directory: String,
 }
-/// Per-tool configuration for `list_dir`, stored as `Params<ListDirParams>`
-/// in Resources. Set via `SetToolOptions` / gRPC or at registration time.
+
+/// `list_dir` 工具的配置参数，在 Resources 中以 `Params<ListDirParams>` 的形式存储。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListDirParams {
-    /// BFS expansion stops when this budget would be exceeded.
-    /// Defaults to `DEFAULT_MAX_OUTPUT_CHARS` (10,000) to match the Python
+    /// 广度优先搜索（BFS）展开的字符上限预算，超出时自动停止搜索并输出截断说明。
+    /// 默认值为 `DEFAULT_MAX_OUTPUT_CHARS` (10,000)。
     pub max_output_chars: Option<usize>,
 }
+
 crate::register_resource!("grok_build", "ListDir", ListDirParams);
-/// Exact historical invalid-directory message for `list_dir` in legacy-0.4.10.
-///
-/// Historical fixture captured from an earlier (0.4.10) revision of this tool.
-///
-/// Historical 0.4.10 collapsed nonexistent paths, file paths, and other
-/// invalid-directory failures into the same generic message.
+
+/// Legacy-0.4.10 契约下无效目录的错误渲染信息。
 fn render_legacy_list_dir_error(path: &Path) -> String {
     format!("Error: {} is not a valid directory", path.display())
 }
-/// Internal version discriminant for list_dir.
+
+/// list_dir 工具的内部版本判别枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListDirVersion {
     Current,

@@ -14,6 +14,15 @@ export interface ComposerHandle {
   focus: () => void
 }
 
+const PASTE_FOLD_THRESHOLD = 800
+
+interface PasteBlock {
+  id: string
+  text: string
+  lineCount: number
+  charCount: number
+}
+
 interface ComposerProps {
   input: string
   setInput: (v: string) => void
@@ -39,7 +48,7 @@ interface ComposerProps {
   onSwitchReasoningEffort: (effort: string) => void
   onSelectWorkspace: (cwd: string) => void
   onBrowseWorkspace: () => void
-  onSend: () => void
+  onSend: (text?: string) => void
   onCancel: () => void
 }
 
@@ -166,6 +175,27 @@ function CheckIcon() {
   )
 }
 
+function FileTextIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14 2v6h6M16 13H8M16 17H8M10 9H8"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
     input,
@@ -202,6 +232,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
+  const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -293,14 +324,45 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }, [contextUsedTokens, contextWindow])
 
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData('text')
+    if (text.length <= PASTE_FOLD_THRESHOLD) return // 短内容走默认粘贴行为
+    e.preventDefault()
+    const block: PasteBlock = {
+      id: crypto.randomUUID(),
+      text,
+      lineCount: text.split('\n').length,
+      charCount: text.length,
+    }
+    setPasteBlocks((prev) => [...prev, block])
+  }
+
+  const removePasteBlock = (id: string) => {
+    setPasteBlocks((prev) => prev.filter((b) => b.id !== id))
+  }
+
+  const buildFinalText = () => {
+    const pasted = pasteBlocks.map((b) => b.text).join('\n\n')
+    const typed = input.trim()
+    if (pasted && typed) return `${pasted}\n\n${typed}`
+    return pasted || typed
+  }
+
+  const handleSend = () => {
+    const finalText = buildFinalText()
+    if (!finalText) return
+    onSend(finalText)
+    setPasteBlocks([])
+  }
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (canSend && input.trim()) onSend()
+      if (canSend && (input.trim() || pasteBlocks.length > 0)) handleSend()
     }
   }
 
-  const canSubmit = canSend && !!input.trim()
+  const canSubmit = canSend && (!!input.trim() || pasteBlocks.length > 0)
   const wsLabel = formatWorkspaceLabel(workspaceCwd)
   const currentWsKey = normPath(workspaceCwd)
 
@@ -395,6 +457,38 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
       <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
         {/* placeholder 固定；New chat 静默重建时不提示「创建中」 */}
+        {pasteBlocks.length > 0 && (
+          <div className="paste-blocks">
+            {pasteBlocks.map((b) => {
+              const rawFirstLine = b.text.trim().split('\n')[0]?.trim() || '剪贴板文本'
+              const title = rawFirstLine.length > 24 ? `${rawFirstLine.slice(0, 24)}…` : rawFirstLine
+              return (
+                <div key={b.id} className="paste-block-card">
+                  <div className="paste-block-icon">
+                    <FileTextIcon />
+                  </div>
+                  <div className="paste-block-info">
+                    <div className="paste-block-title" title={rawFirstLine}>
+                      {title}
+                    </div>
+                    <div className="paste-block-meta">
+                      {b.charCount.toLocaleString()} 字符 · {b.lineCount} 行
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="paste-block-remove"
+                    onClick={() => removePasteBlock(b.id)}
+                    aria-label="移除粘贴内容"
+                    title="移除此附件"
+                  >
+                    ×
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={input}
@@ -403,16 +497,129 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           disabled={isGenerating}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
         />
         <div className="composer-toolbar">
           <div className="toolbar-left">
             <span className="composer-hint">
               {isGenerating
-                ? '生成中 · 点左侧方块可中断 · Esc 失焦'
+                ? '生成中 · 点右侧方块可中断 · Esc 失焦'
                 : 'Enter 发送 · Shift+Enter 换行'}
             </span>
           </div>
           <div className="toolbar-right">
+            {models.length > 0 && (
+              <div className="model-picker" ref={modelPickerRef}>
+                <button
+                  type="button"
+                  className={`composer-chip model-chip${modelOpen ? ' open' : ''}`}
+                  disabled={!ready}
+                  title="切换当前会话模型及思考强度"
+                  aria-expanded={modelOpen}
+                  onClick={() => {
+                    if (!ready) return
+                    setWsOpen(false)
+                    setModelOpen((v) => !v)
+                  }}
+                >
+                  <span className="chip-label">{selectedModelLabel}</span>
+                  <ChevronIcon up={modelOpen} />
+                </button>
+
+                {modelOpen && (
+                  <div className="composer-menu model-menu" role="listbox">
+                    {/* 下拉面板顶部：智能 / 思考强度调节区（对齐图 2） */}
+                    {showReasoning && (
+                      <div className="model-menu-reasoning-section">
+                        <div className="model-menu-header">
+                          <span>智能</span>
+                          <span className="model-menu-reasoning-val">{effortLabel}</span>
+                        </div>
+                        <div className="model-menu-slider-row">
+                          <input
+                            type="range"
+                            className="effort-slider"
+                            min={0}
+                            max={REASONING_LEVELS.length - 1}
+                            step={1}
+                            value={effortIndex}
+                            disabled={!ready || isGenerating}
+                            aria-label="思考强度"
+                            aria-valuetext={effortLabel}
+                            onChange={(e) => {
+                              const idx = Number(e.target.value)
+                              const lv = REASONING_LEVELS[idx]
+                              if (lv) onSwitchReasoningEffort(lv.value)
+                            }}
+                          />
+                        </div>
+                        <div className="model-menu-effort-chips">
+                          {REASONING_LEVELS.map((lv) => {
+                            const active = lv.value === (reasoningEffort || 'medium')
+                            return (
+                              <button
+                                key={lv.value}
+                                type="button"
+                                className={`effort-quick-chip${active ? ' active' : ''}`}
+                                title={lv.value === 'medium' ? `${lv.label}（默认）` : lv.label}
+                                onClick={() => onSwitchReasoningEffort(lv.value)}
+                              >
+                                {lv.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {showReasoning && (
+                      <div className="composer-menu-divider" />
+                    )}
+
+                    <div className="composer-menu-label">模型</div>
+                    {models.map((m) => {
+                      const active = m.id === selectedModelId
+                      const title = m.model?.trim() || m.id
+                      const subBits = [
+                        m.supports_reasoning_effort ? '支持推理' : '',
+                        m.api_backend && m.api_backend !== 'chat_completions'
+                          ? m.api_backend
+                          : '',
+                        m.context_window > 0
+                          ? `上下文 ${formatTokenK(m.context_window)}`
+                          : '',
+                      ].filter(Boolean)
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          className={`composer-menu-item${active ? ' active' : ''}`}
+                          onClick={() => {
+                            setModelOpen(false)
+                            onSwitchModel(m.id)
+                          }}
+                        >
+                          <span className="menu-item-body">
+                            <span className="menu-item-title">{title}</span>
+                            {subBits.length > 0 && (
+                              <span className="menu-item-sub">{subBits.join(' · ')}</span>
+                            )}
+                          </span>
+                          {active && (
+                            <span className="menu-item-check">
+                              <CheckIcon />
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 中断：始终展示，仅生成中可点 */}
             <button
               type="button"
@@ -431,7 +638,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               disabled={!canSubmit}
               title="发送消息 (Enter)"
               aria-label="发送消息"
-              onClick={onSend}
+              onClick={handleSend}
             >
               <SendIcon />
             </button>
@@ -440,96 +647,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       </div>
 
       <div className="composer-below">
-        <div className="composer-below-left">
-          {/* 思考强度：滑动选择（Claude Code /model 旁 effort 滑条交互） */}
-          {showReasoning && (
-            <div
-              className="effort-slider-wrap"
-              title="拖动调节思考强度"
-            >
-              <span className="effort-slider-label">思考</span>
-              <input
-                type="range"
-                className="effort-slider"
-                min={0}
-                max={REASONING_LEVELS.length - 1}
-                step={1}
-                value={effortIndex}
-                disabled={!ready || isGenerating}
-                aria-label="思考强度"
-                aria-valuetext={effortLabel}
-                onChange={(e) => {
-                  const idx = Number(e.target.value)
-                  const lv = REASONING_LEVELS[idx]
-                  if (lv) onSwitchReasoningEffort(lv.value)
-                }}
-              />
-              <span className="effort-slider-value">{effortLabel}</span>
-            </div>
-          )}
+        <div className="composer-below-left" />
 
-          {models.length > 0 && (
-            <div className="model-picker" ref={modelPickerRef}>
-              <button
-                type="button"
-                className={`composer-chip model-chip${modelOpen ? ' open' : ''}`}
-                disabled={!ready}
-                title="切换当前会话模型"
-                aria-expanded={modelOpen}
-                onClick={() => {
-                  if (!ready) return
-                  setWsOpen(false)
-                  setModelOpen((v) => !v)
-                }}
-              >
-                <span className="chip-label">{selectedModelLabel}</span>
-                <ChevronIcon up={modelOpen} />
-              </button>
-              {modelOpen && (
-                <div className="composer-menu model-menu" role="listbox">
-                  <div className="composer-menu-label">模型</div>
-                  {models.map((m) => {
-                    const active = m.id === selectedModelId
-                    const title = m.model?.trim() || m.id
-                    const subBits = [
-                      m.supports_reasoning_effort ? '支持推理' : '',
-                      m.api_backend && m.api_backend !== 'chat_completions'
-                        ? m.api_backend
-                        : '',
-                      m.context_window > 0
-                        ? `上下文 ${formatTokenK(m.context_window)}`
-                        : '',
-                    ].filter(Boolean)
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        className={`composer-menu-item${active ? ' active' : ''}`}
-                        onClick={() => {
-                          setModelOpen(false)
-                          onSwitchModel(m.id)
-                        }}
-                      >
-                        <span className="menu-item-body">
-                          <span className="menu-item-title">{title}</span>
-                          {subBits.length > 0 && (
-                            <span className="menu-item-sub">{subBits.join(' · ')}</span>
-                          )}
-                        </span>
-                        {active && (
-                          <span className="menu-item-check">
-                            <CheckIcon />
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+        <div className="composer-below-center">
+          <p className="disclaimer-text">AI 可能会出错，请核对重要信息</p>
         </div>
 
         <div className="composer-below-right">

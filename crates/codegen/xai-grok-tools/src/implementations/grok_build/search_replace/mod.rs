@@ -1,18 +1,20 @@
-//! SearchReplace (Edit) tool — new architecture (`Tool` trait).
+//! SearchReplace (代码文本编辑与替换) 工具 —— 基于 `Tool` Trait 的新架构实现。
 //!
-//! Replaces an exact string in a file, with support for:
-//! - New file creation (when `old_string` is empty)
-//! - Replace-all mode (`replace_all: true`)
+//! 在指定文件中精确替换目标字符串，支持：
+//! - 创建新文件（当 `old_string` 为空时）
+//! - 全部替换模式（`replace_all: true`）
 //!
-//! ## Resources
+//! ## 依赖资源
 //!
-//! - `Cwd` — working directory for path resolution (required)
-//! - `FileSystem` — read/write file content (required)
-//! - `NotificationHandle` — emit `FileWritten` notifications (optional, noop fallback)
-//! - `ToolCallId` — notification correlation (optional, defaults empty)
-//! - `TemplateRenderer` — resolve client-facing tool/param names in error messages (optional)
+//! - `Cwd` —— 用于解析文件路径的工作目录（必需）
+//! - `FileSystem` —— 读取与写入文件内容（必需）
+//! - `NotificationHandle` —— 发送 `FileWritten` 文件变更通知（可选）
+//! - `ToolCallId` —— 通知关联的工具调用 ID（可选）
+//! - `TemplateRenderer` —— 在错误提示中解析并渲染客户端工具名/参数名（可选）
+
 pub(crate) mod helpers;
 mod versions;
+
 use crate::notification::types::FileWritten;
 use crate::types::output::{
     SearchReplaceEditContextInformation, SearchReplaceEditDetail, SearchReplaceEditsApplied,
@@ -32,13 +34,16 @@ use helpers::{
     NormalizedMatchResult, build_edit_details, find_normalized_match_positions,
     replace_normalized_matches, replace_using_positions,
 };
+
 pub(crate) const CONTEXT_LINES: usize = 3;
-/// Internal version discriminant for search_replace.
+
+/// search_replace 工具的内部版本判别枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchReplaceVersion {
     Current,
     Legacy0_4_10,
 }
+
 impl SearchReplaceVersion {
     pub(crate) fn from_contract(v: Option<&str>) -> Self {
         match v {
@@ -46,32 +51,30 @@ impl SearchReplaceVersion {
             _ => Self::Current,
         }
     }
+
     pub(crate) fn is_legacy(self) -> bool {
         self == Self::Legacy0_4_10
     }
 }
-/// Full description with read-before-edit guidance (for non-concise toolset).
-///
-/// Uses MiniJinja template placeholders with ToolKind-based keys:
-/// - `${{ tools.by_kind.read }}` — client-facing name for the Read tool
-/// - `${{ params.edit.old_string }}` — client-facing param name
-/// - `${{ params.edit.replace_all }}` — client-facing param name
+
+/// 默认完整工具集下的描述文本（包含“编辑前先读取”的引导提示）。
 pub(crate) const DESCRIPTION_FULL: &str = r#"Replace an exact string in a file.
 
 - Read the file with `${{ tools.by_kind.read }}` before editing it.
 - `${{ tools.by_kind.read }}` prefixes each line with "LINE_NUMBER→". That prefix is not part of the file: match only what comes after the →, with its exact indentation.
 - `${{ params.edit.old_string }}` must match exactly one place in the file. If it appears more than once, add surrounding lines to make it unique, or set `${{ params.edit.replace_all }}` to change every occurrence (handy for renaming an identifier)."#;
-/// Input for the search_replace tool.
+
+/// search_replace 工具的输入参数。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchReplaceInput {
     #[schemars(
-        description = "The path to the file to modify. You can use either a relative path in the workspace or an absolute path."
+        description = "要修改的目标文件路径，支持工作区相对路径或绝对路径。"
     )]
     pub file_path: String,
-    #[schemars(description = "The text to replace")]
+    #[schemars(description = "要在文件中匹配并替换的目标原字符串（old_string）")]
     pub old_string: String,
     #[schemars(
-        description = "The text to replace it with (must be different from ${{ params.edit.old_string }})"
+        description = "替换后的新字符串（new_string，必须与 old_string 不同）"
     )]
     pub new_string: String,
     #[serde(
@@ -79,25 +82,23 @@ pub struct SearchReplaceInput {
         deserialize_with = "crate::types::schema::deserialize_lenient_bool"
     )]
     #[schemars(
-        description = "Replace all occurrences of ${{ params.edit.old_string }} (default false)"
+        description = "是否替换文件中所有匹配到的 old_string（默认 false，仅替换唯一匹配项）"
     )]
     pub replace_all: bool,
 }
+
 fn default_true() -> bool {
     true
 }
-/// Configuration for the search_replace tool, stored as `Params<SearchReplaceParams>` in Resources.
-///
-/// Replaces the old `SearchReplaceOptions` that was stored via `tool_options_as()`.
+
+/// search_replace 工具的配置参数，在 Resources 中以 `Params<SearchReplaceParams>` 形式存储。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchReplaceParams {
-    /// Deprecated runtime no-op, kept so configs still sending it deserialize under
-    /// `deny_unknown_fields`. Still gates the config-time Read-tool requirement (`requires_expr`).
+    /// 运行时 No-op 配置（兼容旧配置格式）
     #[serde(default)]
     pub skip_read_before_edit: bool,
-    /// Empty old string DOES not override the file unless its empty, by default we allow
-    /// empty old string to override the file content completely``
+    /// 是否允许空字符串匹配，默认允许覆盖文件内容
     #[serde(default)]
     pub empty_old_string_does_not_override: bool,
     /// When true, enable normalized-fallback matching for Unicode confusable

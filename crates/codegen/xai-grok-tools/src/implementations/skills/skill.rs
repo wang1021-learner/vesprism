@@ -1,42 +1,40 @@
-//! Skill tool implementation - allows the agent to invoke user-defined skills.
+//! Skill 工具实现 —— 允许 Agent 触发执行用户自定义的技能 (Skill)。
 //!
-//! Skills are user-defined prompts stored as Markdown files that can be invoked
-//! by the user via slash commands (e.g., /commit) or by the model via this tool.
+//! Skill 是用户定义的 Prompt 指令模板（存储为 Markdown 文件），
+//! 可以由用户在聊天窗口中通过 Slash 命令（如 `/commit`）显式调用，
+//! 也可以由 AI 模型通过本工具按需动态调用。
 
 use crate::implementations::skills::types::SkillInfo;
 
-/// Input for the Skill tool
+/// Skill 工具的输入参数。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SkillInput {
-    /// The name of the skill to invoke (e.g., "commit", "review-pr", or fully qualified "user:commit")
-    #[schemars(description = "The name of the skill to invoke")]
+    /// 要调用的技能名称（如 "commit"、"review-pr" 或全限定名称 "user:commit"）
+    #[schemars(description = "要调用的 Skill 名称")]
     pub skill: String,
 
-    /// Optional arguments to pass to the skill
+    /// 传递给 Skill 的可选参数列表
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Optional arguments to pass to the skill")]
+    #[schemars(description = "传递给 Skill 的可选参数字符串")]
     pub args: Option<String>,
 }
 
-/// Output from the Skill tool
+/// Skill 工具的输出结果。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SkillOutput {
-    /// Whether the skill was successfully resolved
+    /// Skill 是否成功解析并加载
     pub success: bool,
-    /// Brief fallback message, used as the tool result when there is no skill body.
+    /// 简短的回退提示消息
     pub tool_result: String,
-    /// The skill's display name
+    /// Skill 的展示名称
     pub skill_name: String,
-    /// The formatted skill content, delivered to the model as the tool result.
+    /// 格式化后的 Skill 详细 Prompt 内容，作为工具执行结果提交给模型
     pub skill_message: Option<String>,
-    /// Error message if the skill failed to load
+    /// 加载或解析失败时的错误提示
     pub error: Option<String>,
 }
 
-// Old `SkillToolImpl` + `impl Tool` deleted.
-// New implementation is in `grok_build/skill/`.
-
-/// Build the formatted skill message shown to the model.
+/// 构造展示给模型的格式化 Skill 消息。
 ///
 /// Canonical formatter for skill content injection. Used by the skill tool
 /// (invocation path), TUI slash commands, the pager, and agent definition

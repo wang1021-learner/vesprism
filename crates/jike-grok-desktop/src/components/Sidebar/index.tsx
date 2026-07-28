@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -372,13 +373,16 @@ export function Sidebar({
     [recentChats, currentWorkspaceCwd],
   )
 
-  const isWorkspaceCollapsed = (ws: WorkspaceGroup): boolean => {
-    if (Object.prototype.hasOwnProperty.call(wsCollapsed, ws.cwdKey)) {
-      return wsCollapsed[ws.cwdKey]
-    }
-    // 默认：当前工作空间展开，其余折叠
-    return !ws.isCurrent
-  }
+  const isWorkspaceCollapsed = useCallback(
+    (ws: WorkspaceGroup): boolean => {
+      if (Object.prototype.hasOwnProperty.call(wsCollapsed, ws.cwdKey)) {
+        return wsCollapsed[ws.cwdKey]
+      }
+      // 默认：当前工作空间展开，其余折叠
+      return !ws.isCurrent
+    },
+    [wsCollapsed],
+  )
 
   const toggleWorkspace = (ws: WorkspaceGroup) => {
     const next = !isWorkspaceCollapsed(ws)
@@ -444,7 +448,7 @@ export function Sidebar({
     needAlignActiveRef.current = false
   }, [
     activeChatId,
-    currentWorkspaceCwd,
+    isWorkspaceCollapsed,
     recentChats,
     workspaceGroups,
     wsCollapsed,
@@ -624,7 +628,6 @@ export function Sidebar({
         <div className="sidebar-recent-list" ref={listRef}>
           {workspaceGroups.map((ws) => {
             const folded = isWorkspaceCollapsed(ws)
-            const chatCount = ws.dateGroups.reduce((n, g) => n + g.chats.length, 0)
             return (
               <div
                 key={ws.cwdKey}
@@ -639,7 +642,6 @@ export function Sidebar({
                 >
                   <FolderIcon open={!folded} />
                   <span className="sidebar-workspace-name">{ws.label}</span>
-                  <span className="sidebar-workspace-count">{chatCount}</span>
                 </button>
                 <CollapsibleWorkspaceBody open={!folded}>
                   {ws.dateGroups.map((group) => (

@@ -23,6 +23,8 @@ import { MessageList } from './components/Chat/MessageList'
 import { Composer, type ComposerHandle } from './components/Composer'
 import { SettingsModal } from './components/Modals/SettingsModal'
 import { PermissionModal } from './components/Modals/PermissionModal'
+import { ArtifactProvider } from './context/ArtifactContext'
+import { ArtifactPanel } from './components/ArtifactPanel'
 
 import './App.css'
 
@@ -1169,9 +1171,11 @@ export default function App() {
         }
       }
 
-      setSettingsOpen(false)
+      return { ok: true }
     } catch (e) {
-      setError(String(e))
+      const msg = String(e)
+      setError(msg)
+      return { ok: false, error: msg }
     } finally {
       setSavingSettings(false)
     }
@@ -1187,8 +1191,8 @@ export default function App() {
   ])
 
   /** 发送消息 */
-  const onSend = async () => {
-    const text = input.trim()
+  const onSend = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim()
     if (!text || !ready || status === 'generating') return
     setInput('')
     setError(null)
@@ -1378,7 +1382,8 @@ export default function App() {
   }
 
   return (
-    <div className="app-container">
+    <ArtifactProvider workspaceRoot={workspaceCwd}>
+      <div className="app-container">
       {/* 左侧边栏组件 */}
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -1433,7 +1438,7 @@ export default function App() {
           onSwitchReasoningEffort={(e) => void switchReasoningEffort(e)}
           onSelectWorkspace={(cwd) => void applyWorkspaceCwd(cwd)}
           onBrowseWorkspace={() => void browseWorkspace()}
-          onSend={() => void onSend()}
+          onSend={(text) => void onSend(text)}
           onCancel={() => void onCancel()}
         />
 
@@ -1466,10 +1471,12 @@ export default function App() {
             savingSettings={savingSettings}
             canSwitchWorkspace={canSwitchWorkspace}
             onClose={() => setSettingsOpen(false)}
-            onSave={() => void saveSettings()}
+            onSave={saveSettings}
           />
         )}
       </div>
+      <ArtifactPanel />
     </div>
+    </ArtifactProvider>
   )
 }

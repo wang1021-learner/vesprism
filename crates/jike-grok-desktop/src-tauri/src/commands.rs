@@ -211,8 +211,42 @@ fn desktop_home_dir() -> PathBuf {
 }
 
 /// 密钥文件路径：`$GROK_HOME/.env`（用户主目录隔离区，**不在仓库内**）。
-fn env_file_path() -> PathBuf {
+pub(crate) fn env_file_path() -> PathBuf {
     desktop_home_dir().join(".env")
+}
+
+/// 收紧 `.env` 文件的 Windows ACL：移除继承权限，仅授权当前登录用户完全控制。
+/// 这是尽力而为的安全加固——失败时只记录警告，不阻断密钥保存流程。
+pub(crate) fn harden_env_file_permissions(path: &std::path::Path) {
+    let username = match std::env::var("USERNAME") {
+        Ok(u) if !u.trim().is_empty() => u,
+        _ => {
+            eprintln!("[security] 无法获取当前用户名，跳过 .env 权限收紧");
+            return;
+        }
+    };
+    let path_str = path.display().to_string();
+    let output = std::process::Command::new("icacls")
+        .arg(&path_str)
+        .arg("/inheritance:r")
+        .arg("/grant:r")
+        .arg(format!("{username}:F"))
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            eprintln!("[security] .env 权限已收紧至当前用户: {path_str}");
+        }
+        Ok(o) => {
+            eprintln!(
+                "[security] icacls 收紧 .env 权限失败（非阻断）: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+        }
+        Err(e) => {
+            eprintln!("[security] 无法执行 icacls（非阻断）: {e}");
+        }
+    }
 }
 
 /// 密钥文件绝对路径（供前端提示展示）。
@@ -220,6 +254,47 @@ fn env_file_path() -> PathBuf {
 pub fn env_file_location() -> String {
     env_file_path().display().to_string()
 }
+
+/// 读取指定文件的完整文本内容，仅用于 Artifact 预览等按需读取场景。
+/// 安全约束：拒绝任何解析后不在 workspace_root 之内的路径（防止越界读取）。
+#[tauri::command]
+pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<String, String> {
+    let requested = std::path::Path::new(&path);
+    let root = std::path::Path::new(&workspace_root);
+
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("工作区路径无效: {e}"))?;
+    let canonical_requested = requested
+        .canonicalize()
+        .map_err(|e| format!("文件不存在或无法访问: {e}"))?;
+
+    if !canonical_requested.starts_with(&canonical_root) {
+        return Err("拒绝访问：目标文件不在当前工作区范围内".to_string());
+    }
+
+    const MAX_PREVIEW_FILE_BYTES: u64 = 2 * 1024 * 1024; // 2MB 上限，避免超大文件卡死渲染
+    let metadata = std::fs::metadata(&canonical_requested)
+        .map_err(|e| format!("读取文件信息失败: {e}"))?;
+    if metadata.len() > MAX_PREVIEW_FILE_BYTES {
+        return Err(format!(
+            "文件过大（{} bytes），超过预览上限 {} bytes",
+            metadata.len(),
+            MAX_PREVIEW_FILE_BYTES
+        ));
+    }
+
+    std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
+}
+
+/// 把 Artifact 预览内容写入用户通过系统"另存为"对话框选择的路径。
+/// 与 read_file_for_preview 不同，这里的目标路径完全由用户在
+/// 系统对话框中主动选择，不做工作区范围校验。
+#[tauri::command]
+pub fn save_artifact_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| format!("保存文件失败: {e}"))
+}
+
 
 /// API Key 设置状态（不含明文值）。
 #[derive(serde::Serialize)]
@@ -292,6 +367,7 @@ pub fn save_env_key(key_name: String, value: String) -> Result<(), String> {
     let content = new_lines.join("\n") + "\n";
     // UTF-8 写入，避免 Windows 默认编码坑
     std::fs::write(&path, content.as_bytes()).map_err(|e| format!("写入密钥文件失败: {e}"))?;
+    harden_env_file_permissions(&path);
 
     // 立即覆盖加载到当前进程环境变量，使后续 restart_session 使用新值。
     dotenvy::from_path_override(&path).map_err(|e| e.to_string())?;

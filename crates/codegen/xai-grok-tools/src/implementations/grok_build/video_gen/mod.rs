@@ -1,25 +1,21 @@
-//! Video generation module. Hosts the shared [`VideoGenClient`] and the
-//! `image_to_video` and `reference_to_video` tools, which generate videos via
-//! the xAI Video Generation API and save them to the local filesystem so the
-//! model can reference them in code (e.g. `<video src="videos/hero.mp4">`).
+//! `video_gen` (视频生成) 模块。
+//! 宿主托管共享的 [`VideoGenClient`]，以及 `image_to_video` 和 `reference_to_video` 工具，
+//! 通过 xAI Video Generation API 生成视频并保存至本地文件系统（例如 `<video src="videos/hero.mp4">`）。
 //!
-//! Architecture follows the same pattern as `image_gen`:
+//! 整体架构采用与 `image_gen` 相同的范式：
 //!
-//! - [`VideoGenConfig`] is built from session credentials by the host and
-//!   injected into the tool registry.
-//! - When `Enabled`, a [`VideoGenClient`] is constructed once and injected
-//!   into `Resources`. The tools read it at runtime via `resources.require()`.
-//! - When `Disabled`, the tools are not registered so the model never sees them.
+//! - [`VideoGenConfig`] 由宿主从会话凭证构造并注入至工具注册表中。
+//! - 当处于 `Enabled` 状态时，构造一个 [`VideoGenClient`] 注入至 `Resources` 中。工具在运行时通过 `resources.require()` 读取。
+//! - 当处于 `Disabled` 状态时，工具不会注册，模型也无法感知。
 //!
-//! The generated video is written to `<session_folder>/videos/<n>.mp4`
-//! where `<n>` is a session-scoped counter (1, 2, 3, ... — 1 token each).
-//! The tools return the absolute path so the model can copy or move the
-//! video into the project working directory when it needs a persistent asset.
+//! 生成的视频写入到 `<session_folder>/videos/<n>.mp4`，
+//! 其中 `<n>` 为会话作用域内的自增计数器（1, 2, 3...）。
+//! 工具返回绝对路径，模型需要持久化资产时可将其复制或移动至项目工作目录中。
 //!
-//! Video generation is asynchronous:
-//! 1. POST to `/v1/videos/generations` → receive a `request_id`
-//! 2. Poll GET `/v1/videos/{request_id}` until status is `"done"`
-//! 3. Download video bytes from the API URL, or an optional presigned GET URL
+//! 视频生成采用异步轮询机制：
+//! 1. POST 请求到 `/v1/videos/generations` → 接收 `request_id`；
+//! 2. GET 轮询 `/v1/videos/{request_id}` 直至状态变为 `"done"`；
+//! 3. 从 API 返回的 URL（或预签名 GET URL）下载视频字节流。
 
 use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -33,15 +29,18 @@ use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::resources::SessionFolder;
 use crate::types::tool::{ToolKind, ToolNamespace};
 
+/// `video_gen` 视频生成的基准与高清模型。
 const XAI_VIDEO_BASE_MODEL: &str = "grok-imagine-video";
 const XAI_VIDEO_QUALITY_MODEL: &str = "grok-imagine-video-1.5-preview";
+
+// 视频生成轮询与超时常量配置
 const VIDEO_START_TIMEOUT_SECS: u64 = 60;
 const VIDEO_GEN_TIMEOUT_SECS: u64 = 300;
 const VIDEO_POLL_INTERVAL_SECS: u64 = 5;
 const VIDEO_POLL_REQUEST_TIMEOUT_SECS: u64 = 30;
 const VIDEO_DOWNLOAD_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_ZDR_VIDEO_PRESIGN_EXPIRES_SECS: u64 = 900;
-/// Presign at request start; must survive generation poll + local download.
+/// 预签名有效时间必须足以覆盖生成轮询与本地下载时间。
 const MIN_ZDR_VIDEO_PRESIGN_EXPIRES_SECS: u64 =
     VIDEO_GEN_TIMEOUT_SECS + VIDEO_DOWNLOAD_TIMEOUT_SECS + 60;
 const DEFAULT_ZDR_VIDEO_KEY_PREFIX: &str = "grok-videos/";

@@ -1,11 +1,8 @@
-//! ReadFile — new-architecture implementation.
+//! ReadFile —— 新架构下的文件读取工具实现。
 //!
-//! Reuses the core logic (`extract_file_content_lines`, `bytes_to_metadata`,
-//! constants) from the old `implementations::read_file` module.
-//! State:
-//! - Notifications emitted via `NotificationHandle` from Resources.
-//!
-//! Reminders are NOT implemented here (Phase 5).
+//! 复用了核心解析逻辑（包含 `extract_file_content_lines`、`bytes_to_metadata` 等）。
+//! 状态与通知通过 Resources 中的 `NotificationHandle` 统一进行发包。
+
 use crate::implementations::read_file::{
     handle_pdf, is_pdf_file, raw_text_to_file_content, run_document_extraction,
 };
@@ -21,26 +18,30 @@ use crate::types::resources::{
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::sync::LazyLock;
+
 mod versions;
+
 use crate::types::schema::GrokIntegerSchema;
-/// Configuration for the ReadFile tool, stored as `Params<ReadFileParams>` in Resources.
+
+/// ReadFile 工具配置，在 Resources 中以 `Params<ReadFileParams>` 的形式存储。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFileParams {
     #[serde(default)]
     pub cursor_rules_on_read: bool,
 }
+
 crate::register_resource!("grok_build", "ReadFile", ReadFileParams);
-/// Internal version discriminant for read_file.
+
+/// read_file 工具内部版本判别枚举。
 ///
-/// `read_file` has cross-cutting version divergence: gitignore enforcement
-/// and error mapping. If extracting into version modules, this tool is the
-/// highest-risk candidate.
+/// `read_file` 存在横切的版本差异（例如 gitignore 规则校验与错误映射）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadFileVersion {
     Current,
     Legacy0_4_10,
 }
+
 impl ReadFileVersion {
     pub(crate) fn from_contract(v: Option<&str>) -> Self {
         match v {
@@ -48,22 +49,24 @@ impl ReadFileVersion {
             _ => Self::Current,
         }
     }
+
     pub(crate) fn is_legacy(self) -> bool {
         self == Self::Legacy0_4_10
     }
 }
+
 pub(crate) const MAX_NUM_TOKENS: usize = 25_000;
 pub const MAX_LINES_READ: usize = 1_000;
+
 pub use crate::implementations::read_file::{
     FileMetadata, PDF_MAX_PAGES_PER_READ, bytes_to_metadata, parse_page_range,
 };
-/// Max size of one streamed delta: strictly below `stream_chunk`'s 16 KiB
-/// cap (so a delta is never capped/gapped) and char-aligned (so concatenated
-/// deltas reproduce the terminal `content` byte-for-byte).
+
+/// 单次流式 chunk 的最大字节限制：严格低于 `stream_chunk` 的 16 KiB 限制，
+/// 且保持字符对齐，确保拼接后的增量流与完整内容逐字节一致。
 const STREAM_DELTA_TARGET_BYTES: usize = 4 * 1024;
-/// ReadFile's capabilities incl. its streaming spec (single source of
-/// truth). Streams the formatted projection (not raw bytes) as inert
-/// `PlainText` / `Append`.
+
+/// ReadFile 的功能声明（包含流式传输规范）。
 static READ_FILE_CAPABILITIES: LazyLock<xai_tool_protocol::ToolCapabilities> =
     LazyLock::new(|| xai_tool_protocol::ToolCapabilities {
         is_read_only: true,
@@ -74,8 +77,10 @@ static READ_FILE_CAPABILITIES: LazyLock<xai_tool_protocol::ToolCapabilities> =
         }),
         ..Default::default()
     });
+
 const MAX_PPTX_BYTES: usize = 50 * 1024 * 1024;
 const PPTX_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 async fn handle_pptx(
     file_bytes: Vec<u8>,
     path: &std::path::Path,
@@ -90,16 +95,15 @@ async fn handle_pptx(
     )
     .await
 }
-/// Extract text from a PPTX file (zip + DrawingML text runs).
-///
-/// Returns line-numbered text via the shared `raw_text_to_file_content`
-/// helper.
+
+/// 从 PPTX 压缩包数据（Zip + DrawingML）中提取文本内容。
 fn extract_pptx_text(file_bytes: Vec<u8>) -> Result<ReadFileOutput, String> {
     let text = crate::implementations::read_file::pptx::extract_pptx_text_from_bytes(&file_bytes)
         .map_err(|e| format!("Failed to extract text from PPTX: {e}"))?;
     Ok(raw_text_to_file_content(text))
 }
-/// Description for default toolset (full/non-concise)
+
+/// 默认完整工具集中的 ReadFile 工具描述信息。
 pub(crate) const DESCRIPTION_FULL: &str = r#"Read a file.
 
 Usage:
@@ -108,11 +112,12 @@ Usage:
 - Results are returned with line numbers starting at 1. The format is: LINE_NUMBER→LINE_CONTENT
 - This tool can read PDF files (.pdf), PowerPoint files (.pptx), Jupyter notebooks (.ipynb files), and image files (e.g. PNG, JPG, etc).
 - When reading an image file the contents are presented visually as this tool uses multimodal LLMs."#;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReadFileInput {
     #[serde(rename = "target_file")]
     #[schemars(
-        description = "The path of the file to read. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is."
+        description = "要读取的目标文件路径，支持工作区相对路径或绝对路径。如果提供绝对路径，将保持原样。"
     )]
     pub path: String,
     #[serde(
@@ -122,37 +127,34 @@ pub struct ReadFileInput {
     )]
     #[schemars(
         with = "GrokIntegerSchema",
-        description = "The line number to start reading from. Only provide if the file is too large to read at once."
+        description = "开始读取的行号（从 1 开始）。仅在文件过大无法一次性读取时提供。"
     )]
     pub offset: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         with = "GrokIntegerSchema",
-        description = "The number of lines to read. Only provide if the file is too large to read at once."
+        description = "读取的行数限制。仅在文件过大无法一次性读取时提供。"
     )]
     pub limit: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Page range for PDF files (e.g. '1-5', '3', '10-'). Required for PDFs with more than 10 pages. Max 20 pages per call. Ignored for non-PDF files."
+        description = "PDF 文件的页码范围（如 '1-5', '3', '10-'）。超过 10 页的 PDF 必须提供。单次最多 20 页。非 PDF 文件忽略。"
     )]
     pub pages: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Output format for PDF files. 'image' (default) renders pages as images. 'text' extracts text content. Ignored for non-PDF files."
+        description = "PDF 文件的输出格式：'image'（默认，将页面渲染为图片）或 'text'（提取纯文本）。非 PDF 文件忽略。"
     )]
     pub format: Option<String>,
 }
+
 async fn cursor_rules_on_read_enabled(resources: &SharedResources) -> bool {
     let res = resources.lock().await;
     res.get::<Params<ReadFileParams>>()
         .is_some_and(|p| p.0.cursor_rules_on_read)
 }
-/// Harness-compatible negative offset resolution (1-indexed start line).
-///
-/// Negatives use the reference `split('\n')` field count plus a phantom field when
-/// the file is non-empty and has no trailing `\n`. Extraction still uses
-/// `split_inclusive`, so a start that lands on the phantom-only field yields
-/// an empty window (harness-aligned; not a Grok-line clamp).
+
+/// 兼容 Harness 的负数偏移量起始行号解析（从 1 开始计数的行号）。
 fn resolve_read_start_line(file_content: &str, offset: Option<i64>) -> usize {
     let offset_raw = offset.unwrap_or(1);
     if offset_raw == 0 {
@@ -168,25 +170,24 @@ fn resolve_read_start_line(file_content: &str, offset: Option<i64>) -> usize {
     let computed = (total_fields as i64) + offset_raw + 1;
     computed.max(1) as usize
 }
-/// Only non-negative raw offsets are stored on `FileContent`. Negatives become
-/// `None` ("from beginning"); we mirror only the signed input wire type, not
-/// the resolved start line.
+
+/// 仅将非负的原始 offset 存储至 `FileContent` 中。负数转为 `None`（即从头开始）。
 fn stored_read_offset(offset: Option<i64>) -> Option<usize> {
     offset.filter(|&o| o >= 0).map(|o| o as usize)
 }
-/// Result of extracting file content lines with both default and concise formats
+
+/// 提取文件行内容的结果结构体（包含默认格式与纯文本格式）。
 pub struct ExtractedContent {
-    /// Default format: line numbers with → separator (no padding)
+    /// 默认格式：带行号及 → 分隔符的内容
     pub content: String,
-    /// Concise format: identical to content (kept for backward compatibility)
+    /// 简短格式：与 content 保持一致（用于向前兼容）
     pub content_concise: String,
-    /// Raw unformatted content
+    /// 原始未格式化的纯文本内容
     pub raw_output: String,
-    /// Base64 images captured per-line before truncation. Plumbed through
-    /// `FileContent.extracted_images` and turned into multimodal
-    /// `ContentPart::Image` follow-ups by the session layer.
+    /// 在截断前逐行捕获的 Base64 图片列表，传递给 `FileContent.extracted_images`
     pub extracted_images: Vec<crate::util::base64_images::ExtractedImage>,
 }
+
 pub fn extract_file_content_lines(
     file_content: &str,
     offset: Option<i64>,
