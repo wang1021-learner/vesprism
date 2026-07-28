@@ -68,6 +68,7 @@ impl ToolKind {
             ToolKind::UseTool => "Use Tool",
             ToolKind::Monitor => "Monitor",
             ToolKind::GoalUpdate => "Update Goal",
+            ToolKind::Workflow => "Workflow",
             ToolKind::Other => "Tool",
         }
     }
@@ -109,6 +110,7 @@ impl ToolKind {
             | ToolKind::UseTool
             | ToolKind::Monitor
             | ToolKind::GoalUpdate
+            | ToolKind::Workflow
             | ToolKind::Other => false,
         }
     }
@@ -126,13 +128,14 @@ impl schemars::JsonSchema for ToolKind {
             .filter_map(|v| v.as_str().map(|s| format!("`{s}`")))
             .collect::<Vec<_>>()
             .join(", ");
-        schemars::json_schema!(
-            { "type" : "string", "description" :
-            format!("Categorizes what a tool does at a high level. Open set — consumers must \
+        schemars::json_schema!({
+            "type": "string",
+            "description": format!(
+                "Categorizes what a tool does at a high level. Open set — consumers must \
                  tolerate unknown values (Rust deserializes them to `other` via \
-                 `#[serde(other)]`). Known values: {known}."),
-            }
-        )
+                 `#[serde(other)]`). Known values: {known}."
+            ),
+        })
     }
 }
 
@@ -300,7 +303,7 @@ mod tests {
         let meta = CanonicalToolMeta::new(
             "read_file",
             &identity(ToolKind::Read),
-            Some(serde_json::json!({ "path" : "/a" })),
+            Some(serde_json::json!({ "path": "/a" })),
         );
         let t = serde_json::to_value(&meta).unwrap();
         assert_eq!(t["version"], serde_json::json!(TOOL_META_VERSION));
@@ -335,7 +338,16 @@ mod tests {
         let mut expected: serde_json::Value =
             serde_json::from_str(tool_meta_json_schema_str()).expect("checked-in schema parses");
         if let Some(values) = expected["definitions"]["ToolNamespace"]["enum"].as_array_mut() {
-            values.retain(|v| v != "cursor");
+            use std::collections::HashSet;
+            use strum::IntoEnumIterator;
+            let compiled: HashSet<String> = ToolNamespace::iter()
+                .filter_map(|ns| {
+                    serde_json::to_value(ns)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                })
+                .collect();
+            values.retain(|v| matches!(v.as_str(), Some(s) if compiled.contains(s)));
         }
         let expected = format!("{}\n", serde_json::to_string_pretty(&expected).unwrap());
         assert_eq!(
@@ -347,7 +359,7 @@ mod tests {
     #[test]
     fn merge_into_nests_under_one_key_and_preserves_existing() {
         let meta = CanonicalToolMeta::new("run_terminal_cmd", &identity(ToolKind::Execute), None);
-        let merged = meta.merge_into(Some(serde_json::json!({ "bash_mode" : true })));
+        let merged = meta.merge_into(Some(serde_json::json!({"bash_mode": true})));
         let o = merged.as_object().unwrap();
         assert_eq!(o["bash_mode"], true, "existing meta must be preserved");
         let t = &o[TOOL_META_KEY];

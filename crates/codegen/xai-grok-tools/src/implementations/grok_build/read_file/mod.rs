@@ -1,8 +1,11 @@
-//! ReadFile —— 新架构下的文件读取工具实现。
+//! ReadFile — new-architecture implementation.
 //!
-//! 复用了核心解析逻辑（包含 `extract_file_content_lines`、`bytes_to_metadata` 等）。
-//! 状态与通知通过 Resources 中的 `NotificationHandle` 统一进行发包。
-
+//! Reuses the core logic (`extract_file_content_lines`, `bytes_to_metadata`,
+//! constants) from the old `implementations::read_file` module.
+//! State:
+//! - Notifications emitted via `NotificationHandle` from Resources.
+//!
+//! Reminders are NOT implemented here (Phase 5).
 use crate::implementations::read_file::{
     handle_pdf, is_pdf_file, raw_text_to_file_content, run_document_extraction,
 };
@@ -18,30 +21,26 @@ use crate::types::resources::{
 use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::sync::LazyLock;
-
 mod versions;
-
 use crate::types::schema::GrokIntegerSchema;
-
-/// ReadFile 工具配置，在 Resources 中以 `Params<ReadFileParams>` 的形式存储。
+/// Configuration for the ReadFile tool, stored as `Params<ReadFileParams>` in Resources.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFileParams {
     #[serde(default)]
     pub cursor_rules_on_read: bool,
 }
-
 crate::register_resource!("grok_build", "ReadFile", ReadFileParams);
-
-/// read_file 工具内部版本判别枚举。
+/// Internal version discriminant for read_file.
 ///
-/// `read_file` 存在横切的版本差异（例如 gitignore 规则校验与错误映射）。
+/// `read_file` has cross-cutting version divergence: gitignore enforcement
+/// and error mapping. If extracting into version modules, this tool is the
+/// highest-risk candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReadFileVersion {
     Current,
     Legacy0_4_10,
 }
-
 impl ReadFileVersion {
     pub(crate) fn from_contract(v: Option<&str>) -> Self {
         match v {
@@ -49,24 +48,22 @@ impl ReadFileVersion {
             _ => Self::Current,
         }
     }
-
     pub(crate) fn is_legacy(self) -> bool {
         self == Self::Legacy0_4_10
     }
 }
-
 pub(crate) const MAX_NUM_TOKENS: usize = 25_000;
 pub const MAX_LINES_READ: usize = 1_000;
-
 pub use crate::implementations::read_file::{
     FileMetadata, PDF_MAX_PAGES_PER_READ, bytes_to_metadata, parse_page_range,
 };
-
-/// 单次流式 chunk 的最大字节限制：严格低于 `stream_chunk` 的 16 KiB 限制，
-/// 且保持字符对齐，确保拼接后的增量流与完整内容逐字节一致。
+/// Max size of one streamed delta: strictly below `stream_chunk`'s 16 KiB
+/// cap (so a delta is never capped/gapped) and char-aligned (so concatenated
+/// deltas reproduce the terminal `content` byte-for-byte).
 const STREAM_DELTA_TARGET_BYTES: usize = 4 * 1024;
-
-/// ReadFile 的功能声明（包含流式传输规范）。
+/// ReadFile's capabilities incl. its streaming spec (single source of
+/// truth). Streams the formatted projection (not raw bytes) as inert
+/// `PlainText` / `Append`.
 static READ_FILE_CAPABILITIES: LazyLock<xai_tool_protocol::ToolCapabilities> =
     LazyLock::new(|| xai_tool_protocol::ToolCapabilities {
         is_read_only: true,
@@ -77,10 +74,8 @@ static READ_FILE_CAPABILITIES: LazyLock<xai_tool_protocol::ToolCapabilities> =
         }),
         ..Default::default()
     });
-
 const MAX_PPTX_BYTES: usize = 50 * 1024 * 1024;
 const PPTX_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-
 async fn handle_pptx(
     file_bytes: Vec<u8>,
     path: &std::path::Path,
@@ -95,29 +90,33 @@ async fn handle_pptx(
     )
     .await
 }
-
-/// 从 PPTX 压缩包数据（Zip + DrawingML）中提取文本内容。
+/// Extract text from a PPTX file (zip + DrawingML text runs).
+///
+/// Returns line-numbered text via the shared `raw_text_to_file_content`
+/// helper.
 fn extract_pptx_text(file_bytes: Vec<u8>) -> Result<ReadFileOutput, String> {
     let text = crate::implementations::read_file::pptx::extract_pptx_text_from_bytes(&file_bytes)
         .map_err(|e| format!("Failed to extract text from PPTX: {e}"))?;
     Ok(raw_text_to_file_content(text))
 }
-
-/// 默认完整工具集中的 ReadFile 工具描述信息。
+/// Description for default toolset (full/non-concise)
 pub(crate) const DESCRIPTION_FULL: &str = r#"Read a file.
 
 Usage:
-- The target_file parameter can be a relative path in the workspace or an absolute path
+- The ${{ params.read.target_file }} parameter can be a relative path in the workspace or an absolute path
 - By default, it reads up to {max_lines_read} lines starting from the beginning of the file
 - Results are returned with line numbers starting at 1. The format is: LINE_NUMBER→LINE_CONTENT
 - This tool can read PDF files (.pdf), PowerPoint files (.pptx), Jupyter notebooks (.ipynb files), and image files (e.g. PNG, JPG, etc).
 - When reading an image file the contents are presented visually as this tool uses multimodal LLMs."#;
-
+/// Schema-only advertised default (runtime still treats omit as line 1 via unwrap_or).
+fn schema_default_offset() -> Option<i64> {
+    Some(1)
+}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReadFileInput {
     #[serde(rename = "target_file")]
     #[schemars(
-        description = "要读取的目标文件路径，支持工作区相对路径或绝对路径。如果提供绝对路径，将保持原样。"
+        description = "The path of the file to read. You can use either a relative path in the workspace or an absolute path. If an absolute path is provided, it will be preserved as is."
     )]
     pub path: String,
     #[serde(
@@ -127,34 +126,38 @@ pub struct ReadFileInput {
     )]
     #[schemars(
         with = "GrokIntegerSchema",
-        description = "开始读取的行号（从 1 开始）。仅在文件过大无法一次性读取时提供。"
+        default = "schema_default_offset",
+        description = "The line number to start reading from. Only provide if the file is too large to read at once."
     )]
     pub offset: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         with = "GrokIntegerSchema",
-        description = "读取的行数限制。仅在文件过大无法一次性读取时提供。"
+        description = "The number of lines to read. Only provide if the file is too large to read at once."
     )]
     pub limit: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "PDF 文件的页码范围（如 '1-5', '3', '10-'）。超过 10 页的 PDF 必须提供。单次最多 20 页。非 PDF 文件忽略。"
+        description = "Page range for PDF files (e.g. '1-5', '3', '10-'). Required for PDFs with more than 10 pages. Max 20 pages per call. Ignored for non-PDF files."
     )]
     pub pages: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "PDF 文件的输出格式：'image'（默认，将页面渲染为图片）或 'text'（提取纯文本）。非 PDF 文件忽略。"
+        description = "Output format for PDF files. 'image' (default) renders pages as images. 'text' extracts text content. Ignored for non-PDF files."
     )]
     pub format: Option<String>,
 }
-
 async fn cursor_rules_on_read_enabled(resources: &SharedResources) -> bool {
     let res = resources.lock().await;
     res.get::<Params<ReadFileParams>>()
         .is_some_and(|p| p.0.cursor_rules_on_read)
 }
-
-/// 兼容 Harness 的负数偏移量起始行号解析（从 1 开始计数的行号）。
+/// Harness-compatible negative offset resolution (1-indexed start line).
+///
+/// Negatives use the reference `split('\n')` field count plus a phantom field when
+/// the file is non-empty and has no trailing `\n`. Extraction still uses
+/// `split_inclusive`, so a start that lands on the phantom-only field yields
+/// an empty window (harness-aligned; not a Grok-line clamp).
 fn resolve_read_start_line(file_content: &str, offset: Option<i64>) -> usize {
     let offset_raw = offset.unwrap_or(1);
     if offset_raw == 0 {
@@ -170,24 +173,56 @@ fn resolve_read_start_line(file_content: &str, offset: Option<i64>) -> usize {
     let computed = (total_fields as i64) + offset_raw + 1;
     computed.max(1) as usize
 }
-
-/// 仅将非负的原始 offset 存储至 `FileContent` 中。负数转为 `None`（即从头开始）。
+/// Only non-negative raw offsets are stored on `FileContent`. Negatives become
+/// `None` ("from beginning"); we mirror only the signed input wire type, not
+/// the resolved start line.
 fn stored_read_offset(offset: Option<i64>) -> Option<usize> {
     offset.filter(|&o| o >= 0).map(|o| o as usize)
 }
-
-/// 提取文件行内容的结果结构体（包含默认格式与纯文本格式）。
+/// Files read in full (no line/token cap): any file named exactly `SKILL.md`,
+/// plus any Markdown file with a `skills` path component so docs a `SKILL.md`
+/// references are never silently truncated. `.`/`..` are folded lexically
+/// (symlinks are not resolved). Intentionally broader than
+/// skill discovery's dir check — matches any `skills` segment
+/// (plugin/bundled/user roots), and matches it exactly (not case-folded) so
+/// near-misses like `skills-cursor` do not qualify.
+fn is_skill_markdown(path: &std::path::Path) -> bool {
+    if path.file_name().is_some_and(|n| n == "SKILL.md") {
+        return true;
+    }
+    let is_md = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+    if !is_md {
+        return false;
+    }
+    use std::path::Component;
+    let mut stack: Vec<&std::ffi::OsStr> = Vec::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
+            Component::ParentDir => {
+                stack.pop();
+            }
+            Component::Normal(c) => stack.push(c),
+        }
+    }
+    stack.into_iter().any(|c| c == "skills")
+}
+/// Result of extracting file content lines with both default and concise formats
 pub struct ExtractedContent {
-    /// 默认格式：带行号及 → 分隔符的内容
+    /// Default format: line numbers with → separator (no padding)
     pub content: String,
-    /// 简短格式：与 content 保持一致（用于向前兼容）
+    /// Concise format: identical to content (kept for backward compatibility)
     pub content_concise: String,
-    /// 原始未格式化的纯文本内容
+    /// Raw unformatted content
     pub raw_output: String,
-    /// 在截断前逐行捕获的 Base64 图片列表，传递给 `FileContent.extracted_images`
+    /// Base64 images captured per-line before truncation. Plumbed through
+    /// `FileContent.extracted_images` and turned into multimodal
+    /// `ContentPart::Image` follow-ups by the session layer.
     pub extracted_images: Vec<crate::util::base64_images::ExtractedImage>,
 }
-
 pub fn extract_file_content_lines(
     file_content: &str,
     offset: Option<i64>,
@@ -300,6 +335,7 @@ pub(crate) async fn run_read_file(
     contract_version: Option<&str>,
     resources: SharedResources,
     streamable_out: Option<&mut bool>,
+    invoking_param_names: &crate::types::resources::InvokingToolParamNames,
 ) -> Result<ReadFileOutput, xai_tool_runtime::ToolError> {
     let (cwd, display_cwd, fs, hints_enabled);
     {
@@ -313,6 +349,7 @@ pub(crate) async fn run_read_file(
         hints_enabled = res.get::<PathNotFoundHints>().is_some_and(|h| h.0);
     }
     let joined_path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.path);
+    let is_skill_markdown = is_skill_markdown(&joined_path);
     let (path, _unicode_note) = match crate::util::fs::try_canonicalize(&joined_path).await {
         Ok(p) => (p, None),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -325,10 +362,6 @@ pub(crate) async fn run_read_file(
     };
     let version = ReadFileVersion::from_contract(contract_version);
     let is_legacy = version.is_legacy();
-    let is_skill_file = path
-        .file_name()
-        .and_then(|f| f.to_str())
-        .is_some_and(|name| name == "SKILL.md");
     let skip_gitignore = is_legacy && versions::legacy_0_4_10::allows_gitignored_reads();
     if !skip_gitignore {
         let res = resources.lock().await;
@@ -416,9 +449,10 @@ pub(crate) async fn run_read_file(
     }
     if crate::util::binary::is_binary(&extension, &file_bytes) {
         tracing::info!(
-            path = % path.display(), extension = % extension, detected_by = if crate
-            ::util::binary::BINARY_EXTENSIONS.binary_search(& extension.as_str()).is_ok()
-            { "extension" } else { "content_inspection" },
+            path = %path.display(),
+            extension = %extension,
+            detected_by = if crate::util::binary::BINARY_EXTENSIONS
+                .binary_search(&extension.as_str()).is_ok() { "extension" } else { "content_inspection" },
             "binary file rejected by read_file"
         );
         return Ok(ReadFileOutput::FileReadError(format!(
@@ -447,7 +481,7 @@ pub(crate) async fn run_read_file(
             .map(|t| t.0.max_lines_read())
             .unwrap_or_else(|| TruncationConfig::default().max_lines_read())
     };
-    let (effective_offset, effective_limit) = if is_skill_file {
+    let (effective_offset, effective_limit) = if is_skill_markdown {
         (None, None)
     } else {
         (
@@ -462,7 +496,7 @@ pub(crate) async fn run_read_file(
         total_lines,
     );
     let token_count = crate::util::truncate::estimate_tokens(&extracted.content);
-    if !is_skill_file && token_count > MAX_NUM_TOKENS {
+    if !is_skill_markdown && token_count > MAX_NUM_TOKENS {
         let (grep_name, execute_name);
         {
             let res = resources.lock().await;
@@ -474,11 +508,13 @@ pub(crate) async fn run_read_file(
                 .render("${{ tools.by_kind.execute }}")
                 .map_err(|e| xai_tool_runtime::ToolError::invalid_arguments(e.to_string()))?;
         }
+        let offset_param = invoking_param_names.resolve("offset");
+        let limit_param = invoking_param_names.resolve("limit");
         let single_content_line = extracted.raw_output.lines().count() <= 1;
         let single_line_hint = if single_content_line && !execute_name.is_empty() {
             format!(
                 "\nNote: the requested read is a single very long line, so \
-                 line-based offset/limit cannot narrow it further. Use the \
+                 line-based {offset_param}/{limit_param} cannot narrow it further. Use the \
                  '{execute_name}' tool to extract the parts you need (e.g. \
                  `jq`, `python3`, or `cut -c`)."
             )
@@ -494,23 +530,21 @@ pub(crate) async fn run_read_file(
                 .limit
                 .map_or_else(|| "to end".to_string(), |v| v.to_string());
             format!(
-                "The requested line range (offset={}, limit={}) contains {} tokens, \
-                 which exceeds the maximum allowed tokens ({} tokens).\n\
-                 Try a smaller `limit`, a different starting `offset`, \
-                 or use the '{}' tool to search for specific content.{}",
-                off, lim, token_count, MAX_NUM_TOKENS, grep_name, single_line_hint
+                "The requested line range ({offset_param}={off}, {limit_param}={lim}) contains {token_count} tokens, \
+                 which exceeds the maximum allowed tokens ({MAX_NUM_TOKENS} tokens).\n\
+                 Try a smaller `{limit_param}`, a different starting `{offset_param}`, \
+                 or use the '{grep_name}' tool to search for specific content.{single_line_hint}"
             )
         } else {
             format!(
-                "File content ({} tokens) exceeds maximum allowed tokens ({} tokens).\n\
-                 Please use offset and limit parameters to read a shorter range, \
-                 or use the '{}' to search for specific content.{}",
-                token_count, MAX_NUM_TOKENS, grep_name, single_line_hint
+                "File content ({token_count} tokens) exceeds maximum allowed tokens ({MAX_NUM_TOKENS} tokens).\n\
+                 Please use {offset_param} and {limit_param} parameters to read a shorter range, \
+                 or use the '{grep_name}' to search for specific content.{single_line_hint}"
             )
         };
         return Ok(ReadFileOutput::FileTooLarge(msg));
     }
-    let (stored_offset, stored_limit) = if is_skill_file {
+    let (stored_offset, stored_limit) = if is_skill_markdown {
         (None, None)
     } else {
         (stored_read_offset(input.offset), input.limit)
@@ -597,25 +631,51 @@ impl xai_tool_runtime::Tool for ReadFileTool {
         let Some(spec) = admitted_spec else {
             let this = ReadFileTool;
             return Box::pin(async_stream::stream! {
-                yield xai_tool_runtime::ToolStreamItem::Terminal(this.run(ctx, input)
-                . await);
+                yield xai_tool_runtime::ToolStreamItem::Terminal(this.run(ctx, input).await);
             });
         };
         Box::pin(async_stream::stream! {
-            match ReadFileTool::read_with_streamability(& ctx, input). await {
-            Ok((output, streamable)) => { if streamable && let
-            ReadFileOutput::FileContent(fc) = & output && ! fc.content.is_empty() {
-            let content = fc.content.as_bytes(); let mut last_total : u64 = 0; let
-            mut window_start = 0usize; while window_start < content.len() { let mut
-            window_end = (window_start + STREAM_DELTA_TARGET_BYTES).min(content
-            .len()); while window_end > window_start && ! fc.content
-            .is_char_boundary(window_end) { window_end -= 1; } if let Some(p) =
-            xai_tool_runtime::stream_chunk(spec, & content[..window_end], window_end
-            as u64, & mut last_total, false,) { yield
-            xai_tool_runtime::ToolStreamItem::Progress(p); } window_start =
-            window_end; } } yield
-            xai_tool_runtime::ToolStreamItem::Terminal(Ok(output)); } Err(e) => yield
-            xai_tool_runtime::ToolStreamItem::Terminal(Err(e)), }
+            // `streamable` is call-local to this read.
+            match ReadFileTool::read_with_streamability(&ctx, input).await {
+                Ok((output, streamable)) => {
+                    if streamable
+                        && let ReadFileOutput::FileContent(fc) = &output
+                        && !fc.content.is_empty()
+                    {
+                        // Replay char-aligned slices of the final `content`
+                        // (each below the 16 KiB cap; see
+                        // STREAM_DELTA_TARGET_BYTES).
+                        let content = fc.content.as_bytes();
+                        let mut last_total: u64 = 0;
+                        let mut window_start = 0usize;
+                        while window_start < content.len() {
+                            let mut window_end =
+                                (window_start + STREAM_DELTA_TARGET_BYTES).min(content.len());
+                            // Align DOWN to a char boundary (a char is ≤ 4
+                            // bytes vs the 4 KiB target: never a zero-width
+                            // window).
+                            while window_end > window_start
+                                && !fc.content.is_char_boundary(window_end)
+                            {
+                                window_end -= 1;
+                            }
+                            if let Some(p) = xai_tool_runtime::stream_chunk(
+                                spec,
+                                &content[..window_end],
+                                window_end as u64,
+                                &mut last_total,
+                                // Full replay, no streaming loss ⇒ never truncated.
+                                false,
+                            ) {
+                                yield xai_tool_runtime::ToolStreamItem::Progress(p);
+                            }
+                            window_start = window_end;
+                        }
+                    }
+                    yield xai_tool_runtime::ToolStreamItem::Terminal(Ok(output));
+                }
+                Err(e) => yield xai_tool_runtime::ToolStreamItem::Terminal(Err(e)),
+            }
         })
     }
     #[tracing::instrument(name = "tool.read_file", skip_all, fields(path = %input.path))]
@@ -644,12 +704,14 @@ impl ReadFileTool {
             .map(|c| c.0.clone());
         let bv = crate::types::tool_metadata::behavior_version(ctx);
         let mut streamable_text = false;
+        let invoking = crate::types::tool_metadata::invoking_param_names(ctx);
         let output = run_read_file(
             input,
             cwd_override.clone(),
             bv.as_deref(),
             resources.clone(),
             Some(&mut streamable_text),
+            &invoking,
         )
         .await?;
         Ok((output, streamable_text))
@@ -1004,6 +1066,63 @@ mod tests {
                     msg
                 );
                 assert!(!msg.contains("Please use offset and limit parameters"));
+            }
+            other => panic!("Expected FileTooLarge, got {:?}", other),
+        }
+    }
+    /// Regression: FileTooLarge must name *this* tool's schema keys, not
+    /// whatever a sibling Read tool last wrote into the kind-wide param map.
+    #[tokio::test]
+    async fn token_limit_error_uses_invoking_tool_param_names_not_kind_wide() {
+        let tmp = TempDir::new().unwrap();
+        let line = "x".repeat(200);
+        let big_content = std::iter::repeat_n(line.as_str(), 1100)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(tmp.path().join("big.txt"), &big_content).unwrap();
+        let tool = ReadFileTool;
+        let mut resources = test_resources(tmp.path());
+        resources.insert(TemplateRenderer::new(
+            [(ToolKind::Search, "Grep".to_string())].into(),
+            [(
+                ToolKind::Read,
+                [
+                    ("offset".to_string(), "poisoned_offset".to_string()),
+                    ("limit".to_string(), "poisoned_limit".to_string()),
+                ]
+                .into(),
+            )]
+            .into(),
+        ));
+        let input = ReadFileInput {
+            path: "big.txt".to_string(),
+            offset: Some(1),
+            limit: Some(800),
+            pages: None,
+            format: None,
+        };
+        let mut ctx = test_ctx(resources.into_shared());
+        ctx.extensions
+            .insert(crate::types::resources::InvokingToolParamNames(
+                [
+                    ("offset".to_string(), "start_line".to_string()),
+                    ("limit".to_string(), "max_lines".to_string()),
+                ]
+                .into(),
+            ));
+        let result = xai_tool_runtime::Tool::run(&tool, ctx, input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileTooLarge(msg) => {
+                assert!(
+                    msg.contains("start_line=1") && msg.contains("max_lines=800"),
+                    "expected invoking-tool names, got: {msg}"
+                );
+                assert!(
+                    !msg.contains("poisoned_offset") && !msg.contains("poisoned_limit"),
+                    "must not use kind-wide sibling renames: {msg}"
+                );
             }
             other => panic!("Expected FileTooLarge, got {:?}", other),
         }
@@ -1715,6 +1834,46 @@ pub fn verify(req: &HttpRequest) -> Result<Claims, Error> {
             std::mem::discriminant(&result),
         );
     }
+    #[tokio::test]
+    async fn md_in_skills_dir_ignores_model_offset_and_limit() {
+        let tmp = TempDir::new().unwrap();
+        let skill_dir = tmp.path().join(".grok/skills/my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let content = (1..=1200)
+            .map(|n| format!("line{n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(skill_dir.join("reference.md"), &content).unwrap();
+        let tool = ReadFileTool;
+        let resources = test_resources(tmp.path());
+        let input = ReadFileInput {
+            path: ".grok/skills/my-skill/reference.md".to_string(),
+            offset: Some(3),
+            limit: Some(1),
+            pages: None,
+            format: None,
+        };
+        let result = xai_tool_runtime::Tool::run(&tool, test_ctx(resources.into_shared()), input)
+            .await
+            .unwrap();
+        match result {
+            ReadFileOutput::FileContent(fc) => {
+                assert!(
+                    fc.content.contains("line1"),
+                    "missing line1: {}",
+                    fc.content
+                );
+                assert!(
+                    fc.content.contains("line1200"),
+                    "missing line1200: {}",
+                    fc.content
+                );
+                assert_eq!(fc.offset, None);
+                assert_eq!(fc.limit, None);
+            }
+            other => panic!("Expected FileContent, got {:?}", other),
+        }
+    }
     #[test]
     fn parse_single_page() {
         assert_eq!(parse_page_range("3", 10).unwrap(), vec![2]);
@@ -2257,12 +2416,17 @@ pub fn verify(req: &HttpRequest) -> Result<Claims, Error> {
         }
     }
     #[test]
-    fn read_file_offset_description_unchanged() {
+    fn read_file_offset_schema_advertises_start_default() {
         let src = include_str!("mod.rs");
         assert!(
-            src
-            .contains("description = \"The line number to start reading from. Only provide if the file is too large to read at once.\""),
-            "offset schemars description must not change"
+            src.contains(
+                "description = \"The line number to start reading from. Only provide if the file is too large to read at once.\""
+            ),
+            "offset schemars description must remain the pre-PR wording"
+        );
+        assert!(
+            src.contains("default = \"schema_default_offset\""),
+            "offset must advertise schema_default_offset"
         );
     }
     #[test]

@@ -1,13 +1,19 @@
 [package]
 license = "Apache-2.0"
 name = "xai-grok-shell"
-version = "0.2.101"
+version = "0.2.112"
 edition.workspace = true
 
 [features]
 default = []
 unstable = []
-default-bazel = []
+dhat-heap = ["dep:dhat"]
+# Session synthesis + in-process e2e harness (`session::testkit`) for soak,
+# load, and bench tests. Off by default; the tests/benches that use it declare
+# it via `required-features`.
+test-support = []
+default-bazel = ["test-support"]
+# Local playground binaries (e.g. chat-history-downgrade).
 playground-tools = []
 
 [dependencies]
@@ -107,6 +113,7 @@ arc-swap = { workspace = true }
 infer = "0.15"
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp"] }
 moka = { workspace = true, features = ["future"] }
+dhat = { workspace = true, optional = true }
 base64 = { workspace = true }
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 sha2 = { workspace = true }
@@ -136,6 +143,7 @@ xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-tools = { path = "../xai-grok-tools" }
 xai-tty-utils = { workspace = true }
+xai-workflow = { path = "../xai-workflow" }
 xai-system-power = { workspace = true }
 xai-grok-workspace = { workspace = true }
 xai-grok-subagent-resolution = { path = "../xai-grok-subagent-resolution" }
@@ -183,6 +191,7 @@ windows = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 filetime = { workspace = true }
+pretty_assertions = { workspace = true }
 tempfile = { workspace = true }
 xai-grok-memory = { workspace = true, features = ["test-support"] }
 xai-grok-workspace = { workspace = true, features = ["test-support"] }
@@ -209,6 +218,28 @@ workspace = true
 [[bench]]
 name = "session_list"
 harness = false
+
+[[bench]]
+name = "fork_copy"
+harness = false
+required-features = ["test-support"]
+
+# Consume `session::testkit`, so they need the gate (on by default under Bazel).
+[[test]]
+name = "test_session_load_memory"
+required-features = ["test-support"]
+
+[[test]]
+name = "session_fork_replay_memory"
+required-features = ["test-support"]
+
+[[test]]
+name = "session_load_perf"
+required-features = ["test-support"]
+
+[[test]]
+name = "testkit_synth_roundtrip"
+required-features = ["test-support"]
 
 [lints]
 workspace = true
