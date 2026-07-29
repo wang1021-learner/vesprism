@@ -64,6 +64,15 @@ pub trait ToolMetadata: Send + Sync {
         Expr::True
     }
 
+    /// 供 `xai_tool_runtime::Tool::description()` 使用的模型安全兜底描述：
+    /// 去掉原始模板中所有 `${{ … }}` / `${% … %}` 标记后的文本。
+    ///
+    /// 注册表路径（`versioned_definition`）会在 finalize 后的 toolset 上下文中
+    /// 正确渲染模板；此处仅服务绕过注册表的调用方，它们绝不能看到原始模板语法。
+    fn sanitized_description_template(&self) -> String {
+        crate::types::template_renderer::strip_template_markers(self.description_template())
+    }
+
     /// 根据给定的契约版本构建工具定义 (ToolDefinition)。
     ///
     /// 默认实现：通过 `TemplateRenderer` 渲染 `description_template()` 并重新映射 Schema 参数名称。
@@ -80,8 +89,7 @@ pub trait ToolMetadata: Send + Sync {
     ) -> ToolDefinition {
         let raw_desc = description_override.unwrap_or_else(|| self.description_template());
         let description = renderer.render(raw_desc).unwrap_or_else(|e| {
-            tracing::warn!("Description template render failed, using raw: {e}");
-            raw_desc.to_string()
+            crate::types::template_renderer::strip_markers_on_render_failure(raw_desc, &e)
         });
         let remapped_schema = if param_map.is_empty() {
             input_schema.clone()
