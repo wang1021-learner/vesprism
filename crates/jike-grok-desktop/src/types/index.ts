@@ -63,6 +63,8 @@ export type SessionEvent =
     }
   | { type: 'status_changed'; status: SessionStatus }
   | { type: 'session_id_changed'; session_id: string }
+  /** 历史回放事件已全部发出，前端可一次落盘 transcript */
+  | { type: 'replay_complete'; session_id: string }
 
 export type ChatRole = 'user' | 'assistant' | 'thought' | 'system' | 'tool'
 

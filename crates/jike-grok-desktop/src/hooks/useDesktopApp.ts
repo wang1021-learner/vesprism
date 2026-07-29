@@ -132,6 +132,20 @@ export function useDesktopApp() {
 
   const composerRef = useRef<ComposerHandle>(null)
   const autoStarted = useRef(false)
+  /** load_session 期间：收到 replay_complete 后 resolve，保证 finishReplay 不早于回放结束 */
+  const replayDoneWaiter = useRef<{
+    resolve: () => void
+    promise: Promise<void>
+  } | null>(null)
+
+  const armReplayDoneWaiter = useCallback(() => {
+    let resolve!: () => void
+    const promise = new Promise<void>((r) => {
+      resolve = r
+    })
+    replayDoneWaiter.current = { resolve, promise }
+    return promise
+  }, [])
 
   // ── session-event 订阅 ────────────────────────────────
   useEffect(() => {
@@ -200,6 +214,16 @@ export function useDesktopApp() {
           case 'session_id_changed':
             dispatchSession({ type: 'SESSION_ID', sessionId: payload.session_id })
             break
+          case 'replay_complete': {
+            // 后端已 drain 完回放事件；先 resolve waiter，由 handleSelectChat 统一 finishReplay
+            // （再 microtask 兜底一次，防止 invoke 路径异常未 await）
+            replayDoneWaiter.current?.resolve()
+            replayDoneWaiter.current = null
+            queueMicrotask(() => {
+              finishReplay()
+            })
+            break
+          }
         }
       })
       if (cancelled) unlisten?.()
@@ -216,6 +240,7 @@ export function useDesktopApp() {
     upsertToolCall,
     patchToolCall,
     sealLive,
+    finishReplay,
     stream,
     pendingPrompts,
     setContextUsedTokens,
@@ -379,8 +404,9 @@ export function useDesktopApp() {
 
       resetConversationUi()
       setError(null)
-      // 回放模式：事件进 assembler，结束后一次 commit 到 history
+      // 回放模式：事件进 assembler；后端 ReplayComplete 后再一次 commit
       beginReplay()
+      const replayDone = armReplayDoneWaiter()
       dispatchSession({ type: 'LOAD_START', sessionId: id })
 
       if (!hadUserMessage && prevId && prevId !== id) {
@@ -391,8 +417,11 @@ export function useDesktopApp() {
         const fallbackCwd = await invoke<string>('workspace_cwd')
         const cwd = (sessionCwd || fromList?.cwd || fallbackCwd).trim() || fallbackCwd
         await invoke('load_session', { sessionId: id, cwd })
-        // 等 actor 把回放事件 drain 完再一次落盘 UI
-        await new Promise<void>((r) => window.setTimeout(r, 120))
+        // 后端已 drain + 发 replay_complete；再等事件被 JS 处理完（最多 3s 兜底）
+        await Promise.race([
+          replayDone,
+          new Promise<void>((r) => window.setTimeout(r, 3000)),
+        ])
         finishReplay()
         dispatchSession({ type: 'LOAD_OK' })
         try {
@@ -410,6 +439,7 @@ export function useDesktopApp() {
       } catch (e) {
         const msg = String(e)
         setError(msg)
+        replayDoneWaiter.current = null
         finishReplay()
         pushMessage('system', `恢复会话失败: ${msg}`)
         dispatchSession({ type: 'LOAD_FAIL', restoreSessionId: prevId })
@@ -429,6 +459,7 @@ export function useDesktopApp() {
       resetConversationUi,
       beginReplay,
       finishReplay,
+      armReplayDoneWaiter,
     ],
   )
 

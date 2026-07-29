@@ -119,6 +119,8 @@ pub enum FrontendEvent {
     StatusChanged { status: SessionStatus },
     /// 当前会话 ID 变化（新建/重启/恢复后广播）。
     SessionIdChanged { session_id: String },
+    /// 历史回放事件已全部转发完毕（前端据此一次落盘 transcript）。
+    ReplayComplete { session_id: String },
 }
 
 /// 权限选项（可序列化）。
@@ -190,6 +192,7 @@ pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<Actor
                     &mut session,
                     &mut status_rx,
                     &mut pending_permissions,
+                    &mut next_perm_id,
                 ).await;
             }
             // 消费会话流式事件并转发给前端（透传；合并由官方 ReplayBuffer 负责）。
@@ -247,6 +250,7 @@ async fn handle_command(
     session: &mut Option<GrokSession>,
     status_rx: &mut Option<tokio::sync::watch::Receiver<SessionStatus>>,
     pending_permissions: &mut HashMap<u64, oneshot::Sender<String>>,
+    next_perm_id: &mut u64,
 ) {
     match cmd {
         ActorCommand::Start { cwd, reply } => {
@@ -374,12 +378,22 @@ async fn handle_command(
 
             emit(app, FrontendEvent::StatusChanged { status: SessionStatus::Initializing });
             match GrokSession::resume(session_id, cwd).await {
-                Ok(s) => {
+                Ok(mut s) => {
                     *status_rx = Some(s.subscribe_status());
                     let sid = s.session_id();
+                    // 先把 resume 期间灌入 channel 的回放事件全部 forward，再通知前端落盘。
+                    // 否则 invoke 返回后前端若过早 finishReplay，会只剩后到的 tool 卡。
+                    drain_session_events_until_quiet(
+                        &mut s,
+                        app,
+                        pending_permissions,
+                        next_perm_id,
+                    )
+                    .await;
                     *session = Some(s);
                     emit(app, FrontendEvent::StatusChanged { status: SessionStatus::Idle });
-                    emit(app, FrontendEvent::SessionIdChanged { session_id: sid });
+                    emit(app, FrontendEvent::SessionIdChanged { session_id: sid.clone() });
+                    emit(app, FrontendEvent::ReplayComplete { session_id: sid });
                     let _ = reply.send(Ok(()));
                 }
                 Err(e) => {
@@ -523,6 +537,41 @@ async fn begin_fresh_session(
             );
             let _ = reply.send(Err(e.to_string()));
         }
+    }
+}
+
+/// 将 channel 中已有（及短窗内陆续到达）的会话事件全部 forward 给前端。
+///
+/// `load_session` 在 resume 完成时，回放通知往往已在 `event_rx` 里排队；
+/// 必须在此 drain 完毕后再 `reply Ok` / `ReplayComplete`，前端才能一次组装完整 transcript。
+async fn drain_session_events_until_quiet(
+    session: &mut GrokSession,
+    app: &AppHandle,
+    pending: &mut HashMap<u64, oneshot::Sender<String>>,
+    next_id: &mut u64,
+) {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let quiet = Duration::from_millis(40);
+    let mut idle_rounds = 0u32;
+    // 连续若干轮 try_recv 为空则认为本批回放结束
+    const QUIET_ROUNDS: u32 = 3;
+
+    while Instant::now() < deadline {
+        let mut n = 0u32;
+        while let Some(ev) = session.try_next_event() {
+            forward_event(app, ev, pending, next_id);
+            n += 1;
+        }
+        if n > 0 {
+            idle_rounds = 0;
+            continue;
+        }
+        idle_rounds += 1;
+        if idle_rounds >= QUIET_ROUNDS {
+            break;
+        }
+        tokio::time::sleep(quiet).await;
     }
 }
 

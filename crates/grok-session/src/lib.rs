@@ -931,6 +931,11 @@ impl GrokSession {
     pub async fn next_event(&mut self) -> Option<SessionEvent> {
         self.event_rx.recv().await
     }
+
+    /// 非阻塞取一条事件（历史回放 drain 用）。
+    pub fn try_next_event(&mut self) -> Option<SessionEvent> {
+        self.event_rx.try_recv().ok()
+    }
 }
 
 /// 列出指定工作目录下的历史会话摘要（按官方持久化层的排序返回，通常是最近更新在前）。
