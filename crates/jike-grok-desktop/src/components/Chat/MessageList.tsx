@@ -10,10 +10,9 @@ import type { ChatMessage, ChatRole, PermissionRequest } from '../../types'
 import { MessageItem } from './MessageItem'
 
 const ITEM_GAP = 24
-/** 流式贴底：最多每 N 帧读一次 scrollHeight，降低 layout 频率 */
 const STREAM_SCROLL_EVERY_N = 2
-/** 超过此条数且正在流式时才启用虚拟列表；历史回放一律普通布局，避免测高失败只剩工具卡 */
-const VIRTUALIZE_MIN_COUNT = 80
+/** 仅 history 很长且正在流式时才虚拟化 history 段 */
+const VIRTUALIZE_MIN_HISTORY = 80
 
 function estimateMessageSize(role: ChatRole, textLen: number): number {
   switch (role) {
@@ -58,9 +57,9 @@ function DownArrowIcon() {
 }
 
 /**
- * 消息列表：
- * - 非流式（含历史会话）：普通 flex 布局，保证 user/assistant/tool 全部可见
- * - 流式且消息多：history 虚拟化 + live 尾条普通 DOM
+ * 列表策略（目标态）：
+ * - 默认文档流：历史 / 静态会话完整可见
+ * - 流式 + history 很长：只虚拟化 history，live 末条永远普通 DOM
  */
 export function MessageList({
   messages,
@@ -85,11 +84,16 @@ export function MessageList({
   const lastMessageId = lastMessage?.id
   const lastMessageTextLength = lastMessage?.text?.length
 
-  /** 仅「正在生成」且消息较多时用虚拟列表；历史回放/静态查看走文档流 */
-  const useVirtual = Boolean(streaming && count >= VIRTUALIZE_MIN_COUNT)
-  const useLiveTail = Boolean(useVirtual && count > 0)
-  const historyCount = useLiveTail ? count - 1 : useVirtual ? count : 0
-  const liveMessage = useLiveTail ? lastMessage : undefined
+  // 流式时末条视为 live（assistant/thought），history = 前面定稿
+  const liveIsStreamingTail =
+    streaming &&
+    lastMessage != null &&
+    (lastMessage.role === 'assistant' || lastMessage.role === 'thought')
+  const historyCount = liveIsStreamingTail ? count - 1 : count
+  const useVirtual = Boolean(
+    streaming && historyCount >= VIRTUALIZE_MIN_HISTORY,
+  )
+  const liveMessage = liveIsStreamingTail ? lastMessage : undefined
 
   useEffect(() => {
     if (lastMessage) {
@@ -98,9 +102,8 @@ export function MessageList({
   }, [lastMessage, lastMessageId])
 
   const virtualizer = useVirtualizer({
-    count: historyCount,
+    count: useVirtual ? historyCount : 0,
     getScrollElement: () => viewportRef.current,
-    // React 19：禁止在 layout/ref 路径 flushSync
     useFlushSync: false,
     estimateSize: (index) => {
       const m = messages[index]
@@ -119,9 +122,7 @@ export function MessageList({
           : el.getBoundingClientRect().height) || 0
       const idx = Number(el.getAttribute('data-index'))
       const m = messages[idx]
-      if (m && h > 0) {
-        heightCacheRef.current.set(m.id, h)
-      }
+      if (m && h > 0) heightCacheRef.current.set(m.id, h)
       return h
     },
   })
@@ -150,9 +151,7 @@ export function MessageList({
   }, [])
 
   const pauseAutoScroll = useCallback(() => {
-    if (!userInteractedUp.current) {
-      markSeenToMax()
-    }
+    if (!userInteractedUp.current) markSeenToMax()
     userInteractedUp.current = true
     setShowJumpButton(true)
   }, [markSeenToMax])
@@ -201,13 +200,12 @@ export function MessageList({
     if (!loadingHistory && count > 0) {
       requestAnimationFrame(() => stickScrollToBottom())
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionKey / loading 驱动重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey, loadingHistory, stickScrollToBottom])
 
   useEffect(() => {
     if (!showJumpButton) return
-    const n = messages.filter((m) => m.id > seenMaxIdRef.current).length
-    setNewMessageCount(n)
+    setNewMessageCount(messages.filter((m) => m.id > seenMaxIdRef.current).length)
   }, [messages, showJumpButton, lastMessageId, count])
 
   useLayoutEffect(() => {
@@ -224,18 +222,13 @@ export function MessageList({
       return
     }
     streamScrollTickRef.current += 1
-    if (streamScrollTickRef.current % STREAM_SCROLL_EVERY_N !== 0) {
-      return
-    }
+    if (streamScrollTickRef.current % STREAM_SCROLL_EVERY_N !== 0) return
     const el = viewportRef.current
     if (!el) return
     const prev = lastScrollHeightRef.current
     const next = el.scrollHeight
-    if (next > prev && prev > 0) {
-      el.scrollTop += next - prev
-    } else {
-      el.scrollTop = next
-    }
+    if (next > prev && prev > 0) el.scrollTop += next - prev
+    else el.scrollTop = next
     lastScrollHeightRef.current = el.scrollHeight
   }, [
     totalSize,
@@ -291,7 +284,7 @@ export function MessageList({
     </button>
   )
 
-  // ── 普通布局：历史 / 静态会话，保证全部消息可见 ──
+  // 默认：文档流（含历史会话）
   if (!useVirtual) {
     return (
       <div className="chat-viewport-wrapper">
@@ -316,9 +309,8 @@ export function MessageList({
     )
   }
 
-  // ── 虚拟列表 + live 尾条（仅长会话流式） ──
+  // 长会话流式：虚拟化 history + live 尾条
   const virtualItems = virtualizer.getVirtualItems()
-
   return (
     <div className="chat-viewport-wrapper">
       <div
@@ -346,9 +338,7 @@ export function MessageList({
                 data-index={vi.index}
                 ref={(node) => {
                   if (!node) return
-                  queueMicrotask(() => {
-                    virtualizer.measureElement(node)
-                  })
+                  queueMicrotask(() => virtualizer.measureElement(node))
                 }}
                 className="message-virtual-row"
                 style={{
@@ -366,7 +356,6 @@ export function MessageList({
             )
           })}
         </div>
-
         {liveMessage && (
           <div
             className="messages-container messages-live-tail"

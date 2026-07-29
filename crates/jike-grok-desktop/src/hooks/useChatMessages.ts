@@ -1,7 +1,13 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import {
+  createTranscriptAssembler,
+  viewMessages,
+  type LiveMessage,
+  type TranscriptAssembler,
+} from '../lib/chatTranscript'
 import { createPendingPrompts } from '../lib/pendingPrompts'
-import { createStreamTypewriter } from '../lib/streamTypewriter'
+import { noteFrameTimestamp, reportStreamTick } from '../lib/streamMetrics'
 import type {
   ChatMessage,
   ChatRole,
@@ -11,53 +17,225 @@ import type {
 } from '../types'
 
 /**
- * 消息列表 + 流式打字机 + 工具卡。
- * 打字机细节见 createStreamTypewriter；此处只接线。
+ * history（定稿）+ live（当前流式条）+ 历史回放组装。
+ *
+ * - 实时：assistant/thought 只改 live（rAF 合帧 setState）；user/tool 进 history
+ * - 回放：事件先写入 assembler，finishReplay 一次 setHistory
+ * - 文本合并：官方 bufferingSettings；前端只做一帧一次 live 更新
  */
 export function useChatMessages() {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [history, setHistory] = useState<ChatMessage[]>([])
+  const [live, setLive] = useState<LiveMessage | null>(null)
   const [contextUsedTokens, setContextUsedTokens] = useState(0)
-  const [usageDetail, setUsageDetail] = useState<Record<string, unknown> | null>(null)
+  const [usageDetail, setUsageDetail] = useState<Record<string, unknown> | null>(
+    null,
+  )
   const [usageDetailLoading, setUsageDetailLoading] = useState(false)
   const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([])
   const permission = permissionQueue[0] ?? null
 
   const nextId = useRef(1)
-  const streamRef = useRef<ReturnType<typeof createStreamTypewriter> | null>(null)
-  if (!streamRef.current) {
-    streamRef.current = createStreamTypewriter({
-      apply: (fn) => setMessages(fn),
-      allocId: () => nextId.current++,
-    })
-  }
-  const stream = streamRef.current
+  const allocId = useCallback(() => nextId.current++, [])
 
-  const pendingPromptsRef = useRef<ReturnType<typeof createPendingPrompts> | null>(null)
+  /** 实时路径 assembler（与 React state 同步） */
+  const liveAsm = useRef<TranscriptAssembler | null>(null)
+  if (!liveAsm.current) {
+    liveAsm.current = createTranscriptAssembler(allocId)
+  }
+
+  /** 回放路径：独立 assembler，finish 时一次性落到 React */
+  const replayAsm = useRef<TranscriptAssembler | null>(null)
+  const replaying = useRef(false)
+
+  const pendingPromptsRef = useRef<ReturnType<typeof createPendingPrompts> | null>(
+    null,
+  )
   if (!pendingPromptsRef.current) {
     pendingPromptsRef.current = createPendingPrompts()
   }
   const pendingPrompts = pendingPromptsRef.current
 
-  /**
-   * 流式 append 或整段 push。
-   * @param immediate 历史回放时 true：跳过 rAF，立刻写入，避免与工具卡交错丢文本
-   */
+  /** live 文本 rAF 合帧：一帧最多一次 setLive */
+  const liveRaf = useRef(0)
+  const scheduleLivePaint = useCallback(() => {
+    if (liveRaf.current) return
+    liveRaf.current = requestAnimationFrame(() => {
+      liveRaf.current = 0
+      const t0 = performance.now()
+      const frameDelta = noteFrameTimestamp(t0)
+      const snap = liveAsm.current!.snapshot()
+      setLive(snap.live)
+      reportStreamTick({
+        tickCost: performance.now() - t0,
+        commitCost: performance.now() - t0,
+        pendingChars: 0,
+        batchSize: snap.live?.text.length ?? 0,
+        frameDeltaMs: frameDelta,
+      })
+    })
+  }, [])
+
+  const cancelLiveRaf = useCallback(() => {
+    if (liveRaf.current) {
+      cancelAnimationFrame(liveRaf.current)
+      liveRaf.current = 0
+    }
+  }, [])
+
+  const paintHistoryFromLiveAsm = useCallback(() => {
+    cancelLiveRaf()
+    const snap = liveAsm.current!.snapshot()
+    setHistory(snap.history)
+    setLive(snap.live)
+  }, [cancelLiveRaf])
+
+  const activeAsm = (): TranscriptAssembler => {
+    if (replaying.current && replayAsm.current) return replayAsm.current
+    return liveAsm.current!
+  }
+
+  // ── 回放 API ──────────────────────────────────────────
+  const beginReplay = useCallback(() => {
+    cancelLiveRaf()
+    replaying.current = true
+    replayAsm.current = createTranscriptAssembler(allocId)
+    liveAsm.current!.clear()
+    setHistory([])
+    setLive(null)
+  }, [allocId, cancelLiveRaf])
+
+  const finishReplay = useCallback(() => {
+    if (!replaying.current || !replayAsm.current) return
+    replayAsm.current.sealLive()
+    const snap = replayAsm.current.snapshot()
+    // 把结果拷到 live assembler，保持后续实时一致
+    liveAsm.current!.replaceAll(snap.history)
+    replaying.current = false
+    replayAsm.current = null
+    setHistory(snap.history)
+    setLive(null)
+  }, [])
+
+  const isReplaying = useCallback(() => replaying.current, [])
+
+  // ── 消息写入 ──────────────────────────────────────────
+  const appendAgent = useCallback(
+    (role: 'assistant' | 'thought', text: string) => {
+      if (!text) return
+      const asm = activeAsm()
+      asm.appendLive(role, text)
+      if (replaying.current) return
+      scheduleLivePaint()
+    },
+    [scheduleLivePaint],
+  )
+
+  const pushUser = useCallback(
+    (text: string, promptId?: string) => {
+      const asm = activeAsm()
+      asm.pushUser(text, promptId)
+      if (replaying.current) return
+      paintHistoryFromLiveAsm()
+    },
+    [paintHistoryFromLiveAsm],
+  )
+
+  const pushSystem = useCallback(
+    (text: string) => {
+      const asm = activeAsm()
+      asm.pushSystem(text)
+      if (replaying.current) return
+      paintHistoryFromLiveAsm()
+    },
+    [paintHistoryFromLiveAsm],
+  )
+
+  /** 兼容旧 pushMessage(role, text, append?, promptId?) */
   const pushMessage = useCallback(
-    (
-      role: ChatRole,
-      text: string,
-      append = false,
-      promptId?: string,
-      immediate = false,
-    ) => {
-      if (append) {
-        if (immediate) stream.appendImmediate(role, text)
-        else stream.append(role, text)
+    (role: ChatRole, text: string, append = false, promptId?: string) => {
+      if (role === 'tool') return
+      if (role === 'system') {
+        pushSystem(text)
         return
       }
-      stream.push(role, text, promptId)
+      if (role === 'user') {
+        if (append) {
+          activeAsm().appendUser(text)
+          if (!replaying.current) paintHistoryFromLiveAsm()
+          return
+        }
+        pushUser(text, promptId)
+        return
+      }
+      if (role === 'assistant' || role === 'thought') {
+        if (append) appendAgent(role, text)
+        else {
+          // 整段：当作 live 后 seal
+          const asm = activeAsm()
+          asm.sealLive()
+          asm.appendLive(role, text)
+          asm.sealLive()
+          if (!replaying.current) paintHistoryFromLiveAsm()
+        }
+      }
     },
-    [stream],
+    [appendAgent, paintHistoryFromLiveAsm, pushSystem, pushUser],
+  )
+
+  const upsertToolCall = useCallback(
+    (tool: ToolCallData) => {
+      activeAsm().upsertTool(tool)
+      if (!replaying.current) paintHistoryFromLiveAsm()
+    },
+    [paintHistoryFromLiveAsm],
+  )
+
+  const patchToolCall = useCallback(
+    (update: ToolCallUpdateData) => {
+      activeAsm().patchTool(update)
+      if (!replaying.current) paintHistoryFromLiveAsm()
+    },
+    [paintHistoryFromLiveAsm],
+  )
+
+  const sealLive = useCallback(() => {
+    if (replaying.current) {
+      replayAsm.current?.sealLive()
+      return
+    }
+    liveAsm.current!.sealLive()
+    paintHistoryFromLiveAsm()
+  }, [paintHistoryFromLiveAsm])
+
+  const resetConversationUi = useCallback(() => {
+    cancelLiveRaf()
+    replaying.current = false
+    replayAsm.current = null
+    liveAsm.current!.clear()
+    pendingPrompts.clearAll()
+    setHistory([])
+    setLive(null)
+    setContextUsedTokens(0)
+    setPermissionQueue([])
+    setUsageDetail(null)
+  }, [cancelLiveRaf, pendingPrompts])
+
+  const setMessages = useCallback(
+    (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      cancelLiveRaf()
+      const snap = liveAsm.current!.snapshot()
+      const base = viewMessages(snap)
+      const next = typeof updater === 'function' ? updater(base) : updater
+      liveAsm.current!.replaceAll(next)
+      setHistory(next)
+      setLive(null)
+    },
+    [cancelLiveRaf],
+  )
+
+  const messages = useMemo(
+    () => viewMessages({ history, live }),
+    [history, live],
   )
 
   const fetchUsageDetail = useCallback(async () => {
@@ -67,107 +245,70 @@ export function useChatMessages() {
       const detail = await invoke('get_session_usage')
       setUsageDetail(detail as Record<string, unknown>)
     } catch (e) {
-      pushMessage('system', `获取用量明细失败: ${String(e)}`)
+      pushSystem(`获取用量明细失败: ${String(e)}`)
     } finally {
       setUsageDetailLoading(false)
     }
-  }, [usageDetailLoading, pushMessage])
+  }, [usageDetailLoading, pushSystem])
 
-  const upsertToolCall = useCallback(
-    (tool: ToolCallData) => {
-      stream.commitSealed((prev) => {
-        const idx = prev.findIndex(
-          (m) => m.role === 'tool' && m.tool.toolCallId === tool.toolCallId,
-        )
-        if (idx >= 0) {
-          const copy = [...prev]
-          const cur = copy[idx]
-          if (cur.role !== 'tool') return prev
-          copy[idx] = {
-            id: cur.id,
-            role: 'tool',
-            text: tool.detail || tool.title,
-            tool: { ...cur.tool, ...tool },
+  /** 兼容旧 stream.* API（桌面其它调用点） */
+  const stream = useMemo(
+    () => ({
+      append: (role: ChatRole, text: string) => {
+        if (role === 'assistant' || role === 'thought') appendAgent(role, text)
+      },
+      appendImmediate: (role: ChatRole, text: string) => {
+        if (role === 'assistant' || role === 'thought') {
+          appendAgent(role, text)
+          if (!replaying.current) {
+            cancelLiveRaf()
+            setLive(liveAsm.current!.snapshot().live)
           }
-          return copy
         }
-        return [
-          ...prev,
-          {
-            id: nextId.current++,
-            role: 'tool' as const,
-            text: tool.detail || tool.title,
-            tool,
-          },
-        ]
-      })
-    },
-    [stream],
+      },
+      push: (role: ChatRole, text: string, promptId?: string) => {
+        pushMessage(role, text, false, promptId)
+      },
+      flush: () => {
+        if (replaying.current) return
+        cancelLiveRaf()
+        setLive(liveAsm.current!.snapshot().live)
+      },
+      discard: () => {
+        cancelLiveRaf()
+        // 丢弃 live，不写 history
+        const h = liveAsm.current!.snapshot().history
+        liveAsm.current!.replaceAll(h)
+        setLive(null)
+      },
+      seal: () => sealLive(),
+      commitSealed: (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+        if (replaying.current) {
+          const asm = replayAsm.current!
+          asm.sealLive()
+          const base = viewMessages(asm.snapshot())
+          asm.replaceAll(updater(base))
+          return
+        }
+        sealLive()
+        setMessages(updater)
+      },
+      getActiveRole: (): ChatRole | null => {
+        if (replaying.current) return replayAsm.current?.liveRole() ?? null
+        return liveAsm.current!.liveRole()
+      },
+      setActiveRole: (_role: ChatRole | null) => {
+        /* live 由 append 驱动 */
+      },
+      getPendingChars: () => liveAsm.current!.snapshot().live?.text.length ?? 0,
+    }),
+    [appendAgent, cancelLiveRaf, pushMessage, sealLive, setMessages],
   )
-
-  const patchToolCall = useCallback(
-    (update: ToolCallUpdateData) => {
-      stream.commitSealed((prev) => {
-        const idx = prev.findIndex(
-          (m) => m.role === 'tool' && m.tool.toolCallId === update.toolCallId,
-        )
-        if (idx < 0) {
-          const tool: ToolCallData = {
-            toolCallId: update.toolCallId,
-            kind: update.kind ?? 'other',
-            status: update.status ?? 'in_progress',
-            title: update.title ?? '工具调用',
-            detail: update.detail ?? '',
-            preview: update.preview ?? '',
-            diffs: update.diffs ?? [],
-          }
-          return [
-            ...prev,
-            {
-              id: nextId.current++,
-              role: 'tool' as const,
-              text: tool.detail || tool.title,
-              tool,
-            },
-          ]
-        }
-        const copy = [...prev]
-        const cur = copy[idx]
-        if (cur.role !== 'tool') return prev
-        const old = cur.tool
-        const next: ToolCallData = {
-          toolCallId: old.toolCallId,
-          kind: update.kind ?? old.kind,
-          status: update.status ?? old.status,
-          title: update.title ?? old.title,
-          detail: update.detail ?? old.detail,
-          preview: update.preview ?? old.preview,
-          diffs: update.diffs ?? old.diffs,
-        }
-        copy[idx] = {
-          id: cur.id,
-          role: 'tool',
-          text: next.detail || next.title,
-          tool: next,
-        }
-        return copy
-      })
-    },
-    [stream],
-  )
-
-  const resetConversationUi = useCallback(() => {
-    stream.discard()
-    stream.setActiveRole(null)
-    pendingPrompts.clearAll()
-    setMessages([])
-    setContextUsedTokens(0)
-    setPermissionQueue([])
-    setUsageDetail(null)
-  }, [stream, pendingPrompts])
 
   return {
     messages,
+    history,
+    live,
     setMessages,
     contextUsedTokens,
     setContextUsedTokens,
@@ -178,12 +319,18 @@ export function useChatMessages() {
     setPermissionQueue,
     permission,
     pushMessage,
-    /** 统一流式控制：flush / discard / seal / getActiveRole … */
+    appendAgent,
+    pushUser,
+    pushSystem,
     stream,
     pendingPrompts,
     upsertToolCall,
     patchToolCall,
+    sealLive,
     resetConversationUi,
+    beginReplay,
+    finishReplay,
+    isReplaying,
   }
 }
 

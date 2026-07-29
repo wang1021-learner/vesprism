@@ -696,7 +696,8 @@ impl GrokSession {
         let compat_gui_read = gui_read.compat();
         let compat_gui_write = gui_write.compat_write();
 
-        let (event_tx, event_rx) = mpsc::channel(256);
+        // 历史回放可能瞬时灌入大量 session/update；256 易反压卡住 load_session
+        let (event_tx, event_rx) = mpsc::channel(4096);
         let client = GuiClient {
             event_tx: event_tx.clone(),
         };
@@ -762,7 +763,7 @@ impl GrokSession {
         let (gui_read, gui_write) = tokio::io::split(gui_stream);
         let compat_gui_read = gui_read.compat();
         let compat_gui_write = gui_write.compat_write();
-        let (event_tx, event_rx) = mpsc::channel(256);
+        let (event_tx, event_rx) = mpsc::channel(4096);
         let client = GuiClient {
             event_tx: event_tx.clone(),
         };

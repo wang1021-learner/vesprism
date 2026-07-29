@@ -83,11 +83,15 @@ export function useDesktopApp() {
     setPermissionQueue,
     permission,
     pushMessage,
+    appendAgent,
     stream,
     pendingPrompts,
     upsertToolCall,
     patchToolCall,
+    sealLive,
     resetConversationUi,
+    beginReplay,
+    finishReplay,
   } = chat
 
   const canSwitchWorkspace =
@@ -128,15 +132,6 @@ export function useDesktopApp() {
 
   const composerRef = useRef<ComposerHandle>(null)
   const autoStarted = useRef(false)
-  /** 事件监听闭包用：避免依赖 session 状态导致频繁重订阅 */
-  const loadingHistoryRef = useRef(loadingHistory)
-  const engineGeneratingRef = useRef(engineGenerating)
-  useEffect(() => {
-    loadingHistoryRef.current = loadingHistory
-  }, [loadingHistory])
-  useEffect(() => {
-    engineGeneratingRef.current = engineGenerating
-  }, [engineGenerating])
 
   // ── session-event 订阅 ────────────────────────────────
   useEffect(() => {
@@ -148,21 +143,19 @@ export function useDesktopApp() {
     ;(async () => {
       unlisten = await listen<SessionEvent>('session-event', (event) => {
         const payload = event.payload
-        // 历史加载 / 非生成态：文本立即落地，不走 rAF 打字机
-        const immediateText =
-          loadingHistoryRef.current || !engineGeneratingRef.current
         switch (payload.type) {
           case 'agent_text_chunk':
-            pushMessage('assistant', payload.text, true, undefined, immediateText)
+            // 实时：只改 live（rAF 合帧）；回放：写入 replay assembler
+            appendAgent('assistant', payload.text)
             break
           case 'agent_thought_chunk':
-            pushMessage('thought', payload.text, true, undefined, immediateText)
+            appendAgent('thought', payload.text)
             break
           case 'user_text_chunk': {
             const pid = payload.prompt_id
             if (pid && pendingPrompts.has(pid)) break
             if (stream.getActiveRole() === 'user') {
-              pushMessage('user', payload.text, true, undefined, immediateText)
+              pushMessage('user', payload.text, true)
             } else {
               pushMessage('user', payload.text)
             }
@@ -179,12 +172,12 @@ export function useDesktopApp() {
             break
           case 'turn_ended': {
             if (payload.prompt_id) pendingPrompts.clear(payload.prompt_id)
-            stream.seal()
+            sealLive()
             break
           }
           case 'error': {
             if (payload.prompt_id) pendingPrompts.clear(payload.prompt_id)
-            stream.seal()
+            sealLive()
             setError(payload.message)
             pushMessage('system', `错误: ${payload.message}`)
             break
@@ -219,8 +212,10 @@ export function useDesktopApp() {
   }, [
     inTauri,
     pushMessage,
+    appendAgent,
     upsertToolCall,
     patchToolCall,
+    sealLive,
     stream,
     pendingPrompts,
     setContextUsedTokens,
@@ -384,6 +379,8 @@ export function useDesktopApp() {
 
       resetConversationUi()
       setError(null)
+      // 回放模式：事件进 assembler，结束后一次 commit 到 history
+      beginReplay()
       dispatchSession({ type: 'LOAD_START', sessionId: id })
 
       if (!hadUserMessage && prevId && prevId !== id) {
@@ -394,10 +391,10 @@ export function useDesktopApp() {
         const fallbackCwd = await invoke<string>('workspace_cwd')
         const cwd = (sessionCwd || fromList?.cwd || fallbackCwd).trim() || fallbackCwd
         await invoke('load_session', { sessionId: id, cwd })
+        // 等 actor 把回放事件 drain 完再一次落盘 UI
+        await new Promise<void>((r) => window.setTimeout(r, 120))
+        finishReplay()
         dispatchSession({ type: 'LOAD_OK' })
-        // 历史回放可能仍在 drain；稍后 flush 打字机，避免末条 AI 卡在 pending
-        window.setTimeout(() => stream.flush(), 0)
-        window.setTimeout(() => stream.flush(), 80)
         try {
           const appliedCwd = await invoke<string>('set_workspace_cwd', { cwd })
           setWorkspaceCwd(appliedCwd)
@@ -413,6 +410,7 @@ export function useDesktopApp() {
       } catch (e) {
         const msg = String(e)
         setError(msg)
+        finishReplay()
         pushMessage('system', `恢复会话失败: ${msg}`)
         dispatchSession({ type: 'LOAD_FAIL', restoreSessionId: prevId })
       }
@@ -429,7 +427,8 @@ export function useDesktopApp() {
       loadModelsFromDisk,
       syncSessionModel,
       resetConversationUi,
-      stream,
+      beginReplay,
+      finishReplay,
     ],
   )
 
@@ -844,9 +843,8 @@ export function useDesktopApp() {
     if (!text || !selectCanSend(inTauri, sessionShell)) return
     setInput('')
     setError(null)
-    // 发送前清掉未吐完的缓冲，避免旧流式残留
+    // 发送前清掉未定稿的 live，避免旧流式残留
     stream.discard()
-    stream.setActiveRole(null)
     const isFirstUserMessage = !messages.some((m) => m.role === 'user')
     if (isFirstUserMessage) {
       const title = text.replace(/\s+/g, ' ')
@@ -869,8 +867,6 @@ export function useDesktopApp() {
     }
     const promptId = generateId('prompt_')
     pushMessage('user', text, false, promptId)
-    // 用户气泡已完整落盘，不进入流式 append 态
-    stream.setActiveRole(null)
     pendingPrompts.track(promptId)
 
     try {
@@ -887,7 +883,7 @@ export function useDesktopApp() {
 
   const onCancel = async () => {
     try {
-      stream.flush()
+      sealLive()
       await invoke('cancel_turn')
     } catch (e) {
       setError(String(e))
