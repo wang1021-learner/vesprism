@@ -12,6 +12,8 @@ import { MessageItem } from './MessageItem'
 const ITEM_GAP = 24
 /** 流式贴底：最多每 N 帧读一次 scrollHeight，降低 layout 频率 */
 const STREAM_SCROLL_EVERY_N = 2
+/** 超过此条数且正在流式时才启用虚拟列表；历史回放一律普通布局，避免测高失败只剩工具卡 */
+const VIRTUALIZE_MIN_COUNT = 80
 
 function estimateMessageSize(role: ChatRole, textLen: number): number {
   switch (role) {
@@ -56,10 +58,9 @@ function DownArrowIcon() {
 }
 
 /**
- * 虚拟化 history + 流式 live 尾条（普通 DOM）。
- *
- * 流式时只 virtualize `messages[0..n-2]`，末条固定在列表下方不参与 measure，
- * 避免 virtualizer 对增长中的气泡反复测高/diff。
+ * 消息列表：
+ * - 非流式（含历史会话）：普通 flex 布局，保证 user/assistant/tool 全部可见
+ * - 流式且消息多：history 虚拟化 + live 尾条普通 DOM
  */
 export function MessageList({
   messages,
@@ -71,15 +72,12 @@ export function MessageList({
   const viewportRef = useRef<HTMLDivElement>(null)
   const userInteractedUp = useRef(false)
   const [showJumpButton, setShowJumpButton] = useState(false)
-  /** 用户离开底部时已见过的最大消息 id */
   const seenMaxIdRef = useRef(0)
-  /** 列表中最大 message id（id 单调递增，用末条维护） */
   const maxMessageIdRef = useRef(0)
   const [newMessageCount, setNewMessageCount] = useState(0)
   const scrollScheduledRef = useRef(false)
   const lastScrollHeightRef = useRef(0)
   const heightCacheRef = useRef<Map<number, number>>(new Map())
-  /** 流式贴底降频计数 */
   const streamScrollTickRef = useRef(0)
 
   const count = messages.length
@@ -87,12 +85,12 @@ export function MessageList({
   const lastMessageId = lastMessage?.id
   const lastMessageTextLength = lastMessage?.text?.length
 
-  /** 流式：history 与 live 拆分；非流式：全部进虚拟列表。不 slice，避免每帧新数组。 */
-  const useLiveTail = Boolean(streaming && count > 0)
-  const historyCount = useLiveTail ? count - 1 : count
+  /** 仅「正在生成」且消息较多时用虚拟列表；历史回放/静态查看走文档流 */
+  const useVirtual = Boolean(streaming && count >= VIRTUALIZE_MIN_COUNT)
+  const useLiveTail = Boolean(useVirtual && count > 0)
+  const historyCount = useLiveTail ? count - 1 : useVirtual ? count : 0
   const liveMessage = useLiveTail ? lastMessage : undefined
 
-  // 维护 max id（O(1)，替代多处 reduce）
   useEffect(() => {
     if (lastMessage) {
       maxMessageIdRef.current = Math.max(maxMessageIdRef.current, lastMessage.id)
@@ -102,9 +100,7 @@ export function MessageList({
   const virtualizer = useVirtualizer({
     count: historyCount,
     getScrollElement: () => viewportRef.current,
-    // React 19：measureElement 在 commitAttachRef 里若用 flushSync 会报
-    // "flushSync was called from inside a lifecycle method"，并可能导致测高
-    // 失败、历史气泡叠层/只看见用户消息。关闭后改为异步 rerender。
+    // React 19：禁止在 layout/ref 路径 flushSync
     useFlushSync: false,
     estimateSize: (index) => {
       const m = messages[index]
@@ -113,10 +109,9 @@ export function MessageList({
       if (cached != null && cached > 0) return cached
       return estimateMessageSize(m.role, m.text?.length ?? 0)
     },
-    overscan: streaming ? 4 : 8,
+    overscan: 4,
     getItemKey: (index) => messages[index]?.id ?? index,
     measureElement: (el) => {
-      // offsetHeight 含 padding；Element 无此属性时回退 getBoundingClientRect
       const htmlEl = el as HTMLElement
       const h =
         (typeof htmlEl.offsetHeight === 'number' && htmlEl.offsetHeight > 0
@@ -206,8 +201,7 @@ export function MessageList({
     if (!loadingHistory && count > 0) {
       requestAnimationFrame(() => stickScrollToBottom())
     }
-    // 仅会话切换时重置；勿依赖 count / lastMessage.id 以免流式中反复清缓存
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionKey 驱动重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionKey / loading 驱动重置
   }, [sessionKey, loadingHistory, stickScrollToBottom])
 
   useEffect(() => {
@@ -216,15 +210,13 @@ export function MessageList({
     setNewMessageCount(n)
   }, [messages, showJumpButton, lastMessageId, count])
 
-  // 非流式 / 跳底：下一帧 stick
   useLayoutEffect(() => {
     if (loadingHistory || userInteractedUp.current || count === 0) return
     if (streaming) return
     scheduleStickBottom()
   }, [count, lastMessageId, loadingHistory, scheduleStickBottom, streaming])
 
-  // 流式：history totalSize / live 文本变长时降频贴底
-  const totalSize = virtualizer.getTotalSize()
+  const totalSize = useVirtual ? virtualizer.getTotalSize() : 0
   useEffect(() => {
     if (loadingHistory || userInteractedUp.current || count === 0) return
     if (!streaming) {
@@ -277,6 +269,54 @@ export function MessageList({
     )
   }
 
+  const jumpButton = showJumpButton && (
+    <button
+      type="button"
+      className="jump-to-bottom-btn"
+      onClick={() => resumeAutoScroll()}
+      title={
+        newMessageCount > 0
+          ? `${newMessageCount} 条新消息，点击跳到底部`
+          : '跳到底部'
+      }
+    >
+      <span className="jump-to-bottom-icon">
+        <DownArrowIcon />
+      </span>
+      {newMessageCount > 0 && (
+        <span className="jump-to-bottom-badge">
+          {newMessageCount > 9 ? '9+' : newMessageCount}
+        </span>
+      )}
+    </button>
+  )
+
+  // ── 普通布局：历史 / 静态会话，保证全部消息可见 ──
+  if (!useVirtual) {
+    return (
+      <div className="chat-viewport-wrapper">
+        <div
+          className="chat-viewport"
+          ref={viewportRef}
+          onScroll={onViewportScroll}
+          onWheel={onWheel}
+        >
+          <div className="messages-container">
+            {messages.map((m, i) => (
+              <MessageItem
+                key={m.id}
+                message={m}
+                streaming={Boolean(streaming && i === count - 1)}
+              />
+            ))}
+          </div>
+        </div>
+        {jumpButton}
+      </div>
+    )
+  }
+
+  // ── 虚拟列表 + live 尾条（仅长会话流式） ──
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
@@ -287,7 +327,6 @@ export function MessageList({
         onScroll={onViewportScroll}
         onWheel={onWheel}
       >
-        {/* history：虚拟列表，稳定高度 */}
         <div
           className="messages-container messages-container-virtual"
           style={{
@@ -305,11 +344,8 @@ export function MessageList({
               <div
                 key={vi.key}
                 data-index={vi.index}
-                // 不直接把 measureElement 当 ref：它在 attach 时可能同步触发
-                // onChange(sync)；配合 useFlushSync:false 仍更安全地延后一帧测高。
                 ref={(node) => {
                   if (!node) return
-                  // 微任务：躲开 commitLayout / attachRef 同步路径
                   queueMicrotask(() => {
                     virtualizer.measureElement(node)
                   })
@@ -331,7 +367,6 @@ export function MessageList({
           })}
         </div>
 
-        {/* live：流式末条，普通 DOM，不进 virtualizer measure */}
         {liveMessage && (
           <div
             className="messages-container messages-live-tail"
@@ -347,28 +382,7 @@ export function MessageList({
           </div>
         )}
       </div>
-
-      {showJumpButton && (
-        <button
-          type="button"
-          className="jump-to-bottom-btn"
-          onClick={() => resumeAutoScroll()}
-          title={
-            newMessageCount > 0
-              ? `${newMessageCount} 条新消息，点击跳到底部`
-              : '跳到底部'
-          }
-        >
-          <span className="jump-to-bottom-icon">
-            <DownArrowIcon />
-          </span>
-          {newMessageCount > 0 && (
-            <span className="jump-to-bottom-badge">
-              {newMessageCount > 9 ? '9+' : newMessageCount}
-            </span>
-          )}
-        </button>
-      )}
+      {jumpButton}
     </div>
   )
 }

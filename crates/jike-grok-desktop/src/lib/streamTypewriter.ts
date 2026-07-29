@@ -24,6 +24,11 @@ function makeTextMessage(
 
 export type StreamTypewriter = {
   append: (role: ChatRole, text: string) => void
+  /**
+   * 立即写入 React state（无 rAF）。历史回放 / 非流式场景用，
+   * 避免 rAF 与工具卡 commitSealed 交错导致文本消息“丢了”。
+   */
+  appendImmediate: (role: ChatRole, text: string) => void
   push: (role: ChatRole, text: string, promptId?: string) => void
   flush: () => void
   discard: () => void
@@ -185,6 +190,25 @@ export function createStreamTypewriter(opts: {
     schedule()
   }
 
+  /** 立刻把 chunk 合并进消息列表（同步 flush，不经 rAF） */
+  const appendImmediate = (role: ChatRole, text: string) => {
+    if (!text) return
+    const r = asStreamRole(role)
+    const canContinue = activeRole === r || activeRole === null
+    if (!canContinue) {
+      flush()
+      activeRole = r
+    }
+    if (pending && pending.role === r) {
+      pending.text += text
+    } else {
+      if (pending?.text) flush()
+      pending = { role: r, text }
+    }
+    if (activeRole === null) activeRole = r
+    flush()
+  }
+
   const push = (role: ChatRole, text: string, promptId?: string) => {
     flush()
     const r = asStreamRole(role)
@@ -194,6 +218,7 @@ export function createStreamTypewriter(opts: {
 
   return {
     append,
+    appendImmediate,
     push,
     flush,
     discard,

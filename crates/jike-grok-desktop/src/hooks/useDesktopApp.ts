@@ -128,6 +128,15 @@ export function useDesktopApp() {
 
   const composerRef = useRef<ComposerHandle>(null)
   const autoStarted = useRef(false)
+  /** 事件监听闭包用：避免依赖 session 状态导致频繁重订阅 */
+  const loadingHistoryRef = useRef(loadingHistory)
+  const engineGeneratingRef = useRef(engineGenerating)
+  useEffect(() => {
+    loadingHistoryRef.current = loadingHistory
+  }, [loadingHistory])
+  useEffect(() => {
+    engineGeneratingRef.current = engineGenerating
+  }, [engineGenerating])
 
   // ── session-event 订阅 ────────────────────────────────
   useEffect(() => {
@@ -139,18 +148,21 @@ export function useDesktopApp() {
     ;(async () => {
       unlisten = await listen<SessionEvent>('session-event', (event) => {
         const payload = event.payload
+        // 历史加载 / 非生成态：文本立即落地，不走 rAF 打字机
+        const immediateText =
+          loadingHistoryRef.current || !engineGeneratingRef.current
         switch (payload.type) {
           case 'agent_text_chunk':
-            pushMessage('assistant', payload.text, true)
+            pushMessage('assistant', payload.text, true, undefined, immediateText)
             break
           case 'agent_thought_chunk':
-            pushMessage('thought', payload.text, true)
+            pushMessage('thought', payload.text, true, undefined, immediateText)
             break
           case 'user_text_chunk': {
             const pid = payload.prompt_id
             if (pid && pendingPrompts.has(pid)) break
             if (stream.getActiveRole() === 'user') {
-              pushMessage('user', payload.text, true)
+              pushMessage('user', payload.text, true, undefined, immediateText)
             } else {
               pushMessage('user', payload.text)
             }

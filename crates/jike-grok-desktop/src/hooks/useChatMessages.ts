@@ -38,11 +38,21 @@ export function useChatMessages() {
   }
   const pendingPrompts = pendingPromptsRef.current
 
-  /** 流式 append 或整段 push */
+  /**
+   * 流式 append 或整段 push。
+   * @param immediate 历史回放时 true：跳过 rAF，立刻写入，避免与工具卡交错丢文本
+   */
   const pushMessage = useCallback(
-    (role: ChatRole, text: string, append = false, promptId?: string) => {
+    (
+      role: ChatRole,
+      text: string,
+      append = false,
+      promptId?: string,
+      immediate = false,
+    ) => {
       if (append) {
-        stream.append(role, text)
+        if (immediate) stream.appendImmediate(role, text)
+        else stream.append(role, text)
         return
       }
       stream.push(role, text, promptId)
