@@ -116,8 +116,12 @@ export function MessageList({
     overscan: streaming ? 4 : 8,
     getItemKey: (index) => messages[index]?.id ?? index,
     measureElement: (el) => {
-      // 用 offsetHeight 比 getBoundingClientRect 更便宜，且含 padding（box-sizing）
-      const h = el.offsetHeight || el.getBoundingClientRect().height
+      // offsetHeight 含 padding；Element 无此属性时回退 getBoundingClientRect
+      const htmlEl = el as HTMLElement
+      const h =
+        (typeof htmlEl.offsetHeight === 'number' && htmlEl.offsetHeight > 0
+          ? htmlEl.offsetHeight
+          : el.getBoundingClientRect().height) || 0
       const idx = Number(el.getAttribute('data-index'))
       const m = messages[idx]
       if (m && h > 0) {
