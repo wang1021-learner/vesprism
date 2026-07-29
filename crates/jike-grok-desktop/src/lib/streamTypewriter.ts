@@ -35,32 +35,13 @@ export type StreamTypewriter = {
   getPendingChars: () => number
 }
 
-function takeCodePoints(s: string, maxUnits: number): [string, string] {
-  if (s.length <= maxUnits) return [s, '']
-  let i = 0
-  let taken = 0
-  while (i < s.length && taken < maxUnits) {
-    const cp = s.codePointAt(i)!
-    i += cp > 0xffff ? 2 : 1
-    taken += 1
-  }
-  return [s.slice(0, i), s.slice(i)]
-}
-
-function batchSize(pendingLen: number): number {
-  // 对齐 V2 动态档位思路，略保守
-  if (pendingLen > 8000) return 256
-  if (pendingLen > 2000) return 128
-  if (pendingLen > 500) return 64
-  if (pendingLen > 120) return 32
-  if (pendingLen > 40) return 16
-  if (pendingLen > 12) return 8
-  if (pendingLen > 4) return 4
-  return 2
-}
-
 /**
- * 流式打字机：buffer + rAF + activeRole + StreamMetrics 采样。
+ * 流式合并器：同一帧内多次 append 进 buffer，每 rAF 整段 drain 到 React。
+ *
+ * 不再按字符限速（旧 batchSize 会制造机械打字感）；节流交给：
+ * - 官方 ReplayBuffer（initialize bufferingSettings）
+ * - 桌面 Actor 侧 chunk 合并
+ * - rAF + React 18 批处理
  */
 export function createStreamTypewriter(opts: {
   apply: MessagesApply
@@ -105,6 +86,7 @@ export function createStreamTypewriter(opts: {
     raf = requestAnimationFrame(tick)
   }
 
+  /** 每帧把 pending 一次清空，避免人为限速 */
   const tick = () => {
     raf = 0
     const t0 = performance.now()
@@ -122,40 +104,18 @@ export function createStreamTypewriter(opts: {
       return
     }
 
-    const role = pending.role
-    const pendingBefore = pending.text.length
-    const take = batchSize(pendingBefore)
-    const [chunk, rest] = takeCodePoints(pending.text, take)
-    pending.text = rest
-    if (!rest) pending = null
-    const batchUsed = chunk.length
-
+    const batchUsed = pending.text.length
     const c0 = performance.now()
-    apply((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].role === role) {
-        const copy = [...prev]
-        const last = copy[copy.length - 1]
-        if (last.role !== 'tool') {
-          copy[copy.length - 1] = { ...last, text: last.text + chunk }
-          activeRole = role
-          return copy
-        }
-      }
-      activeRole = role
-      return [...prev, makeTextMessage(allocId(), role, chunk)]
-    })
+    apply((prev) => drainInto(prev))
     const commitCost = performance.now() - c0
-    const tickCost = performance.now() - t0
 
     reportStreamTick({
-      tickCost,
+      tickCost: performance.now() - t0,
       commitCost,
-      pendingChars: pending?.text.length ?? 0,
+      pendingChars: 0,
       batchSize: batchUsed,
       frameDeltaMs: frameDelta,
     })
-
-    if (pending?.text) schedule()
   }
 
   const flush = () => {
@@ -164,13 +124,14 @@ export function createStreamTypewriter(opts: {
       pending = null
       return
     }
+    const batchUsed = pending.text.length
     const c0 = performance.now()
     apply((prev) => drainInto(prev))
     reportStreamTick({
       tickCost: performance.now() - c0,
       commitCost: performance.now() - c0,
       pendingChars: 0,
-      batchSize: 0,
+      batchSize: batchUsed,
     })
   }
 
@@ -207,6 +168,7 @@ export function createStreamTypewriter(opts: {
   }
 
   const append = (role: ChatRole, text: string) => {
+    if (!text) return
     const r = asStreamRole(role)
     const canContinue = activeRole === r || activeRole === null
     if (!canContinue) {

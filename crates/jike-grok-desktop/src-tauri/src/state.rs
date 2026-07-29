@@ -6,8 +6,14 @@ use grok_session::{
 };
 use serde::Serialize;
 use std::collections::HashMap;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Instant, sleep_until};
+
+/// 桌面侧文本/思考 chunk 合并窗口（约 2 帧 @60Hz）。
+/// 官方 ReplayBuffer 已在 grok-session initialize 打开；此处再并一层，降低 Tauri IPC。
+const STREAM_EMIT_COALESCE_MS: u64 = 33;
 
 /// 从前端 invoke 发往会话 Actor 线程的命令。
 pub enum ActorCommand {
@@ -164,6 +170,31 @@ fn emit(app: &AppHandle, event: FrontendEvent) {
     }
 }
 
+/// 待合并的流式文本（assistant / thought 互斥缓冲）。
+enum PendingStreamEmit {
+    None,
+    Text(String),
+    Thought(String),
+}
+
+impl PendingStreamEmit {
+    fn take_event(&mut self) -> Option<FrontendEvent> {
+        match std::mem::replace(self, Self::None) {
+            Self::None => None,
+            Self::Text(text) if text.is_empty() => None,
+            Self::Text(text) => Some(FrontendEvent::AgentTextChunk { text }),
+            Self::Thought(text) if text.is_empty() => None,
+            Self::Thought(text) => Some(FrontendEvent::AgentThoughtChunk { text }),
+        }
+    }
+
+    fn flush_to(&mut self, app: &AppHandle) {
+        if let Some(ev) = self.take_event() {
+            emit(app, ev);
+        }
+    }
+}
+
 /// 在会话线程内永久循环（处于 LocalSet 中）。
 pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<ActorCommand>) {
     let mut session: Option<GrokSession> = None;
@@ -171,16 +202,31 @@ pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<Actor
     // 待处理的权限 oneshot，key 为 request_id。
     let mut pending_permissions: HashMap<u64, oneshot::Sender<String>> = HashMap::new();
     let mut next_perm_id: u64 = 1;
+    let mut pending_stream = PendingStreamEmit::None;
+    let mut stream_flush_at: Option<Instant> = None;
+    // 合并窗口内只保留最新 token 用量，随文本 flush 或边界事件发出。
+    let mut pending_token_usage: Option<u64> = None;
 
     loop {
         let has_session = session.is_some();
+        let flush_deadline = stream_flush_at;
 
         tokio::select! {
             // 处理来自 Tauri 命令的控制消息。
             cmd = cmd_rx.recv() => {
                 let Some(cmd) = cmd else {
+                    pending_stream.flush_to(&app);
+                    if let Some(total_tokens) = pending_token_usage.take() {
+                        emit(&app, FrontendEvent::TokenUsage { total_tokens });
+                    }
                     break;
                 };
+                // 控制面命令前先冲掉缓冲，避免乱序。
+                pending_stream.flush_to(&app);
+                stream_flush_at = None;
+                if let Some(total_tokens) = pending_token_usage.take() {
+                    emit(&app, FrontendEvent::TokenUsage { total_tokens });
+                }
                 handle_command(
                     cmd,
                     &app,
@@ -203,9 +249,17 @@ pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<Actor
                             ev,
                             &mut pending_permissions,
                             &mut next_perm_id,
+                            &mut pending_stream,
+                            &mut stream_flush_at,
+                            &mut pending_token_usage,
                         );
                     }
                     None => {
+                        pending_stream.flush_to(&app);
+                        stream_flush_at = None;
+                        if let Some(total_tokens) = pending_token_usage.take() {
+                            emit(&app, FrontendEvent::TokenUsage { total_tokens });
+                        }
                         emit(&app, FrontendEvent::Error {
                             message: "会话已断开".into(),
                             prompt_id: None,
@@ -217,6 +271,19 @@ pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<Actor
                         status_rx = None;
                         pending_permissions.clear();
                     }
+                }
+            }
+            // 文本/思考合并窗口到期 → emit 一次。
+            _ = async {
+                match flush_deadline {
+                    Some(deadline) => sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            }, if flush_deadline.is_some() => {
+                pending_stream.flush_to(&app);
+                stream_flush_at = None;
+                if let Some(total_tokens) = pending_token_usage.take() {
+                    emit(&app, FrontendEvent::TokenUsage { total_tokens });
                 }
             }
             // 状态 watch 变化时同步给前端。
@@ -524,62 +591,125 @@ async fn begin_fresh_session(
 }
 
 /// 把业务事件转成可序列化的前端事件；权限请求会登记 oneshot。
+/// 文本/思考 chunk 写入合并缓冲；其它边界事件先 flush 再即时 emit。
 fn forward_event(
     app: &AppHandle,
     event: SessionEvent,
     pending: &mut HashMap<u64, oneshot::Sender<String>>,
     next_id: &mut u64,
+    pending_stream: &mut PendingStreamEmit,
+    stream_flush_at: &mut Option<Instant>,
+    pending_token_usage: &mut Option<u64>,
 ) {
+    let arm_flush_timer = |deadline: &mut Option<Instant>| {
+        if deadline.is_none() {
+            *deadline = Some(
+                Instant::now() + Duration::from_millis(STREAM_EMIT_COALESCE_MS),
+            );
+        }
+    };
+
     match event {
         SessionEvent::AgentTextChunk(text) => {
-            emit(app, FrontendEvent::AgentTextChunk { text });
+            if text.is_empty() {
+                return;
+            }
+            match pending_stream {
+                PendingStreamEmit::Text(buf) => buf.push_str(&text),
+                PendingStreamEmit::Thought(_) => {
+                    pending_stream.flush_to(app);
+                    *pending_stream = PendingStreamEmit::Text(text);
+                }
+                PendingStreamEmit::None => {
+                    *pending_stream = PendingStreamEmit::Text(text);
+                }
+            }
+            arm_flush_timer(stream_flush_at);
         }
         SessionEvent::AgentThoughtChunk(text) => {
-            emit(app, FrontendEvent::AgentThoughtChunk { text });
-        }
-        SessionEvent::UserTextChunk { text, prompt_id } => {
-            emit(app, FrontendEvent::UserTextChunk { text, prompt_id });
-        }
-        SessionEvent::TurnEnded { stop_reason, prompt_id } => {
-            emit(app, FrontendEvent::TurnEnded { stop_reason, prompt_id });
-        }
-        SessionEvent::Error { message, prompt_id } => {
-            emit(app, FrontendEvent::Error { message, prompt_id });
-        }
-        SessionEvent::Other(debug) => {
-            emit(app, FrontendEvent::Other { debug });
-        }
-        SessionEvent::ToolCall(tool) => {
-            emit(app, FrontendEvent::ToolCall { tool });
-        }
-        SessionEvent::ToolCallUpdate(update) => {
-            emit(app, FrontendEvent::ToolCallUpdate { update });
+            if text.is_empty() {
+                return;
+            }
+            match pending_stream {
+                PendingStreamEmit::Thought(buf) => buf.push_str(&text),
+                PendingStreamEmit::Text(_) => {
+                    pending_stream.flush_to(app);
+                    *pending_stream = PendingStreamEmit::Thought(text);
+                }
+                PendingStreamEmit::None => {
+                    *pending_stream = PendingStreamEmit::Thought(text);
+                }
+            }
+            arm_flush_timer(stream_flush_at);
         }
         SessionEvent::TokenUsage { total_tokens } => {
-            emit(app, FrontendEvent::TokenUsage { total_tokens });
+            // 只保留窗口内最新值，与文本一起或在边界事件时发出。
+            *pending_token_usage = Some(total_tokens);
+            arm_flush_timer(stream_flush_at);
         }
-        SessionEvent::PermissionRequest {
-            description,
-            options,
-            respond,
-        } => {
-            let request_id = *next_id;
-            *next_id += 1;
-            pending.insert(request_id, respond);
-            emit(
-                app,
-                FrontendEvent::PermissionRequest {
-                    request_id,
+        other => {
+            // 边界事件：先冲掉流式缓冲，再发本事件。
+            pending_stream.flush_to(app);
+            *stream_flush_at = None;
+            if let Some(total_tokens) = pending_token_usage.take() {
+                emit(app, FrontendEvent::TokenUsage { total_tokens });
+            }
+            match other {
+                SessionEvent::UserTextChunk { text, prompt_id } => {
+                    emit(app, FrontendEvent::UserTextChunk { text, prompt_id });
+                }
+                SessionEvent::TurnEnded {
+                    stop_reason,
+                    prompt_id,
+                } => {
+                    emit(
+                        app,
+                        FrontendEvent::TurnEnded {
+                            stop_reason,
+                            prompt_id,
+                        },
+                    );
+                }
+                SessionEvent::Error { message, prompt_id } => {
+                    emit(app, FrontendEvent::Error { message, prompt_id });
+                }
+                SessionEvent::Other(debug) => {
+                    emit(app, FrontendEvent::Other { debug });
+                }
+                SessionEvent::ToolCall(tool) => {
+                    emit(app, FrontendEvent::ToolCall { tool });
+                }
+                SessionEvent::ToolCallUpdate(update) => {
+                    emit(app, FrontendEvent::ToolCallUpdate { update });
+                }
+                SessionEvent::PermissionRequest {
                     description,
-                    options: options
-                        .into_iter()
-                        .map(|(id, name)| {
-                            let kind = permission_option_kind(&id, &name).to_string();
-                            PermissionOptionDto { id, name, kind }
-                        })
-                        .collect(),
-                },
-            );
+                    options,
+                    respond,
+                } => {
+                    let request_id = *next_id;
+                    *next_id += 1;
+                    pending.insert(request_id, respond);
+                    emit(
+                        app,
+                        FrontendEvent::PermissionRequest {
+                            request_id,
+                            description,
+                            options: options
+                                .into_iter()
+                                .map(|(id, name)| {
+                                    let kind = permission_option_kind(&id, &name).to_string();
+                                    PermissionOptionDto { id, name, kind }
+                                })
+                                .collect(),
+                        },
+                    );
+                }
+                // 已在上方分支处理
+                SessionEvent::AgentTextChunk(_)
+                | SessionEvent::AgentThoughtChunk(_)
+                | SessionEvent::TokenUsage { .. } => {}
+            }
         }
     }
 }

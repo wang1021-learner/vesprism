@@ -56,8 +56,10 @@ function DownArrowIcon() {
 }
 
 /**
- * 虚拟化消息列表 + 测高缓存 + 按消息 id 计新气泡。
- * 贴底仍用 scrollTop/scrollHeight（不用 scrollToIndex 估高），流式降频读 layout。
+ * 虚拟化 history + 流式 live 尾条（普通 DOM）。
+ *
+ * 流式时只 virtualize `messages[0..n-2]`，末条固定在列表下方不参与 measure，
+ * 避免 virtualizer 对增长中的气泡反复测高/diff。
  */
 export function MessageList({
   messages,
@@ -85,6 +87,11 @@ export function MessageList({
   const lastMessageId = lastMessage?.id
   const lastMessageTextLength = lastMessage?.text?.length
 
+  /** 流式：history 与 live 拆分；非流式：全部进虚拟列表。不 slice，避免每帧新数组。 */
+  const useLiveTail = Boolean(streaming && count > 0)
+  const historyCount = useLiveTail ? count - 1 : count
+  const liveMessage = useLiveTail ? lastMessage : undefined
+
   // 维护 max id（O(1)，替代多处 reduce）
   useEffect(() => {
     if (lastMessage) {
@@ -93,7 +100,7 @@ export function MessageList({
   }, [lastMessage, lastMessageId])
 
   const virtualizer = useVirtualizer({
-    count,
+    count: historyCount,
     getScrollElement: () => viewportRef.current,
     estimateSize: (index) => {
       const m = messages[index]
@@ -102,7 +109,7 @@ export function MessageList({
       if (cached != null && cached > 0) return cached
       return estimateMessageSize(m.role, m.text?.length ?? 0)
     },
-    overscan: streaming ? 6 : 8,
+    overscan: streaming ? 4 : 8,
     getItemKey: (index) => messages[index]?.id ?? index,
     measureElement: (el) => {
       const h = el.getBoundingClientRect().height
@@ -118,7 +125,6 @@ export function MessageList({
   const stickScrollToBottom = useCallback(() => {
     const el = viewportRef.current
     if (!el) return
-    // 仍读 scrollHeight（贴底可靠）；调用方负责降频
     const sh = el.scrollHeight
     el.scrollTop = sh
     lastScrollHeightRef.current = sh
@@ -128,7 +134,6 @@ export function MessageList({
     if (userInteractedUp.current) return
     if (scrollScheduledRef.current) return
     scrollScheduledRef.current = true
-    // 与 setMessages 错开到下一帧，减轻同帧 Layout
     requestAnimationFrame(() => {
       scrollScheduledRef.current = false
       if (userInteractedUp.current) return
@@ -192,7 +197,9 @@ export function MessageList({
     if (!loadingHistory && count > 0) {
       requestAnimationFrame(() => stickScrollToBottom())
     }
-  }, [sessionKey, loadingHistory, stickScrollToBottom, count, lastMessage?.id])
+    // 仅会话切换时重置；勿依赖 count / lastMessage.id 以免流式中反复清缓存
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionKey 驱动重置
+  }, [sessionKey, loadingHistory, stickScrollToBottom])
 
   useEffect(() => {
     if (!showJumpButton) return
@@ -207,7 +214,7 @@ export function MessageList({
     scheduleStickBottom()
   }, [count, lastMessageId, loadingHistory, scheduleStickBottom, streaming])
 
-  // 流式：totalSize / 文本变长时降频读 scrollHeight，不用 scrollToIndex
+  // 流式：history totalSize / live 文本变长时降频贴底
   const totalSize = virtualizer.getTotalSize()
   useEffect(() => {
     if (loadingHistory || userInteractedUp.current || count === 0) return
@@ -261,7 +268,6 @@ export function MessageList({
     )
   }
 
-  const lastId = messages[messages.length - 1]?.id
   const virtualItems = virtualizer.getVirtualItems()
 
   return (
@@ -272,10 +278,11 @@ export function MessageList({
         onScroll={onViewportScroll}
         onWheel={onWheel}
       >
+        {/* history：虚拟列表，稳定高度 */}
         <div
           className="messages-container messages-container-virtual"
           style={{
-            height: totalSize,
+            height: historyCount > 0 ? totalSize : 0,
             position: 'relative',
             width: '90%',
             maxWidth: 768,
@@ -285,7 +292,6 @@ export function MessageList({
           {virtualItems.map((vi) => {
             const m = messages[vi.index]
             if (!m) return null
-            const isLast = m.id === lastId
             return (
               <div
                 key={vi.key}
@@ -298,15 +304,31 @@ export function MessageList({
                   left: 0,
                   width: '100%',
                   transform: `translateY(${vi.start}px)`,
-                  paddingBottom: vi.index < count - 1 ? ITEM_GAP : 0,
+                  paddingBottom: ITEM_GAP,
                   boxSizing: 'border-box',
                 }}
               >
-                <MessageItem message={m} streaming={Boolean(streaming && isLast)} />
+                <MessageItem message={m} streaming={false} />
               </div>
             )
           })}
         </div>
+
+        {/* live：流式末条，普通 DOM，不进 virtualizer measure */}
+        {liveMessage && (
+          <div
+            className="messages-container messages-live-tail"
+            style={{
+              width: '90%',
+              maxWidth: 768,
+              margin: '0 auto',
+              paddingBottom: ITEM_GAP,
+              boxSizing: 'border-box',
+            }}
+          >
+            <MessageItem message={liveMessage} streaming />
+          </div>
+        )}
       </div>
 
       {showJumpButton && (

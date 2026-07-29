@@ -594,6 +594,27 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
     }
 }
 
+/// 桌面 / 嵌入式客户端的 `initialize` 请求。
+///
+/// 通过 `meta.bufferingSettings` 打开官方 shell 的 `ReplayBuffer`，
+/// 合并高频 `agent_message_chunk` / `agent_thought_chunk`，减少 ACP 与下游 IPC 次数。
+/// 不修改 shell 源码，仅使用官方已有扩展点。
+fn desktop_initialize_request() -> InitializeRequest {
+    let mut meta = serde_json::Map::new();
+    // camelCase 与 shell `BufferingSettings` 对齐；约 1 帧窗口，兼顾跟手与合并。
+    meta.insert(
+        "bufferingSettings".into(),
+        serde_json::json!({
+            "maxItems": 32,
+            "maxBytes": 2048,
+            "maxDurationMs": 16
+        }),
+    );
+    InitializeRequest::new(ProtocolVersion::LATEST)
+        .client_capabilities(ClientCapabilities::default())
+        .meta(Some(meta))
+}
+
 /// 将 ACP 的 `SessionUpdate` 映射为业务层 `SessionEvent`（纯函数，有单元测试）。
 pub fn session_update_to_event(
     update: SessionUpdate,
@@ -692,10 +713,7 @@ impl GrokSession {
         }));
 
         connection
-            .initialize(
-                InitializeRequest::new(ProtocolVersion::LATEST)
-                    .client_capabilities(ClientCapabilities::default()),
-            )
+            .initialize(desktop_initialize_request())
             .await?;
 
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
@@ -758,10 +776,7 @@ impl GrokSession {
             }
         }));
         connection
-            .initialize(
-                InitializeRequest::new(ProtocolVersion::LATEST)
-                    .client_capabilities(ClientCapabilities::default()),
-            )
+            .initialize(desktop_initialize_request())
             .await?;
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
 
