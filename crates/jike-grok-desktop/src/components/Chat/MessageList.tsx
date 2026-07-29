@@ -102,6 +102,10 @@ export function MessageList({
   const virtualizer = useVirtualizer({
     count: historyCount,
     getScrollElement: () => viewportRef.current,
+    // React 19：measureElement 在 commitAttachRef 里若用 flushSync 会报
+    // "flushSync was called from inside a lifecycle method"，并可能导致测高
+    // 失败、历史气泡叠层/只看见用户消息。关闭后改为异步 rerender。
+    useFlushSync: false,
     estimateSize: (index) => {
       const m = messages[index]
       if (!m) return 80 + ITEM_GAP
@@ -112,7 +116,8 @@ export function MessageList({
     overscan: streaming ? 4 : 8,
     getItemKey: (index) => messages[index]?.id ?? index,
     measureElement: (el) => {
-      const h = el.getBoundingClientRect().height
+      // 用 offsetHeight 比 getBoundingClientRect 更便宜，且含 padding（box-sizing）
+      const h = el.offsetHeight || el.getBoundingClientRect().height
       const idx = Number(el.getAttribute('data-index'))
       const m = messages[idx]
       if (m && h > 0) {
@@ -296,7 +301,15 @@ export function MessageList({
               <div
                 key={vi.key}
                 data-index={vi.index}
-                ref={virtualizer.measureElement}
+                // 不直接把 measureElement 当 ref：它在 attach 时可能同步触发
+                // onChange(sync)；配合 useFlushSync:false 仍更安全地延后一帧测高。
+                ref={(node) => {
+                  if (!node) return
+                  // 微任务：躲开 commitLayout / attachRef 同步路径
+                  queueMicrotask(() => {
+                    virtualizer.measureElement(node)
+                  })
+                }}
                 className="message-virtual-row"
                 style={{
                   position: 'absolute',

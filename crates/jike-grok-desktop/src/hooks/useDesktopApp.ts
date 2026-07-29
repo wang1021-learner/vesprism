@@ -383,6 +383,9 @@ export function useDesktopApp() {
         const cwd = (sessionCwd || fromList?.cwd || fallbackCwd).trim() || fallbackCwd
         await invoke('load_session', { sessionId: id, cwd })
         dispatchSession({ type: 'LOAD_OK' })
+        // 历史回放可能仍在 drain；稍后 flush 打字机，避免末条 AI 卡在 pending
+        window.setTimeout(() => stream.flush(), 0)
+        window.setTimeout(() => stream.flush(), 80)
         try {
           const appliedCwd = await invoke<string>('set_workspace_cwd', { cwd })
           setWorkspaceCwd(appliedCwd)
@@ -414,6 +417,7 @@ export function useDesktopApp() {
       loadModelsFromDisk,
       syncSessionModel,
       resetConversationUi,
+      stream,
     ],
   )
 
