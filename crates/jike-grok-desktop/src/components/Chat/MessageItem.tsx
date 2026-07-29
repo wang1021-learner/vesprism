@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
 import type { ChatMessage } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { ToolCallCard } from './ToolCallCard'
@@ -79,6 +79,16 @@ const ThoughtBubble = memo(function ThoughtBubble({
   const [userExpanded, setUserExpanded] = useState(false)
   const expanded = streaming || userExpanded
   const charHint = text.length > 0 ? `${text.length.toLocaleString()} 字符` : ''
+  const bodyRef = useRef<HTMLPreElement>(null)
+
+  // thought-body 有 max-height + overflow:auto；流式时内容往下长，
+  // 若不跟滚 scrollTop 会停在顶部，看起来像「思考卡住不动」。
+  useLayoutEffect(() => {
+    if (!streaming) return
+    const el = bodyRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [streaming, text])
 
   return (
     <div className="message-row thought-row">
@@ -117,7 +127,11 @@ const ThoughtBubble = memo(function ThoughtBubble({
             )}
           </span>
         </button>
-        {expanded && <pre className="bubble-text thought-body">{text}</pre>}
+        {expanded && (
+          <pre ref={bodyRef} className="bubble-text thought-body">
+            {text}
+          </pre>
+        )}
       </div>
     </div>
   )
