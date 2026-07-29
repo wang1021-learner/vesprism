@@ -123,6 +123,38 @@ pub enum FrontendEvent {
 pub struct PermissionOptionDto {
     pub id: String,
     pub name: String,
+    /// allow | deny | other — 前端按钮样式与 Esc 默认拒绝用
+    pub kind: String,
+}
+
+fn permission_option_kind(id: &str, name: &str) -> &'static str {
+    let i = id.to_ascii_lowercase();
+    let n = name.to_ascii_lowercase();
+    if i.contains("reject")
+        || i.contains("deny")
+        || i.contains("cancel")
+        || n.contains("reject")
+        || n.contains("deny")
+        || n.contains("cancel")
+        || name.contains("拒绝")
+        || name.contains("取消")
+        || name.contains("不允许")
+    {
+        return "deny";
+    }
+    if i.contains("allow")
+        || i.contains("approve")
+        || i.contains("accept")
+        || n.contains("allow")
+        || n.contains("approve")
+        || n.contains("yes")
+        || name.contains("允许")
+        || name.contains("同意")
+        || name.contains("始终")
+    {
+        return "allow";
+    }
+    "other"
 }
 
 /// 向前端广播会话事件。
@@ -541,7 +573,10 @@ fn forward_event(
                     description,
                     options: options
                         .into_iter()
-                        .map(|(id, name)| PermissionOptionDto { id, name })
+                        .map(|(id, name)| {
+                            let kind = permission_option_kind(&id, &name).to_string();
+                            PermissionOptionDto { id, name, kind }
+                        })
                         .collect(),
                 },
             );

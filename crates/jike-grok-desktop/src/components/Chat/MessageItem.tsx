@@ -7,48 +7,55 @@ const USER_BUBBLE_FOLD_THRESHOLD = 600
 
 interface MessageItemProps {
   message: ChatMessage
-  /** 当前这条是否仍在流式输出（仅最后一条可能为 true） */
   streaming?: boolean
+}
+
+/** 非流式：引用相等即可；流式：比 text + streaming */
+function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
+  if (prev.streaming !== next.streaming) return false
+  if (!next.streaming && !prev.streaming) {
+    return prev.message === next.message
+  }
+  // 流式末条：同一 id 下比 text
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.role === next.message.role &&
+    prev.message.text === next.message.text &&
+    (prev.message.role !== 'tool' ||
+      (next.message.role === 'tool' &&
+        prev.message.role === 'tool' &&
+        prev.message.tool === next.message.tool))
+  )
 }
 
 export const MessageItem = memo(function MessageItem({
   message,
   streaming = false,
 }: MessageItemProps) {
-  const { role, text, tool } = message
-
-  if (role === 'system') {
+  if (message.role === 'system') {
     return (
       <div className="message-row system-row">
-        <div className="system-pill">{text}</div>
+        <div className="system-pill">{message.text}</div>
       </div>
     )
   }
 
-  if (role === 'user') {
-    return <UserBubble text={text} />
+  if (message.role === 'user') {
+    return <UserBubble text={message.text} />
   }
 
-  if (role === 'thought') {
-    return (
-      <div className="message-row thought-row">
-        <div className="bubble bubble-thought">
-          <div className="thought-header">💭 思考推演</div>
-          <pre className="bubble-text">{text}</pre>
-        </div>
-      </div>
-    )
+  if (message.role === 'thought') {
+    return <ThoughtBubble text={message.text} streaming={streaming} />
   }
 
-  if (role === 'tool' && tool) {
+  if (message.role === 'tool') {
     return (
       <div className="message-row tool-row">
-        <ToolCallCard tool={tool} />
+        <ToolCallCard tool={message.tool} />
       </div>
     )
   }
 
-  // Assistant
   return (
     <div className="message-row assistant-row">
       <div className="assistant-badge">
@@ -56,7 +63,61 @@ export const MessageItem = memo(function MessageItem({
         <span className="badge-text">Assistant</span>
       </div>
       <div className="assistant-content">
-        <AssistantMarkdown text={text} streaming={streaming} />
+        <AssistantMarkdown text={message.text} streaming={streaming} />
+      </div>
+    </div>
+  )
+}, messageItemEqual)
+
+const ThoughtBubble = memo(function ThoughtBubble({
+  text,
+  streaming,
+}: {
+  text: string
+  streaming: boolean
+}) {
+  const [userExpanded, setUserExpanded] = useState(false)
+  const expanded = streaming || userExpanded
+  const charHint = text.length > 0 ? `${text.length.toLocaleString()} 字符` : ''
+
+  return (
+    <div className="message-row thought-row">
+      <div
+        className={`bubble bubble-thought${expanded ? ' is-expanded' : ' is-collapsed'}${streaming ? ' is-streaming' : ''}`}
+      >
+        <button
+          type="button"
+          className="thought-header"
+          onClick={() => {
+            if (streaming) return
+            setUserExpanded((v) => !v)
+          }}
+          aria-expanded={expanded}
+          disabled={streaming}
+          title={
+            streaming ? '思考中…' : expanded ? '收起思考过程' : '展开思考过程'
+          }
+        >
+          <span className="thought-header-left">
+            <span className="thought-icon" aria-hidden>
+              💭
+            </span>
+            <span className="thought-title">
+              {streaming ? '思考中…' : '思考过程'}
+            </span>
+            {!streaming && charHint && (
+              <span className="thought-meta">{charHint}</span>
+            )}
+          </span>
+          <span className="thought-header-right" aria-hidden>
+            {streaming ? (
+              <span className="thought-streaming-dot" />
+            ) : (
+              <span className={`thought-chevron${expanded ? ' open' : ''}`}>▾</span>
+            )}
+          </span>
+        </button>
+        {expanded && <pre className="bubble-text thought-body">{text}</pre>}
       </div>
     </div>
   )

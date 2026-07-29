@@ -1,14 +1,39 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ChatMessage, PermissionRequest } from '../../types'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import type { ChatMessage, ChatRole, PermissionRequest } from '../../types'
 import { MessageItem } from './MessageItem'
+
+const ITEM_GAP = 24
+/** 流式贴底：最多每 N 帧读一次 scrollHeight，降低 layout 频率 */
+const STREAM_SCROLL_EVERY_N = 2
+
+function estimateMessageSize(role: ChatRole, textLen: number): number {
+  switch (role) {
+    case 'system':
+      return 40 + ITEM_GAP
+    case 'thought':
+      return 52 + ITEM_GAP
+    case 'tool':
+      return 88 + ITEM_GAP
+    case 'user':
+      return Math.min(280, 56 + Math.ceil(textLen / 80) * 22) + ITEM_GAP
+    case 'assistant':
+    default:
+      return Math.min(560, 64 + Math.ceil(textLen / 70) * 20) + ITEM_GAP
+  }
+}
 
 interface MessageListProps {
   messages: ChatMessage[]
   permission: PermissionRequest | null
-  loadingSession?: boolean
-  /** 切换会话时变化，用于强制滚到底部 */
+  loadingHistory?: boolean
   sessionKey?: string
-  /** 正在流式生成（thought/assistant），用于减轻 Markdown 高亮等开销 */
   streaming?: boolean
 }
 
@@ -30,116 +55,190 @@ function DownArrowIcon() {
   )
 }
 
+/**
+ * 虚拟化消息列表 + 测高缓存 + 按消息 id 计新气泡。
+ * 贴底仍用 scrollTop/scrollHeight（不用 scrollToIndex 估高），流式降频读 layout。
+ */
 export function MessageList({
   messages,
-  permission,
-  loadingSession,
+  permission: _permission,
+  loadingHistory = false,
   sessionKey,
   streaming = false,
 }: MessageListProps) {
   const viewportRef = useRef<HTMLDivElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  /** 用户是否已主动向上离开底部（阅读历史时不抢滚动） */
   const userInteractedUp = useRef(false)
-  /** 是否展示"跳到底部"悬浮按钮（配合 userInteractedUp 的可渲染状态） */
   const [showJumpButton, setShowJumpButton] = useState(false)
-  /** 暂停贴底时的消息数基线，用于计算"新消息"数量 */
-  const seenCountRef = useRef(0)
+  /** 用户离开底部时已见过的最大消息 id */
+  const seenMaxIdRef = useRef(0)
+  /** 列表中最大 message id（id 单调递增，用末条维护） */
+  const maxMessageIdRef = useRef(0)
   const [newMessageCount, setNewMessageCount] = useState(0)
-
-  /** 本帧是否已经排定了一次贴底，避免同一帧内 useLayoutEffect + ResizeObserver 重复触发 */
   const scrollScheduledRef = useRef(false)
-  /** 有消息时才有 .messages-container，用于在空列表→首条消息时挂上 ResizeObserver */
-  const hasMessages = messages.length > 0
+  const lastScrollHeightRef = useRef(0)
+  const heightCacheRef = useRef<Map<number, number>>(new Map())
+  /** 流式贴底降频计数 */
+  const streamScrollTickRef = useRef(0)
 
-  const scrollToEnd = useCallback(() => {
+  const count = messages.length
+  const lastMessage = count > 0 ? messages[count - 1] : undefined
+  const lastMessageId = lastMessage?.id
+  const lastMessageTextLength = lastMessage?.text?.length
+
+  // 维护 max id（O(1)，替代多处 reduce）
+  useEffect(() => {
+    if (lastMessage) {
+      maxMessageIdRef.current = Math.max(maxMessageIdRef.current, lastMessage.id)
+    }
+  }, [lastMessage, lastMessageId])
+
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (index) => {
+      const m = messages[index]
+      if (!m) return 80 + ITEM_GAP
+      const cached = heightCacheRef.current.get(m.id)
+      if (cached != null && cached > 0) return cached
+      return estimateMessageSize(m.role, m.text?.length ?? 0)
+    },
+    overscan: streaming ? 6 : 8,
+    getItemKey: (index) => messages[index]?.id ?? index,
+    measureElement: (el) => {
+      const h = el.getBoundingClientRect().height
+      const idx = Number(el.getAttribute('data-index'))
+      const m = messages[idx]
+      if (m && h > 0) {
+        heightCacheRef.current.set(m.id, h)
+      }
+      return h
+    },
+  })
+
+  const stickScrollToBottom = useCallback(() => {
     const el = viewportRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
+    // 仍读 scrollHeight（贴底可靠）；调用方负责降频
+    const sh = el.scrollHeight
+    el.scrollTop = sh
+    lastScrollHeightRef.current = sh
   }, [])
 
-  const scheduleScrollToEnd = useCallback(() => {
+  const scheduleStickBottom = useCallback(() => {
+    if (userInteractedUp.current) return
     if (scrollScheduledRef.current) return
     scrollScheduledRef.current = true
+    // 与 setMessages 错开到下一帧，减轻同帧 Layout
     requestAnimationFrame(() => {
       scrollScheduledRef.current = false
-      scrollToEnd()
+      if (userInteractedUp.current) return
+      stickScrollToBottom()
     })
-  }, [scrollToEnd])
+  }, [stickScrollToBottom])
+
+  const markSeenToMax = useCallback(() => {
+    seenMaxIdRef.current = maxMessageIdRef.current
+  }, [])
 
   const pauseAutoScroll = useCallback(() => {
     if (!userInteractedUp.current) {
-      seenCountRef.current = messages.length
+      markSeenToMax()
     }
     userInteractedUp.current = true
     setShowJumpButton(true)
-  }, [messages.length])
+  }, [markSeenToMax])
 
   const resumeAutoScroll = useCallback(() => {
     userInteractedUp.current = false
     setShowJumpButton(false)
     setNewMessageCount(0)
-  }, [])
+    markSeenToMax()
+    scheduleStickBottom()
+  }, [scheduleStickBottom, markSeenToMax])
 
-  // 容器尺寸变化（Markdown 高亮、代码块撑开、流式增高）时按需贴底
-  // hasMessages：从空状态切到有消息时需重新 observe（仅依赖 loadingSession 会漏挂）
-  useEffect(() => {
-    const containerEl = containerRef.current
-    if (!containerEl || loadingSession) return
-
-    const observer = new ResizeObserver(() => {
-      if (!userInteractedUp.current) {
-        scheduleScrollToEnd()
-      }
-    })
-
-    observer.observe(containerEl)
-    return () => observer.disconnect()
-  }, [loadingSession, hasMessages, scheduleScrollToEnd])
-
-  // 视口滚动：根据与底部距离恢复/暂停贴底
   const onViewportScroll = useCallback(() => {
     const el = viewportRef.current
     if (!el) return
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight
-    if (gap < 30) {
-      resumeAutoScroll()
-    } else if (gap > 100) {
+    const nearBottom = streaming ? gap < 80 : gap < 48
+    if (nearBottom) {
+      if (userInteractedUp.current) {
+        userInteractedUp.current = false
+        setShowJumpButton(false)
+        setNewMessageCount(0)
+        markSeenToMax()
+      }
+    } else if (gap > 120) {
       pauseAutoScroll()
     }
-  }, [pauseAutoScroll, resumeAutoScroll])
+  }, [pauseAutoScroll, streaming, markSeenToMax])
 
-  // 向上滚轮：立刻切断贴底（不等 scroll 事件）
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    if (e.deltaY < 0) {
-      pauseAutoScroll()
-    }
-  }, [pauseAutoScroll])
+  const onWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (e.deltaY < 0) pauseAutoScroll()
+    },
+    [pauseAutoScroll],
+  )
 
-  // 切会话 / 历史加载完成：重置并贴底
   useEffect(() => {
     userInteractedUp.current = false
     setShowJumpButton(false)
     setNewMessageCount(0)
-    if (!loadingSession) {
-      scrollToEnd()
+    seenMaxIdRef.current = 0
+    maxMessageIdRef.current = lastMessage?.id ?? 0
+    lastScrollHeightRef.current = 0
+    streamScrollTickRef.current = 0
+    heightCacheRef.current.clear()
+    if (!loadingHistory && count > 0) {
+      requestAnimationFrame(() => stickScrollToBottom())
     }
-  }, [sessionKey, loadingSession, scrollToEnd])
+  }, [sessionKey, loadingHistory, stickScrollToBottom, count, lastMessage?.id])
 
-  // 暂停贴底期间统计新新增的消息数量
   useEffect(() => {
     if (!showJumpButton) return
-    const delta = messages.length - seenCountRef.current
-    setNewMessageCount(delta > 0 ? delta : 0)
-  }, [messages.length, showJumpButton])
+    const n = messages.filter((m) => m.id > seenMaxIdRef.current).length
+    setNewMessageCount(n)
+  }, [messages, showJumpButton, lastMessageId, count])
 
-  // 消息数据更新且未上滑：绘制前贴底
+  // 非流式 / 跳底：下一帧 stick
   useLayoutEffect(() => {
-    if (loadingSession || userInteractedUp.current) return
-    scheduleScrollToEnd()
-  }, [messages, permission, loadingSession, scheduleScrollToEnd])
+    if (loadingHistory || userInteractedUp.current || count === 0) return
+    if (streaming) return
+    scheduleStickBottom()
+  }, [count, lastMessageId, loadingHistory, scheduleStickBottom, streaming])
 
-  if (loadingSession) {
+  // 流式：totalSize / 文本变长时降频读 scrollHeight，不用 scrollToIndex
+  const totalSize = virtualizer.getTotalSize()
+  useEffect(() => {
+    if (loadingHistory || userInteractedUp.current || count === 0) return
+    if (!streaming) {
+      scheduleStickBottom()
+      return
+    }
+    streamScrollTickRef.current += 1
+    if (streamScrollTickRef.current % STREAM_SCROLL_EVERY_N !== 0) {
+      return
+    }
+    const el = viewportRef.current
+    if (!el) return
+    const prev = lastScrollHeightRef.current
+    const next = el.scrollHeight
+    if (next > prev && prev > 0) {
+      el.scrollTop += next - prev
+    } else {
+      el.scrollTop = next
+    }
+    lastScrollHeightRef.current = el.scrollHeight
+  }, [
+    totalSize,
+    lastMessageTextLength,
+    streaming,
+    loadingHistory,
+    scheduleStickBottom,
+    count,
+  ])
+
+  if (loadingHistory) {
     return (
       <div className="chat-viewport empty-state">
         <div className="empty-content loading-session-state">
@@ -163,23 +262,50 @@ export function MessageList({
   }
 
   const lastId = messages[messages.length - 1]?.id
+  const virtualItems = virtualizer.getVirtualItems()
 
   return (
     <div className="chat-viewport-wrapper">
       <div
-        className="chat-viewport"
+        className="chat-viewport chat-viewport-virtual"
         ref={viewportRef}
         onScroll={onViewportScroll}
         onWheel={onWheel}
       >
-        <div className="messages-container" ref={containerRef}>
-          {messages.map((m) => (
-            <MessageItem
-              key={m.id}
-              message={m}
-              streaming={streaming && m.id === lastId}
-            />
-          ))}
+        <div
+          className="messages-container messages-container-virtual"
+          style={{
+            height: totalSize,
+            position: 'relative',
+            width: '90%',
+            maxWidth: 768,
+            margin: '0 auto',
+          }}
+        >
+          {virtualItems.map((vi) => {
+            const m = messages[vi.index]
+            if (!m) return null
+            const isLast = m.id === lastId
+            return (
+              <div
+                key={vi.key}
+                data-index={vi.index}
+                ref={virtualizer.measureElement}
+                className="message-virtual-row"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${vi.start}px)`,
+                  paddingBottom: vi.index < count - 1 ? ITEM_GAP : 0,
+                  boxSizing: 'border-box',
+                }}
+              >
+                <MessageItem message={m} streaming={Boolean(streaming && isLast)} />
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -187,17 +313,20 @@ export function MessageList({
         <button
           type="button"
           className="jump-to-bottom-btn"
-          onClick={() => {
-            resumeAutoScroll()
-            scheduleScrollToEnd()
-          }}
-          title={newMessageCount > 0 ? `${newMessageCount} 条新消息，点击跳到底部` : '跳到底部'}
+          onClick={() => resumeAutoScroll()}
+          title={
+            newMessageCount > 0
+              ? `${newMessageCount} 条新消息，点击跳到底部`
+              : '跳到底部'
+          }
         >
           <span className="jump-to-bottom-icon">
             <DownArrowIcon />
           </span>
           {newMessageCount > 0 && (
-            <span className="jump-to-bottom-badge">{newMessageCount > 9 ? '9+' : newMessageCount}</span>
+            <span className="jump-to-bottom-badge">
+              {newMessageCount > 9 ? '9+' : newMessageCount}
+            </span>
           )}
         </button>
       )}

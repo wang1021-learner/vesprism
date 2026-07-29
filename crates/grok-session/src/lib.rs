@@ -40,6 +40,16 @@ pub enum SessionStatus {
     Ended,
 }
 
+/// 工具调用中的结构化 diff（来自 ACP `ToolCallContent::Diff`），供桌面侧栏高亮。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDiffInfo {
+    pub path: String,
+    /// 原内容；新建文件时为 `None`
+    pub old_text: Option<String>,
+    pub new_text: String,
+}
+
 /// 工具调用快照（供 GUI 卡片展示；字段尽量完整，更新事件可为部分字段）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +64,9 @@ pub struct ToolCallInfo {
     pub detail: String,
     /// 输出预览（截断）
     pub preview: String,
+    /// 结构化 diff 列表（可能为空；编辑类工具优先用此字段做高亮）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diffs: Vec<ToolDiffInfo>,
 }
 
 /// 工具调用增量更新（仅包含本次有值的字段；`None` 表示不改）。
@@ -66,6 +79,8 @@ pub struct ToolCallUpdateInfo {
     pub title: Option<String>,
     pub detail: Option<String>,
     pub preview: Option<String>,
+    /// 有 content 且含 Diff 时写入；无 diff 时为 `None`（不覆盖已有）
+    pub diffs: Option<Vec<ToolDiffInfo>>,
 }
 
 /// 面向 GUI / REPL 的业务层事件。
@@ -303,6 +318,8 @@ fn format_permission_description(tc: &agent_client_protocol::ToolCallUpdate) -> 
 }
 
 const PREVIEW_MAX_CHARS: usize = 2500;
+/// 单侧 diff 文本上限（字符），避免超大文件堵事件通道；侧栏仍够用。
+const DIFF_TEXT_MAX_CHARS: usize = 80_000;
 
 fn truncate_preview(s: &str) -> String {
     let trimmed = s.trim();
@@ -312,6 +329,56 @@ fn truncate_preview(s: &str) -> String {
     let mut out: String = trimmed.chars().take(PREVIEW_MAX_CHARS).collect();
     out.push_str("…");
     out
+}
+
+fn truncate_diff_text(s: &str) -> String {
+    if s.chars().count() <= DIFF_TEXT_MAX_CHARS {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(DIFF_TEXT_MAX_CHARS).collect();
+    out.push_str("\n…(truncated)");
+    out
+}
+
+/// 从 ACP tool content 抽出结构化 diff。
+fn extract_tool_diffs(content: &[agent_client_protocol::ToolCallContent]) -> Vec<ToolDiffInfo> {
+    use agent_client_protocol::ToolCallContent;
+    let mut out = Vec::new();
+    for c in content {
+        if let ToolCallContent::Diff(diff) = c {
+            out.push(ToolDiffInfo {
+                path: diff.path.display().to_string(),
+                old_text: diff.old_text.as_ref().map(|t| truncate_diff_text(t)),
+                new_text: truncate_diff_text(&diff.new_text),
+            });
+        }
+    }
+    out
+}
+
+/// 简易 unified 片段：供卡片 preview（完整高亮走 `diffs` 字段）。
+fn format_diff_preview_snippet(
+    path: &std::path::Path,
+    old_text: Option<&str>,
+    new_text: &str,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("diff {}", path.display()));
+    if let Some(old) = old_text {
+        for line in old.lines().take(40) {
+            lines.push(format!("-{line}"));
+        }
+        if old.lines().count() > 40 {
+            lines.push("-…".to_string());
+        }
+    }
+    for line in new_text.lines().take(40) {
+        lines.push(format!("+{line}"));
+    }
+    if new_text.lines().count() > 40 {
+        lines.push("+…".to_string());
+    }
+    lines.join("\n")
 }
 
 fn tool_kind_str(kind: agent_client_protocol::ToolKind) -> String {
@@ -411,8 +478,11 @@ fn tool_content_preview(content: &[agent_client_protocol::ToolCallContent]) -> S
                 }
             }
             ToolCallContent::Diff(diff) => {
-                let snippet: String = diff.new_text.chars().take(400).collect();
-                parts.push(format!("diff {}\n{}", diff.path.display(), snippet));
+                parts.push(format_diff_preview_snippet(
+                    &diff.path,
+                    diff.old_text.as_deref(),
+                    &diff.new_text,
+                ));
             }
             ToolCallContent::Terminal(_) => {
                 parts.push("[terminal]".to_string());
@@ -459,6 +529,7 @@ fn tool_call_to_info(tc: &agent_client_protocol::ToolCall) -> ToolCallInfo {
     if preview.is_empty() {
         preview = tool_raw_output_preview(&tc.raw_output);
     }
+    let diffs = extract_tool_diffs(&tc.content);
     ToolCallInfo {
         tool_call_id: tc.tool_call_id.to_string(),
         kind: tool_kind_str(tc.kind),
@@ -466,6 +537,7 @@ fn tool_call_to_info(tc: &agent_client_protocol::ToolCall) -> ToolCallInfo {
         title: tc.title.clone(),
         detail,
         preview,
+        diffs,
     }
 }
 
@@ -502,6 +574,15 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
             .map(|v| tool_raw_output_preview(&Some(v.clone())))
             .filter(|s| !s.is_empty());
     }
+    // 仅在 content 携带 Diff 时更新 diffs，避免空更新抹掉已有 diff
+    let diffs = fields.content.as_ref().and_then(|c| {
+        let d = extract_tool_diffs(c);
+        if d.is_empty() {
+            None
+        } else {
+            Some(d)
+        }
+    });
     ToolCallUpdateInfo {
         tool_call_id: tcu.tool_call_id.to_string(),
         kind,
@@ -509,6 +590,7 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
         title,
         detail,
         preview,
+        diffs,
     }
 }
 

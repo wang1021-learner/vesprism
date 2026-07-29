@@ -9,6 +9,8 @@ import {
 } from 'react'
 import type { ModelEntry } from '../../types'
 import { REASONING_LEVELS } from '../../types'
+import type { SessionPhase } from '../../session/sessionLifecycle'
+import { generateId } from '../../lib/generateId'
 
 export interface ComposerHandle {
   focus: () => void
@@ -27,10 +29,12 @@ interface ComposerProps {
   input: string
   setInput: (v: string) => void
   canSend: boolean
-  isGenerating: boolean
-  ready: boolean
-  /** 正在 start/restart 会话（New chat / 首次启动） */
-  starting?: boolean
+  /** 引擎正在生成（engineStatus === generating） */
+  engineGenerating: boolean
+  /** 壳层 phase === ready */
+  shellReady: boolean
+  /** 会话壳层阶段（可选展示 / 禁用逻辑） */
+  sessionPhase: SessionPhase
   models: ModelEntry[]
   selectedModelId: string
   /** 当前会话推理强度（仅 supports_reasoning 模型有效） */
@@ -220,9 +224,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     input,
     setInput,
     canSend,
-    isGenerating,
-    ready,
-    starting: _starting = false,
+    engineGenerating,
+    shellReady,
+    sessionPhase,
     models,
     selectedModelId,
     reasoningEffort,
@@ -242,6 +246,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }: ComposerProps,
   ref,
 ) {
+  // 别名：与历史 isGenerating 语义一致，便于阅读
+  const isGenerating = engineGenerating
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wsPickerRef = useRef<HTMLDivElement>(null)
   const modelPickerRef = useRef<HTMLDivElement>(null)
@@ -330,7 +336,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [selectedModel])
 
   const showReasoning =
-    Boolean(selectedModel?.supports_reasoning_effort) && ready
+    Boolean(selectedModel?.supports_reasoning_effort) && shellReady
 
   const usage = useMemo(() => {
     const used = Math.max(0, contextUsedTokens || 0)
@@ -362,7 +368,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (text.length <= PASTE_FOLD_THRESHOLD) return // 短内容走默认粘贴行为
     e.preventDefault()
     const block: PasteBlock = {
-      id: crypto.randomUUID(),
+      id: generateId('paste_'),
       text,
       lineCount: text.split('\n').length,
       charCount: text.length,
@@ -537,7 +543,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <span className="composer-hint">
               {isGenerating
                 ? '生成中 · 点右侧方块可中断 · Esc 失焦'
-                : 'Enter 发送 · Shift+Enter 换行'}
+                : sessionPhase === 'loading'
+                  ? '正在加载会话…'
+                  : sessionPhase === 'booting' || sessionPhase === 'restarting'
+                    ? '会话准备中…'
+                    : sessionPhase === 'failed'
+                      ? '会话未就绪，可新建或重试'
+                      : 'Enter 发送 · Shift+Enter 换行'}
             </span>
           </div>
           <div className="toolbar-right">
@@ -546,11 +558,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <button
                   type="button"
                   className={`composer-chip model-chip${modelOpen ? ' open' : ''}`}
-                  disabled={!ready}
+                  disabled={!shellReady}
                   title="切换当前会话模型及思考强度"
                   aria-expanded={modelOpen}
                   onClick={() => {
-                    if (!ready) return
+                    if (!shellReady) return
                     setWsOpen(false)
                     setModelOpen((v) => !v)
                   }}
@@ -583,7 +595,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                             max={availableReasoningLevels.length - 1}
                             step={1}
                             value={effortIndex}
-                            disabled={!ready || isGenerating}
+                            disabled={!shellReady || isGenerating}
                             aria-label="思考强度"
                             aria-valuetext={`Tier ${effortIndex}`}
                             onChange={(e) => {

@@ -1,14 +1,26 @@
 export type SessionStatus = 'initializing' | 'idle' | 'generating' | 'ended' | 'unknown'
 
+/** 权限按钮语义（后端透传；前端也可从 id/name 推断） */
+export type PermissionOptionKind = 'allow' | 'deny' | 'other'
+
 export type PermissionOption = {
   id: string
   name: string
+  /** 有则优先；无则前端兜底推断 */
+  kind?: PermissionOptionKind
 }
 
 export type PermissionRequest = {
   request_id: number
   description: string
   options: PermissionOption[]
+}
+
+/** 工具调用中的结构化 diff（与后端 ToolDiffInfo camelCase 对齐） */
+export type ToolDiffData = {
+  path: string
+  oldText?: string | null
+  newText: string
 }
 
 /** 工具调用卡片数据（与后端 ToolCallInfo camelCase 对齐） */
@@ -19,6 +31,8 @@ export type ToolCallData = {
   title: string
   detail: string
   preview: string
+  /** 编辑类工具的结构化 diff；无则侧栏用 preview 回退 */
+  diffs?: ToolDiffData[]
 }
 
 export type ToolCallUpdateData = {
@@ -28,6 +42,7 @@ export type ToolCallUpdateData = {
   title?: string | null
   detail?: string | null
   preview?: string | null
+  diffs?: ToolDiffData[] | null
 }
 
 export type SessionEvent =
@@ -51,14 +66,21 @@ export type SessionEvent =
 
 export type ChatRole = 'user' | 'assistant' | 'thought' | 'system' | 'tool'
 
-export type ChatMessage = {
-  id: number
-  role: ChatRole
-  text: string
-  /** role === 'tool' 时的卡片数据 */
-  tool?: ToolCallData
-  promptId?: string
-}
+/** 可辨识联合：tool 角色必带 tool 字段 */
+export type ChatMessage =
+  | {
+      id: number
+      role: 'user' | 'assistant' | 'thought' | 'system'
+      text: string
+      promptId?: string
+    }
+  | {
+      id: number
+      role: 'tool'
+      text: string
+      tool: ToolCallData
+      promptId?: string
+    }
 
 /** 官方 api_backend 三选一 */
 export type ApiBackend = 'chat_completions' | 'responses' | 'messages'
@@ -75,9 +97,12 @@ export type ModelEntry = {
   system_prompt_label: string
   api_backend: ApiBackend | string
   description: string
-  temperature: number
-  top_p: number
-  max_completion_tokens: number
+  /** null = 不写盘；0 是合法采样值 */
+  temperature: number | null
+  /** null = 不写盘 */
+  top_p: number | null
+  /** null = 不写盘 */
+  max_completion_tokens: number | null
   extra_headers: Record<string, string>
   api_base_url: string
   max_retries: number
@@ -113,9 +138,10 @@ export function emptyModelEntry(partial: Partial<ModelEntry> & { id: string }): 
     system_prompt_label: partial.system_prompt_label ?? '',
     api_backend: partial.api_backend ?? 'chat_completions',
     description: partial.description ?? '',
-    temperature: partial.temperature ?? 0,
-    top_p: partial.top_p ?? 0,
-    max_completion_tokens: partial.max_completion_tokens ?? 0,
+    temperature: partial.temperature === undefined ? null : partial.temperature,
+    top_p: partial.top_p === undefined ? null : partial.top_p,
+    max_completion_tokens:
+      partial.max_completion_tokens === undefined ? null : partial.max_completion_tokens,
     extra_headers: partial.extra_headers ?? {},
     api_base_url: partial.api_base_url ?? '',
     max_retries: partial.max_retries ?? 0,

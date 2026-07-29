@@ -413,13 +413,13 @@ pub struct ModelEntryDto {
     pub api_backend: String,
     #[serde(default)]
     pub description: String,
-    /// 0 = 不写盘
+    /// None = 不写盘；Some(0.0) 为合法采样值
     #[serde(default)]
-    pub temperature: f64,
+    pub temperature: Option<f64>,
     #[serde(default)]
-    pub top_p: f64,
+    pub top_p: Option<f64>,
     #[serde(default)]
-    pub max_completion_tokens: u64,
+    pub max_completion_tokens: Option<u64>,
     #[serde(default)]
     pub extra_headers: std::collections::BTreeMap<String, String>,
     /// API key 鉴权专用 base（空 = 与 base_url 相同）
@@ -538,6 +538,18 @@ fn table_f64(t: &toml::map::Map<String, toml::Value>, key: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+fn table_opt_f64(t: &toml::map::Map<String, toml::Value>, key: &str) -> Option<f64> {
+    t.get(key)
+        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+}
+
+fn table_opt_u64(t: &toml::map::Map<String, toml::Value>, key: &str) -> Option<u64> {
+    t.get(key)
+        .and_then(|v| v.as_integer())
+        .filter(|&n| n >= 0)
+        .map(|n| n as u64)
+}
+
 fn table_extra_headers(
     t: &toml::map::Map<String, toml::Value>,
 ) -> std::collections::BTreeMap<String, String> {
@@ -620,9 +632,9 @@ fn parse_model_entries(root: &toml::Value) -> Vec<ModelEntryDto> {
                 system_prompt_label: table_str(t, "system_prompt_label"),
                 api_backend,
                 description: table_str(t, "description"),
-                temperature: table_f64(t, "temperature"),
-                top_p: table_f64(t, "top_p"),
-                max_completion_tokens: table_u64(t, "max_completion_tokens"),
+                temperature: table_opt_f64(t, "temperature"),
+                top_p: table_opt_f64(t, "top_p"),
+                max_completion_tokens: table_opt_u64(t, "max_completion_tokens"),
                 extra_headers: table_extra_headers(t),
                 api_base_url: table_str(t, "api_base_url"),
                 max_retries: table_u64(t, "max_retries"),
@@ -724,17 +736,21 @@ fn validate_model_entry(entry: &ModelEntryDto) -> Result<(), String> {
         return Err(format!("模型 [{}]：context_window 必须大于 0", entry.id));
     }
     normalize_api_backend(&entry.api_backend)?;
-    if entry.temperature < 0.0 || entry.temperature > 2.0 {
-        return Err(format!(
-            "模型 [{}]：temperature 应在 0–2 之间（0 表示不设置）",
-            entry.id
-        ));
+    if let Some(t) = entry.temperature {
+        if !(0.0..=2.0).contains(&t) {
+            return Err(format!(
+                "模型 [{}]：temperature 应在 0–2 之间（null 表示不设置）",
+                entry.id
+            ));
+        }
     }
-    if entry.top_p < 0.0 || entry.top_p > 1.0 {
-        return Err(format!(
-            "模型 [{}]：top_p 应在 0–1 之间（0 表示不设置）",
-            entry.id
-        ));
+    if let Some(p) = entry.top_p {
+        if !(0.0..=1.0).contains(&p) {
+            return Err(format!(
+                "模型 [{}]：top_p 应在 0–1 之间（null 表示不设置）",
+                entry.id
+            ));
+        }
     }
     if entry.auto_compact_threshold_percent > 100 {
         return Err(format!(
@@ -829,26 +845,33 @@ fn upsert_model_entry(
         entry_tbl.insert("agent_type".into(), toml::Value::String(agent.into()));
     }
 
-    if entry.temperature > 0.0 {
-        entry_tbl.insert(
-            "temperature".into(),
-            toml::Value::Float(entry.temperature),
-        );
-    } else {
-        entry_tbl.remove("temperature");
+    match entry.temperature {
+        Some(t) => {
+            entry_tbl.insert("temperature".into(), toml::Value::Float(t));
+        }
+        None => {
+            entry_tbl.remove("temperature");
+        }
     }
-    if entry.top_p > 0.0 {
-        entry_tbl.insert("top_p".into(), toml::Value::Float(entry.top_p));
-    } else {
-        entry_tbl.remove("top_p");
+    match entry.top_p {
+        Some(p) => {
+            entry_tbl.insert("top_p".into(), toml::Value::Float(p));
+        }
+        None => {
+            entry_tbl.remove("top_p");
+        }
     }
-    if entry.max_completion_tokens > 0 {
-        entry_tbl.insert(
-            "max_completion_tokens".into(),
-            toml::Value::Integer(entry.max_completion_tokens as i64),
-        );
-    } else {
-        entry_tbl.remove("max_completion_tokens");
+    match entry.max_completion_tokens {
+        Some(n) if n > 0 => {
+            entry_tbl.insert(
+                "max_completion_tokens".into(),
+                toml::Value::Integer(n as i64),
+            );
+        }
+        Some(0) | None => {
+            entry_tbl.remove("max_completion_tokens");
+        }
+        _ => {}
     }
     if entry.max_retries > 0 {
         entry_tbl.insert(
@@ -1098,11 +1121,15 @@ pub async fn load_session(session_id: String, cwd: String, state: State<'_, AppS
 
 /// 列出会话。
 ///
-/// - 传入 `cwd` 时仍会返回 **全部工作空间** 的会话（带 `cwd` 字段），供侧栏
-///   「工作空间 → 时间」两层分组；`cwd` 仅用于把当前工作空间排到前面。
+/// - 传入 `cwd` 时仍会返回各工作空间会话（带 `cwd`），供侧栏两层分组；
+///   `cwd` 仅用于把当前工作空间排到前面。
 /// - 空会话已过滤。
+/// - `limit`：可选上限（排序后截断）；`None` / `0` 不截断。
 #[tauri::command]
-pub async fn list_sessions(cwd: String) -> Result<Vec<SessionSummaryDto>, String> {
+pub async fn list_sessions(
+    cwd: String,
+    limit: Option<u32>,
+) -> Result<Vec<SessionSummaryDto>, String> {
     let mut summaries = grok_session::list_all_sessions()
         .await
         .map_err(|e| e.to_string())?;
@@ -1128,25 +1155,28 @@ pub async fn list_sessions(cwd: String) -> Result<Vec<SessionSummaryDto>, String
         }
     });
 
-    Ok(summaries
-        .into_iter()
-        .map(|s| {
-            let title = s
-                .display_title_opt()
-                .or_else(|| grok_session::get_session_first_prompt(&s))
-                .unwrap_or_else(|| "新对话".to_string());
+    let take_n = limit.filter(|n| *n > 0).map(|n| n as usize);
+    let iter = summaries.into_iter().map(|s| {
+        let title = s
+            .display_title_opt()
+            .or_else(|| grok_session::get_session_first_prompt(&s))
+            .unwrap_or_else(|| "新对话".to_string());
 
-            let active_time = s.last_active_at.unwrap_or(s.created_at);
+        let active_time = s.last_active_at.unwrap_or(s.created_at);
 
-            SessionSummaryDto {
-                id: s.info.id.to_string(),
-                title,
-                updated_at: active_time.to_rfc3339(),
-                num_messages: s.num_messages,
-                cwd: s.info.cwd,
-            }
-        })
-        .collect())
+        SessionSummaryDto {
+            id: s.info.id.to_string(),
+            title,
+            updated_at: active_time.to_rfc3339(),
+            num_messages: s.num_messages,
+            cwd: s.info.cwd,
+        }
+    });
+
+    Ok(match take_n {
+        Some(n) => iter.take(n).collect(),
+        None => iter.collect(),
+    })
 }
 
 /// 删除会话：走 Actor，保证删当前会话时先释放再删盘，避免文件锁失败。

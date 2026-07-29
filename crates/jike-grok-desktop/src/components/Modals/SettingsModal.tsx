@@ -1,25 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { ApiBackend, ModelEntry } from '../../types'
-
-type SettingsTab = 'general' | 'models'
-
-const API_BACKENDS: { value: ApiBackend; label: string; hint: string }[] = [
-  {
-    value: 'chat_completions',
-    label: 'Chat Completions',
-    hint: 'OpenAI 兼容 /v1/chat/completions（DeepSeek、Ollama、多数厂商）',
-  },
-  {
-    value: 'responses',
-    label: 'Responses',
-    hint: 'OpenAI Responses /v1/responses',
-  },
-  {
-    value: 'messages',
-    label: 'Messages',
-    hint: 'Anthropic Messages /v1/messages（Claude）',
-  },
-]
+import type { ModelEntry } from '../../types'
+import { ModelSamplingFields } from './ModelSamplingFields'
+import {
+  API_BACKENDS,
+  headersToText,
+  textToHeaders,
+  type SettingsTab,
+} from './settingsHelpers'
 
 interface SettingsModalProps {
   settingsCwd: string
@@ -44,27 +31,6 @@ interface SettingsModalProps {
   savingSettings: boolean
   onClose: () => void
   onSave: () => Promise<{ ok: boolean; error?: string }> | void
-}
-
-function headersToText(headers: Record<string, string> | undefined): string {
-  if (!headers) return ''
-  return Object.entries(headers)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('\n')
-}
-
-function textToHeaders(text: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const colon = trimmed.indexOf(':')
-    if (colon <= 0) continue
-    const key = trimmed.slice(0, colon).trim()
-    const value = trimmed.slice(colon + 1).trim()
-    if (key) out[key] = value
-  }
-  return out
 }
 
 export function SettingsModal({
@@ -504,87 +470,10 @@ export function SettingsModal({
 
                         {showAdvanced && (
                           <div className="settings-advanced-body">
-                            <div className="settings-field-grid settings-field-grid-3">
-                              <div className="settings-field">
-                                <label className="settings-label">温度 (temperature)</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={2}
-                                  step={0.1}
-                                  className="settings-input"
-                                  value={
-                                    selectedModel.temperature > 0
-                                      ? selectedModel.temperature
-                                      : ''
-                                  }
-                                  placeholder="不设置"
-                                  onChange={(e) => {
-                                    const raw = e.target.value.trim()
-                                    if (raw === '') {
-                                      updateSelectedModel({ temperature: 0 })
-                                      return
-                                    }
-                                    const n = Number(raw)
-                                    updateSelectedModel({
-                                      temperature: Number.isFinite(n) ? n : 0,
-                                    })
-                                  }}
-                                />
-                              </div>
-                              <div className="settings-field">
-                                <label className="settings-label">核采样 (top_p)</label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={1}
-                                  step={0.05}
-                                  className="settings-input"
-                                  value={selectedModel.top_p > 0 ? selectedModel.top_p : ''}
-                                  placeholder="不设置"
-                                  onChange={(e) => {
-                                    const raw = e.target.value.trim()
-                                    if (raw === '') {
-                                      updateSelectedModel({ top_p: 0 })
-                                      return
-                                    }
-                                    const n = Number(raw)
-                                    updateSelectedModel({
-                                      top_p: Number.isFinite(n) ? n : 0,
-                                    })
-                                  }}
-                                />
-                              </div>
-                              <div className="settings-field">
-                                <label className="settings-label">
-                                  最大生成长度 (max_completion_tokens)
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step={1}
-                                  className="settings-input"
-                                  value={
-                                    selectedModel.max_completion_tokens > 0
-                                      ? selectedModel.max_completion_tokens
-                                      : ''
-                                  }
-                                  placeholder="不设置"
-                                  onChange={(e) => {
-                                    const raw = e.target.value.trim()
-                                    if (raw === '') {
-                                      updateSelectedModel({ max_completion_tokens: 0 })
-                                      return
-                                    }
-                                    const n = Math.floor(Number(raw))
-                                    updateSelectedModel({
-                                      max_completion_tokens:
-                                        Number.isFinite(n) && n > 0 ? n : 0,
-                                    })
-                                  }}
-                                />
-                              </div>
-                            </div>
+                            <ModelSamplingFields
+                              selectedModel={selectedModel}
+                              updateSelectedModel={updateSelectedModel}
+                            />
 
                             <div className="settings-field">
                               <label className="settings-label">
