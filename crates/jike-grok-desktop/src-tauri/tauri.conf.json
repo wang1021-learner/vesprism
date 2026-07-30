@@ -5,7 +5,7 @@
   "identifier": "com.jike.grokdesktop",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://127.0.0.1:1420",
+    "devUrl": "http://127.0.0.1:9527",
     "beforeDevCommand": {
       "script": "npm run dev",
       "cwd": ".."

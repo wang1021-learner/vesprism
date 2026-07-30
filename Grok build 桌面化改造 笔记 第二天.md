@@ -8,7 +8,8 @@
 
 ## 一、今天的目标
 
-不碰官方 TUI 代码，把 `xai-grok-shell`（agent 运行时）当作 library 依赖，
+当日策略：不碰官方 TUI 代码，把 `xai-grok-shell`（agent 运行时）当作 library 依赖，  
+（**【2026-07-29】** 好方案可改官方，见 `docs/官方代码修改原则.md`。）
 在一个全新的、物理隔离的 Rust 项目里，验证：
 1. 能否用 `tokio::io::duplex()` 建立内存双工管道，绕开真实 stdin/stdout；
 2. 能否通过这条管道，用真实的 ACP JSON-RPC 协议跟 agent 完成握手、创建会话、发消息。

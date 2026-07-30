@@ -1,32 +1,55 @@
 {
   "name": "jike-grok-desktop",
+  "productName": "Grok Build",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Grok Build 桌面端 — Hermes UI + Tauri 2",
   "type": "module",
+  "main": "dist/index.html",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 127.0.0.1 --port 9527",
     "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 9527",
+    "typecheck": "tsc -p . --noEmit",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "desktop": "cargo tauri dev",
+    "desktop:build": "cargo tauri build"
   },
   "dependencies": {
-    "@tanstack/react-virtual": "^3.14.9",
+    "@assistant-ui/react": "^0.14.23",
+    "@assistant-ui/react-streamdown": "^0.3.4",
+    "@nanostores/react": "^1.1.0",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@streamdown/code": "^1.1.1",
+    "@streamdown/math": "^1.0.2",
+    "@streamdown/mermaid": "^1.0.2",
+    "@tabler/icons-react": "^3.41.1",
+    "@tanstack/react-query": "^5.100.6",
+    "@tanstack/react-virtual": "^3.13.24",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2",
-    "highlight.js": "^11.11.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "dompurify": "^3.4.11",
+    "katex": "^0.16.45",
+    "mermaid": "^11.15.0",
+    "nanostores": "^1.3.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-markdown": "^10.1.0",
-    "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "react-router-dom": "^7.17.0",
+    "streamdown": "^2.5.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.4"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.3",
+    "@vitejs/plugin-react": "^6.0.1",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.0.10"
   }
 }

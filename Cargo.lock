@@ -6224,10 +6224,12 @@ name = "jike-grok-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dirs 5.0.1",
  "dotenvy",
  "grok-session",
  "log",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",
@@ -6236,6 +6238,7 @@ dependencies = [
  "tauri-plugin-log",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
+ "xai-grok-shell",
 ]
 
 [[package]]

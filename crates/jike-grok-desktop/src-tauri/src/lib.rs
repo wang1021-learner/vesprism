@@ -1,4 +1,5 @@
 mod commands;
+mod session_index;
 mod state;
 
 use state::{spawn_session_actor, AppState};
@@ -95,6 +96,8 @@ pub fn run() {
             commands::reload_models,
             commands::load_session,
             commands::list_sessions,
+            commands::search_sessions,
+            commands::get_session_messages,
             commands::delete_session,
             commands::rename_session,
             commands::set_current_model,

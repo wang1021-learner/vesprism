@@ -1103,7 +1103,7 @@ pub async fn reload_models(state: State<'_, AppState>) -> Result<(), String> {
     send_cmd(&state, |reply| ActorCommand::ReloadModels { reply }).await
 }
 
-/// 会话摘要（前端友好字段，从官方 Summary 结构体裁剪而来）。
+/// 会话摘要（前端友好字段；Codex 风格：列表来自 threads 索引）。
 #[derive(serde::Serialize)]
 pub struct SessionSummaryDto {
     pub id: String,
@@ -1112,6 +1112,23 @@ pub struct SessionSummaryDto {
     pub num_messages: usize,
     /// 会话所属工作空间路径（`summary.info.cwd`）
     pub cwd: String,
+    /// 侧栏预览（首条用户句截断）
+    #[serde(default)]
+    pub preview: String,
+}
+
+/// 展示消息（对齐前端 ChatMessage；从 updates.jsonl 投影，不启 agent）。
+#[derive(serde::Serialize)]
+pub struct DisplayMessageDto {
+    pub id: String,
+    pub role: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_id: Option<String>,
 }
 
 #[tauri::command]
@@ -1119,64 +1136,171 @@ pub async fn load_session(session_id: String, cwd: String, state: State<'_, AppS
     send_cmd(&state, |reply| ActorCommand::LoadSession { session_id, cwd, reply }).await
 }
 
-/// 列出会话。
+/// 会话搜索结果（官方 FTS：标题 + 用户消息正文）。
+#[derive(serde::Serialize)]
+pub struct SessionSearchHitDto {
+    pub id: String,
+    pub title: String,
+    pub cwd: String,
+    pub updated_at: String,
+    pub score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+    pub matched_fields: Vec<String>,
+}
+
+/// 搜索会话（Codex/Claude 侧栏搜索应对标：服务端 FTS，不是前端扫 title）。
 ///
-/// - 传入 `cwd` 时仍会返回各工作空间会话（带 `cwd`），供侧栏两层分组；
-///   `cwd` 仅用于把当前工作空间排到前面。
-/// - 空会话已过滤。
-/// - `limit`：可选上限（排序后截断）；`None` / `0` 不截断。
+/// 使用官方 `session_search.sqlite`（WAL + FTS5），首次会后台建索引。
+#[tauri::command]
+pub async fn search_sessions(
+    query: String,
+    cwd: Option<String>,
+    limit: Option<u32>,
+) -> Result<SearchSessionsResultDto, String> {
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        return Ok(SearchSessionsResultDto {
+            results: vec![],
+            bootstrapping: false,
+            total_estimate: Some(0),
+        });
+    }
+    let root = xai_grok_shell::util::grok_home::grok_home();
+    let req = xai_grok_shell::session::storage::search::SessionSearchRequest {
+        query: q,
+        cwd: cwd.filter(|c| !c.trim().is_empty()),
+        limit: limit.unwrap_or(50) as usize,
+        offset: 0,
+        include_content: true,
+    };
+    let resp = xai_grok_shell::session::storage::search::execute_search(&root, &req)
+        .await
+        .map_err(|e| format!("搜索失败: {e}"))?;
+
+    let results = resp
+        .results
+        .into_iter()
+        .map(|r| {
+            let updated_at = chrono::DateTime::from_timestamp(r.updated_at_unix, 0)
+                .map(|t| t.to_rfc3339())
+                .unwrap_or_default();
+            SessionSearchHitDto {
+                id: r.session_id,
+                title: if r.title.trim().is_empty() {
+                    "新对话".into()
+                } else {
+                    r.title
+                },
+                cwd: r.cwd,
+                updated_at,
+                score: r.score,
+                snippet: r.snippet,
+                matched_fields: r.matched_fields,
+            }
+        })
+        .collect();
+
+    Ok(SearchSessionsResultDto {
+        results,
+        bootstrapping: resp.bootstrapping,
+        total_estimate: resp.total_estimate,
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct SearchSessionsResultDto {
+    pub results: Vec<SessionSearchHitDto>,
+    pub bootstrapping: bool,
+    pub total_estimate: Option<usize>,
+}
+
+/// Codex 风格：只读盘投影历史消息，不启 agent、不事件回放。
+#[tauri::command]
+pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessageDto>, String> {
+    let sid = session_id.clone();
+    tokio::task::spawn_blocking(move || {
+        grok_session::load_display_messages(&sid)
+            .map(|msgs| {
+                msgs.into_iter()
+                    .map(|m| DisplayMessageDto {
+                        id: m.id,
+                        role: m.role,
+                        text: m.text,
+                        tool: m.tool,
+                        tool_call_id: m.tool_call_id,
+                        prompt_id: m.prompt_id,
+                    })
+                    .collect()
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("get_session_messages 任务失败: {e}"))?
+}
+
+/// 列出会话（Codex：扫盘重建 threads.sqlite 索引后读库）。
+///
+/// - `cwd` 用于当前工作空间排到前面
+/// - 空会话已过滤
+/// - `limit`：可选上限
 #[tauri::command]
 pub async fn list_sessions(
     cwd: String,
     limit: Option<u32>,
 ) -> Result<Vec<SessionSummaryDto>, String> {
+    // 1) 官方 summary 仍是权威来源（过滤空会话）
     let mut summaries = grok_session::list_all_sessions()
         .await
         .map_err(|e| e.to_string())?;
-
-    // 过滤从未说过话的空会话，避免「连点新建」堆一串「新对话」
     summaries.retain(|s| !grok_session::is_blank_session(s));
 
-    // 当前工作空间优先，组内按活跃时间降序
-    let current = cwd.trim().replace('\\', "/").to_ascii_lowercase();
-    summaries.sort_by(|a, b| {
-        let a_cwd = a.info.cwd.replace('\\', "/").to_ascii_lowercase();
-        let b_cwd = b.info.cwd.replace('\\', "/").to_ascii_lowercase();
-        let a_cur = a_cwd == current;
-        let b_cur = b_cwd == current;
-        match (a_cur, b_cur) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => {
-                let time_a = a.last_active_at.unwrap_or(a.created_at);
-                let time_b = b.last_active_at.unwrap_or(b.created_at);
-                time_b.cmp(&time_a)
-            }
-        }
-    });
-
-    let take_n = limit.filter(|n| *n > 0).map(|n| n as usize);
-    let iter = summaries.into_iter().map(|s| {
+    let mut rows = Vec::with_capacity(summaries.len());
+    for s in &summaries {
         let title = s
             .display_title_opt()
-            .or_else(|| grok_session::get_session_first_prompt(&s))
+            .or_else(|| grok_session::get_session_first_prompt(s))
             .unwrap_or_else(|| "新对话".to_string());
-
-        let active_time = s.last_active_at.unwrap_or(s.created_at);
-
-        SessionSummaryDto {
+        let preview: String = title.chars().take(80).collect();
+        let active = s.last_active_at.unwrap_or(s.created_at);
+        let dir =
+            xai_grok_shell::session::persistence::find_session_dir_by_id(&s.info.id.to_string());
+        let transcript_path = dir
+            .as_ref()
+            .map(|d| crate::session_index::transcript_path_for_dir(d))
+            .unwrap_or_default();
+        rows.push(crate::session_index::ThreadRow {
             id: s.info.id.to_string(),
             title,
-            updated_at: active_time.to_rfc3339(),
+            preview,
+            cwd: s.info.cwd.clone(),
+            updated_at: active.to_rfc3339(),
+            updated_at_ms: active.timestamp_millis(),
             num_messages: s.num_messages,
-            cwd: s.info.cwd,
-        }
-    });
+            transcript_path,
+        });
+    }
 
-    Ok(match take_n {
-        Some(n) => iter.take(n).collect(),
-        None => iter.collect(),
+    let cwd_for_sort = cwd;
+    let lim = limit;
+    // 2) 写索引 + 3) 从索引读出（Codex threads 排序）
+    tokio::task::spawn_blocking(move || {
+        crate::session_index::rebuild_from_summaries(&rows)?;
+        let listed = crate::session_index::list_threads(&cwd_for_sort, lim)?;
+        Ok(listed
+            .into_iter()
+            .map(|r| SessionSummaryDto {
+                id: r.id,
+                title: r.title,
+                updated_at: r.updated_at,
+                num_messages: r.num_messages,
+                cwd: r.cwd,
+                preview: r.preview,
+            })
+            .collect())
     })
+    .await
+    .map_err(|e| format!("list_sessions 任务失败: {e}"))?
 }
 
 /// 删除会话：走 Actor，保证删当前会话时先释放再删盘，避免文件锁失败。
@@ -1186,15 +1310,18 @@ pub async fn delete_session(
     cwd: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let sid = session_id.clone();
     send_cmd(&state, |reply| ActorCommand::DeleteSession {
         session_id,
         cwd,
         reply,
     })
-    .await
+    .await?;
+    let _ = crate::session_index::delete_thread(&sid);
+    Ok(())
 }
 
-/// 重命名会话标题（持久化到官方 summary.json）。
+/// 重命名会话标题（持久化到官方 summary.json + 索引）。
 #[tauri::command]
 pub async fn rename_session(
     session_id: String,
@@ -1203,7 +1330,9 @@ pub async fn rename_session(
 ) -> Result<(), String> {
     grok_session::rename_session(&session_id, &cwd, &title)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let _ = crate::session_index::rename_thread(&session_id, &title);
+    Ok(())
 }
 
 #[tauri::command]

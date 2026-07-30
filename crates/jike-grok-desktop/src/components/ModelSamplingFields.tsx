@@ -1,12 +1,12 @@
-import type { ModelEntry } from '../../types'
+import type { ModelInfo } from '../types'
 
 /** 温度 / top_p / max_completion_tokens（null = 不设置） */
 export function ModelSamplingFields({
   selectedModel,
   updateSelectedModel,
 }: {
-  selectedModel: ModelEntry
-  updateSelectedModel: (patch: Partial<ModelEntry>) => void
+  selectedModel: ModelInfo
+  updateSelectedModel: (patch: Partial<ModelInfo>) => void
 }) {
   return (
     <div className="settings-field-grid settings-field-grid-3">

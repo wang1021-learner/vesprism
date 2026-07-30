@@ -42,7 +42,8 @@ xai_grok_shell::spawn_agent_local
 原则：
 
 - **物理隔离**：新代码只在自有目录，不写入官方 `codegen/*` 业务逻辑。
-- **只加不改**官方实现；workspace 仅追加 members。
+- **当日策略**：最小侵入官方；workspace 仅追加 members。  
+  **【已更新 2026-07-29】** 好方案可改官方，见 `docs/官方代码修改原则.md`。
 - 新 crate 必须进 workspace，依赖 `workspace = true`，避免 lock 分裂。
 
 ### 2.3 与「cwd 固定仓库根」的关系

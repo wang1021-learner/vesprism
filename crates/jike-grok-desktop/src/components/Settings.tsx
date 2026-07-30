@@ -1,5 +1,35 @@
-import { useMemo, useState } from 'react'
-import type { ModelEntry } from '../../types'
+/**
+ * 设置弹窗 — 对齐重构前样式与交互：
+ * 左侧「通用 / 模型」导航 · 模型列表 + 详情 · 连接/推理/密钥/高级折叠
+ */
+import { useStore } from '@nanostores/react'
+import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  $defaultModelId,
+  $messages,
+  $models,
+  $reasoningEffort,
+  $settingsOpen,
+  $workspaceCwd,
+} from '../store'
+import {
+  envFileLocation,
+  getEnvStatus,
+  getModelSettings,
+  reloadModels,
+  saveEnvKey,
+  saveModelSettings,
+  setCurrentModel,
+  setWorkspaceCwd,
+} from '../bridge'
+import {
+  emptyModelEntry,
+  normalizeModelFromDisk,
+  prepareModelsForSave,
+  resolveEnvKey,
+} from '../lib/models'
+import type { ModelInfo } from '../types'
 import { ModelSamplingFields } from './ModelSamplingFields'
 import {
   API_BACKENDS,
@@ -8,86 +38,263 @@ import {
   type SettingsTab,
 } from './settingsHelpers'
 
-interface SettingsModalProps {
-  settingsCwd: string
-  setSettingsCwd: (cwd: string) => void
-  pickDirectory: () => void
-  canSwitchWorkspace: boolean
-  models: ModelEntry[]
-  selectedModelId: string
-  selectModel: (id: string) => void
-  draftModelIds: string[]
-  startAddModel: () => void
-  discardSelectedDraft: () => void
-  removeSelectedModel: () => void
-  updateSelectedModel: (patch: Partial<ModelEntry>) => void
-  modelConfigPath: string
-  keyStatus: { key_name: string; is_set: boolean } | null
-  keyInput: string
-  setKeyInput: (val: string) => void
-  keyVisible: boolean
-  setKeyVisible: (fn: (v: boolean) => boolean) => void
-  envFilePath: string
-  savingSettings: boolean
-  onClose: () => void
-  onSave: () => Promise<{ ok: boolean; error?: string }> | void
+function shortId(): string {
+  return Math.random().toString(36).slice(2, 10)
 }
 
-export function SettingsModal({
-  settingsCwd,
-  setSettingsCwd,
-  pickDirectory,
-  canSwitchWorkspace,
-  models,
-  selectedModelId,
-  selectModel,
-  draftModelIds,
-  startAddModel,
-  discardSelectedDraft,
-  removeSelectedModel,
-  updateSelectedModel,
-  modelConfigPath,
-  keyStatus,
-  keyInput,
-  setKeyInput,
-  keyVisible,
-  setKeyVisible,
-  envFilePath,
-  savingSettings,
-  onClose,
-  onSave,
-}: SettingsModalProps) {
+export function SettingsModal() {
+  const open = useStore($settingsOpen)
+  const messages = useStore($messages)
+  const canSwitchWorkspace = !messages.some((m) => m.role === 'user')
+
   const [tab, setTab] = useState<SettingsTab>('models')
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(
+    null,
+  )
+
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [selectedModelId, setSelectedModelId] = useState('')
+  const [defaultId, setDefaultId] = useState('')
+  const [settingsCwd, setSettingsCwd] = useState('')
+  const [keyInput, setKeyInput] = useState('')
+  const [keyVisible, setKeyVisible] = useState(false)
+  const [envFilePath, setEnvFilePath] = useState('')
+  const [modelConfigPath, setModelConfigPath] = useState('')
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [keyStatus, setKeyStatus] = useState<{ key_name: string; is_set: boolean } | null>(
+    null,
+  )
+  const [draftModelIds, setDraftModelIds] = useState<string[]>([])
+  const [headersDraft, setHeadersDraft] = useState<string | null>(null)
+  /** 已配置密钥时，点「更新」才显示输入框 */
+  const [forceKeyEdit, setForceKeyEdit] = useState(false)
+
   const selectedModel = models.find((m) => m.id === selectedModelId)
   const isDraft = selectedModelId ? draftModelIds.includes(selectedModelId) : false
-
-  const handleSave = async () => {
-    setToast(null)
-    const res = await onSave()
-    if (res && res.ok) {
-      setToast({ message: '配置模型成功', type: 'success' })
-      setTimeout(() => {
-        setToast(null)
-      }, 3000)
-    } else if (res && res.error) {
-      setToast({ message: res.error, type: 'error' })
-    }
-  }
 
   const headersText = useMemo(
     () => headersToText(selectedModel?.extra_headers),
     [selectedModel?.extra_headers],
   )
-  const [headersDraft, setHeadersDraft] = useState<string | null>(null)
   const headersValue =
     headersDraft !== null && selectedModel ? headersDraft : headersText
+
+  const refreshKeyStatus = async (envKey: string) => {
+    const name = envKey.trim()
+    if (!name) {
+      setKeyStatus(null)
+      return
+    }
+    try {
+      setKeyStatus(await getEnvStatus(name))
+    } catch {
+      setKeyStatus({ key_name: name, is_set: false })
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    setTab('models')
+    setShowAdvanced(false)
+    setToast(null)
+    setKeyInput('')
+    setKeyVisible(false)
+    setDraftModelIds([])
+    setHeadersDraft(null)
+    setForceKeyEdit(false)
+    void (async () => {
+      try {
+        const s = await getModelSettings()
+        const normalized = s.models.map((m) => normalizeModelFromDisk(m))
+        setModels(normalized)
+        setModelConfigPath(s.config_path || '')
+        const pick =
+          s.default_id && normalized.some((m) => m.id === s.default_id)
+            ? s.default_id
+            : (normalized[0]?.id ?? '')
+        setDefaultId(pick)
+        setSelectedModelId(pick)
+        setSettingsCwd($workspaceCwd.get())
+        const entry = normalized.find((m) => m.id === pick)
+        await refreshKeyStatus(entry ? resolveEnvKey(entry) : '')
+        try {
+          setEnvFilePath(await envFileLocation())
+        } catch {
+          setEnvFilePath('')
+        }
+      } catch (e) {
+        setToast({ message: String(e), type: 'error' })
+      }
+    })()
+  }, [open])
+
+  if (!open) return null
+
+  const updateSelectedModel = (patch: Partial<ModelInfo>) => {
+    if (!selectedModelId) return
+    setModels((prev) =>
+      prev.map((m) => {
+        if (m.id !== selectedModelId) return m
+        const next = { ...m, ...patch }
+        if (patch.model != null) next.name = patch.model
+        return next
+      }),
+    )
+  }
+
+  const selectModel = (id: string) => {
+    setHeadersDraft(null)
+    setShowAdvanced(false)
+    setSelectedModelId(id)
+    setKeyInput('')
+    setKeyVisible(false)
+    setForceKeyEdit(false)
+    const entry = models.find((m) => m.id === id)
+    void refreshKeyStatus(entry ? resolveEnvKey(entry) : '')
+  }
 
   const onSelectModel = (id: string) => {
     setHeadersDraft(null)
     setShowAdvanced(false)
     selectModel(id)
+  }
+
+  const startAddModel = () => {
+    const existing = new Set(models.map((m) => m.id))
+    let id = ''
+    for (let i = 0; i < 16; i++) {
+      const c = `m-${shortId()}`
+      if (!existing.has(c)) {
+        id = c
+        break
+      }
+    }
+    if (!id) id = `m-${shortId()}`
+    const template = models.find((m) => m.id === selectedModelId) ?? models[0]
+    const draft = emptyModelEntry({
+      id,
+      model: '',
+      name: '',
+      base_url: template?.base_url ?? '',
+      api_backend: template?.api_backend || 'chat_completions',
+      agent_type: template?.agent_type || 'grok-build',
+      context_window: template?.context_window || 128_000,
+      supports_reasoning_effort: false,
+      reasoning_effort: 'medium',
+    })
+    setModels((prev) => [...prev, draft])
+    setDraftModelIds((prev) => [...prev, id])
+    setSelectedModelId(id)
+    setDefaultId((d) => d || id)
+    setKeyInput('')
+    setKeyVisible(false)
+    setHeadersDraft(null)
+    setShowAdvanced(false)
+    void refreshKeyStatus(resolveEnvKey(draft))
+  }
+
+  const removeSelectedModel = () => {
+    if (models.length <= 1 || !selectedModelId) return
+    const remaining = models.filter((m) => m.id !== selectedModelId)
+    const nextId = remaining[0]?.id ?? ''
+    setModels(remaining)
+    setDraftModelIds((prev) => prev.filter((id) => id !== selectedModelId))
+    if (defaultId === selectedModelId) setDefaultId(nextId)
+    setSelectedModelId(nextId)
+    setKeyInput('')
+    setHeadersDraft(null)
+    const next = remaining.find((m) => m.id === nextId)
+    void refreshKeyStatus(next ? resolveEnvKey(next) : '')
+  }
+
+  const discardSelectedDraft = () => {
+    if (!draftModelIds.includes(selectedModelId)) return
+    removeSelectedModel()
+  }
+
+  const pickDirectory = async () => {
+    try {
+      const selected = await openDialog({
+        directory: true,
+        defaultPath: settingsCwd || undefined,
+      })
+      if (typeof selected === 'string') setSettingsCwd(selected)
+    } catch (e) {
+      setToast({ message: String(e), type: 'error' })
+    }
+  }
+
+  const onSave = async (): Promise<{ ok: boolean; error?: string }> => {
+    setSavingSettings(true)
+    setToast(null)
+    try {
+      if (!settingsCwd.trim()) throw new Error('请填写工作目录')
+      const trimmed = prepareModelsForSave(models)
+      // 选中即默认（与列表选择对齐）；若未选则用 defaultId
+      const def = (selectedModelId || defaultId).trim()
+      if (!def || !trimmed.some((m) => m.id === def)) {
+        throw new Error('请选择一个有效的默认模型')
+      }
+      const selectedEntry =
+        trimmed.find((m) => m.id === selectedModelId) ??
+        trimmed.find((m) => m.id === def)
+
+      const appliedCwd = await setWorkspaceCwd(settingsCwd.trim())
+      if (keyInput.trim() && selectedEntry) {
+        await saveEnvKey(resolveEnvKey(selectedEntry), keyInput.trim())
+      }
+      await saveModelSettings(def, trimmed)
+      try {
+        await reloadModels()
+      } catch {
+        /* 无会话可忽略 */
+      }
+
+      $models.set(trimmed)
+      $defaultModelId.set(def)
+      $workspaceCwd.set(appliedCwd)
+      setModels(trimmed)
+      setDefaultId(def)
+      setDraftModelIds([])
+      setKeyInput('')
+
+      const ent = trimmed.find((m) => m.id === def)
+      const effort = ent?.supports_reasoning_effort
+        ? ent.reasoning_effort || 'medium'
+        : undefined
+      try {
+        await setCurrentModel(def, effort)
+        if (effort) $reasoningEffort.set(effort)
+      } catch {
+        /* 会话未就绪 */
+      }
+
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
+  const handleSave = async () => {
+    setToast(null)
+    const res = await onSave()
+    if (res.ok) {
+      setToast({ message: '配置模型成功', type: 'success' })
+      setTimeout(() => {
+        setToast(null)
+        $settingsOpen.set(false)
+      }, 600)
+    } else if (res.error) {
+      setToast({ message: res.error, type: 'error' })
+    }
+  }
+
+  const onClose = () => {
+    if (savingSettings) return
+    $settingsOpen.set(false)
   }
 
   return (
@@ -160,11 +367,17 @@ export function SettingsModal({
                           onChange={(e) => setSettingsCwd(e.target.value)}
                           className="settings-input"
                         />
-                        <button type="button" className="btn-secondary" onClick={pickDirectory}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => void pickDirectory()}
+                        >
                           浏览…
                         </button>
                       </div>
-                      <p className="settings-hint">保存后写入本地配置；若会话已就绪会重建以切换目录。</p>
+                      <p className="settings-hint">
+                        保存后写入本地配置；若会话已就绪会重建以切换目录。
+                      </p>
                     </>
                   ) : (
                     <p className="settings-hint">
@@ -194,7 +407,9 @@ export function SettingsModal({
                   </div>
 
                   {models.length === 0 ? (
-                    <p className="settings-hint settings-models-empty">尚无模型，点击「新增」。</p>
+                    <p className="settings-hint settings-models-empty">
+                      尚无模型，点击「新增」。
+                    </p>
                   ) : (
                     <ul className="settings-models-items">
                       {models.map((m) => {
@@ -214,6 +429,9 @@ export function SettingsModal({
                                   <span className="settings-badge-new">新</span>
                                 ) : null}
                                 {title}
+                                {m.id === defaultId && !draft ? (
+                                  <span className="settings-badge-default">默认</span>
+                                ) : null}
                               </span>
                               <span className="settings-model-item-sub">{sub}</span>
                             </button>
@@ -224,7 +442,10 @@ export function SettingsModal({
                   )}
 
                   {modelConfigPath && (
-                    <p className="settings-hint settings-models-path" title={modelConfigPath}>
+                    <p
+                      className="settings-hint settings-models-path"
+                      title={modelConfigPath}
+                    >
                       {modelConfigPath}
                     </p>
                   )}
@@ -235,7 +456,8 @@ export function SettingsModal({
                     <div className="settings-models-empty-detail">
                       <p className="settings-empty-title">选择或新增模型</p>
                       <p className="settings-hint">
-                        配置写入官方格式的 <code>[model.&lt;id&gt;]</code>，可对接 OpenAI 兼容 / Anthropic Messages 等。
+                        配置写入官方格式的 <code>[model.&lt;id&gt;]</code>
+                        ，可对接 OpenAI 兼容 / Anthropic Messages 等。
                       </p>
                     </div>
                   ) : (
@@ -247,6 +469,15 @@ export function SettingsModal({
                           </h3>
                         </div>
                         <div className="settings-models-detail-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={savingSettings}
+                            onClick={() => setDefaultId(selectedModel.id)}
+                            title="设为默认模型"
+                          >
+                            {defaultId === selectedModel.id ? '已是默认' : '设为默认'}
+                          </button>
                           {isDraft ? (
                             <button
                               type="button"
@@ -310,9 +541,13 @@ export function SettingsModal({
                             className="settings-input"
                             value={selectedModel.base_url}
                             placeholder="https://api.example.com/v1"
-                            onChange={(e) => updateSelectedModel({ base_url: e.target.value })}
+                            onChange={(e) =>
+                              updateSelectedModel({ base_url: e.target.value })
+                            }
                           />
-                          <p className="settings-hint">OpenAI 兼容接口通常需以 /v1 结尾。</p>
+                          <p className="settings-hint">
+                            OpenAI 兼容接口通常需以 /v1 结尾。
+                          </p>
                         </div>
 
                         <div className="settings-field">
@@ -320,7 +555,8 @@ export function SettingsModal({
                           <div className="settings-backend-options" role="radiogroup">
                             {API_BACKENDS.map((opt) => {
                               const active =
-                                (selectedModel.api_backend || 'chat_completions') === opt.value
+                                (selectedModel.api_backend || 'chat_completions') ===
+                                opt.value
                               return (
                                 <button
                                   key={opt.value}
@@ -332,7 +568,9 @@ export function SettingsModal({
                                     updateSelectedModel({ api_backend: opt.value })
                                   }
                                 >
-                                  <span className="settings-backend-label">{opt.label}</span>
+                                  <span className="settings-backend-label">
+                                    {opt.label}
+                                  </span>
                                   <span className="settings-backend-hint">{opt.hint}</span>
                                 </button>
                               )
@@ -392,7 +630,7 @@ export function SettingsModal({
                         </div>
                       </section>
 
-                      {/* —— 推理：设置里只声明是否支持；强度在输入栏切换模型时选择 —— */}
+                      {/* —— 推理 —— */}
                       <section className="settings-field-section">
                         <h4 className="settings-field-section-title">推理</h4>
                         <label className="settings-checkbox-label settings-reasoning-enable">
@@ -410,7 +648,8 @@ export function SettingsModal({
                           <span>
                             <strong>此模型支持推理 / 思考</strong>
                             <span className="settings-hint settings-hint-inline">
-                              仅声明能力。强度在下方输入栏切换模型时选择（类似 Claude / Codex）
+                              仅声明能力。强度在下方输入栏切换模型时选择（类似 Claude /
+                              Codex）
                             </span>
                           </span>
                         </label>
@@ -420,12 +659,20 @@ export function SettingsModal({
                       <section className="settings-field-section">
                         <h4 className="settings-field-section-title">密钥</h4>
                         <div className="settings-key-block">
-                          {keyStatus?.is_set ? (
+                          {keyStatus?.is_set && !forceKeyEdit ? (
                             <div className="settings-key-set-banner">
                               <span className="settings-key-set-text">已配置</span>
                               <span className="settings-hint">
                                 变量 {keyStatus.key_name} · 明文不在 config.toml
                               </span>
+                              <button
+                                type="button"
+                                className="btn-inline"
+                                style={{ marginLeft: 'auto' }}
+                                onClick={() => setForceKeyEdit(true)}
+                              >
+                                更新
+                              </button>
                             </div>
                           ) : (
                             <>
@@ -448,6 +695,9 @@ export function SettingsModal({
                               </div>
                               <p className="settings-hint">
                                 保存至 {envFilePath || '桌面 .env'}，通过 env_key 注入进程。
+                                {keyStatus?.key_name
+                                  ? ` 当前 env_key：${keyStatus.key_name}`
+                                  : ''}
                               </p>
                             </>
                           )}
@@ -492,7 +742,9 @@ export function SettingsModal({
 
                             <div className="settings-field-grid">
                               <div className="settings-field">
-                                <label className="settings-label">最大重试次数 (max_retries)</label>
+                                <label className="settings-label">
+                                  最大重试次数 (max_retries)
+                                </label>
                                 <input
                                   type="number"
                                   min={0}
@@ -535,7 +787,9 @@ export function SettingsModal({
                                   onChange={(e) => {
                                     const raw = e.target.value.trim()
                                     if (raw === '') {
-                                      updateSelectedModel({ inference_idle_timeout_secs: 0 })
+                                      updateSelectedModel({
+                                        inference_idle_timeout_secs: 0,
+                                      })
                                       return
                                     }
                                     const n = Math.floor(Number(raw))
@@ -566,8 +820,7 @@ export function SettingsModal({
                                   onChange={(e) => {
                                     const v = e.target.value
                                     updateSelectedModel({
-                                      stream_tool_calls:
-                                        v === '' ? null : v === 'true',
+                                      stream_tool_calls: v === '' ? null : v === 'true',
                                     })
                                   }}
                                 >
@@ -633,7 +886,9 @@ export function SettingsModal({
                                     type="checkbox"
                                     checked={Boolean(selectedModel.use_concise)}
                                     onChange={(e) =>
-                                      updateSelectedModel({ use_concise: e.target.checked })
+                                      updateSelectedModel({
+                                        use_concise: e.target.checked,
+                                      })
                                     }
                                   />
                                   简洁模式 (use_concise)
@@ -837,7 +1092,7 @@ export function SettingsModal({
             type="button"
             className="btn-primary"
             disabled={savingSettings}
-            onClick={handleSave}
+            onClick={() => void handleSave()}
           >
             {savingSettings ? '保存中…' : '保存'}
           </button>

@@ -7,6 +7,9 @@
 //! （或由 `current_thread` runtime 驱动 LocalSet），
 //! 因为 ACP 客户端与 agent 任务都使用 `spawn_local`。
 
+mod display_messages;
+pub use display_messages::{load_display_messages, load_display_messages_from_session_dir, DisplayMessage};
+
 use agent_client_protocol::{
     Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ExtRequest,
     InitializeRequest, LoadSessionRequest, ModelId, NewSessionRequest, PromptRequest,

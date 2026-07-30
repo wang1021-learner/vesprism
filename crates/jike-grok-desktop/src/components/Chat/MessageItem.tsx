@@ -1,7 +1,6 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useState } from 'react'
 import type { ChatMessage } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
-import { ToolCallCard } from './ToolCallCard'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
 
@@ -10,64 +9,55 @@ interface MessageItemProps {
   streaming?: boolean
 }
 
-/** 非流式：引用相等即可；流式：比 text + streaming */
-function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
-  if (prev.streaming !== next.streaming) return false
-  if (!next.streaming && !prev.streaming) {
-    return prev.message === next.message
-  }
-  // 流式末条：同一 id 下比 text
-  return (
-    prev.message.id === next.message.id &&
-    prev.message.role === next.message.role &&
-    prev.message.text === next.message.text &&
-    (prev.message.role !== 'tool' ||
-      (next.message.role === 'tool' &&
-        prev.message.role === 'tool' &&
-        prev.message.tool === next.message.tool))
-  )
-}
-
 export const MessageItem = memo(function MessageItem({
   message,
   streaming = false,
 }: MessageItemProps) {
-  if (message.role === 'system') {
-    return (
-      <div className="message-row system-row">
-        <div className="system-pill">{message.text}</div>
-      </div>
-    )
-  }
+  switch (message.role) {
+    case 'system':
+      return (
+        <div className="message-row system-row">
+          <div className="system-pill">{message.text}</div>
+        </div>
+      )
 
-  if (message.role === 'user') {
-    return <UserBubble text={message.text} />
-  }
+    case 'user':
+      return <UserBubble text={message.text} />
 
-  if (message.role === 'thought') {
-    return <ThoughtBubble text={message.text} streaming={streaming} />
-  }
+    case 'thought':
+      return <ThoughtBubble text={message.text} streaming={streaming} />
 
-  if (message.role === 'tool') {
-    return (
-      <div className="message-row tool-row">
-        <ToolCallCard tool={message.tool} />
-      </div>
-    )
-  }
+    case 'tool':
+      return (
+        <div className="message-row tool-row">
+          <div className="tool-card">
+            <div className="tool-card-header">
+              <span className="tool-label">🔧 {message.tool || 'tool'}</span>
+            </div>
+            {message.text ? (
+              <pre className="tool-output bubble-text">{message.text}</pre>
+            ) : null}
+          </div>
+        </div>
+      )
 
-  return (
-    <div className="message-row assistant-row">
-      <div className="assistant-badge">
-        <span className="badge-icon">✦</span>
-        <span className="badge-text">Assistant</span>
-      </div>
-      <div className="assistant-content">
-        <AssistantMarkdown text={message.text} streaming={streaming} />
-      </div>
-    </div>
-  )
-}, messageItemEqual)
+    case 'assistant':
+      return (
+        <div className="message-row assistant-row">
+          <div className="assistant-badge">
+            <span className="badge-icon">✦</span>
+            <span className="badge-text">Assistant</span>
+          </div>
+          <div className="assistant-content md-body">
+            <AssistantMarkdown text={message.text} />
+          </div>
+        </div>
+      )
+
+    default:
+      return null
+  }
+})
 
 const ThoughtBubble = memo(function ThoughtBubble({
   text,
@@ -76,19 +66,10 @@ const ThoughtBubble = memo(function ThoughtBubble({
   text: string
   streaming: boolean
 }) {
+  // 流式默认展开；结束后默认折叠，可点开
   const [userExpanded, setUserExpanded] = useState(false)
   const expanded = streaming || userExpanded
   const charHint = text.length > 0 ? `${text.length.toLocaleString()} 字符` : ''
-  const bodyRef = useRef<HTMLPreElement>(null)
-
-  // thought-body 有 max-height + overflow:auto；流式时内容往下长，
-  // 若不跟滚 scrollTop 会停在顶部，看起来像「思考卡住不动」。
-  useLayoutEffect(() => {
-    if (!streaming) return
-    const el = bodyRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [streaming, text])
 
   return (
     <div className="message-row thought-row">
@@ -115,9 +96,9 @@ const ThoughtBubble = memo(function ThoughtBubble({
             <span className="thought-title">
               {streaming ? '思考中…' : '思考过程'}
             </span>
-            {!streaming && charHint && (
+            {!streaming && charHint ? (
               <span className="thought-meta">{charHint}</span>
-            )}
+            ) : null}
           </span>
           <span className="thought-header-right" aria-hidden>
             {streaming ? (
@@ -127,11 +108,7 @@ const ThoughtBubble = memo(function ThoughtBubble({
             )}
           </span>
         </button>
-        {expanded && (
-          <pre ref={bodyRef} className="bubble-text thought-body">
-            {text}
-          </pre>
-        )}
+        {expanded ? <pre className="bubble-text thought-body">{text}</pre> : null}
       </div>
     </div>
   )
@@ -147,15 +124,17 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
     <div className="message-row user-row">
       <div className="bubble bubble-user">
         <pre className="bubble-text">{displayText}</pre>
-        {isLong && (
+        {isLong ? (
           <button
             type="button"
             className="bubble-expand-toggle"
             onClick={() => setExpanded((v) => !v)}
           >
-            {expanded ? '收起' : `展开全部（${text.length.toLocaleString()} 字符）`}
+            {expanded
+              ? '收起'
+              : `展开全部（${text.length.toLocaleString()} 字符）`}
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   )

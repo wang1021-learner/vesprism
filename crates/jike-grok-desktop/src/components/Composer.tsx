@@ -7,10 +7,9 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react'
-import type { ModelEntry } from '../../types'
-import { REASONING_LEVELS } from '../../types'
-import type { SessionPhase } from '../../session/sessionLifecycle'
-import { generateId } from '../../lib/generateId'
+import type { ModelInfo, SessionPhase } from '../types'
+import { REASONING_LEVELS } from '../types'
+import { generateId } from '../lib/generateId'
 
 export interface ComposerHandle {
   focus: () => void
@@ -35,7 +34,7 @@ interface ComposerProps {
   shellReady: boolean
   /** 会话壳层阶段（可选展示 / 禁用逻辑） */
   sessionPhase: SessionPhase
-  models: ModelEntry[]
+  models: ModelInfo[]
   selectedModelId: string
   /** 当前会话推理强度（仅 supports_reasoning 模型有效） */
   reasoningEffort: string

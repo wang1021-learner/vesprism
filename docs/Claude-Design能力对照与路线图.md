@@ -81,7 +81,7 @@ ArtifactContext（内存状态）
 
 **约束（保持）**
 
-1. 只加不改官方 `xai-grok-shell` 行为；预览全在桌面壳。  
+1. **官方代码可改**（见 `docs/官方代码修改原则.md`）。Design 预览优先在桌面壳；若能力需进 agent/工具层，允许改 `xai-grok-shell` 等官方路径。  
 2. 读文件必须走 `read_file_for_preview` 工作区边界校验。  
 3. iframe 保持 sandbox，避免预览页碰主应用 DOM。  
 4. 不把密钥或任意盘路径暴露进预览。
@@ -164,7 +164,8 @@ type ArtifactVersion = {
 - 不重做 Figma 矢量编辑器、组件库市场。  
 - 不拆独立「Design」进程/窗口（除非用户强烈要求）。  
 - 不接 Canva/云协作。  
-- 不修改官方 agent 协议只为预览；能在 GUI 层解决就在 GUI 层解决。
+- 不为「只为预览」无意义地改 agent 协议；**能在 GUI 层做好就在 GUI 层做**。  
+  若根因在协议/工具/会话语义，且方案更好，**允许改官方**（`docs/官方代码修改原则.md`）。
 
 ---
 
@@ -175,9 +176,9 @@ type ArtifactVersion = {
 | 附件/图片输入 ⬜ | P1-1 |
 | 会话导出 Markdown/PDF ⬜ | 部分重叠 P2-3（设计向导出） |
 | MCP / 插件 GUI ⬜ | 正交；Design skill 可后挂 |
-| 只加不改官方 | 全文遵守 |
+| 官方代码修改 | 见 `docs/官方代码修改原则.md`（好方案可改） |
 
-建议：把本文件视为 **Artifact / 设计预览** 专线；大纲第六节优先级表不必被本线打乱——本线改动集中在 `jike-grok-desktop` 前端 + 已有 preview 命令。
+建议：把本文件视为 **Artifact / 设计预览** 专线；大纲第六节优先级表不必被本线打乱——本线默认在 `jike-grok-desktop`；下沉官方时按修改原则记录补丁。
 
 ---
 
@@ -186,3 +187,4 @@ type ArtifactVersion = {
 | 日期 | 说明 |
 |------|------|
 | 2026-07-28 | 初版：Claude Design 对照 + MVP/P1/P2；启动 MVP 实现 |
+| 2026-07-29 | 与「官方代码修改原则」对齐：废止「只加不改」硬禁令 |

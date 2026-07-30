@@ -27,4 +27,7 @@ dirs = "5"
 grok-session = { workspace = true }
 tauri-plugin-dialog = "2"
 toml = { workspace = true }
+rusqlite = { version = "0.37", features = ["bundled"] }
+xai-grok-shell = { workspace = true }
+chrono = { workspace = true }
 

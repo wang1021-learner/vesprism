@@ -3,7 +3,8 @@
 > 版本：v2.0（最优架构）  
 > 日期：2026-07-28  
 > 对标：Anthropic Claude Design  
-> 前提：**允许修改官方 crate**（`xai-grok-agent` / `xai-grok-shell` / `xai-grok-tools` / `grok-session` 等）  
+> 前提：**允许修改官方 crate**（`xai-grok-agent` / `xai-grok-shell` / `xai-grok-tools` 等；`grok-session` 为自建桥接）  
+> 与全仓现行规则一致：`docs/官方代码修改原则.md`（好方案可改官方，非「只加不改」禁令）  
 > 决策：Design 是 **引擎一等公民**，不是桌面壳上的临时拼装。
 
 ---

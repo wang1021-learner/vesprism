@@ -1,6 +1,6 @@
-import type { ApiBackend } from '../../types'
-
 export type SettingsTab = 'general' | 'models'
+
+export type ApiBackend = 'chat_completions' | 'responses' | 'messages'
 
 export const API_BACKENDS: { value: ApiBackend; label: string; hint: string }[] = [
   {
