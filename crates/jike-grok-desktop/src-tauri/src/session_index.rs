@@ -102,48 +102,52 @@ pub fn rebuild_from_summaries(rows: &[ThreadRow]) -> Result<(), String> {
 }
 
 /// 列出线程；`current_cwd` 非空时该 cwd 优先，其余按 recency。
+/// 排序与 `LIMIT` 均在 SQL 完成，避免全表进内存再 `sort_by`/`truncate`。
 pub fn list_threads(current_cwd: &str, limit: Option<u32>) -> Result<Vec<ThreadRow>, String> {
     with_db(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
-                 FROM threads
-                 ORDER BY updated_at_ms DESC",
-            )
-            .map_err(|e| e.to_string())?;
-        let iter = stmt
-            .query_map([], |row| {
-                Ok(ThreadRow {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    preview: row.get(2)?,
-                    cwd: row.get(3)?,
-                    updated_at: row.get(4)?,
-                    updated_at_ms: row.get(5)?,
-                    num_messages: row.get::<_, i64>(6)? as usize,
-                    transcript_path: row.get(7)?,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        let mut all: Vec<ThreadRow> = iter.filter_map(|r| r.ok()).collect();
-
         let current = current_cwd.trim().replace('\\', "/").to_ascii_lowercase();
-        if !current.is_empty() {
-            all.sort_by(|a, b| {
-                let a_cur = a.cwd.replace('\\', "/").to_ascii_lowercase() == current;
-                let b_cur = b.cwd.replace('\\', "/").to_ascii_lowercase() == current;
-                match (a_cur, b_cur) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => b.updated_at_ms.cmp(&a.updated_at_ms),
-                }
-            });
-        }
+        let lim = limit.filter(|n| *n > 0).map(|n| n as i64);
 
-        if let Some(n) = limit.filter(|n| *n > 0) {
-            all.truncate(n as usize);
-        }
-        Ok(all)
+        // cwd 规范化后与当前工作区比：当前优先，组内 recency
+        let sql = if lim.is_some() {
+            "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
+             FROM threads
+             ORDER BY CASE WHEN lower(replace(cwd, '\\', '/')) = ?1 THEN 0 ELSE 1 END,
+                      updated_at_ms DESC
+             LIMIT ?2"
+        } else {
+            "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
+             FROM threads
+             ORDER BY CASE WHEN lower(replace(cwd, '\\', '/')) = ?1 THEN 0 ELSE 1 END,
+                      updated_at_ms DESC"
+        };
+
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<ThreadRow> {
+            Ok(ThreadRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                preview: row.get(2)?,
+                cwd: row.get(3)?,
+                updated_at: row.get(4)?,
+                updated_at_ms: row.get(5)?,
+                num_messages: row.get::<_, i64>(6)? as usize,
+                transcript_path: row.get(7)?,
+            })
+        };
+
+        let rows = if let Some(n) = lim {
+            stmt.query_map(params![current, n], map_row)
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect()
+        } else {
+            stmt.query_map(params![current], map_row)
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+        Ok(rows)
     })
 }
 

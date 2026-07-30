@@ -2,12 +2,49 @@
  * Grok Build 桌面端 — 共享类型
  */
 
+/** 工具调用中的结构化 diff（与后端 ToolDiffInfo camelCase 对齐） */
+export type ToolDiffData = {
+  path: string
+  oldText?: string | null
+  newText: string
+}
+
+/** 工具调用数据（与后端 ToolCallInfo camelCase 对齐） */
+export type ToolCallData = {
+  toolCallId: string
+  /** read / edit / execute / search / fetch / delete / move / think / other */
+  kind: string
+  /** pending / in_progress / completed / failed */
+  status: string
+  title: string
+  /** 路径、命令等摘要 */
+  detail: string
+  /** 输出预览（截断） */
+  preview: string
+  diffs?: ToolDiffData[]
+  /** 前端计时（耗时展示） */
+  timing?: { start: number; end?: number }
+}
+
+export type ToolCallUpdateData = {
+  toolCallId: string
+  kind?: string | null
+  status?: string | null
+  title?: string | null
+  detail?: string | null
+  preview?: string | null
+  diffs?: ToolDiffData[] | null
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'thought' | 'tool'
   text: string
+  /** @deprecated 用 toolCall.title；兼容磁盘投影 */
   tool?: string
   toolCallId?: string
+  /** 完整工具快照（实时事件） */
+  toolCall?: ToolCallData
   /** 用户消息关联的 prompt（用于分片合并 / 乐观 UI） */
   promptId?: string
   isStreaming?: boolean

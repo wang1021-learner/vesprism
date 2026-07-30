@@ -44,6 +44,25 @@ export const $activeChatId = atom('')
 // ── Composer 状态 ──
 export const $composerInput = atom('')
 
+// ── Toast（顶部浮层，不进对话历史；如切换模型） ──
+export type ToastTone = 'info' | 'success' | 'error'
+export type ToastItem = {
+  id: string
+  message: string
+  tone?: ToastTone
+}
+export const $toasts = atom<ToastItem[]>([])
+
+export function pushToast(message: string, tone: ToastTone = 'info') {
+  const id = `toast_${crypto.randomUUID()}`
+  const prev = $toasts.get()
+  $toasts.set([...prev.slice(-4), { id, message, tone }])
+}
+
+export function dismissToast(id: string) {
+  $toasts.set($toasts.get().filter((t) => t.id !== id))
+}
+
 // ── 操作 ──
 export function addMessage(msg: ChatMessage) {
   $messages.set([...$messages.get(), msg])

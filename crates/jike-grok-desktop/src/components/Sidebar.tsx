@@ -44,16 +44,70 @@ import {
 import {
   abortOpenSession,
   beginAttachRuntime,
+  cacheSessionMessages,
   currentLoadGen,
   finishAttachRuntime,
+  getCachedSessionMessages,
   hydrateFromSnapshot,
+  invalidateSessionMessages,
   nextLoadGen,
 } from '../lib/sessionOpen'
-import type { ChatMessage } from '../types'
+import type { ChatMessage, ToolCallData } from '../types'
+import { BrandLogo, BrandWordmark } from './BrandLogo'
 
 /** FTS 搜索结果行（可带 snippet） */
 type SearchHit = ChatSummary & { snippet?: string }
-import { BrandLogo, BrandWordmark } from './BrandLogo'
+
+/** 磁盘投影 → ChatMessage（工具字段与实时 ToolCallInfo 对齐，不再靠标题猜 kind） */
+function hydrateDisplayMessage(m: {
+  id: string
+  role: string
+  text: string
+  tool?: string | null
+  tool_call_id?: string | null
+  prompt_id?: string | null
+  kind?: string | null
+  status?: string | null
+  detail?: string | null
+  preview?: string | null
+}): ChatMessage {
+  const role = (
+    ['user', 'assistant', 'system', 'thought', 'tool'].includes(m.role)
+      ? m.role
+      : 'assistant'
+  ) as ChatMessage['role']
+
+  if (role === 'tool') {
+    const title = m.tool || 'tool'
+    const preview = m.preview || m.text || ''
+    const detail = m.detail || title
+    const toolCall: ToolCallData = {
+      toolCallId: m.tool_call_id || m.id,
+      kind: (m.kind || 'other').toLowerCase(),
+      status: (m.status || 'completed').toLowerCase(),
+      title,
+      detail,
+      preview,
+    }
+    return {
+      id: m.id,
+      role: 'tool',
+      text: preview || detail,
+      tool: title,
+      toolCallId: toolCall.toolCallId,
+      toolCall,
+    }
+  }
+
+  return {
+    id: m.id,
+    role,
+    text: m.text || '',
+    ...(m.tool ? { tool: m.tool } : {}),
+    ...(m.tool_call_id ? { toolCallId: m.tool_call_id } : {}),
+    ...(m.prompt_id ? { promptId: m.prompt_id } : {}),
+  }
+}
 
 function FolderIcon({ open = false }: { open?: boolean }) {
   return (
@@ -345,27 +399,34 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       return
     }
 
+    // 切走前缓存当前会话消息，回来时可跳过磁盘投影
+    const prevId = $activeSessionId.get()
+    if (prevId && prevId !== id) {
+      const cur = $messages.get()
+      if (cur.length > 0) cacheSessionMessages(prevId, cur)
+    }
+
     $activeChatId.set(id)
     setMenuOpenChatId(null)
     const useCwd = (sessionCwd || cwd).trim() || cwd
     const gen = nextLoadGen()
 
     try {
+      // 先清空 + loading，避免短暂仍显示上一会话（再从顶跳到底）
+      $messages.set([])
       $sessionPhase.set('loading')
       $engineStatus.set('initializing')
-      const raw = await getSessionMessages(id)
-      if (gen !== currentLoadGen()) return
 
-      const messages: ChatMessage[] = raw.map((m) => ({
-        id: m.id,
-        role: (['user', 'assistant', 'system', 'thought', 'tool'].includes(m.role)
-          ? m.role
-          : 'assistant') as ChatMessage['role'],
-        text: m.text || '',
-        ...(m.tool ? { tool: m.tool } : {}),
-        ...(m.tool_call_id ? { toolCallId: m.tool_call_id } : {}),
-        ...(m.prompt_id ? { promptId: m.prompt_id } : {}),
-      }))
+      let messages = getCachedSessionMessages(id)
+      if (!messages) {
+        const raw = await getSessionMessages(id)
+        if (gen !== currentLoadGen()) return
+        messages = raw.map((m) => hydrateDisplayMessage(m))
+        cacheSessionMessages(id, messages)
+      } else if (gen !== currentLoadGen()) {
+        return
+      }
+
       hydrateFromSnapshot(messages)
 
       beginAttachRuntime()
@@ -373,6 +434,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       if (gen !== currentLoadGen()) return
       finishAttachRuntime()
       $activeSessionId.set(id)
+      // runtime 挂好后刷新缓存（含切走期间可能未写入的快照）
+      cacheSessionMessages(id, $messages.get())
     } catch (e) {
       if (gen !== currentLoadGen()) return
       abortOpenSession()
@@ -451,6 +514,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     setBusy(true)
     try {
       await deleteSession(chat.id, chat.cwd || cwd)
+      invalidateSessionMessages(chat.id)
       if (chat.id === activeChatId) {
         $messages.set([])
         $activeChatId.set('')

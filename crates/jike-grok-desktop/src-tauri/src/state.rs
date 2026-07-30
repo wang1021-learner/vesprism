@@ -381,13 +381,15 @@ async fn handle_command(
                 Ok(mut s) => {
                     *status_rx = Some(s.subscribe_status());
                     let sid = s.session_id();
-                    // 先把 resume 期间灌入 channel 的回放事件全部 forward，再通知前端落盘。
-                    // 否则 invoke 返回后前端若过早 finishReplay，会只剩后到的 tool 卡。
+                    // 前端已用 get_session_messages 磁盘投影秒开 UI；回放 chunk 在 attaching
+                    // 阶段会被丢弃。此处仍 drain channel（避免污染后续实时事件），但跳过
+                    // 与投影重复的 transcript 类 forward，省 IPC/序列化/前端无效处理。
                     drain_session_events_until_quiet(
                         &mut s,
                         app,
                         pending_permissions,
                         next_perm_id,
+                        true, /* skip_transcript */
                     )
                     .await;
                     *session = Some(s);
@@ -540,15 +542,18 @@ async fn begin_fresh_session(
     }
 }
 
-/// 将 channel 中已有（及短窗内陆续到达）的会话事件全部 forward 给前端。
+/// 将 channel 中已有（及短窗内陆续到达）的会话事件 drain 掉。
 ///
 /// `load_session` 在 resume 完成时，回放通知往往已在 `event_rx` 里排队；
-/// 必须在此 drain 完毕后再 `reply Ok` / `ReplayComplete`，前端才能一次组装完整 transcript。
+/// 必须在此 drain 完毕后再 `reply Ok` / `ReplayComplete`，避免回放残留进实时流。
+///
+/// `skip_transcript`：前端已用磁盘投影展示历史时为 true，只透传权限/错误等关键事件。
 async fn drain_session_events_until_quiet(
     session: &mut GrokSession,
     app: &AppHandle,
     pending: &mut HashMap<u64, oneshot::Sender<String>>,
     next_id: &mut u64,
+    skip_transcript: bool,
 ) {
     use std::time::{Duration, Instant};
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -560,6 +565,11 @@ async fn drain_session_events_until_quiet(
     while Instant::now() < deadline {
         let mut n = 0u32;
         while let Some(ev) = session.try_next_event() {
+            if skip_transcript && is_projection_redundant(&ev) {
+                // 消费即丢：agent 仍需回放到正确状态，但不必再推前端
+                n += 1;
+                continue;
+            }
             forward_event(app, ev, pending, next_id);
             n += 1;
         }
@@ -573,6 +583,21 @@ async fn drain_session_events_until_quiet(
         }
         tokio::time::sleep(quiet).await;
     }
+}
+
+/// 磁盘投影已覆盖的回放事件（LoadSession + skip_transcript 时不 forward）。
+/// 仍透传：Error、PermissionRequest、TokenUsage（用量条）。
+fn is_projection_redundant(event: &SessionEvent) -> bool {
+    matches!(
+        event,
+        SessionEvent::AgentTextChunk(_)
+            | SessionEvent::AgentThoughtChunk(_)
+            | SessionEvent::UserTextChunk { .. }
+            | SessionEvent::ToolCall(_)
+            | SessionEvent::ToolCallUpdate(_)
+            | SessionEvent::TurnEnded { .. }
+            | SessionEvent::Other(_)
+    )
 }
 
 /// 把业务事件转成可序列化的前端事件；权限请求会登记 oneshot。

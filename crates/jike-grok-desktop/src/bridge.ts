@@ -67,7 +67,7 @@ export const searchSessions = (
     limit: limit ?? 50,
   })
 
-/** 只读磁盘 transcript 投影消息（不启 agent）— Codex 打开历史主路径 */
+/** 只读磁盘 transcript 投影消息（不启 agent）— 打开历史主路径 */
 export const getSessionMessages = (sessionId: string) =>
   invoke<
     Array<{
@@ -77,6 +77,11 @@ export const getSessionMessages = (sessionId: string) =>
       tool?: string | null
       tool_call_id?: string | null
       prompt_id?: string | null
+      /** read / edit / execute / search / … */
+      kind?: string | null
+      status?: string | null
+      detail?: string | null
+      preview?: string | null
     }>
   >('get_session_messages', { sessionId })
 

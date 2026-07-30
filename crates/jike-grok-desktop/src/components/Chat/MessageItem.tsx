@@ -1,5 +1,5 @@
-import { memo, useState } from 'react'
-import type { ChatMessage } from '../../types'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
+import type { ChatMessage, ToolCallData } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
@@ -7,6 +7,26 @@ const USER_BUBBLE_FOLD_THRESHOLD = 600
 interface MessageItemProps {
   message: ChatMessage
   streaming?: boolean
+}
+
+function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
+  if (prev.streaming !== next.streaming) return false
+  if (!next.streaming && !prev.streaming) {
+    return prev.message === next.message
+  }
+  const a = prev.message
+  const b = next.message
+  return (
+    a.id === b.id &&
+    a.role === b.role &&
+    a.text === b.text &&
+    a.isStreaming === b.isStreaming &&
+    (a.role !== 'tool' ||
+      (a.toolCall?.status === b.toolCall?.status &&
+        a.toolCall?.preview === b.toolCall?.preview &&
+        a.toolCall?.detail === b.toolCall?.detail &&
+        a.toolCall?.title === b.toolCall?.title))
+  )
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -25,20 +45,23 @@ export const MessageItem = memo(function MessageItem({
       return <UserBubble text={message.text} />
 
     case 'thought':
-      return <ThoughtBubble text={message.text} streaming={streaming} />
+      return (
+        <ThoughtLine
+          text={message.text}
+          streaming={streaming || Boolean(message.isStreaming)}
+          timing={message.thoughtTiming}
+        />
+      )
 
     case 'tool':
       return (
-        <div className="message-row tool-row">
-          <div className="tool-card">
-            <div className="tool-card-header">
-              <span className="tool-label">🔧 {message.tool || 'tool'}</span>
-            </div>
-            {message.text ? (
-              <pre className="tool-output bubble-text">{message.text}</pre>
-            ) : null}
-          </div>
-        </div>
+        <ToolLine
+          tool={
+            message.toolCall ??
+            legacyToolFromMessage(message)
+          }
+          streaming={streaming || Boolean(message.isStreaming)}
+        />
       )
 
     case 'assistant':
@@ -57,58 +80,220 @@ export const MessageItem = memo(function MessageItem({
     default:
       return null
   }
-})
+}, messageItemEqual)
 
-const ThoughtBubble = memo(function ThoughtBubble({
+function legacyToolFromMessage(message: ChatMessage): ToolCallData {
+  return {
+    toolCallId: message.toolCallId || message.id,
+    kind: 'other',
+    status: 'completed',
+    title: message.tool || 'tool',
+    detail: message.tool || '',
+    preview: message.text || '',
+  }
+}
+
+function formatDuration(timing?: { start: number; end?: number }): string | null {
+  if (!timing?.start) return null
+  const end = timing.end ?? Date.now()
+  if (end < timing.start) return null
+  const sec = (end - timing.start) / 1000
+  if (sec < 0.05) return null
+  if (sec < 10) return `${sec.toFixed(1).replace(/\.0$/, '')}s`
+  return `${Math.round(sec)}s`
+}
+
+/** 截图风格：思考了 3s › — 默认折叠，点击展开正文 */
+const ThoughtLine = memo(function ThoughtLine({
   text,
   streaming,
+  timing,
 }: {
   text: string
   streaming: boolean
+  timing?: { start: number; end?: number }
 }) {
-  // 流式默认展开；结束后默认折叠，可点开
-  const [userExpanded, setUserExpanded] = useState(false)
-  const expanded = streaming || userExpanded
-  const charHint = text.length > 0 ? `${text.length.toLocaleString()} 字符` : ''
+  const [expanded, setExpanded] = useState(false)
+  const duration = formatDuration(
+    streaming
+      ? timing?.start
+        ? { start: timing.start, end: Date.now() }
+        : undefined
+      : timing,
+  )
+  const title = streaming
+    ? duration
+      ? `思考中… ${duration}`
+      : '思考中…'
+    : duration
+      ? `思考了 ${duration}`
+      : '思考过程'
+  const bodyRef = useRef<HTMLPreElement>(null)
+  const canExpand = text.trim().length > 0
+
+  useLayoutEffect(() => {
+    if (!expanded || !streaming) return
+    const el = bodyRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [expanded, streaming, text])
 
   return (
-    <div className="message-row thought-row">
+    <div className="message-row activity-row thought-row">
+      <div className={`activity-line thought-line${streaming ? ' is-live' : ''}`}>
+        <button
+          type="button"
+          className="activity-toggle"
+          onClick={() => canExpand && setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          disabled={!canExpand}
+          title={expanded ? '收起思考' : '展开思考'}
+        >
+          <span className="activity-label">{title}</span>
+          {canExpand ? (
+            <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
+              ›
+            </span>
+          ) : null}
+          {streaming ? <span className="activity-live-dot" aria-hidden /> : null}
+        </button>
+        {expanded && canExpand ? (
+          <pre ref={bodyRef} className="activity-body thought-body">
+            {text}
+          </pre>
+        ) : null}
+      </div>
+    </div>
+  )
+})
+
+function kindIcon(kind: string): string {
+  switch (kind) {
+    case 'read':
+      return '📄'
+    case 'edit':
+      return '✎'
+    case 'execute':
+      return '▶'
+    case 'search':
+      return '⌕'
+    case 'fetch':
+      return '↗'
+    case 'delete':
+      return '⌫'
+    case 'think':
+      return '💭'
+    default:
+      return '·'
+  }
+}
+
+function toolHeadline(tool: ToolCallData): string {
+  const detail = tool.detail?.trim() || ''
+  const short =
+    detail.length > 72 ? `${detail.slice(0, 70)}…` : detail
+  const running =
+    tool.status === 'pending' || tool.status === 'in_progress'
+
+  switch (tool.kind) {
+    case 'execute':
+      return running
+        ? `正在运行 ${short || tool.title}`
+        : `已运行 ${short || tool.title}`
+    case 'read':
+      return running
+        ? `正在读取 ${short || tool.title}`
+        : `已读取 ${short || tool.title}`
+    case 'edit':
+      return running
+        ? `正在编辑 ${short || tool.title}`
+        : `已编辑 ${short || tool.title}`
+    case 'search':
+      return running
+        ? `正在搜索 ${short || tool.title}`
+        : `已搜索 ${short || tool.title}`
+    case 'fetch':
+      return running
+        ? `正在抓取 ${short || tool.title}`
+        : `已抓取 ${short || tool.title}`
+    case 'delete':
+      return running ? `正在删除 ${short}` : `已删除 ${short || tool.title}`
+    default: {
+      // 官方 title 常为 "Execute `…`" / "Explored N files"
+      const t = tool.title?.trim() || '工具'
+      if (running && !/中|ing/i.test(t)) return `进行中 · ${t}`
+      return t
+    }
+  }
+}
+
+/** 截图风格：▶ 已运行 cmd 2.7s — 默认折叠，可展开输出 */
+const ToolLine = memo(function ToolLine({
+  tool,
+  streaming,
+}: {
+  tool: ToolCallData
+  streaming: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const duration = formatDuration(tool.timing)
+  const live =
+    streaming || tool.status === 'pending' || tool.status === 'in_progress'
+  const preview = tool.preview?.trim() || ''
+  const hasBody = preview.length > 0 || (tool.diffs?.length ?? 0) > 0
+  const headline = toolHeadline(tool)
+
+  return (
+    <div className="message-row activity-row tool-row">
       <div
-        className={`bubble bubble-thought${expanded ? ' is-expanded' : ' is-collapsed'}${streaming ? ' is-streaming' : ''}`}
+        className={`activity-line tool-line status-${tool.status}${live ? ' is-live' : ''}`}
       >
         <button
           type="button"
-          className="thought-header"
-          onClick={() => {
-            if (streaming) return
-            setUserExpanded((v) => !v)
-          }}
+          className="activity-toggle"
+          onClick={() => hasBody && setExpanded((v) => !v)}
           aria-expanded={expanded}
-          disabled={streaming}
-          title={
-            streaming ? '思考中…' : expanded ? '收起思考过程' : '展开思考过程'
-          }
+          disabled={!hasBody}
+          title={hasBody ? (expanded ? '收起输出' : '展开输出') : undefined}
         >
-          <span className="thought-header-left">
-            <span className="thought-icon" aria-hidden>
-              💭
-            </span>
-            <span className="thought-title">
-              {streaming ? '思考中…' : '思考过程'}
-            </span>
-            {!streaming && charHint ? (
-              <span className="thought-meta">{charHint}</span>
-            ) : null}
+          <span className="activity-icon" aria-hidden data-kind={tool.kind}>
+            {kindIcon(tool.kind)}
           </span>
-          <span className="thought-header-right" aria-hidden>
-            {streaming ? (
-              <span className="thought-streaming-dot" />
-            ) : (
-              <span className={`thought-chevron${expanded ? ' open' : ''}`}>▾</span>
-            )}
+          <span className="activity-label" title={tool.detail || tool.title}>
+            {headline}
           </span>
+          {duration ? <span className="activity-meta">{duration}</span> : null}
+          {hasBody ? (
+            <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
+              ›
+            </span>
+          ) : null}
+          {live ? <span className="activity-live-dot" aria-hidden /> : null}
         </button>
-        {expanded ? <pre className="bubble-text thought-body">{text}</pre> : null}
+        {expanded && hasBody ? (
+          <div className="activity-body tool-body">
+            {preview ? <pre className="tool-output-pre">{preview}</pre> : null}
+            {tool.diffs?.map((d, i) => (
+              <div key={`${d.path}-${i}`} className="tool-diff-block">
+                <div className="tool-diff-path">{d.path || 'diff'}</div>
+                <pre className="tool-output-pre">
+                  {(d.oldText
+                    ? d.oldText
+                        .split('\n')
+                        .slice(0, 30)
+                        .map((l) => `-${l}`)
+                        .join('\n') + '\n'
+                    : '') +
+                    d.newText
+                      .split('\n')
+                      .slice(0, 40)
+                      .map((l) => `+${l}`)
+                      .join('\n')}
+                </pre>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   )

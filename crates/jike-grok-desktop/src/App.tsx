@@ -2,14 +2,21 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Composer } from './components/Composer'
 import { MessageList } from './components/Chat/MessageList'
+import {
+  ErrorBoundary,
+  MainViewportErrorFallback,
+  MessagesErrorFallback,
+} from './components/ErrorBoundary'
 import { PermissionModal } from './components/Permission'
 import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
+import { ToastHost } from './components/Toast'
 import {
   $activeChatId, $activeSessionId, $chats, $composerInput, $contextUsedTokens,
   $defaultModelId, $engineStatus, $error, $generating, $messages, $models,
   $permission, $reasoningEffort, $sessionPhase,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
+  pushToast,
 } from './store'
 import {
   cancelTurn, getModelSettings, listSessions,
@@ -40,15 +47,32 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <AppSidebar />
-      <div className="main-viewport">
-        <AppHeader />
-        <AppError />
-        <AppMessages />
-        <AppComposer />
-        <AppPermission />
-        <SettingsModal />
-      </div>
+      <ToastHost />
+      <ErrorBoundary name="侧栏">
+        <AppSidebar />
+      </ErrorBoundary>
+      <ErrorBoundary
+        name="主界面"
+        fallback={(error, reset) => (
+          <MainViewportErrorFallback error={error} onReset={reset} />
+        )}
+      >
+        <div className="main-viewport">
+          <AppHeader />
+          <AppError />
+          <ErrorBoundary
+            name="消息区"
+            fallback={(error, reset) => (
+              <MessagesErrorFallback error={error} onReset={reset} />
+            )}
+          >
+            <AppMessages />
+          </ErrorBoundary>
+          <AppComposer />
+          <AppPermission />
+          <SettingsModal />
+        </div>
+      </ErrorBoundary>
     </div>
   )
 }
@@ -189,7 +213,8 @@ function AppComposer() {
   const canSwitchWs = ready && !generating && !messages.some((m) => m.role === 'user')
 
   const onSend = useCallback(async (text?: string) => {
-    const msg = text ?? input.trim()
+    // 读 atom 最新值，避免 useCallback 闭包捕获旧 input
+    const msg = (text ?? $composerInput.get()).trim()
     if (!msg) return
     $composerInput.set('')
     try {
@@ -200,7 +225,7 @@ function AppComposer() {
       $error.set(String(e))
       $engineStatus.set('idle')
     }
-  }, [input])
+  }, [])
 
   const onCancel = useCallback(async () => {
     try { await cancelTurn(); $engineStatus.set('idle') } catch (e) { $error.set(String(e)) }
@@ -214,12 +239,28 @@ function AppComposer() {
     $defaultModelId.set(id)
     if (nextEffort) $reasoningEffort.set(nextEffort)
     void setCurrentModel(id, nextEffort)
+      .then(() => {
+        const label = entry?.model?.trim() || entry?.name?.trim() || id
+        pushToast(`已切换模型 · ${label}`, 'success')
+      })
+      .catch((e) => {
+        $error.set(String(e))
+        pushToast(`切换模型失败 · ${String(e)}`, 'error')
+      })
   }, [])
 
   const onSwitchReasoningEffort = useCallback((e: string) => {
     $reasoningEffort.set(e)
     const id = $defaultModelId.get()
-    if (id) void setCurrentModel(id, e)
+    if (!id) return
+    void setCurrentModel(id, e)
+      .then(() => {
+        pushToast(`已切换思考强度 · ${e}`, 'success')
+      })
+      .catch((err) => {
+        $error.set(String(err))
+        pushToast(`切换思考强度失败`, 'error')
+      })
   }, [])
 
   const onSelectWorkspace = useCallback(async (newCwd: string) => {

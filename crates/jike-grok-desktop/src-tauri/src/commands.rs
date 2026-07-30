@@ -1118,6 +1118,7 @@ pub struct SessionSummaryDto {
 }
 
 /// 展示消息（对齐前端 ChatMessage；从 updates.jsonl 投影，不启 agent）。
+/// 工具字段与实时 `ToolCallInfo` 对齐：kind / status / detail / preview。
 #[derive(serde::Serialize)]
 pub struct DisplayMessageDto {
     pub id: String,
@@ -1129,6 +1130,14 @@ pub struct DisplayMessageDto {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 #[tauri::command]
@@ -1230,6 +1239,10 @@ pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessa
                         tool: m.tool,
                         tool_call_id: m.tool_call_id,
                         prompt_id: m.prompt_id,
+                        kind: m.kind,
+                        status: m.status,
+                        detail: m.detail,
+                        preview: m.preview,
                     })
                     .collect()
             })

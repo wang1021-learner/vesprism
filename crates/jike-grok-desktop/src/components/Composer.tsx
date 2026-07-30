@@ -317,12 +317,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return i >= 0 ? i : 3 // medium
   }, [reasoningEffort, availableReasoningLevels])
 
-  // textarea 自适应高度
+  // textarea 自适应高度（空内容压到 min-height，避免空白一块过高）
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+    el.style.height = '0px'
+    const next = Math.min(Math.max(el.scrollHeight, 20), 120)
+    el.style.height = `${next}px`
   }, [input])
 
   // chat_completions backend（DeepSeek 等第三方）官方代码对这个参数
