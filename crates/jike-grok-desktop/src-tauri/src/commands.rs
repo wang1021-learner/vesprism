@@ -107,6 +107,25 @@ fn resolve_workspace_cwd(state: &AppState) -> PathBuf {
     default_repo_root()
 }
 
+/// 校验 `requested` 是否落在 `workspace_root` 范围内，返回规范化后的绝对路径。
+/// 供所有"按路径读工作区内文件"的 command 复用，避免校验逻辑散落多处。
+fn ensure_within_workspace(requested: &str, workspace_root: &std::path::Path) -> Result<PathBuf, String> {
+    let requested_path = std::path::Path::new(requested);
+
+    let canonical_root = workspace_root
+        .canonicalize()
+        .map_err(|e| format!("工作区路径无效: {e}"))?;
+    let canonical_requested = requested_path
+        .canonicalize()
+        .map_err(|e| format!("文件不存在或无法访问: {e}"))?;
+
+    if !canonical_requested.starts_with(&canonical_root) {
+        return Err("拒绝访问：目标文件不在当前工作区范围内".to_string());
+    }
+
+    Ok(canonical_requested)
+}
+
 /// 返回当前 agent 工作目录（已解析后的绝对/规范化路径字符串）。
 #[tauri::command]
 pub fn workspace_cwd(state: State<'_, AppState>) -> String {
@@ -259,21 +278,10 @@ pub fn env_file_location() -> String {
 /// 安全约束：拒绝任何解析后不在 workspace_root 之内的路径（防止越界读取）。
 #[tauri::command]
 pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<String, String> {
-    let requested = std::path::Path::new(&path);
-    let root = std::path::Path::new(&workspace_root);
+    let canonical_requested =
+        ensure_within_workspace(&path, std::path::Path::new(&workspace_root))?;
 
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|e| format!("工作区路径无效: {e}"))?;
-    let canonical_requested = requested
-        .canonicalize()
-        .map_err(|e| format!("文件不存在或无法访问: {e}"))?;
-
-    if !canonical_requested.starts_with(&canonical_root) {
-        return Err("拒绝访问：目标文件不在当前工作区范围内".to_string());
-    }
-
-    const MAX_PREVIEW_FILE_BYTES: u64 = 2 * 1024 * 1024; // 2MB 上限，避免超大文件卡死渲染
+    const MAX_PREVIEW_FILE_BYTES: u64 = 10 * 1024 * 1024; // 10MB 上限
     let metadata = std::fs::metadata(&canonical_requested)
         .map_err(|e| format!("读取文件信息失败: {e}"))?;
     if metadata.len() > MAX_PREVIEW_FILE_BYTES {
@@ -1257,49 +1265,57 @@ pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessa
 /// - `cwd` 用于当前工作空间排到前面
 /// - 空会话已过滤
 /// - `limit`：可选上限
-#[tauri::command]
-pub async fn list_sessions(
-    cwd: String,
-    limit: Option<u32>,
-) -> Result<Vec<SessionSummaryDto>, String> {
-    // 1) 官方 summary 仍是权威来源（过滤空会话）
+/// 把官方 Summary 组装成本地索引行；list_sessions 全量重建与单条 upsert 共用同一份逻辑，避免两处字段映射各自漂移。
+pub(crate) fn thread_row_from_summary(s: &grok_session::Summary) -> crate::session_index::ThreadRow {
+    let title = s
+        .display_title_opt()
+        .or_else(|| grok_session::get_session_first_prompt(s))
+        .unwrap_or_else(|| "新对话".to_string());
+    let preview: String = title.chars().take(80).collect();
+    let active = s.last_active_at.unwrap_or(s.created_at);
+    let dir = xai_grok_shell::session::persistence::find_session_dir_by_id(&s.info.id.to_string());
+    let transcript_path = dir
+        .as_ref()
+        .map(|d| crate::session_index::transcript_path_for_dir(d))
+        .unwrap_or_default();
+    crate::session_index::ThreadRow {
+        id: s.info.id.to_string(),
+        title,
+        preview,
+        cwd: s.info.cwd.clone(),
+        updated_at: active.to_rfc3339(),
+        updated_at_ms: active.timestamp_millis(),
+        num_messages: s.num_messages,
+        transcript_path,
+    }
+}
+
+/// 一次性全量重建索引（启动时兜底用）。日常运行由 TurnEnded 触发的增量 upsert 维护，不再由 list_sessions 反应式重建。
+pub(crate) async fn rebuild_session_index_full() -> Result<(), String> {
     let mut summaries = grok_session::list_all_sessions()
         .await
         .map_err(|e| e.to_string())?;
     summaries.retain(|s| !grok_session::is_blank_session(s));
+    let rows: Vec<_> = summaries.iter().map(thread_row_from_summary).collect();
+    tokio::task::spawn_blocking(move || crate::session_index::rebuild_from_summaries(&rows))
+        .await
+        .map_err(|e| format!("索引重建任务失败: {e}"))?
+}
 
-    let mut rows = Vec::with_capacity(summaries.len());
-    for s in &summaries {
-        let title = s
-            .display_title_opt()
-            .or_else(|| grok_session::get_session_first_prompt(s))
-            .unwrap_or_else(|| "新对话".to_string());
-        let preview: String = title.chars().take(80).collect();
-        let active = s.last_active_at.unwrap_or(s.created_at);
-        let dir =
-            xai_grok_shell::session::persistence::find_session_dir_by_id(&s.info.id.to_string());
-        let transcript_path = dir
-            .as_ref()
-            .map(|d| crate::session_index::transcript_path_for_dir(d))
-            .unwrap_or_default();
-        rows.push(crate::session_index::ThreadRow {
-            id: s.info.id.to_string(),
-            title,
-            preview,
-            cwd: s.info.cwd.clone(),
-            updated_at: active.to_rfc3339(),
-            updated_at_ms: active.timestamp_millis(),
-            num_messages: s.num_messages,
-            transcript_path,
-        });
+/// 按 id 组装单条索引行，找不到（比如已删除）或是空会话时返回 None。
+pub(crate) fn build_thread_row_by_id(session_id: &str) -> Option<crate::session_index::ThreadRow> {
+    let summary = grok_session::get_session_summary(session_id)?;
+    if grok_session::is_blank_session(&summary) {
+        return None;
     }
+    Some(thread_row_from_summary(&summary))
+}
 
-    let cwd_for_sort = cwd;
-    let lim = limit;
-    // 2) 写索引 + 3) 从索引读出（Codex threads 排序）
+/// 列出会话（Codex threads 排序）。纯读：只查已经维护好的本地索引，不再每次全量重建。
+#[tauri::command]
+pub async fn list_sessions(cwd: String, limit: Option<u32>) -> Result<Vec<SessionSummaryDto>, String> {
     tokio::task::spawn_blocking(move || {
-        crate::session_index::rebuild_from_summaries(&rows)?;
-        let listed = crate::session_index::list_threads(&cwd_for_sort, lim)?;
+        let listed = crate::session_index::list_threads(&cwd, limit)?;
         Ok(listed
             .into_iter()
             .map(|r| SessionSummaryDto {
@@ -1360,5 +1376,55 @@ pub async fn set_current_model(
         reply,
     })
     .await
+}
+
+// ── 文件树 ──
+
+#[derive(serde::Serialize)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+#[tauri::command]
+pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
+    let dir = std::path::Path::new(&path);
+    if !dir.is_dir() {
+        return Err(format!("不是目录: {}", dir.display()));
+    }
+    let mut entries: Vec<DirEntry> = Vec::new();
+    let read = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败: {e}"))?;
+    for entry in read {
+        let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "node_modules" || name == "target" {
+            continue;
+        }
+        entries.push(DirEntry {
+            is_dir: entry.file_type().map(|t| t.is_dir()).unwrap_or(false),
+            name,
+        });
+    }
+    entries.sort_by(|a, b| {
+        if a.is_dir != b.is_dir {
+            return if a.is_dir { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+        }
+        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+    });
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn read_file_text(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let workspace_root = resolve_workspace_cwd(&state);
+    let canonical_requested = ensure_within_workspace(&path, &workspace_root)?;
+
+    const MAX_BYTES: u64 = 10 * 1024 * 1024; // 10MB 上限
+    let meta = std::fs::metadata(&canonical_requested)
+        .map_err(|e| format!("读取文件信息失败: {e}"))?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!("文件过大（{} bytes），上限 {} bytes", meta.len(), MAX_BYTES));
+    }
+    std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
 }
 

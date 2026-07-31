@@ -22,8 +22,8 @@ export const setWorkspaceCwd = (cwd: string) => invoke<string>('set_workspace_cw
 
 // ── 会话 ──
 export const startSession = (cwd: string) => invoke('start_session', { cwd })
-export const sendPrompt = (text: string) =>
-  invoke('send_prompt', { text, promptId: crypto.randomUUID() })
+export const sendPrompt = (text: string, promptId?: string) =>
+  invoke('send_prompt', { text, promptId: promptId ?? crypto.randomUUID() })
 export const cancelTurn = () => invoke('cancel_turn')
 export const restartSession = (cwd: string) => invoke('restart_session', { cwd })
 
@@ -122,6 +122,12 @@ export const envFileLocation = () => invoke<string>('env_file_location')
 // ── 文件 ──
 export const readFileForPreview = (path: string, workspaceRoot: string) =>
   invoke<string>('read_file_for_preview', { path, workspaceRoot })
+
+export const listDir = (path: string) =>
+  invoke<Array<{ name: string; is_dir: boolean }>>('list_dir', { path })
+
+export const readFileText = (path: string) =>
+  invoke<string>('read_file_text', { path })
 
 export const pickDirectory = () => invoke<string | null>('pick_directory')
 

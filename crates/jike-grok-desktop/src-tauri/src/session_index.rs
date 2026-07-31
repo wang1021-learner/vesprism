@@ -101,6 +101,31 @@ pub fn rebuild_from_summaries(rows: &[ThreadRow]) -> Result<(), String> {
     })
 }
 
+/// 增量插入或更新单条会话索引记录，不触碰其余行（相比 rebuild_from_summaries 的全表重建）。
+pub fn upsert_thread(row: &ThreadRow) -> Result<(), String> {
+    with_db(|conn| {
+        conn.execute(
+            "INSERT INTO threads
+             (id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+             ON CONFLICT(id) DO UPDATE SET
+               title = excluded.title,
+               preview = excluded.preview,
+               cwd = excluded.cwd,
+               updated_at = excluded.updated_at,
+               updated_at_ms = excluded.updated_at_ms,
+               num_messages = excluded.num_messages,
+               transcript_path = excluded.transcript_path",
+            params![
+                row.id, row.title, row.preview, row.cwd,
+                row.updated_at, row.updated_at_ms, row.num_messages as i64, row.transcript_path,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
 /// 列出线程；`current_cwd` 非空时该 cwd 优先，其余按 recency。
 /// 排序与 `LIMIT` 均在 SQL 完成，避免全表进内存再 `sort_by`/`truncate`。
 pub fn list_threads(current_cwd: &str, limit: Option<u32>) -> Result<Vec<ThreadRow>, String> {

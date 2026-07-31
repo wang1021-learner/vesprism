@@ -8,13 +8,14 @@ import {
   MessagesErrorFallback,
 } from './components/ErrorBoundary'
 import { PermissionModal } from './components/Permission'
+import { RightPanel } from './components/RightPanel'
 import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
 import { ToastHost } from './components/Toast'
 import {
   $activeChatId, $activeSessionId, $chats, $composerInput, $contextUsedTokens,
   $defaultModelId, $engineStatus, $error, $generating, $messages, $models,
-  $permission, $reasoningEffort, $sessionPhase,
+  $permission, $reasoningEffort, $rightPanelOpen, $sessionPhase,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
   pushToast,
 } from './store'
@@ -24,6 +25,8 @@ import {
   workspaceCwd,
 } from './bridge'
 import { pushTranscriptEvent } from './lib/sessionOpen'
+import { generateId } from './lib/generateId'
+import { removeUserMessageByPromptId } from './lib/sessionTranscript'
 
 export default function App() {
   const ready = useRef(false)
@@ -73,6 +76,7 @@ export default function App() {
           <SettingsModal />
         </div>
       </ErrorBoundary>
+      <RightPanel />
     </div>
   )
 }
@@ -84,7 +88,7 @@ async function bootstrap() {
     const settings = await getModelSettings()
     $models.set(settings.models)
     $defaultModelId.set(settings.default_id || settings.models[0]?.id || '')
-    const chats = await listSessions(cwd)
+    const chats = await listSessions(cwd, 80)
     $chats.set(chats.map(c => ({ id: c.id, title: c.title, cwd: c.cwd, updatedAt: c.updated_at })))
     const wsSet = new Set(chats.map(c => c.cwd))
     if (cwd) wsSet.add(cwd)
@@ -114,9 +118,8 @@ function handleSessionEvent(ev: import('./bridge').SessionEventPayload) {
       if (ev.request_id != null && ev.options?.length) {
         $permission.set({
           id: String(ev.request_id),
-          tool: ev.description || 'unknown',
-          args: {},
-          message: ev.options.map((o) => o.name).join(' / '),
+          tool: ev.description || '工具权限请求',
+          options: ev.options.map((o) => ({ id: o.id, name: o.name, kind: o.kind })),
         })
       }
       break
@@ -145,40 +148,40 @@ function AppSidebar() {
 
 function AppHeader() {
   const collapsed = useStore($sidebarCollapsed)
+  const panelOpen = useStore($rightPanelOpen)
   const messages = useStore($messages)
   const firstUser = messages.find((m) => m.role === 'user' && m.text.trim())
-  const title = firstUser
-    ? firstUser.text.trim().replace(/\s+/g, ' ')
-    : '新对话'
+  const title = firstUser ? firstUser.text.trim().replace(/\s+/g, ' ') : '新对话'
 
   return (
     <header className="main-header">
       <div className="header-left">
         {collapsed && (
-          <button
-            type="button"
-            className="sidebar-toggle-btn"
-            title="展开会话边栏"
-            onClick={() => $sidebarCollapsed.set(false)}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M9 3v18" />
+          <button type="button" className="sidebar-toggle-btn" title="展开会话边栏"
+            onClick={() => $sidebarCollapsed.set(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" />
             </svg>
           </button>
         )}
-        <h1 className="chat-title" title={title}>
-          {title}
-        </h1>
+        <h1 className="chat-title" title={title}>{title}</h1>
       </div>
-      <div className="header-right" />
+      <div className="header-right">
+        <button
+          type="button"
+          className={`header-panel-btn${panelOpen ? ' is-active' : ''}`}
+          title={panelOpen ? '关闭右侧面板' : '打开右侧面板'}
+          aria-pressed={panelOpen}
+          onClick={() => $rightPanelOpen.set(!panelOpen)}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+            <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+            <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+            <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+          </svg>
+        </button>
+      </div>
     </header>
   )
 }
@@ -216,12 +219,27 @@ function AppComposer() {
     // 读 atom 最新值，避免 useCallback 闭包捕获旧 input
     const msg = (text ?? $composerInput.get()).trim()
     if (!msg) return
+    // 与 bridge / 引擎 meta.promptId 对齐；generateId 兼容无 randomUUID 的 WebView
+    const promptId = generateId('p_')
     $composerInput.set('')
+    // 乐观 UI：立刻插入用户气泡，不依赖 user_text_chunk 回显时机
+    $messages.set([
+      ...$messages.get(),
+      {
+        id: generateId('msg_'),
+        role: 'user' as const,
+        text: msg,
+        promptId,
+      },
+    ])
     try {
       $engineStatus.set('generating')
       $error.set('')
-      await sendPrompt(msg)
+      await sendPrompt(msg, promptId)
     } catch (e) {
+      // invoke 失败：撤回乐观气泡并还原输入，避免「空列表 / 幽灵消息」
+      $messages.set(removeUserMessageByPromptId($messages.get(), promptId))
+      $composerInput.set(msg)
       $error.set(String(e))
       $engineStatus.set('idle')
     }

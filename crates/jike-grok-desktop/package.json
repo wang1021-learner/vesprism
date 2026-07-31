@@ -3,7 +3,7 @@
   "productName": "Grok Build",
   "private": true,
   "version": "0.1.0",
-  "description": "Grok Build 桌面端 — Hermes UI + Tauri 2",
+  "description": "Grok Build 桌面端 — Tauri 2 + React 19",
   "type": "module",
   "main": "dist/index.html",
   "scripts": {

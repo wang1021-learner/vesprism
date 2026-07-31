@@ -242,7 +242,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     const w = workspace ?? $workspaceCwd.get()
     if (!w) return
     try {
-      const list = await listSessions(w)
+      const list = await listSessions(w, 300)
       $chats.set(
         list.map((c) => ({
           id: c.id,

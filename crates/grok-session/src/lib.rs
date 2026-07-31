@@ -955,6 +955,11 @@ pub async fn list_all_sessions() -> anyhow::Result<Vec<Summary>> {
         .map_err(|e| anyhow::anyhow!("读取全部会话列表失败: {}", e))
 }
 
+/// 按 session id 查询单条最新摘要，供索引增量更新使用，避免为了刷新一条记录去拉全量列表。
+pub fn get_session_summary(session_id: &str) -> Option<Summary> {
+    xai_grok_shell::session::persistence::find_summary_by_session_id(session_id)
+}
+
 /// 删除指定 session_id 的本地持久化记录。
 pub async fn delete_session(session_id: &str, cwd: &str) -> anyhow::Result<()> {
     let raw_config = xai_grok_shell::config::load_effective_config()

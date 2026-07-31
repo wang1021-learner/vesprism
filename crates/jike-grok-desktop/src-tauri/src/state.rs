@@ -204,11 +204,13 @@ pub async fn run_actor(app: AppHandle, mut cmd_rx: mpsc::UnboundedReceiver<Actor
             }, if has_session => {
                 match event {
                     Some(ev) => {
+                        let current_session_id = session.as_ref().map(|s| s.session_id());
                         forward_event(
                             &app,
                             ev,
                             &mut pending_permissions,
                             &mut next_perm_id,
+                            current_session_id,
                         );
                     }
                     None => {
@@ -562,6 +564,8 @@ async fn drain_session_events_until_quiet(
     // 连续若干轮 try_recv 为空则认为本批回放结束
     const QUIET_ROUNDS: u32 = 3;
 
+    let current_session_id = Some(session.session_id());
+
     while Instant::now() < deadline {
         let mut n = 0u32;
         while let Some(ev) = session.try_next_event() {
@@ -570,7 +574,7 @@ async fn drain_session_events_until_quiet(
                 n += 1;
                 continue;
             }
-            forward_event(app, ev, pending, next_id);
+            forward_event(app, ev, pending, next_id, current_session_id.clone());
             n += 1;
         }
         if n > 0 {
@@ -607,7 +611,9 @@ fn forward_event(
     event: SessionEvent,
     pending: &mut HashMap<u64, oneshot::Sender<String>>,
     next_id: &mut u64,
+    current_session_id: Option<String>,
 ) {
+    let _ = app;
     match event {
         SessionEvent::AgentTextChunk(text) => {
             if !text.is_empty() {
@@ -626,6 +632,13 @@ fn forward_event(
             stop_reason,
             prompt_id,
         } => {
+            if let Some(sid) = current_session_id.clone() {
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Some(row) = crate::commands::build_thread_row_by_id(&sid) {
+                        let _ = crate::session_index::upsert_thread(&row);
+                    }
+                });
+            }
             emit(
                 app,
                 FrontendEvent::TurnEnded {

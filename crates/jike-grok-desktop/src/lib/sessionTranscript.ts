@@ -102,24 +102,7 @@ export function applyTranscriptEvent(
       if (!text) return messages
       const pid = ev.prompt_id ?? undefined
       const base = sealStreamingTail(messages)
-      const last = base[base.length - 1]
-      if (last?.role === 'user') {
-        if (pid != null && last.promptId === pid) {
-          return [...base.slice(0, -1), { ...last, text: last.text + text }]
-        }
-        if (pid == null && last.promptId == null) {
-          return [...base.slice(0, -1), { ...last, text: last.text + text }]
-        }
-      }
-      return [
-        ...base,
-        {
-          id: generateId('msg_'),
-          role: 'user',
-          text,
-          ...(pid != null ? { promptId: pid } : {}),
-        },
-      ]
+      return mergeUserTextChunk(base, text, pid)
     }
     case 'tool_call': {
       if (!ev.tool) return messages
@@ -132,6 +115,89 @@ export function applyTranscriptEvent(
     default:
       return messages
   }
+}
+
+/**
+ * 合并用户文本回显，兼容乐观 UI：
+ * - 发送时前端已插入带 promptId 的完整气泡
+ * - 引擎稍后推 user_text_chunk（可能分片 / 丢 meta），不得再插第二条
+ */
+function mergeUserTextChunk(
+  messages: ChatMessage[],
+  text: string,
+  pid: string | undefined,
+): ChatMessage[] {
+  // 1) 按 promptId 精确核销（乐观气泡 / 流式回显）
+  if (pid != null) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role !== 'user' || m.promptId !== pid) continue
+
+      if (!m.text) {
+        const copy = messages.slice()
+        copy[i] = { ...m, text }
+        return copy
+      }
+      // 乐观全文已覆盖该分片（前缀 / 子串 / 全文）
+      if (m.text === text || m.text.startsWith(text) || m.text.includes(text)) {
+        return messages
+      }
+      // 累积式回显：服务端每次推更长前缀
+      if (text.startsWith(m.text)) {
+        const copy = messages.slice()
+        copy[i] = { ...m, text }
+        return copy
+      }
+      // 增量分片（无乐观时）：拼到尾部
+      const copy = messages.slice()
+      copy[i] = { ...m, text: m.text + text }
+      return copy
+    }
+  }
+
+  const last = messages[messages.length - 1]
+  if (last?.role === 'user') {
+    // 2) 双方都无 promptId：按流式尾部拼接
+    if (pid == null && last.promptId == null) {
+      return [...messages.slice(0, -1), { ...last, text: last.text + text }]
+    }
+    // 3) 尾部是乐观气泡（有 promptId），回显丢了 meta：按内容核销，避免重复
+    if (pid == null && last.promptId != null && last.text) {
+      if (
+        last.text === text ||
+        last.text.startsWith(text) ||
+        last.text.includes(text)
+      ) {
+        return messages
+      }
+      if (text.startsWith(last.text)) {
+        return [...messages.slice(0, -1), { ...last, text }]
+      }
+      // 刚发送的尾部用户气泡优先，不再插第二条
+      return messages
+    }
+  }
+
+  return [
+    ...messages,
+    {
+      id: generateId('msg_'),
+      role: 'user',
+      text,
+      ...(pid != null ? { promptId: pid } : {}),
+    },
+  ]
+}
+
+/** 发送失败时撤掉对应乐观用户气泡 */
+export function removeUserMessageByPromptId(
+  messages: ChatMessage[],
+  promptId: string,
+): ChatMessage[] {
+  const next = messages.filter(
+    (m) => !(m.role === 'user' && m.promptId === promptId),
+  )
+  return next.length === messages.length ? messages : next
 }
 
 function appendRole(

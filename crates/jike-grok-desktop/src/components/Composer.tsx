@@ -257,6 +257,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     },
   }))
 
+  useEffect(() => {
+    const onFocus = () => {
+      textareaRef.current?.focus()
+    }
+    window.addEventListener('jike:focus-composer', onFocus)
+    return () => window.removeEventListener('jike:focus-composer', onFocus)
+  }, [])
+
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
@@ -317,12 +325,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return i >= 0 ? i : 3 // medium
   }, [reasoningEffort, availableReasoningLevels])
 
-  // textarea 自适应高度（空内容压到 min-height，避免空白一块过高）
+  // textarea 自适应高度（空内容保持舒适行高）
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = '0px'
-    const next = Math.min(Math.max(el.scrollHeight, 20), 120)
+    const next = Math.min(Math.max(el.scrollHeight, 36), 160)
     el.style.height = `${next}px`
   }, [input])
 

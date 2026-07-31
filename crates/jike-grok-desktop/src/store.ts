@@ -44,6 +44,13 @@ export const $activeChatId = atom('')
 // ── Composer 状态 ──
 export const $composerInput = atom('')
 
+// ── 右侧栏 ──
+export type RightPanelTab = 'files' | 'output'
+export const $rightPanelOpen = atom(false)
+export const $rightPanelTab = atom<RightPanelTab>('files')
+export const $rightPanelWidth = atom(320)
+export const $rightPanelOutput = atom('')
+
 // ── Toast（顶部浮层，不进对话历史；如切换模型） ──
 export type ToastTone = 'info' | 'success' | 'error'
 export type ToastItem = {

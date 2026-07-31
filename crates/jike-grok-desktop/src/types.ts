@@ -51,11 +51,16 @@ export interface ChatMessage {
   thoughtTiming?: { start: number; end?: number }
 }
 
+export interface PermissionOption {
+  id: string
+  name: string
+  kind?: string // allow | deny | other
+}
+
 export interface PermissionRequest {
   id: string
   tool: string
-  args: Record<string, unknown>
-  message: string
+  options: PermissionOption[]
 }
 
 /** 对齐后端 ModelEntryDto（serde snake_case） */

@@ -1,8 +1,77 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChatMessage, ToolCallData } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
+
+/**
+ * 对齐官方 TUI（xai-grok-pager-render::glyphs::braille_spinner_frames）：
+ * 正常：⠋⠙⠹⠸⠼⠴⠦⠧；WebView 无字形时回退 | / - \（同 CLI ConHost fallback）
+ * 帧率约 7.5fps（每帧 133ms ≈ SPINNER_DIVISOR=4 @ 30fps）
+ */
+const BRAILLE_SPINNER_FRAMES = [
+  '\u{280b}', // ⠋
+  '\u{2819}', // ⠙
+  '\u{2839}', // ⠹
+  '\u{2838}', // ⠸
+  '\u{283c}', // ⠼
+  '\u{2834}', // ⠴
+  '\u{2826}', // ⠦
+  '\u{2827}', // ⠧
+] as const
+
+const ASCII_SPINNER_FRAMES = ['|', '/', '-', '\\'] as const
+
+const BRAILLE_FRAME_MS = 133
+
+/** 测一次：当前字体画不出 Braille 时用 ASCII，避免「有节点但看不见」 */
+function canRenderBraille(): boolean {
+  try {
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return false
+    // 与 .activity-braille-spinner 主字体一致
+    ctx.font =
+      '14px "Segoe UI Symbol", "Cascadia Mono", "Segoe UI", ui-monospace, monospace'
+    const braille = ctx.measureText(BRAILLE_SPINNER_FRAMES[0]).width
+    const ascii = ctx.measureText('|').width
+    // 缺失字形时宽度常接近 0，或与 tofu/空格差不多
+    return braille >= ascii * 0.5 && braille > 2
+  } catch {
+    return false
+  }
+}
+
+let _brailleOk: boolean | null = null
+function preferBrailleFrames(): boolean {
+  if (_brailleOk == null) {
+    _brailleOk = typeof document !== 'undefined' ? canRenderBraille() : true
+  }
+  return _brailleOk
+}
+
+const BrailleSpinner = memo(function BrailleSpinner() {
+  const frames = preferBrailleFrames()
+    ? BRAILLE_SPINNER_FRAMES
+    : ASCII_SPINNER_FRAMES
+  const [frame, setFrame] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setFrame((i) => (i + 1) % frames.length)
+    }, BRAILLE_FRAME_MS)
+    return () => window.clearInterval(id)
+  }, [frames])
+  return (
+    <span
+      className="activity-braille-spinner"
+      aria-hidden
+      title="进行中"
+      data-spinner={preferBrailleFrames() ? 'braille' : 'ascii'}
+    >
+      {frames[frame % frames.length]}
+    </span>
+  )
+})
 
 interface MessageItemProps {
   message: ChatMessage
@@ -149,13 +218,14 @@ const ThoughtLine = memo(function ThoughtLine({
           disabled={!canExpand}
           title={expanded ? '收起思考' : '展开思考'}
         >
+          {/* CLI 布局：spinner 在左 — `⠋ 思考中… 1.4s` */}
+          {streaming ? <BrailleSpinner /> : null}
           <span className="activity-label">{title}</span>
           {canExpand ? (
             <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
               ›
             </span>
           ) : null}
-          {streaming ? <span className="activity-live-dot" aria-hidden /> : null}
         </button>
         {expanded && canExpand ? (
           <pre ref={bodyRef} className="activity-body thought-body">
@@ -256,9 +326,14 @@ const ToolLine = memo(function ToolLine({
           disabled={!hasBody}
           title={hasBody ? (expanded ? '收起输出' : '展开输出') : undefined}
         >
-          <span className="activity-icon" aria-hidden data-kind={tool.kind}>
-            {kindIcon(tool.kind)}
-          </span>
+          {/* 进行中：CLI 同款 braille spinner；结束后显示 kind 图标 */}
+          {live ? (
+            <BrailleSpinner />
+          ) : (
+            <span className="activity-icon" aria-hidden data-kind={tool.kind}>
+              {kindIcon(tool.kind)}
+            </span>
+          )}
           <span className="activity-label" title={tool.detail || tool.title}>
             {headline}
           </span>
@@ -268,7 +343,6 @@ const ToolLine = memo(function ToolLine({
               ›
             </span>
           ) : null}
-          {live ? <span className="activity-live-dot" aria-hidden /> : null}
         </button>
         {expanded && hasBody ? (
           <div className="activity-body tool-body">

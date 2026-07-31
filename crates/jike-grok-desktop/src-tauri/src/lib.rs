@@ -77,6 +77,14 @@ pub fn run() {
                 cmd_tx,
                 workspace_cwd_override: std::sync::Arc::new(std::sync::Mutex::new(None)),
             });
+
+            // 索引启动兜底：一次性全量重建，之后由 TurnEnded 增量 upsert 维护，list_sessions 不再反应式重建。
+            tauri::async_runtime::spawn(async {
+                if let Err(e) = crate::commands::rebuild_session_index_full().await {
+                    log::warn!("会话索引启动重建失败: {e}");
+                }
+            });
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -104,6 +112,8 @@ pub fn run() {
             commands::read_file_for_preview,
             commands::save_artifact_file,
             commands::get_session_usage,
+            commands::list_dir,
+            commands::read_file_text,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

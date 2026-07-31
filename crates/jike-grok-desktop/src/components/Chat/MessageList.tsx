@@ -6,10 +6,18 @@ import {
   useState,
   memo,
 } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '@nanostores/react'
 import type { ChatMessage, PermissionRequest } from '../../types'
 import { $activeChatId, $sessionPhase } from '../../store'
 import { MessageItem } from './MessageItem'
+
+/** 行间距（原 .messages-container gap: 24px） */
+const ROW_GAP = 24
+/** 列表底部留白 */
+const LIST_PAD_BOTTOM = 6
+/** 默认估高：减少首屏测高跳动 */
+const DEFAULT_ESTIMATE = 96
 
 interface MessageListProps {
   messages: ChatMessage[]
@@ -35,11 +43,34 @@ function DownArrowIcon() {
   )
 }
 
+function estimateMessageHeight(msg: ChatMessage | undefined): number {
+  if (!msg) return DEFAULT_ESTIMATE
+  switch (msg.role) {
+    case 'system':
+      return 40 + ROW_GAP
+    case 'thought':
+      return (msg.isStreaming ? 36 : 32) + ROW_GAP
+    case 'tool':
+      return 40 + ROW_GAP
+    case 'user': {
+      const lines = Math.min(12, Math.ceil((msg.text?.length || 0) / 48) || 1)
+      return Math.min(280, 48 + lines * 20) + ROW_GAP
+    }
+    case 'assistant': {
+      const lines = Math.min(40, Math.ceil((msg.text?.length || 0) / 60) || 1)
+      return Math.min(640, 56 + lines * 18) + ROW_GAP
+    }
+    default:
+      return DEFAULT_ESTIMATE + ROW_GAP
+  }
+}
+
 /**
- * 对话列表滚动策略：
- * - 打开历史：paint 前贴底 + 未就绪时透明，避免「先顶后底」
- * - 贴底时：流式自动跟滚
- * - 用户上滚：锁定，显示「回到底部」
+ * 虚拟列表对话视窗：
+ * - @tanstack/react-virtual 只挂载可见区 + overscan
+ * - 按 message id 缓存测高，切会话/回滚复用
+ * - 打开历史：paint 前贴底 + 未就绪时透明
+ * - 贴底时流式自动跟滚；用户上滚锁定 +「回到底部」
  */
 export const MessageList = memo(function MessageList({
   messages,
@@ -57,13 +88,49 @@ export const MessageList = memo(function MessageList({
   const lastScrollHeight = useRef(0)
   const lastChatKey = useRef('')
   const prevCount = useRef(0)
+  /** messageId → 实测高度（含 gap） */
+  const heightCacheRef = useRef(new Map<string, number>())
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
 
   const count = messages.length
   const last = count > 0 ? messages[count - 1] : undefined
   const lastId = last?.id ?? ''
   const lastLen = last?.text?.length ?? 0
+  const lastToolPreview = last?.role === 'tool' ? last.toolCall?.preview?.length ?? 0 : 0
   const chatKey = activeChatId || 'empty'
 
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: (index) => {
+      const msg = messagesRef.current[index]
+      if (!msg) return DEFAULT_ESTIMATE + ROW_GAP
+      const cached = heightCacheRef.current.get(msg.id)
+      if (cached && cached > 0) return cached
+      return estimateMessageHeight(msg)
+    },
+    getItemKey: (index) => messagesRef.current[index]?.id ?? index,
+    overscan: 12,
+    measureElement: (el) => {
+      const height = el.getBoundingClientRect().height
+      const index = Number(el.getAttribute('data-index'))
+      const id = messagesRef.current[index]?.id
+      if (id && height > 0) {
+        heightCacheRef.current.set(id, height)
+      }
+      return height
+    },
+  })
+
+  const totalSize = virtualizer.getTotalSize()
+
+  /**
+   * 贴底只信 scrollHeight。
+   * scrollToIndex(align:end) 依赖行高估测，估高未收敛时本身就会偏；
+   * 对「滚到最底」这个语义，scrollTop = scrollHeight 就是正确答案。
+   * 虚拟列表仍会随 scroll 位置挂载底部行并完成测高。
+   */
   const stickToBottom = useCallback(() => {
     const el = viewportRef.current
     if (!el) return
@@ -97,14 +164,12 @@ export const MessageList = memo(function MessageList({
       stickToBottom()
       return
     }
-    const target = el.scrollHeight - el.clientHeight
-    // 距离很近时直接贴底，避免无意义动画
+    const target = Math.max(0, el.scrollHeight - el.clientHeight)
     if (target - el.scrollTop < 8) {
       stickToBottom()
       return
     }
     el.scrollTo({ top: target, behavior: 'smooth' })
-    // smooth 结束后再钉一次（内容若增高）
     window.setTimeout(() => {
       if (!userPinnedUp.current) stickToBottom()
     }, 320)
@@ -144,8 +209,7 @@ export const MessageList = memo(function MessageList({
 
   /**
    * 打开历史 / 空→有消息：
-   * 1) 先隐藏  2) layout 内 scrollTop=max  3) 再显示
-   * 以前 loading 时跳过贴底，等 ready 才跳 → 先顶后底。
+   * 1) 先隐藏  2) layout 内贴底  3) 再显示
    */
   useLayoutEffect(() => {
     const chatChanged = chatKey !== lastChatKey.current
@@ -160,36 +224,35 @@ export const MessageList = memo(function MessageList({
     }
 
     if (count === 0) {
-      // 加载中空列表 / 新对话：直接可交互
       setScrollReady(true)
       return
     }
 
-    // 需要「先贴底再露脸」的场景
     if (chatChanged || becamePopulated || loadingHistory) {
       setScrollReady(false)
       stickToBottom()
       requestAnimationFrame(() => {
         stickToBottom()
-        setScrollReady(true)
+        // 虚拟列表首轮测高后 totalSize 会变，再钉一次
         requestAnimationFrame(() => {
-          if (!userPinnedUp.current) stickToBottom()
+          stickToBottom()
+          setScrollReady(true)
+          requestAnimationFrame(() => {
+            if (!userPinnedUp.current) stickToBottom()
+          })
         })
       })
-      return
     }
-
-    // 同会话非流式更新（一般由其它 effect 处理）
   }, [chatKey, count, lastId, loadingHistory, stickToBottom])
 
-  // 非流式消息变化跟滚（用户未上锁）
+  // 非流式：新消息 / 换尾条时贴底
   useLayoutEffect(() => {
     if (!scrollReady || userPinnedUp.current || count === 0) return
     if (streaming) return
     stickToBottom()
   }, [count, lastId, streaming, scrollReady, stickToBottom])
 
-  // 流式跟滚
+  // 流式：尾条变长 / totalSize 变大时跟滚（高度差补偿）
   useEffect(() => {
     if (!scrollReady || userPinnedUp.current || count === 0) return
     if (!streaming) return
@@ -200,10 +263,37 @@ export const MessageList = memo(function MessageList({
     if (next > prev && prev > 0) {
       el.scrollTop += next - prev
     } else {
-      el.scrollTop = next
+      scheduleStick()
     }
     lastScrollHeight.current = el.scrollHeight
-  }, [lastLen, lastId, count, streaming, scrollReady, messages])
+  }, [
+    lastLen,
+    lastToolPreview,
+    lastId,
+    count,
+    streaming,
+    scrollReady,
+    totalSize,
+    scheduleStick,
+  ])
+
+  // 流式中强制重测最后一项（Markdown 变高时 ResizeObserver 偶发滞后）
+  useLayoutEffect(() => {
+    if (!streaming || count === 0) return
+    const items = virtualizer.getVirtualItems()
+    const lastVirtual = items.find((v) => v.index === count - 1)
+    if (!lastVirtual) {
+      // 最后一项不在 DOM：贴底让 virtualizer 挂载尾部再测高
+      if (!userPinnedUp.current) stickToBottom()
+      return
+    }
+    const row = viewportRef.current?.querySelector(
+      `[data-index="${count - 1}"]`,
+    ) as HTMLElement | null
+    if (row) {
+      virtualizer.measureElement(row)
+    }
+  }, [lastLen, lastToolPreview, streaming, count, virtualizer, stickToBottom])
 
   if (loadingHistory && messages.length === 0) {
     return (
@@ -232,24 +322,54 @@ export const MessageList = memo(function MessageList({
     )
   }
 
+  const virtualItems = virtualizer.getVirtualItems()
+
   return (
     <div className="chat-viewport-wrapper">
       <div
-        className={`chat-viewport${scrollReady ? ' is-scroll-ready' : ' is-scroll-pending'}`}
+        className={`chat-viewport chat-viewport-virtual${scrollReady ? ' is-scroll-ready' : ' is-scroll-pending'}`}
         ref={viewportRef}
         onScroll={onViewportScroll}
         onWheel={onWheel}
         onTouchMove={onTouchMove}
       >
-        <div className="messages-container">
-          {messages.map((msg, i) => {
+        <div
+          className="messages-container messages-container-virtual"
+          style={{
+            height: totalSize + LIST_PAD_BOTTOM,
+            position: 'relative',
+            width: '90%',
+            maxWidth: 768,
+            margin: '0 auto',
+          }}
+        >
+          {virtualItems.map((vr) => {
+            const msg = messages[vr.index]
+            if (!msg) return null
             const isLive =
               Boolean(msg.isStreaming) ||
               (streaming &&
-                i === messages.length - 1 &&
-                (msg.role === 'thought' || msg.role === 'assistant'))
+                vr.index === count - 1 &&
+                (msg.role === 'thought' ||
+                  msg.role === 'assistant' ||
+                  msg.role === 'tool'))
             return (
-              <MessageItem key={msg.id} message={msg} streaming={isLive} />
+              <div
+                key={msg.id}
+                data-index={vr.index}
+                ref={virtualizer.measureElement}
+                className="message-virtual-row"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${vr.start}px)`,
+                  paddingBottom: vr.index < count - 1 ? ROW_GAP : 0,
+                }}
+              >
+                <MessageItem message={msg} streaming={isLive} />
+              </div>
             )
           })}
         </div>
