@@ -11,16 +11,17 @@ use super::ctx::{
 use super::dashboard::{
     dispatch_dashboard_attach, dispatch_dashboard_begin_rename, dispatch_dashboard_change_location,
     dispatch_dashboard_commit_rename, dispatch_dashboard_confirm_worktree,
-    dispatch_dashboard_create_new_agent_with_detail, dispatch_dashboard_dispatch,
-    dispatch_dashboard_dispatch_slash, dispatch_dashboard_open_location_picker,
-    dispatch_dashboard_open_shortcuts_help, dispatch_dashboard_overlay_cycle,
-    dispatch_dashboard_overlay_exit, dispatch_dashboard_overlay_stop,
-    dispatch_dashboard_peek_cycle_mode, dispatch_dashboard_peek_reply,
-    dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
-    dispatch_dashboard_question_answer, dispatch_dashboard_reorder, dispatch_dashboard_select,
-    dispatch_dashboard_stop, dispatch_dashboard_toggle_auto_approve,
-    dispatch_dashboard_toggle_grouping, dispatch_dashboard_toggle_pin,
-    dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard, dispatch_open_dashboard,
+    dispatch_dashboard_create_new_agent_with_detail, dispatch_dashboard_delete,
+    dispatch_dashboard_dispatch, dispatch_dashboard_dispatch_slash,
+    dispatch_dashboard_open_location_picker, dispatch_dashboard_open_shortcuts_help,
+    dispatch_dashboard_overlay_cycle, dispatch_dashboard_overlay_exit,
+    dispatch_dashboard_overlay_stop, dispatch_dashboard_peek_cycle_mode,
+    dispatch_dashboard_peek_reply, dispatch_dashboard_permission_followup,
+    dispatch_dashboard_permission_select, dispatch_dashboard_question_answer,
+    dispatch_dashboard_reorder, dispatch_dashboard_select, dispatch_dashboard_stop,
+    dispatch_dashboard_toggle_auto_approve, dispatch_dashboard_toggle_grouping,
+    dispatch_dashboard_toggle_pin, dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard,
+    dispatch_open_dashboard,
 };
 use super::import_claude::{
     dispatch_dismiss_claude_import, dispatch_import_claude, dispatch_import_claude_cancel,
@@ -60,9 +61,10 @@ use super::session::fork::{
     dispatch_startup_fork_session,
 };
 use super::session::lifecycle::{
-    clear_startup_actions, dispatch_agent_type_mismatch_answered, dispatch_exit_session,
-    dispatch_new_session, dispatch_new_session_inner, dispatch_new_session_with_id,
-    dispatch_new_worktree_session, dispatch_trust_folder, open_new_session_question,
+    clear_startup_actions, dispatch_agent_type_mismatch_answered,
+    dispatch_delete_current_session_answered, dispatch_exit_session, dispatch_new_session,
+    dispatch_new_session_inner, dispatch_new_session_with_id, dispatch_new_worktree_session,
+    dispatch_trust_folder, open_delete_current_session_question, open_new_session_question,
 };
 use super::session::load::{
     dispatch_cycle_session_source_filter, dispatch_load_session, dispatch_pick_content_session,
@@ -192,8 +194,61 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             effects
         }
         Action::NewSession => dispatch_new_session(app),
+        #[cfg(feature = "local-workspace")]
+        Action::ConfirmWelcomeLocalWorkspaceAck => {
+            match crate::views::welcome::workspace_mode::confirm_welcome_local_workspace_ack(
+                &app.cwd, false,
+            ) {
+                Ok(cfg) => {
+                    app.welcome_workspace_mode =
+                        crate::views::welcome::WelcomeWorkspaceMode::LocalWorkspace;
+                    app.welcome_session_local_workspace = Some(Some(cfg));
+                    app.welcome_local_workspace_ack_pending = false;
+                    let effects = if app.deferred_startup.worktree {
+                        app.deferred_startup.worktree = false;
+                        let label = app.deferred_startup.worktree_label.take();
+                        let git_ref = app.deferred_startup.worktree_ref.take();
+                        let load_session_id = match app.deferred_startup.session.take() {
+                            Some(crate::app::session_startup::DeferredSessionStartup::Load {
+                                session_id,
+                                ..
+                            }) => Some(session_id),
+                            other => {
+                                app.deferred_startup.session = other;
+                                None
+                            }
+                        };
+                        let preferred = app.deferred_startup.preferred_session_id.take();
+                        dispatch_new_worktree_session(
+                            app,
+                            load_session_id,
+                            label,
+                            None,
+                            None,
+                            git_ref,
+                            preferred,
+                        )
+                    } else {
+                        dispatch_new_session(app)
+                    };
+                    if !crate::app::event_loop::welcome_oneshot_applies_to_effects(&effects) {
+                        app.welcome_session_local_workspace = None;
+                    }
+                    effects
+                }
+                Err(err) => {
+                    tracing::warn!("welcome local-workspace ack: {err}");
+                    app.show_toast(&format!("Local workspace: {err}"));
+                    vec![]
+                }
+            }
+        }
         Action::ChooseNewSessionMode => open_new_session_question(app),
         Action::ExitSession | Action::ExitSessionConfirmed => dispatch_exit_session(app),
+        Action::DeleteCurrentSession => open_delete_current_session_question(app),
+        Action::DeleteCurrentSessionAnswered { confirmed } => {
+            dispatch_delete_current_session_answered(app, confirmed)
+        }
         Action::NewWorktreeSession {
             load_session_id,
             label,
@@ -949,7 +1004,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::SaveRememberNoteFromModal => dispatch_save_remember_note_from_modal(app),
         Action::SendBtw(question) => dispatch_send_btw(app, question),
         Action::SendRecap { auto } => dispatch_send_recap(app, auto),
-        Action::SetCodingDataSharing { opted_in } => set_coding_data_sharing(app, opted_in),
+        Action::SetCodingDataSharing { opted_in } => set_coding_data_sharing(
+            app,
+            opted_in,
+            xai_grok_telemetry::events::CodingDataConsentSource::Settings,
+        ),
         Action::ToggleYolo => dispatch_toggle_yolo(app),
         Action::ToggleMultiline => dispatch_toggle_multiline(app),
         Action::ToggleCompactMode => dispatch_toggle_compact_mode(app),
@@ -1119,6 +1178,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 source,
                 session_id,
                 cwd,
+                after: crate::app::actions::AfterSessionDelete::Stay,
             }]
         }
         Action::Fork(args) => dispatch_fork(app, args),
@@ -1250,6 +1310,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             vec![]
         }
         Action::DashboardStop => dispatch_dashboard_stop(app),
+        Action::DashboardDelete => dispatch_dashboard_delete(app),
         Action::DashboardCycleMode => {
             let policy_block = app.yolo_policy_block;
             if let Some(d) = app.dashboard.as_mut() {

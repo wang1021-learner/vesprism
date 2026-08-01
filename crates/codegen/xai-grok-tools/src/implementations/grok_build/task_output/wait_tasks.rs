@@ -10,7 +10,7 @@
 use crate::DEFAULT_TOOL_OUTPUT_BYTES;
 use crate::implementations::grok_build::task::backend::SubagentBackendResource;
 use crate::implementations::grok_build::task_output::{
-    MAX_MULTI_WAIT_IDS, TaskOutputTool, resolve_tasks, wait_any_event_driven,
+    MAX_MULTI_WAIT_IDS, TaskOutputTool, WaitHint, resolve_tasks, wait_any_event_driven,
 };
 use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::resources::{Terminal, TruncationCfg};
@@ -169,8 +169,14 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
         }
 
         // wait_any: keep legacy event-driven path (not exposed on get_task_output).
-        let timeout =
-            crate::implementations::grok_build::task_output::capped_wait_timeout(input.timeout_ms);
+        let requested = input
+            .timeout_ms
+            .map(std::time::Duration::from_millis)
+            .unwrap_or(super::DEFAULT_WAIT_TIMEOUT);
+        let timeout = crate::implementations::grok_build::task_output::capped_wait_timeout(
+            input.timeout_ms,
+            crate::implementations::grok_build::task_output::max_wait_block(),
+        );
 
         let (terminal, backend, read_file_name, max_output_bytes) = {
             let res = resources.lock().await;
@@ -198,6 +204,7 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
             &backend,
             &read_file_name,
             max_output_bytes,
+            WaitHint::NotRequested,
         )
         .await;
 
@@ -206,20 +213,22 @@ impl xai_tool_runtime::Tool for WaitTasksTool {
 
         let results = if has_pending {
             let deadline = tokio::time::Instant::now() + timeout;
-            wait_any_event_driven(
+            let wait_hint = wait_any_event_driven(
                 &terminal,
                 &backend,
                 &initial.pending_bash_ids,
                 &initial.pending_subagent_ids,
                 deadline,
             )
-            .await;
+            .await
+            .hint(requested, timeout);
             resolve_tasks(
                 &input.task_ids,
                 &terminal,
                 &backend,
                 &read_file_name,
                 max_output_bytes,
+                wait_hint,
             )
             .await
             .results

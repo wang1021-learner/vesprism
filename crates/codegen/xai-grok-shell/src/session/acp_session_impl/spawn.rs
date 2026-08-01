@@ -1,5 +1,10 @@
 //! Session bring-up concern for `acp_session`: `spawn_session_actor`, the
 //! per-session OS thread (`SessionThread` / `spawn_session_on_thread`), and
+//!
+//! Chat+local `own` supervisor (`gateway_bridge::local_workspace_supervisor`) is
+//! started in `session/new` *before* handshake stamp and stored on `MvpAgent`
+//! (not `SessionActor`). Crash-restart issues
+//! `BridgeCommand::UpdateComputerSessions` through the bridge slot seeded here.
 //! the MCP auto-restart wiring (`SessionRestartActions`).
 #![allow(clippy::items_after_test_module)]
 use super::*;
@@ -307,6 +312,7 @@ pub(crate) async fn spawn_session_actor(
     >,
     max_turns: Option<usize>,
     forked_tool_override: Option<Vec<ToolSpec>>,
+    is_chat_kind: bool,
 ) -> Result<
     (
         SessionHandle,
@@ -698,6 +704,7 @@ pub(crate) async fn spawn_session_actor(
                 std::sync::Arc::new(LocalTerminalBackend::new_local_with_persistent_shell(
                     resolve_search_shadows(),
                     resolve_policy(),
+                    tool_context.process_scope.clone(),
                 ))
             }
             TerminalBackendKind::LocalNonPersistent => {
@@ -708,6 +715,7 @@ pub(crate) async fn spawn_session_actor(
                     resolve_search_shadows(),
                     login_shell_capture,
                     resolve_policy(),
+                    tool_context.process_scope.clone(),
                 ))
             }
         };
@@ -1544,6 +1552,7 @@ pub(crate) async fn spawn_session_actor(
         model_auth_memo: std::cell::RefCell::new(None),
         attribution_callback,
         auth_manager,
+        is_chat_kind,
         state,
         notifications: NotificationSender {
             gateway: gateway.clone(),
@@ -1584,6 +1593,7 @@ pub(crate) async fn spawn_session_actor(
             tool_choice: compaction_tool_choice,
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
+            cancel: Default::default(),
         },
         memory: super::memory_state::SessionMemory {
             flush_config: memory_config.as_ref().map_or_else(
@@ -2255,6 +2265,7 @@ pub(crate) async fn spawn_session_on_thread(
     >,
     max_turns: Option<usize>,
     forked_tool_override: Option<Vec<ToolSpec>>,
+    is_chat_kind: bool,
 ) -> Result<
     (
         SessionHandle,
@@ -2423,6 +2434,7 @@ pub(crate) async fn spawn_session_on_thread(
                         parent_scheduler_handle,
                         max_turns,
                         forked_tool_override,
+                        is_chat_kind,
                     )
                     .await
                     {

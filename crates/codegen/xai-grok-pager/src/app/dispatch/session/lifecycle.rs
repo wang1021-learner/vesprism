@@ -127,6 +127,13 @@ pub(in crate::app::dispatch) fn dispatch_new_session(app: &mut AppView) -> Vec<E
         app.deferred_startup.new_session = true;
         return vec![];
     }
+    #[cfg(feature = "local-workspace")]
+    if matches!(app.active_view, ActiveView::Welcome) {
+        let skip_apply = app.welcome_session_local_workspace.is_some();
+        if !skip_apply && let Err(effects) = apply_welcome_workspace_on_new_session(app) {
+            return effects;
+        }
+    }
     let in_git_repo = get_active_agent(app)
         .map(|a| a.current_branch.is_some())
         .unwrap_or(app.cwd_has_git_ancestor);
@@ -261,6 +268,53 @@ pub(in crate::app::dispatch) fn open_agent_type_mismatch_question(
 /// Core new-session logic: create a placeholder agent, push the
 /// `/dashboard` tip, and return the `CreateSession` effect.
 ///
+/// Apply welcome workspace selection before creating a session from Welcome.
+///
+/// Returns `Err(effects)` when session creation should abort (ACK pending or
+/// empty effects). `Ok(())` means continue into the normal new-session path.
+#[cfg(feature = "local-workspace")]
+fn apply_welcome_workspace_on_new_session(app: &mut AppView) -> Result<(), Vec<Effect>> {
+    use crate::views::welcome::workspace_mode::{
+        WelcomeWorkspaceMode, WelcomeWorkspacePrepare, prepare_welcome_workspace_for_new_session,
+    };
+    match prepare_welcome_workspace_for_new_session(
+        app.welcome_workspace_mode,
+        app.local_workspace_startup_locked,
+        app.chat_mode,
+        &app.cwd,
+        false,
+    ) {
+        Ok(WelcomeWorkspacePrepare::Continue {
+            session_override,
+            warning,
+        }) => {
+            if let Some(msg) = warning {
+                tracing::warn!("{msg}");
+                app.show_toast(&msg);
+            }
+            if let Some(override_cfg) = session_override {
+                app.welcome_session_local_workspace = Some(override_cfg);
+            }
+            Ok(())
+        }
+        Ok(WelcomeWorkspacePrepare::AwaitAck) => {
+            app.welcome_local_workspace_ack_pending = true;
+            app.session_picker_entries = None;
+            app.session_picker_loading = false;
+            app.session_picker_list_seq = app.session_picker_list_seq.saturating_add(1);
+            Err(vec![])
+        }
+        Err(err) => {
+            tracing::warn!("welcome workspace mode: {err}");
+            app.show_toast(&format!(
+                "Local workspace unavailable ({err}); using sandbox"
+            ));
+            app.welcome_session_local_workspace = Some(None);
+            app.welcome_workspace_mode = WelcomeWorkspaceMode::Sandbox;
+            Ok(())
+        }
+    }
+}
 /// Factored out of [`dispatch_new_session`] so the worktree-question
 /// "No" path can call it directly without re-opening the modal.
 pub(in crate::app::dispatch) fn dispatch_new_session_inner(
@@ -340,6 +394,7 @@ pub(in crate::app::dispatch) fn dispatch_new_session_inner_with_id(
         agent.apply_app_scoped_gates(
             app.sharing_enabled,
             app.usage_visible,
+            !app.has_external_auth_provider,
             app.chat_mode,
             app.screen_mode,
             &app.active_announcements,
@@ -361,6 +416,26 @@ pub(in crate::app::dispatch) fn dispatch_new_session_inner_with_id(
         let chat_kind = consume_chat_kind(app);
         if let Some(agent) = app.agents.get_mut(&agent_id) {
             agent.chat_kind = chat_kind;
+            #[cfg(feature = "local-workspace")]
+            {
+                let local_intent = match &app.welcome_session_local_workspace {
+                    Some(Some(_)) => true,
+                    Some(None) => false,
+                    None => crate::app::session_startup::active_local_workspace()
+                        .ok()
+                        .flatten()
+                        .is_some(),
+                };
+                let (mode, locked) =
+                    crate::views::welcome::workspace_mode::indicator_for_opening_session(
+                        agent.chat_kind,
+                        false,
+                        app.local_workspace_startup_locked,
+                        local_intent,
+                    );
+                agent.workspace_mode = mode;
+                agent.workspace_mode_cli_locked = locked;
+            }
             agent.apply_credit_balance(app.credit_balance.clone(), app.auto_topup.clone());
             agent.mcp_init_progress = Some(McpInitProgress {
                 total: 0,
@@ -392,6 +467,108 @@ pub(in crate::app::dispatch) fn dispatch_exit_session(app: &mut AppView) -> Vec<
     app.session_picker_content_results = None;
     app.session_picker_content_loading = false;
     app.exit_session_pending = None;
+    effects
+}
+/// Confirm deleting the parent session (not a subagent view).
+pub(in crate::app::dispatch) fn open_delete_current_session_question(
+    app: &mut AppView,
+) -> Vec<Effect> {
+    use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
+    use xai_grok_tools::implementations::grok_build::ask_user_question::{
+        Question, QuestionOption,
+    };
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&id) else {
+        return vec![];
+    };
+    if agent.session.session_id.is_none() {
+        app.show_toast("No active session to delete");
+        return vec![];
+    }
+    if agent.question_view.is_some() {
+        app.show_toast("Finish answering the current question first");
+        return vec![];
+    }
+    let question = Question {
+        question: "Delete this session permanently?".into(),
+        id: None,
+        options: vec![
+            QuestionOption {
+                label: "Delete".into(),
+                description: "Remove history and return home".into(),
+                preview: None,
+                id: None,
+            },
+            QuestionOption {
+                label: "Cancel".into(),
+                description: "Keep the session".into(),
+                preview: None,
+                id: None,
+            },
+        ],
+        multi_select: Some(false),
+    };
+    let stashed = agent.prompt.stash();
+    agent.question_view = Some(
+        QuestionViewState::new(
+            format!("delete-session-{}", uuid::Uuid::new_v4()),
+            vec![question],
+            stashed,
+        )
+        .with_local_kind(LocalQuestionKind::DeleteCurrentSession)
+        .with_no_freeform(),
+    );
+    agent.prompt.set_text("");
+    vec![]
+}
+pub(in crate::app::dispatch) fn dispatch_delete_current_session_answered(
+    app: &mut AppView,
+    confirmed: bool,
+) -> Vec<Effect> {
+    if !confirmed {
+        return vec![];
+    }
+    let ActiveView::Agent(id) = app.active_view else {
+        return vec![];
+    };
+    let Some((session_id, cwd, running_bg_tasks)) = app.agents.get(&id).and_then(|agent| {
+        let session_id = agent.session.session_id.clone()?;
+        let cwd = agent.session.cwd.display().to_string();
+        let running_bg_tasks: Vec<String> = agent
+            .session
+            .bg_tasks
+            .values()
+            .filter(|t| t.status == crate::app::agent::BgTaskStatus::Running)
+            .map(|t| t.task_id.clone())
+            .collect();
+        Some((session_id, cwd, running_bg_tasks))
+    }) else {
+        app.show_toast("No active session to delete");
+        return vec![];
+    };
+    let mut effects = vec![Effect::CancelTurn {
+        session_id: session_id.clone(),
+        cancel_subagents: true,
+        trigger: None,
+        rewind_if_pristine: false,
+    }];
+    effects.extend(
+        running_bg_tasks
+            .into_iter()
+            .map(|task_id| Effect::KillBgTask {
+                session_id: session_id.clone(),
+                task_id,
+            }),
+    );
+    app.show_toast("Deleting session\u{2026}");
+    effects.push(Effect::DeleteSession {
+        source: "current".into(),
+        session_id: session_id.to_string(),
+        cwd,
+        after: crate::app::actions::AfterSessionDelete::Welcome,
+    });
     effects
 }
 /// Handle the user accepting the folder-trust question: persist the grant for
@@ -446,6 +623,8 @@ pub(in crate::app::dispatch) fn drain_startup_actions(app: &mut AppView) -> Vec<
         prompt,
         open_dashboard,
         pending_chat,
+        #[cfg(feature = "local-workspace")]
+        history_load_as_build,
     } = app.deferred_startup.take();
     let mut effects = Vec::new();
     match deferred {
@@ -466,6 +645,10 @@ pub(in crate::app::dispatch) fn drain_startup_actions(app: &mut AppView) -> Vec<
             session_cwd,
             chat_kind,
         }) => {
+            #[cfg(feature = "local-workspace")]
+            {
+                app.welcome_history_load_as_build = history_load_as_build;
+            }
             if worktree {
                 if chat_kind || pending_chat {
                     app.deferred_startup.pending_chat = true;
@@ -569,6 +752,33 @@ pub(in crate::app::dispatch) fn dispatch_new_worktree_session(
     git_ref: Option<String>,
     preferred_session_id: Option<String>,
 ) -> Vec<Effect> {
+    #[cfg(feature = "local-workspace")]
+    if load_session_id.is_none()
+        && matches!(app.active_view, crate::app::app_view::ActiveView::Welcome)
+    {
+        let skip_apply = app.welcome_session_local_workspace.is_some();
+        if !skip_apply && let Err(effects) = apply_welcome_workspace_on_new_session(app) {
+            app.deferred_startup.worktree = true;
+            if let Some(ref label) = label {
+                app.deferred_startup.worktree_label = Some(label.clone());
+            }
+            if let Some(ref git_ref) = git_ref {
+                app.deferred_startup.worktree_ref = Some(git_ref.clone());
+            }
+            if let Some(sid) = load_session_id.clone() {
+                app.deferred_startup.session =
+                    Some(crate::app::session_startup::DeferredSessionStartup::Load {
+                        session_id: sid,
+                        session_cwd: None,
+                        chat_kind: app.deferred_startup.pending_chat,
+                    });
+            }
+            if let Some(id) = preferred_session_id.clone() {
+                app.deferred_startup.preferred_session_id = Some(id);
+            }
+            return effects;
+        }
+    }
     let preferred_session_id =
         preferred_session_id.or_else(|| app.deferred_startup.preferred_session_id.take());
     if !app.session_startup_allowed() {
@@ -606,6 +816,11 @@ pub(in crate::app::dispatch) fn dispatch_new_worktree_session(
                 message: msg,
                 action: None,
             });
+        }
+        #[cfg(feature = "local-workspace")]
+        {
+            app.welcome_session_local_workspace = None;
+            app.welcome_history_load_as_build = false;
         }
         return vec![];
     }
@@ -681,12 +896,33 @@ pub(in crate::app::dispatch) fn dispatch_new_worktree_session(
         agent.apply_app_scoped_gates(
             app.sharing_enabled,
             app.usage_visible,
+            !app.has_external_auth_provider,
             app.chat_mode,
             app.screen_mode,
             &app.active_announcements,
             &app.tier_restricted_commands,
         );
         agent.chat_kind = chat_kind;
+        #[cfg(feature = "local-workspace")]
+        {
+            let local_intent = match &app.welcome_session_local_workspace {
+                Some(Some(_)) => true,
+                Some(None) => false,
+                None => crate::app::session_startup::active_local_workspace()
+                    .ok()
+                    .flatten()
+                    .is_some(),
+            };
+            let (mode, locked) =
+                crate::views::welcome::workspace_mode::indicator_for_opening_session(
+                    agent.chat_kind,
+                    app.welcome_history_load_as_build,
+                    app.local_workspace_startup_locked,
+                    local_intent,
+                );
+            agent.workspace_mode = mode;
+            agent.workspace_mode_cli_locked = locked;
+        }
         agent.apply_credit_balance(app.credit_balance.clone(), app.auto_topup.clone());
         agent
             .prompt
@@ -776,6 +1012,26 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
     let chat_kind = consume_chat_kind(app);
     if let Some(agent) = app.agents.get_mut(&agent_id) {
         agent.chat_kind = chat_kind;
+        #[cfg(feature = "local-workspace")]
+        {
+            let local_intent = match &app.welcome_session_local_workspace {
+                Some(Some(_)) => true,
+                Some(None) => false,
+                None => crate::app::session_startup::active_local_workspace()
+                    .ok()
+                    .flatten()
+                    .is_some(),
+            };
+            let (mode, locked) =
+                crate::views::welcome::workspace_mode::indicator_for_opening_session(
+                    agent.chat_kind,
+                    false,
+                    app.local_workspace_startup_locked,
+                    local_intent,
+                );
+            agent.workspace_mode = mode;
+            agent.workspace_mode_cli_locked = locked;
+        }
         agent.apply_credit_balance(app.credit_balance.clone(), app.auto_topup.clone());
         agent.mcp_init_progress = Some(McpInitProgress {
             total: 0,

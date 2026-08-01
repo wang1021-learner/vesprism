@@ -289,14 +289,30 @@ pub struct LoginCompleted {
     pub mid_session: bool,
 }
 
-/// A login flow failed. `error` is the raw error message from the auth flow.
+/// How a login attempt's HTTP request failed.
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginFailureKind {
+    /// `is_connect`: a dead TCP connect *or* a TLS handshake killed
+    /// mid-flight. `os_error` tells them apart.
+    TransportConnect,
+    /// In-flight request cut short: reset, close, timeout, body phase.
+    TransportInterrupted,
+    /// Client-side request construction / redirect policy defect.
+    TransportPermanent,
+    Decode,
+}
+
+/// One per failed login attempt, emitted by the login funnel so a retried
+/// request can't inflate the count. Failures that never reached HTTP (user
+/// backed out, loopback bind, id_token validation) are not reported.
 #[derive(Serialize)]
 pub struct LoginFailed {
-    pub method: String,
-    pub mode: String,
+    pub error_kind: LoginFailureKind,
+    /// OS code from the failure's cause chain (54/104 ECONNRESET, 10054 on
+    /// Windows).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    pub duration_ms: u64,
+    pub os_error: Option<i32>,
 }
 
 /// The user backed out of the login funnel. `stage` is "picker",
@@ -1205,6 +1221,34 @@ pub struct AnnouncementCtaClicked {
     pub source: AnnouncementCtaSurface,
 }
 
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingDataConsentSource {
+    PrivacyBanner,
+    Settings,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodingDataConsentChoice {
+    OptIn,
+    OptOut,
+}
+
+impl CodingDataConsentChoice {
+    pub fn from_opted_in(opted_in: bool) -> Self {
+        if opted_in { Self::OptIn } else { Self::OptOut }
+    }
+}
+
+#[derive(Serialize)]
+pub struct CodingDataConsentSelected {
+    pub source: CodingDataConsentSource,
+    pub choice: CodingDataConsentChoice,
+    pub previous_choice: CodingDataConsentChoice,
+    pub changed: bool,
+}
+
 /// Flat snapshot of the terminal environment for telemetry.
 ///
 /// Shared across pager events so terminal fields are typed once.
@@ -1749,6 +1793,7 @@ telemetry_event!(SuperGrokUpsellShown, "supergrok_upsell_shown");
 telemetry_event!(SuperGrokUpsellClicked, "supergrok_upsell_clicked");
 telemetry_event!(AnnouncementCtaShown, "announcement_cta_shown");
 telemetry_event!(AnnouncementCtaClicked, "announcement_cta_clicked");
+telemetry_event!(CodingDataConsentSelected, "coding_data_consent_selected");
 telemetry_event!(TerminalTelemetry, "terminal_context");
 telemetry_event!(DisplayRefreshProbe, "display_refresh_probe");
 telemetry_event!(BackspaceNoEffect, "backspace_no_effect");
@@ -2025,6 +2070,30 @@ mod tests {
     }
 
     #[test]
+    fn coding_data_consent_selected_name_and_shape() {
+        assert_eq!(
+            CodingDataConsentSelected::NAME,
+            "coding_data_consent_selected"
+        );
+        let event = serde_json::to_value(CodingDataConsentSelected {
+            source: CodingDataConsentSource::Settings,
+            choice: CodingDataConsentChoice::OptIn,
+            previous_choice: CodingDataConsentChoice::OptIn,
+            changed: false,
+        })
+        .unwrap();
+        assert_eq!(
+            event,
+            serde_json::json!({
+                "source": "settings",
+                "choice": "opt_in",
+                "previous_choice": "opt_in",
+                "changed": false,
+            })
+        );
+    }
+
+    #[test]
     fn compaction_retry_degraded_name_and_shape() {
         assert_eq!(CompactionRetryDegraded::NAME, "compaction_retry_degraded");
 
@@ -2149,6 +2218,29 @@ mod tests {
                 "mid_session": false,
             })
         );
+    }
+
+    #[test]
+    fn login_failed_serializes_kind_and_os_code() {
+        let v = serde_json::to_value(LoginFailed {
+            error_kind: LoginFailureKind::TransportInterrupted,
+            os_error: Some(104),
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "error_kind": "transport_interrupted", "os_error": 104 })
+        );
+    }
+
+    #[test]
+    fn login_failed_omits_absent_os_code() {
+        let v = serde_json::to_value(LoginFailed {
+            error_kind: LoginFailureKind::Decode,
+            os_error: None,
+        })
+        .unwrap();
+        assert_eq!(v, serde_json::json!({ "error_kind": "decode" }));
     }
 
     #[test]

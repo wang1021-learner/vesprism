@@ -116,6 +116,13 @@ impl AgentView {
         // dropdown state derived from that text would otherwise steal the
         // arrows mid-browse.
         if self.prompt.history_search.is_active() {
+            // Tear down the history overlay before opening the cheatsheet: it
+            // renders unconditionally and would bleed around the popup, and Esc
+            // would otherwise silently resume the browse instead of closing help.
+            if registry.matches_id(ActionId::ShortcutsHelp, key) {
+                self.close_history_restoring_saved();
+                return self.handle_agent_action_with_registry(ActionId::ShortcutsHelp, registry);
+            }
             return self.handle_history_search_key(key);
         }
 
@@ -448,7 +455,9 @@ impl AgentView {
         {
             let history = self.combined_prompt_history();
             let current_text = self.prompt.text().to_string();
-            if !history.is_empty() {
+            // Without a matcher thread the panel can never populate, and filling
+            // the composer would only be undone by the next Down/Enter.
+            if !history.is_empty() && self.prompt.history_search.is_available() {
                 self.prompt
                     .history_search
                     .activate_browse(&history, &current_text);
