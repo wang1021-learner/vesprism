@@ -1,0 +1,366 @@
+/* Composer model group / paste / effort */
+/* extracted from index.css lines 3810-4173 */
+
+/* Composer: 连体一体化控件 (思考滑条 + 模型选择) */
+.composer-model-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 3px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-solid);
+  border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.composer-model-group:hover {
+  border-color: var(--border-strong-solid);
+}
+
+.composer-model-group .effort-slider-wrap {
+  padding: 0 4px 0 6px;
+  min-height: 24px;
+}
+
+.model-group-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--border-solid);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.composer-model-group .model-chip {
+  border-radius: 14px;
+  padding: 3px 8px 3px 6px;
+  border: none;
+  background: transparent;
+}
+
+.composer-model-group .model-chip:hover:not(:disabled),
+.composer-model-group .model-chip.open {
+  background: var(--surface-hover);
+}
+
+/* 下拉菜单内部智能 / 思考强度面板（对齐图 2） */
+.model-menu-reasoning-section {
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.model-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+.model-menu-reasoning-val-badge {
+  font-weight: 500;
+  color: #6366f1;
+  background: #eef2ff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.model-menu-slider-row {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.model-menu-slider-row .effort-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: transparent;
+  outline: none;
+  margin: 14px 0 8px 0;
+}
+
+/* 轨道样式 */
+.model-menu-slider-row .effort-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+}
+
+/* 滑块(thumb)样式 */
+.model-menu-slider-row .effort-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 50%;
+  background: #6366f1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  margin-top: -6px;
+  /* 让滑块居中于 6px 的轨道：(18 - 6) / 2 = 6 */
+  cursor: pointer;
+  border: none;
+}
+
+.model-menu-effort-ticks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+  /* 让数字和滑块圆心对齐 */
+  margin-top: 4px;
+}
+
+.effort-tick {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+  user-select: none;
+}
+
+.effort-tick:first-child {
+  text-align: left;
+}
+
+.effort-tick:last-child {
+  text-align: right;
+}
+
+.effort-tick.active,
+.effort-tick:hover {
+  color: #6366f1;
+  font-weight: 500;
+}
+
+/* Composer: 粘贴折叠卡片（类似于文件/文档附件卡片） */
+.paste-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.paste-block-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-solid);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  max-width: 300px;
+  min-width: 180px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.paste-block-card:hover {
+  border-color: var(--border-strong-solid);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.paste-block-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.paste-block-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.paste-block-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.paste-block-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.paste-block-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+
+.paste-block-remove:hover {
+  background: var(--border-solid);
+  color: var(--text-primary);
+}
+
+/* 用户气泡：长消息折叠展开（配合粘贴折叠功能，发送后的历史消息同样可折叠） */
+.bubble-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.bubble-expand-toggle:hover {
+  background: var(--border-solid);
+  color: var(--text-secondary);
+  border-color: var(--border-strong-solid);
+}
+
+.effort-slider-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 2px 4px 2px 2px;
+  min-height: 28px;
+  user-select: none;
+}
+
+.effort-slider-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.effort-slider-value {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 2em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.effort-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 88px;
+  height: 4px;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(to right,
+      var(--border-strong-solid) 0%,
+      var(--border-strong-solid) 100%);
+  background-color: var(--border-solid);
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--cta);
+}
+
+.effort-slider:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* WebKit track / thumb */
+.effort-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-solid);
+}
+
+.effort-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--surface-elevated);
+  border: 1.5px solid var(--border-strong-solid);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  cursor: grab;
+  transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+
+.effort-slider:hover:not(:disabled)::-webkit-slider-thumb {
+  border-color: var(--text-tertiary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.effort-slider:active:not(:disabled)::-webkit-slider-thumb {
+  cursor: grabbing;
+  transform: scale(1.08);
+  border-color: var(--text-secondary);
+}
+
+.effort-slider:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--text-tertiary);
+  outline-offset: 2px;
+}
+
+/* Firefox */
+.effort-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-solid);
+  border: none;
+}
+
+.effort-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface-elevated);
+  border: 1.5px solid var(--border-strong-solid);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  cursor: grab;
+}
+
+.effort-slider:hover:not(:disabled)::-moz-range-thumb {
+  border-color: var(--text-tertiary);
+}
+
+.effort-slider:focus-visible {
+  outline: none;
+}
+
+.effort-slider:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--text-tertiary);
+  outline-offset: 2px;
+}

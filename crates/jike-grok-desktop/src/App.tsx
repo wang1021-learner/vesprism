@@ -20,15 +20,24 @@ import {
   pushToast,
 } from './store'
 import {
-  cancelTurn, getModelSettings, listSessions,
+  cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, sendPrompt, setCurrentModel, startSession,
   workspaceCwd,
 } from './bridge'
 import { pushTranscriptEvent } from './lib/sessionOpen'
 import { generateId } from './lib/generateId'
 import { removeUserMessageByPromptId } from './lib/sessionTranscript'
+import { parsePermissionDescription } from './types'
 
 export default function App() {
+  // 浏览器直接打开 Vite 地址时没有 Tauri IPC，整页拦截并提示正确启动方式
+  if (!isTauriRuntime()) {
+    return <BrowserNotDesktopGate />
+  }
+  return <DesktopApp />
+}
+
+function DesktopApp() {
   const ready = useRef(false)
   useEffect(() => {
     if (ready.current) return
@@ -71,8 +80,9 @@ export default function App() {
           >
             <AppMessages />
           </ErrorBoundary>
-          <AppComposer />
+          {/* Hermes 风格：审批条在输入框上方，非全屏 modal */}
           <AppPermission />
+          <AppComposer />
           <SettingsModal />
         </div>
       </ErrorBoundary>
@@ -81,7 +91,69 @@ export default function App() {
   )
 }
 
+/** 网页打开时的全屏拦截页（本产品是 Tauri 桌面端，不是 Web 应用） */
+function BrowserNotDesktopGate() {
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:9527'
+  const href =
+    typeof window !== 'undefined' ? window.location.href : origin
+
+  return (
+    <div className="browser-gate" role="alert">
+      <div className="browser-gate-card">
+        <div className="browser-gate-badge">桌面端专用</div>
+        <h1 className="browser-gate-title">请不要用浏览器打开</h1>
+        <p className="browser-gate-lead">
+          这是 <strong>Tauri 桌面客户端</strong>，不是网页应用。
+          你现在打开的是 Vite 开发服务器地址（
+          <code className="browser-gate-code">{href}</code>
+          ），页面能显示是因为前端静态资源挂在上面，但
+          <strong>没有桌面壳与后端 IPC</strong>，会话、模型、工作区、权限等都不可用。
+        </p>
+
+        <div className="browser-gate-section">
+          <div className="browser-gate-section-title">正确启动方式（带热更新）</div>
+          <ol className="browser-gate-steps">
+            <li>
+              在终端进入项目目录：
+              <pre className="browser-gate-pre">{`cd crates/jike-grok-desktop`}</pre>
+            </li>
+            <li>
+              启动桌面开发模式：
+              <pre className="browser-gate-pre">{`npm run desktop`}</pre>
+              <span className="browser-gate-hint">
+                等价命令：<code>cargo tauri dev</code>
+              </span>
+            </li>
+            <li>
+              使用弹出的 <strong>桌面窗口</strong> 操作，不要再访问浏览器里的{' '}
+              <code>127.0.0.1:9527</code>。
+            </li>
+          </ol>
+        </div>
+
+        <div className="browser-gate-section browser-gate-section-muted">
+          <div className="browser-gate-section-title">为什么浏览器也能打开页面？</div>
+          <p className="browser-gate-note">
+            <code>npm run desktop</code> 会先启动 Vite（默认 {origin}
+            ）给桌面 WebView 加载 UI；该地址若被浏览器访问，只能看到前端壳，
+            调用 <code>invoke</code> 会失败。这是开发脚手架的副产品，
+            <strong>不是</strong>官方支持的网页版入口。
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 async function bootstrap() {
+  if (!isTauriRuntime()) {
+    $error.set(
+      '当前为浏览器环境，不是桌面端。请关闭此页，在 crates/jike-grok-desktop 下执行 npm run desktop。',
+    )
+    $sessionPhase.set('failed')
+    return
+  }
   try {
     const cwd = await workspaceCwd()
     $workspaceCwd.set(cwd)
@@ -116,10 +188,16 @@ function handleSessionEvent(ev: import('./bridge').SessionEventPayload) {
     case 'permission_request':
       if ($sessionPhase.get() === 'loading') break
       if (ev.request_id != null && ev.options?.length) {
+        const raw = ev.description || '工具权限请求'
+        const parsed = parsePermissionDescription(raw)
         $permission.set({
           id: String(ev.request_id),
-          tool: ev.description || '工具权限请求',
+          tool: raw,
           options: ev.options.map((o) => ({ id: o.id, name: o.name, kind: o.kind })),
+          kindLabel: parsed.kindLabel,
+          title: parsed.title,
+          command: parsed.command,
+          summary: parsed.summary,
         })
       }
       break

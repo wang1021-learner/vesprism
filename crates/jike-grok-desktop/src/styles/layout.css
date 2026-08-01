@@ -1,0 +1,19 @@
+/* App shell container */
+/* extracted from index.css lines 271-287 */
+
+/* App shell — flat light gray canvas, white panels */
+.app-container {
+  --sidebar-w: 280px;
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-canvas);
+  padding: 10px;
+  gap: 10px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.app-container:has(.sidebar-collapsed) {
+  --sidebar-w: 52px;
+}

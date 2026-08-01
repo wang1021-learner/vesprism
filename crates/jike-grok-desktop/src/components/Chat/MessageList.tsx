@@ -252,8 +252,9 @@ export const MessageList = memo(function MessageList({
     stickToBottom()
   }, [count, lastId, streaming, scrollReady, stickToBottom])
 
-  // 流式：尾条变长 / totalSize 变大时跟滚（高度差补偿）
-  useEffect(() => {
+  // 流式：尾条变长 / totalSize 变大时跟滚（高度差补偿）。
+  // useLayoutEffect 保证和 DOM commit 同步完成，避免 paint 后调整引起的抖动。
+  useLayoutEffect(() => {
     if (!scrollReady || userPinnedUp.current || count === 0) return
     if (!streaming) return
     const el = viewportRef.current
@@ -263,7 +264,7 @@ export const MessageList = memo(function MessageList({
     if (next > prev && prev > 0) {
       el.scrollTop += next - prev
     } else {
-      scheduleStick()
+      stickToBottom()
     }
     lastScrollHeight.current = el.scrollHeight
   }, [
@@ -274,7 +275,7 @@ export const MessageList = memo(function MessageList({
     streaming,
     scrollReady,
     totalSize,
-    scheduleStick,
+    stickToBottom,
   ])
 
   // 流式中强制重测最后一项（Markdown 变高时 ResizeObserver 偶发滞后）

@@ -1,0 +1,67 @@
+/* Shared buttons / loading state */
+/* extracted from index.css lines 4352-4416 */
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.btn-secondary {
+  border: 1px solid var(--border-strong-solid);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--surface-hover);
+}
+
+.btn-primary {
+  border: none;
+  background: var(--ink-deep);
+  color: var(--surface-elevated);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  opacity: 0.88;
+}
+
+.btn-inline {
+  border: 1px solid var(--border-strong-solid);
+  background: var(--surface-elevated);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-inline:hover {
+  background: var(--surface-hover);
+}
+
+/* 浏览器门控防错 */
+
+/* 加载历史会话 */
+.loading-session-state .spinner-icon {
+  font-size: 28px;
+  color: var(--text-tertiary);
+  animation: pulse 1.2s ease-in-out infinite;
+  margin-bottom: 12px;
+}
+
+.loading-session-state .loading-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+}

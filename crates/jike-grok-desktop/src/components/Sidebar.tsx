@@ -109,6 +109,7 @@ function hydrateDisplayMessage(m: {
   }
 }
 
+/** 简洁文件夹线框（不用 emoji / 系统桌面图标） */
 function FolderIcon({ open = false }: { open?: boolean }) {
   return (
     <svg
@@ -119,23 +120,21 @@ function FolderIcon({ open = false }: { open?: boolean }) {
       fill="none"
       aria-hidden
     >
+      <path
+        d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l1.8 1.8c.2.2.5.3.8.3H19.5A1.5 1.5 0 0 1 21 9.6v8.9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-11Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+      />
       {open ? (
         <path
-          d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+          d="M3 11h18"
           stroke="currentColor"
-          strokeWidth="1.8"
+          strokeWidth="1.75"
           strokeLinecap="round"
-          strokeLinejoin="round"
+          opacity="0.55"
         />
-      ) : (
-        <path
-          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9l-.81-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      )}
+      ) : null}
     </svg>
   )
 }

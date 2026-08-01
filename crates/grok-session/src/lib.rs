@@ -296,15 +296,23 @@ fn format_permission_description(tc: &agent_client_protocol::ToolCallUpdate) -> 
         }
     };
 
+    // 前端 Hermes 风格审批条只依赖：类型 + 命令/目标。
+    // 不要再塞「工具：Execute `整段命令`」——与 detail 重复，UI 会糊成一墙。
     let mut lines = vec![format!("类型：{kind_label}")];
     if let Some(t) = title {
-        if t != detail {
+        let is_execute_wrap = t.starts_with("Execute ")
+            || t.starts_with("execute ")
+            || (t.starts_with('`') && t.ends_with('`'));
+        let duplicates_detail = !detail.is_empty()
+            && (t == detail
+                || t.contains(detail.as_str())
+                || detail.contains(t.trim_matches('`')));
+        if !is_execute_wrap && !duplicates_detail {
             lines.push(format!("工具：{t}"));
         }
     }
     if !detail.is_empty() {
         let label = if kind == "execute" { "命令" } else { "目标" };
-        // 权限弹窗只展示摘要，过长截断
         let shown = if detail.chars().count() > 800 {
             let mut s: String = detail.chars().take(800).collect();
             s.push('…');

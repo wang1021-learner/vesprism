@@ -1,6 +1,7 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage, ToolCallData } from '../../types'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { DiffLines } from './DiffLines'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
 
@@ -73,6 +74,33 @@ const BrailleSpinner = memo(function BrailleSpinner() {
   )
 })
 
+/** 左侧竖轨 + 菱形节点（对齐对话里 Run/Thought 时间线） */
+type ActivityTone = 'thought' | 'tool' | 'tool-failed'
+
+const ActivityRail = memo(function ActivityRail({
+  tone,
+  live,
+}: {
+  tone: ActivityTone
+  live: boolean
+}) {
+  return (
+    <div
+      className={`activity-rail tone-${tone}${live ? ' is-live' : ''}`}
+      aria-hidden
+    >
+      <span className="activity-rail-line" />
+      <span className="activity-rail-marker">
+        {live ? (
+          <BrailleSpinner />
+        ) : (
+          <span className="activity-diamond">◆</span>
+        )}
+      </span>
+    </div>
+  )
+})
+
 interface MessageItemProps {
   message: ChatMessage
   streaming?: boolean
@@ -134,12 +162,9 @@ export const MessageItem = memo(function MessageItem({
       )
 
     case 'assistant':
+      // 不显示 Assistant 角标：左右气泡/活动行已能区分角色，角标冗余
       return (
         <div className="message-row assistant-row">
-          <div className="assistant-badge">
-            <span className="badge-icon">✦</span>
-            <span className="badge-text">Assistant</span>
-          </div>
           <div className="assistant-content md-body">
             <AssistantMarkdown text={message.text} />
           </div>
@@ -172,7 +197,7 @@ function formatDuration(timing?: { start: number; end?: number }): string | null
   return `${Math.round(sec)}s`
 }
 
-/** 截图风格：思考了 3s › — 默认折叠，点击展开正文 */
+/** 菱形时间线：灰菱形 + 竖轨 — Thought for 1.4s › */
 const ThoughtLine = memo(function ThoughtLine({
   text,
   streaming,
@@ -190,13 +215,14 @@ const ThoughtLine = memo(function ThoughtLine({
         : undefined
       : timing,
   )
+  // 对齐对话 UI 文案：Thought for Xs / 思考中…
   const title = streaming
     ? duration
       ? `思考中… ${duration}`
       : '思考中…'
     : duration
-      ? `思考了 ${duration}`
-      : '思考过程'
+      ? `Thought for ${duration}`
+      : 'Thought'
   const bodyRef = useRef<HTMLPreElement>(null)
   const canExpand = text.trim().length > 0
 
@@ -210,94 +236,53 @@ const ThoughtLine = memo(function ThoughtLine({
   return (
     <div className="message-row activity-row thought-row">
       <div className={`activity-line thought-line${streaming ? ' is-live' : ''}`}>
-        <button
-          type="button"
-          className="activity-toggle"
-          onClick={() => canExpand && setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          disabled={!canExpand}
-          title={expanded ? '收起思考' : '展开思考'}
-        >
-          {/* CLI 布局：spinner 在左 — `⠋ 思考中… 1.4s` */}
-          {streaming ? <BrailleSpinner /> : null}
-          <span className="activity-label">{title}</span>
-          {canExpand ? (
-            <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
-              ›
-            </span>
+        <ActivityRail tone="thought" live={streaming} />
+        <div className="activity-main">
+          <button
+            type="button"
+            className="activity-toggle"
+            onClick={() => canExpand && setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            disabled={!canExpand}
+            title={expanded ? '收起思考' : '展开思考'}
+          >
+            <span className="activity-label">{title}</span>
+            {canExpand ? (
+              <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
+                ›
+              </span>
+            ) : null}
+          </button>
+          {expanded && canExpand ? (
+            <pre ref={bodyRef} className="activity-body thought-body">
+              {text}
+            </pre>
           ) : null}
-        </button>
-        {expanded && canExpand ? (
-          <pre ref={bodyRef} className="activity-body thought-body">
-            {text}
-          </pre>
-        ) : null}
+        </div>
       </div>
     </div>
   )
 })
 
-function kindIcon(kind: string): string {
-  switch (kind) {
-    case 'read':
-      return '📄'
-    case 'edit':
-      return '✎'
-    case 'execute':
-      return '▶'
-    case 'search':
-      return '⌕'
-    case 'fetch':
-      return '↗'
-    case 'delete':
-      return '⌫'
-    case 'think':
-      return '💭'
-    default:
-      return '·'
-  }
-}
-
 function toolHeadline(tool: ToolCallData): string {
   const detail = tool.detail?.trim() || ''
   const short =
     detail.length > 72 ? `${detail.slice(0, 70)}…` : detail
-  const running =
-    tool.status === 'pending' || tool.status === 'in_progress'
-
+  const label = short || tool.title?.trim() || 'tool'
+  // 对齐对话 UI：Run <摘要>
   switch (tool.kind) {
     case 'execute':
-      return running
-        ? `正在运行 ${short || tool.title}`
-        : `已运行 ${short || tool.title}`
     case 'read':
-      return running
-        ? `正在读取 ${short || tool.title}`
-        : `已读取 ${short || tool.title}`
     case 'edit':
-      return running
-        ? `正在编辑 ${short || tool.title}`
-        : `已编辑 ${short || tool.title}`
     case 'search':
-      return running
-        ? `正在搜索 ${short || tool.title}`
-        : `已搜索 ${short || tool.title}`
     case 'fetch':
-      return running
-        ? `正在抓取 ${short || tool.title}`
-        : `已抓取 ${short || tool.title}`
     case 'delete':
-      return running ? `正在删除 ${short}` : `已删除 ${short || tool.title}`
-    default: {
-      // 官方 title 常为 "Execute `…`" / "Explored N files"
-      const t = tool.title?.trim() || '工具'
-      if (running && !/中|ing/i.test(t)) return `进行中 · ${t}`
-      return t
-    }
+    default:
+      return `Run ${label}`
   }
 }
 
-/** 截图风格：▶ 已运行 cmd 2.7s — 默认折叠，可展开输出 */
+/** 菱形时间线：绿菱形 + 竖轨 — Run xxx › */
 const ToolLine = memo(function ToolLine({
   tool,
   streaming,
@@ -305,69 +290,95 @@ const ToolLine = memo(function ToolLine({
   tool: ToolCallData
   streaming: boolean
 }) {
-  const [expanded, setExpanded] = useState(false)
+  // 有 diff 默认展开（对齐 Hermes：completed edit 的 diff 直接可见）
+  const [expanded, setExpanded] = useState(() => (tool.diffs?.length ?? 0) > 0)
   const duration = formatDuration(tool.timing)
   const live =
     streaming || tool.status === 'pending' || tool.status === 'in_progress'
+  const failed = tool.status === 'failed'
   const preview = tool.preview?.trim() || ''
   const hasBody = preview.length > 0 || (tool.diffs?.length ?? 0) > 0
   const headline = toolHeadline(tool)
+  const tone: ActivityTone = failed ? 'tool-failed' : 'tool'
+
+  // diff 统计（+N -M）：非空行计数
+  const diffStats = useMemo(() => {
+    if (!tool.diffs?.length) return null
+    let added = 0
+    let removed = 0
+    for (const d of tool.diffs) {
+      added += (d.newText?.split('\n') ?? []).filter((l) => l.trim()).length
+      removed += (d.oldText?.split('\n') ?? []).filter((l) => l.trim()).length
+    }
+    return { added, removed }
+  }, [tool.diffs])
+  const showDiffStats = !live && diffStats !== null && (diffStats.added > 0 || diffStats.removed > 0)
+
+  // 复制完整输出（不受显示截断影响）
+  const [copied, setCopied] = useState(false)
+  const onCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(preview || tool.detail || tool.title)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch { /* clipboard 不可用时静默 */ }
+  }, [preview, tool.detail, tool.title])
 
   return (
     <div className="message-row activity-row tool-row">
       <div
         className={`activity-line tool-line status-${tool.status}${live ? ' is-live' : ''}`}
       >
-        <button
-          type="button"
-          className="activity-toggle"
-          onClick={() => hasBody && setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          disabled={!hasBody}
-          title={hasBody ? (expanded ? '收起输出' : '展开输出') : undefined}
-        >
-          {/* 进行中：CLI 同款 braille spinner；结束后显示 kind 图标 */}
-          {live ? (
-            <BrailleSpinner />
-          ) : (
-            <span className="activity-icon" aria-hidden data-kind={tool.kind}>
-              {kindIcon(tool.kind)}
-            </span>
-          )}
-          <span className="activity-label" title={tool.detail || tool.title}>
-            {headline}
-          </span>
-          {duration ? <span className="activity-meta">{duration}</span> : null}
-          {hasBody ? (
-            <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
-              ›
-            </span>
-          ) : null}
-        </button>
-        {expanded && hasBody ? (
-          <div className="activity-body tool-body">
-            {preview ? <pre className="tool-output-pre">{preview}</pre> : null}
-            {tool.diffs?.map((d, i) => (
-              <div key={`${d.path}-${i}`} className="tool-diff-block">
-                <div className="tool-diff-path">{d.path || 'diff'}</div>
-                <pre className="tool-output-pre">
-                  {(d.oldText
-                    ? d.oldText
-                        .split('\n')
-                        .slice(0, 30)
-                        .map((l) => `-${l}`)
-                        .join('\n') + '\n'
-                    : '') +
-                    d.newText
-                      .split('\n')
-                      .slice(0, 40)
-                      .map((l) => `+${l}`)
-                      .join('\n')}
-                </pre>
-              </div>
-            ))}
+        <ActivityRail tone={tone} live={live} />
+        <div className="activity-main">
+          <div className="activity-toggle-row">
+            <button
+              type="button"
+              className="activity-toggle"
+              onClick={() => hasBody && setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              disabled={!hasBody}
+              title={hasBody ? (expanded ? '收起输出' : '展开输出') : undefined}
+            >
+              <span className="activity-label" title={tool.detail || tool.title}>
+                {headline}
+              </span>
+              {duration ? <span className="activity-meta">{duration}</span> : null}
+              {showDiffStats && diffStats ? (
+                <span className="tool-diff-stats" aria-label={`新增 ${diffStats.added} 行，删除 ${diffStats.removed} 行`}>
+                  <span className="diff-stat-add">+{diffStats.added}</span>
+                  <span className="diff-stat-remove">-{diffStats.removed}</span>
+                </span>
+              ) : null}
+              {hasBody ? (
+                <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
+                  ›
+                </span>
+              ) : null}
+            </button>
+            {preview && !live ? (
+              <button
+                type="button"
+                className={`tool-copy-btn${copied ? ' is-copied' : ''}`}
+                onClick={onCopy}
+                title="复制输出"
+              >
+                {copied ? '✓' : '⧉'}
+              </button>
+            ) : null}
           </div>
-        ) : null}
+          {expanded && hasBody ? (
+            <div className="activity-body tool-body">
+              {preview ? <pre className="tool-output-pre">{preview}</pre> : null}
+              {tool.diffs?.map((d, i) => (
+                <div key={`${d.path}-${i}`} className="tool-diff-block">
+                  <div className="tool-diff-path">{d.path || 'diff'}</div>
+                  <DiffLines oldText={d.oldText ?? ''} newText={d.newText} />
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )

@@ -1,0 +1,130 @@
+/* Design tokens + base reset */
+/* extracted from index.css lines 1-128 */
+
+/* AIAcong Desktop — white + neutral gray (no orange accents) */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces — White minimal aesthetics */
+  --bg-canvas: #f8f9fb;
+  /* 极清爽的灰白外壳画布 */
+  --bg-canvas-mid: #f8f9fb;
+  --bg-canvas-glow: #f8f9fb;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-muted: #f3f4f6;
+  /* 质感极浅灰 */
+  --surface-hover: #eaebee;
+  --surface-glass: rgba(255, 255, 255, 0.96);
+
+  /* Text — 高清晰度灰阶 */
+  --text-primary: #0f172a;
+  /* 极深蓝黑 */
+  --text-secondary: #475569;
+  /* 中灰 Slate */
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --ink-deep: #0f172a;
+
+  /* Accent — 极简高质感 */
+  --accent: #475569;
+  --accent-hover: #334155;
+  --accent-active: #1e293b;
+  --accent-soft: #f1f5f9;
+  --accent-tint: #f8fafc;
+  --brand: #475569;
+  --brand-soft: #f1f5f9;
+  --brand-border: #e2e8f0;
+
+  /* Primary CTA — 深灰/黑 */
+  --cta: #18181b;
+  --cta-hover: #27272a;
+  --cta-active: #09090b;
+  --cta-edge: #3f3f46;
+
+  /* User bubble — Soft off-white pill */
+  --user-bubble-a: #f3f4f6;
+  --user-bubble-b: #f3f4f6;
+  --user-bubble-c: #f3f4f6;
+  --user-bubble-border: #e4e4e7;
+
+  /* Semantic */
+  --success: #16a34a;
+  --success-soft: #f0fdf4;
+  --success-deep: #15803d;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --warning-deep: #b45309;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --danger-border: #fecaca;
+
+  /* Borders & Shadows — 精致柔和边框与阴影 */
+  --border: rgba(0, 0, 0, 0.06);
+  --border-solid: #e2e8f0;
+  --border-strong-solid: #cbd5e1;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.02);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08);
+  --radius-xl: 18px;
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-sm: 6px;
+
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI',
+    'Helvetica Neue', Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-primary);
+  background-color: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 全局细滚动条：滑块高度由浏览器按「可视区/内容」比例计算 */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* 彻底隐藏 Windows Chromium 原生上下箭头按钮 */
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-button:single-button,
+::-webkit-scrollbar-button:vertical:decrement,
+::-webkit-scrollbar-button:vertical:increment,
+::-webkit-scrollbar-button:horizontal:decrement,
+::-webkit-scrollbar-button:horizontal:increment {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}

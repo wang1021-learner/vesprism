@@ -59,8 +59,115 @@ export interface PermissionOption {
 
 export interface PermissionRequest {
   id: string
+  /** 原始 description（调试 / 兜底） */
   tool: string
   options: PermissionOption[]
+  /** 解析后的类型文案，如「运行终端命令」 */
+  kindLabel?: string
+  /** 短标题（已去 Execute `…` 外壳） */
+  title?: string
+  /** 完整命令或目标路径 */
+  command?: string
+  /** 一行摘要（截断） */
+  summary?: string
+}
+
+/**
+ * 解析 grok-session `format_permission_description`。
+ * 兼容多行与被压成一行的文案（IPC/显示层可能吞换行）。
+ */
+export function parsePermissionDescription(raw: string): {
+  kindLabel: string
+  title: string
+  command: string
+  summary: string
+} {
+  const text = (raw || '').trim()
+  if (!text) {
+    return { kindLabel: '工具操作', title: '', command: '', summary: '' }
+  }
+
+  // 先尽量还原多行：在「类型/工具/命令/目标」标签前插入换行
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/(?<!^)\s*(?=(?:类型|工具|命令|目标)：)/g, '\n')
+
+  let kindLabel = ''
+  let title = ''
+  const commandLines: string[] = []
+  let collecting: 'command' | 'target' | null = null
+
+  for (const line of normalized.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    if (trimmed.startsWith('类型：')) {
+      kindLabel = trimmed.slice(3).trim()
+      collecting = null
+      continue
+    }
+    if (trimmed.startsWith('工具：')) {
+      title = trimmed.slice(3).trim()
+      collecting = null
+      continue
+    }
+    if (trimmed.startsWith('命令：') || trimmed.startsWith('目标：')) {
+      collecting = trimmed.startsWith('命令') ? 'command' : 'target'
+      const rest = trimmed.slice(3).trim()
+      if (rest) commandLines.push(rest)
+      continue
+    }
+    if (collecting) {
+      commandLines.push(line)
+    }
+  }
+
+  let command = commandLines.join('\n').trim()
+
+  // Execute `…`（可能跨行）→ 纯命令
+  const peelExecute = (s: string): string | null => {
+    const m = s.match(/^Execute\s+`([\s\S]*)`\s*$/i)
+    return m ? m[1].trim() : null
+  }
+
+  const fromTitle = peelExecute(title)
+  if (fromTitle) {
+    if (!command) command = fromTitle
+    title = ''
+  }
+
+  // 整段里直接找 Execute `…`
+  if (!command) {
+    const m = text.match(/Execute\s+`([\s\S]*?)`/i)
+    if (m) command = m[1].trim()
+  }
+
+  // 类型未解析时，从关键字猜
+  if (!kindLabel) {
+    if (/运行终端|Execute|Get-PS|powershell|bash|cmd/i.test(text)) {
+      kindLabel = '运行终端命令'
+    } else if (/读取|read/i.test(text)) {
+      kindLabel = '读取文件'
+    } else if (/编辑|edit|write/i.test(text)) {
+      kindLabel = '编辑文件'
+    } else {
+      kindLabel = '工具操作'
+    }
+  }
+
+  if (command && title && title.includes(command.slice(0, Math.min(40, command.length)))) {
+    title = ''
+  }
+
+  // 摘要：短命令预览；绝不回退成「类型：…工具：…」整坨
+  let summary = ''
+  if (command) {
+    const one = command.replace(/\s+/g, ' ').trim()
+    summary = one.length > 64 ? `${[...one].slice(0, 64).join('')}…` : one
+  } else if (title && !/^类型：/.test(title) && !title.includes('工具：')) {
+    summary = title.length > 64 ? `${title.slice(0, 64)}…` : title
+  }
+
+  return { kindLabel, title, command, summary }
 }
 
 /** 对齐后端 ModelEntryDto（serde snake_case） */

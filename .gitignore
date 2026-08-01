@@ -9,3 +9,8 @@ crates/grok-gui-poc/test-grok-home/sessions/
 crates/grok-gui-poc/test-grok-home/managed_config.lock
 crates/grok-gui-poc/test-grok-home/.metadata_version
 crates/grok-gui-poc/test-grok-home/agent_id
+
+# local / build artifacts
+*.tsbuildinfo
+crates/jike-grok-desktop/src/index.css.bak
+

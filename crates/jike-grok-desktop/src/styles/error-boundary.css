@@ -1,0 +1,112 @@
+/* Error boundary fallback */
+/* extracted from index.css lines 4488-4596 */
+
+/* Error Boundary — 子树渲染失败时避免整页白屏 */
+.error-boundary-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 100%;
+  flex: 1;
+  padding: 24px;
+  background: var(--bg-canvas);
+  box-sizing: border-box;
+}
+
+.error-boundary-fallback.is-compact {
+  background: var(--surface-elevated);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-solid);
+  margin: 8px 12px;
+  min-height: 200px;
+}
+
+.error-boundary-card {
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  padding: 8px;
+}
+
+.error-boundary-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+}
+
+.error-boundary-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.error-boundary-desc {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.error-boundary-detail {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.error-boundary-btn {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.error-boundary-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.error-boundary-btn.primary {
+  background: var(--cta);
+  border-color: var(--cta);
+  color: #fff;
+}
+
+.error-boundary-btn.primary:hover {
+  background: var(--cta-hover);
+  border-color: var(--cta-hover);
+  color: #fff;
+}
+
+/* ── 右侧面板 ── */
