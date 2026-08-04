@@ -6,12 +6,14 @@ import { useStore } from '@nanostores/react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { useEffect, useMemo, useState } from 'react'
 import {
+  $activeTabId,
   $defaultModelId,
   $messages,
   $models,
   $reasoningEffort,
   $settingsOpen,
   $workspaceCwd,
+  patchActiveTab,
 } from '../store'
 import {
   envFileLocation,
@@ -246,14 +248,14 @@ export function SettingsModal() {
       }
       await saveModelSettings(def, trimmed)
       try {
-        await reloadModels()
+        await reloadModels($activeTabId.get())
       } catch {
         /* 无会话可忽略 */
       }
 
       $models.set(trimmed)
       $defaultModelId.set(def)
-      $workspaceCwd.set(appliedCwd)
+      patchActiveTab({ cwd: appliedCwd })
       setModels(trimmed)
       setDefaultId(def)
       setDraftModelIds([])
@@ -264,7 +266,7 @@ export function SettingsModal() {
         ? ent.reasoning_effort || 'medium'
         : undefined
       try {
-        await setCurrentModel(def, effort)
+        await setCurrentModel($activeTabId.get(), def, effort)
         if (effort) $reasoningEffort.set(effort)
       } catch {
         /* 会话未就绪 */
@@ -648,8 +650,7 @@ export function SettingsModal() {
                           <span>
                             <strong>此模型支持推理 / 思考</strong>
                             <span className="settings-hint settings-hint-inline">
-                              仅声明能力。强度在下方输入栏切换模型时选择（类似 Claude /
-                              Codex）
+                              仅声明能力。强度在下方输入栏切换模型时选择。
                             </span>
                           </span>
                         </label>
@@ -916,7 +917,7 @@ export function SettingsModal() {
                                 onBlur={() => setHeadersDraft(null)}
                               />
                               <p className="settings-hint">
-                                Claude 等可附加 anthropic-version / x-api-key 等头。
+                                Anthropic / Custom 服务商可附加 anthropic-version / x-api-key 等头。
                               </p>
                             </div>
 

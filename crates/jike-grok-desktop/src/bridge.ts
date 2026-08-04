@@ -16,18 +16,23 @@ export function isTauriRuntime(): boolean {
   return Boolean(w.__TAURI_INTERNALS__ || w.__TAURI__)
 }
 
+// ── Tab 生命周期 ──
+export const openTab = () => invoke<string>('open_tab')
+export const closeTab = (tabId: string) => invoke('close_tab', { tabId })
+export const restartTab = (tabId: string) => invoke('restart_tab', { tabId })
+
 // ── 工作区 ──
 export const workspaceCwd = () => invoke<string>('workspace_cwd')
 export const setWorkspaceCwd = (cwd: string) => invoke<string>('set_workspace_cwd', { cwd })
 
 // ── 会话 ──
-export const startSession = (cwd: string) => invoke('start_session', { cwd })
-export const sendPrompt = (text: string, promptId?: string) =>
-  invoke('send_prompt', { text, promptId: promptId ?? crypto.randomUUID() })
-export const cancelTurn = () => invoke('cancel_turn')
-export const restartSession = (cwd: string) => invoke('restart_session', { cwd })
+export const startSession = (tabId: string, cwd: string) => invoke('start_session', { tabId, cwd })
+export const sendPrompt = (tabId: string, text: string, promptId?: string) =>
+  invoke('send_prompt', { tabId, text, promptId: promptId ?? crypto.randomUUID() })
+export const cancelTurn = (tabId: string) => invoke('cancel_turn', { tabId })
+export const restartSession = (tabId: string, cwd: string) => invoke('restart_session', { tabId, cwd })
 
-// ── 会话列表 (Codex 风格：threads 索引；含 preview) ──
+// ── 会话列表 (threads 索引；含 preview) ──
 export const listSessions = (cwd: string, limit?: number) =>
   invoke<
     Array<{
@@ -85,18 +90,18 @@ export const getSessionMessages = (sessionId: string) =>
     }>
   >('get_session_messages', { sessionId })
 
-export const loadSession = (sessionId: string, cwd: string) =>
-  invoke('load_session', { sessionId, cwd })
+export const loadSession = (tabId: string, sessionId: string, cwd: string) =>
+  invoke('load_session', { tabId, sessionId, cwd })
 
-export const deleteSession = (sessionId: string, cwd: string) =>
-  invoke('delete_session', { sessionId, cwd })
+export const deleteSession = (tabId: string, sessionId: string, cwd: string) =>
+  invoke('delete_session', { tabId, sessionId, cwd })
 
 export const renameSession = (sessionId: string, cwd: string, title: string) =>
   invoke('rename_session', { sessionId, cwd, title })
 
 // ── 模型 ──
-export const setCurrentModel = (modelId: string, reasoningEffort?: string) =>
-  invoke('set_current_model', { modelId, reasoningEffort: reasoningEffort ?? null })
+export const setCurrentModel = (tabId: string, modelId: string, reasoningEffort?: string) =>
+  invoke('set_current_model', { tabId, modelId, reasoningEffort: reasoningEffort ?? null })
 
 export const getModelSettings = () =>
   invoke<{ default_id: string; models: ModelInfo[]; config_path: string }>('get_model_settings')
@@ -104,11 +109,11 @@ export const getModelSettings = () =>
 export const saveModelSettings = (defaultId: string, models: ModelInfo[]) =>
   invoke('save_model_settings', { defaultId, models })
 
-export const reloadModels = () => invoke('reload_models')
+export const reloadModels = (tabId: string) => invoke('reload_models', { tabId })
 
 // ── 权限 ──
-export const respondPermission = (requestId: number, optionId: string) =>
-  invoke('respond_permission', { requestId, optionId })
+export const respondPermission = (tabId: string, requestId: number, optionId: string) =>
+  invoke('respond_permission', { tabId, requestId, optionId })
 
 // ── 密钥 ──
 export const getEnvStatus = (keyName: string) =>
@@ -131,12 +136,10 @@ export const readFileText = (path: string) =>
 
 export const pickDirectory = () => invoke<string | null>('pick_directory')
 
-// ── 用量 ──
-export const getSessionUsage = () => invoke<unknown>('get_session_usage')
-
 // ── 流式事件（与后端 FrontendEvent snake_case tag 对齐）──
 export interface SessionEventPayload {
   type: string
+  tab_id: string
   text?: string
   prompt_id?: string | null
   stop_reason?: string
@@ -174,6 +177,11 @@ export interface SessionEventPayload {
   status?: string
   session_id?: string
   total_tokens?: number
+  /** 会话标题更新（引擎 LLM 生成 / 手动改名） */
+  title?: string
+  /** TabActor 重建次数（tab_recovering） / 连续 panic 次数（tab_failed） */
+  attempt?: number
+  attempts?: number
 }
 
 let _unlisten: UnlistenFn | null = null

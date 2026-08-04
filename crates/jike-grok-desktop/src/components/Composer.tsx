@@ -42,8 +42,6 @@ interface ComposerProps {
   workspaceCwd: string
   /** 历史去重工作区列表 */
   workspaceOptions: string[]
-  /** 会话累计已用 tokens（引擎估计） */
-  contextUsedTokens: number
   /** 当前是否允许切换工作区 */
   canSwitchWorkspace: boolean
   onSwitchModel: (id: string) => void
@@ -53,9 +51,6 @@ interface ComposerProps {
   onBrowseWorkspace: () => void
   onSend: (text?: string) => void
   onCancel: () => void
-  usageDetail?: Record<string, unknown> | null
-  usageDetailLoading?: boolean
-  onFetchUsageDetail?: () => void
 }
 
 function formatTokenK(n: number): string {
@@ -65,22 +60,6 @@ function formatTokenK(n: number): string {
   if (k < 10) return `${k.toFixed(1)}K`
   if (k < 1000) return `${Math.round(k)}K`
   return `${(k / 1000).toFixed(1)}M`
-}
-
-// 字段名对应官方 PromptUsageModel 的 camelCase 序列化形式
-// （见 xai-grok-shell/src/extensions/notification.rs），不是 snake_case。
-function formatDetailKey(key: string): string {
-  const map: Record<string, string> = {
-    inputTokens: '输入 Tokens',
-    outputTokens: '输出 Tokens',
-    totalTokens: '总 Tokens',
-    cachedReadTokens: '缓存命中 Tokens',
-    reasoningTokens: '推理 Tokens',
-    modelCalls: '模型调用次数',
-    apiDurationMs: 'API 耗时 (ms)',
-    numTurns: '对话轮次',
-  }
-  return map[key] ?? key
 }
 
 function formatWorkspaceLabel(p: string): string {
@@ -160,7 +139,7 @@ function SendIcon() {
   )
 }
 
-/** 中断：实心圆角方块（对齐 ChatGPT / Claude 停止按钮样式） */
+/** 中断：实心圆角方块 */
 function StopIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -231,7 +210,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     reasoningEffort,
     workspaceCwd,
     workspaceOptions,
-    contextUsedTokens,
     canSwitchWorkspace,
     onSwitchModel,
     onSwitchReasoningEffort,
@@ -239,9 +217,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onBrowseWorkspace,
     onSend,
     onCancel,
-    usageDetail,
-    usageDetailLoading,
-    onFetchUsageDetail,
   }: ComposerProps,
   ref,
 ) {
@@ -268,7 +243,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
-  const [showDetail, setShowDetail] = useState(false)
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -300,17 +274,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }, [wsOpen, modelOpen])
 
-  const contextWindow = useMemo(() => {
-    const m = models.find((x) => x.id === selectedModelId)
-    return m?.context_window && m.context_window > 0 ? m.context_window : 0
-  }, [models, selectedModelId])
-
   const selectedModel = useMemo(
     () => models.find((x) => x.id === selectedModelId),
     [models, selectedModelId],
   )
 
-  // 官方 messages backend（Claude 等）主动过滤掉 none/minimal 两档
+  // 官方 messages backend 主动过滤掉 none/minimal 两档
   // （见 xai-grok-sampling-types 的 to_messages_api），选了也不会
   // 真正发给模型；这里同步隐藏，避免用户选中一个静默失效的档位。
   const availableReasoningLevels = useMemo(() => {
@@ -345,31 +314,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const showReasoning =
     Boolean(selectedModel?.supports_reasoning_effort) && shellReady
-
-  const usage = useMemo(() => {
-    const used = Math.max(0, contextUsedTokens || 0)
-    const total = contextWindow
-    const pct = total > 0 ? Math.min(100, Math.round((used * 100) / total)) : 0
-    const tone = pct >= 95 ? 'danger' : pct >= 85 ? 'warn' : ''
-    return {
-      used,
-      total,
-      pct,
-      tone,
-      label:
-        total > 0
-          ? `${formatTokenK(used)} / ${formatTokenK(total)}`
-          : used > 0
-            ? formatTokenK(used)
-            : '—',
-      title:
-        total > 0
-          ? `上下文用量约 ${used.toLocaleString()} / ${total.toLocaleString()} tokens（${pct}%）`
-          : used > 0
-            ? `已用约 ${used.toLocaleString()} tokens（未配置窗口上限）`
-            : '上下文用量（对话后更新）',
-    }
-  }, [contextUsedTokens, contextWindow])
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const text = e.clipboardData.getData('text')
@@ -702,69 +646,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       </div>
 
       <div className="composer-below">
-        <div className="composer-below-left" />
-
         <div className="composer-below-center">
           <p className="disclaimer-text">AI 可能会出错，请核对重要信息</p>
-        </div>
-
-        <div className="composer-below-right">
-          <div
-            className={`context-meter${usage.tone ? ` ${usage.tone}` : ''}`}
-            title={usage.title}
-            onMouseEnter={() => {
-              setShowDetail(true)
-              onFetchUsageDetail?.()
-            }}
-            onMouseLeave={() => {
-              setShowDetail(false)
-            }}
-          >
-            {usage.total > 0 && (
-              <span className="context-meter-ring" aria-hidden>
-                <svg width="16" height="16" viewBox="0 0 16 16">
-                  <circle cx="8" cy="8" r="6" className="ring-track" />
-                  <circle
-                    cx="8"
-                    cy="8"
-                    r="6"
-                    className="ring-value"
-                    style={{
-                      strokeDasharray: `${(usage.pct / 100) * 37.7} 37.7`,
-                    }}
-                  />
-                </svg>
-              </span>
-            )}
-            <span className="context-meter-text">
-              {usage.label}
-              {usage.total > 0 ? (
-                <span className="context-meter-pct"> · {usage.pct}%</span>
-              ) : null}
-            </span>
-
-            {showDetail && (
-              <div className="context-detail-tooltip">
-                {usageDetailLoading && <div className="tooltip-loading">加载中...</div>}
-                {!usageDetailLoading && usageDetail && (
-                  <div className="tooltip-grid">
-                    {Object.entries(usageDetail).map(([key, val]) => {
-                      if (typeof val !== 'number') return null
-                      return (
-                        <div key={key} className="tooltip-row">
-                          <span className="tooltip-label">{formatDetailKey(key)}</span>
-                          <span className="tooltip-value">{val.toLocaleString()}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-                {!usageDetailLoading && !usageDetail && (
-                  <div className="tooltip-empty">暂无明细</div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </footer>

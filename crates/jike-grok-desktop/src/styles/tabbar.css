@@ -1,0 +1,153 @@
+/* 多会话标签栏：
+ * 满高 tab、激活态主题色下划线（非灰底块）、相邻极淡分隔线、小字号 */
+
+.tabbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  height: 40px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border-solid);
+  background: var(--surface-elevated);
+  user-select: none;
+}
+
+.tabbar-list {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabbar-list::-webkit-scrollbar {
+  display: none;
+}
+
+.tabbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 192px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  position: relative;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+/* 相邻 tab 之间：极淡分隔线 */
+.tabbar-item + .tabbar-item {
+  border-left: 1px solid var(--border);
+}
+
+.tabbar-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+/* 激活态：主题色下划线 + 深色文字 */
+.tabbar-item.is-active {
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tabbar-item.is-failed .tabbar-title {
+  color: var(--danger);
+}
+
+.tabbar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.tabbar-close,
+.tabbar-retry {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.tabbar-item:hover .tabbar-close,
+.tabbar-item.is-active .tabbar-close,
+.tabbar-retry {
+  opacity: 1;
+}
+
+.tabbar-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.tabbar-retry {
+  opacity: 1;
+  color: var(--danger);
+}
+
+.tabbar-retry:hover {
+  background: var(--danger-soft);
+  color: var(--danger-deep);
+}
+
+/* 操作按钮（+ / ☰ / 四宫格）统一规格：
+ * 24px、4px 圆角、幽灵 hover、无边框 */
+.tabbar-new,
+.tabbar-sidebar-toggle,
+.tabbar-panel-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  margin: auto 2px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.tabbar-new:hover:not(:disabled),
+.tabbar-sidebar-toggle:hover,
+.tabbar-panel-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.tabbar-panel-btn.is-active {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.tabbar-new:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tabbar-panel-btn svg {
+  flex-shrink: 0;
+}

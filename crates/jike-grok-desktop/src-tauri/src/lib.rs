@@ -2,7 +2,7 @@ mod commands;
 mod session_index;
 mod state;
 
-use state::{spawn_session_actor, AppState};
+use state::{spawn_supervisor, AppState};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,10 +71,11 @@ pub fn run() {
                 )?;
             }
 
-            // 启动专用会话线程，并把命令发送端交给 Tauri 状态管理。
-            let cmd_tx = spawn_session_actor(app.handle().clone());
+            // 启动 Supervisor 线程（管理所有 tab 的会话 Actor），并把句柄交给 Tauri 状态管理。
+            let (supervisor_tx, tabs) = spawn_supervisor(app.handle().clone());
             app.manage(AppState {
-                cmd_tx,
+                tabs,
+                supervisor_tx,
                 workspace_cwd_override: std::sync::Arc::new(std::sync::Mutex::new(None)),
             });
 
@@ -89,6 +90,9 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            commands::open_tab,
+            commands::close_tab,
+            commands::restart_tab,
             commands::workspace_cwd,
             commands::set_workspace_cwd,
             commands::start_session,
@@ -111,9 +115,10 @@ pub fn run() {
             commands::set_current_model,
             commands::read_file_for_preview,
             commands::save_artifact_file,
-            commands::get_session_usage,
             commands::list_dir,
             commands::read_file_text,
+            commands::get_rewind_points,
+            commands::execute_rewind,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

@@ -16,7 +16,7 @@ export const API_BACKENDS: { value: ApiBackend; label: string; hint: string }[] 
   {
     value: 'messages',
     label: 'Messages',
-    hint: 'Anthropic Messages /v1/messages（Claude）',
+    hint: 'Anthropic Messages /v1/messages',
   },
 ]
 

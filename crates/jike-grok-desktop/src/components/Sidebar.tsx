@@ -12,21 +12,22 @@ import {
   type ReactNode,
 } from 'react'
 import {
-  $activeChatId,
+  $activeTabId,
   $activeSessionId,
   $chats,
-  $composerInput,
-  $contextUsedTokens,
   $defaultModelId,
   $engineStatus,
-  $error,
   $messages,
   $models,
-  $permission,
   $reasoningEffort,
   $sessionPhase,
   $settingsOpen,
+  $sidebarAutoCollapsed,
   $sidebarCollapsed,
+  $commandPaletteOpen,
+  getTabState,
+  patchActiveTab,
+  patchTab,
   $workspaceCwd,
   type ChatSummary,
 } from '../store'
@@ -268,11 +269,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   }, [menuOpenChatId])
 
   const openSearch = () => {
-    setSearchQuery('')
-    setSearchHits([])
-    setSearchError('')
-    setSearchBootstrapping(false)
-    setSearchOpen(true)
+    $commandPaletteOpen.set(true)
     setMenuOpenChatId(null)
   }
 
@@ -390,10 +387,15 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     return !ws.isCurrent
   }
 
-  const onSelectChat = async (id: string, sessionCwd?: string) => {
+  const onSelectChat = useCallback(async (id: string, sessionCwd?: string) => {
     if ($sessionPhase.get() === 'loading') return
+    // 捕获发起时的 tab：从函数最开始就锁定，此后一律用 myTab，不再读 $activeTabId.get()
+    // （await 期间用户可能切走；若中途用 $activeTabId.get()，加载指令和 sessionId
+    //   会写进新活跃 tab，污染其状态）
+    const myTab = $activeTabId.get()
+
     if (id === $activeSessionId.get() && $sessionPhase.get() === 'ready') {
-      $activeChatId.set(id)
+      patchTab(myTab, { chatId: id })
       setMenuOpenChatId(null)
       return
     }
@@ -405,43 +407,43 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       if (cur.length > 0) cacheSessionMessages(prevId, cur)
     }
 
-    $activeChatId.set(id)
+    patchTab(myTab, { chatId: id })
     setMenuOpenChatId(null)
+    // 历史会话直接用列表里的标题（LLM 生成的），等引擎 title_changed 事件再刷新
+    patchTab(myTab, { chatTitle: $chats.get().find((c) => c.id === id)?.title ?? '' })
     const useCwd = (sessionCwd || cwd).trim() || cwd
-    const gen = nextLoadGen()
+    const gen = nextLoadGen(myTab)
 
     try {
       // 先清空 + loading，避免短暂仍显示上一会话（再从顶跳到底）
-      $messages.set([])
-      $sessionPhase.set('loading')
-      $engineStatus.set('initializing')
+      patchTab(myTab, { messages: [], phase: 'loading', status: 'initializing' })
 
       let messages = getCachedSessionMessages(id)
       if (!messages) {
         const raw = await getSessionMessages(id)
-        if (gen !== currentLoadGen()) return
+        if (gen !== currentLoadGen(myTab)) return
         messages = raw.map((m) => hydrateDisplayMessage(m))
         cacheSessionMessages(id, messages)
-      } else if (gen !== currentLoadGen()) {
+      } else if (gen !== currentLoadGen(myTab)) {
         return
       }
 
-      hydrateFromSnapshot(messages)
+      hydrateFromSnapshot(messages, myTab)
 
-      beginAttachRuntime()
-      await loadSession(id, useCwd)
-      if (gen !== currentLoadGen()) return
-      finishAttachRuntime()
-      $activeSessionId.set(id)
-      // runtime 挂好后刷新缓存（含切走期间可能未写入的快照）
-      cacheSessionMessages(id, $messages.get())
+      beginAttachRuntime(myTab)
+      await loadSession(myTab, id, useCwd)
+      if (gen !== currentLoadGen(myTab)) return
+      finishAttachRuntime(myTab)
+      patchTab(myTab, { sessionId: id })
+      // runtime 挂好后刷新缓存（含切走期间可能未写入的快照）——直接从 myTab
+      // 自己的 map 条目取，不依赖它是否仍是活跃 tab
+      cacheSessionMessages(id, getTabState(myTab)?.messages ?? [])
     } catch (e) {
-      if (gen !== currentLoadGen()) return
-      abortOpenSession()
-      $engineStatus.set('idle')
-      $error.set(String(e))
+      if (gen !== currentLoadGen(myTab)) return
+      abortOpenSession(myTab)
+      patchTab(myTab, { status: 'idle', error: String(e) })
     }
-  }
+  }, [cwd])
 
   const handlePickSearchResult = (chat: SearchHit) => {
     closeSearch()
@@ -458,21 +460,23 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     try {
       abortOpenSession()
       // 清空 UI（与旧版 resetConversationUi 一致）
-      $messages.set([])
-      $composerInput.set('')
-      $contextUsedTokens.set(0)
-      $permission.set(null)
-      $error.set('')
-      $activeChatId.set('')
-      $activeSessionId.set('')
-      $sessionPhase.set('restarting')
-      $engineStatus.set('initializing')
+      patchActiveTab({
+        messages: [],
+        composerInput: '',
+        permission: null,
+        error: '',
+        chatId: '',
+        sessionId: '',
+        chatTitle: '',
+        phase: 'restarting',
+        status: 'initializing',
+      })
 
       // 后端：丢弃当前会话；空会话不进历史；启新 session
       try {
-        await restartSession(cwd)
+        await restartSession($activeTabId.get(), cwd)
       } catch {
-        await startSession(cwd)
+        await startSession($activeTabId.get(), cwd)
       }
 
       // 新会话对齐当前默认模型 / 推理档
@@ -483,20 +487,17 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
           ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
           : undefined
         try {
-          await setCurrentModel(modelId, effort)
+          await setCurrentModel($activeTabId.get(), modelId, effort)
           if (effort) $reasoningEffort.set(effort)
         } catch (e) {
           console.warn('新会话同步模型失败', e)
         }
       }
 
-      $sessionPhase.set('ready')
-      $engineStatus.set('idle')
+      patchActiveTab({ phase: 'ready', status: 'idle' })
       await refreshChats()
     } catch (e) {
-      $sessionPhase.set('ready')
-      $engineStatus.set('idle')
-      $error.set(String(e))
+      patchActiveTab({ phase: 'ready', status: 'idle', error: String(e) })
     }
   }, [cwd, refreshChats])
 
@@ -505,28 +506,37 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     const onNew = () => {
       void onNewChat()
     }
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<{ id: string; cwd?: string }>).detail
+      if (detail?.id) {
+        void onSelectChat(detail.id, detail.cwd)
+      }
+    }
     window.addEventListener('jike:new-chat', onNew)
-    return () => window.removeEventListener('jike:new-chat', onNew)
-  }, [onNewChat])
+    window.addEventListener('jike:open-chat', onOpen)
+    return () => {
+      window.removeEventListener('jike:new-chat', onNew)
+      window.removeEventListener('jike:open-chat', onOpen)
+    }
+  }, [onNewChat, onSelectChat])
 
   const handleDelete = async (chat: ChatSummary) => {
     setBusy(true)
     try {
-      await deleteSession(chat.id, chat.cwd || cwd)
+      await deleteSession($activeTabId.get(), chat.id, chat.cwd || cwd)
       invalidateSessionMessages(chat.id)
       if (chat.id === activeChatId) {
-        $messages.set([])
-        $activeChatId.set('')
+        patchActiveTab({ messages: [], chatId: '' })
         try {
-          await restartSession(cwd)
+          await restartSession($activeTabId.get(), cwd)
         } catch {
-          await startSession(cwd)
+          await startSession($activeTabId.get(), cwd)
         }
       }
       setConfirmDelete(null)
       await refreshChats()
     } catch (e) {
-      $error.set(String(e))
+      patchActiveTab({ error: String(e) })
     } finally {
       setBusy(false)
     }
@@ -552,61 +562,219 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     }
   }
 
+  const [peekState, setPeekState] = useState<'closed' | 'peeking' | 'leaving'>('closed')
+  const peekTimerRef = useRef<number | null>(null)
+
+  const clearPeekTimer = () => {
+    if (peekTimerRef.current !== null) {
+      window.clearTimeout(peekTimerRef.current)
+      peekTimerRef.current = null
+    }
+  }
+
+  const handleMouseEnter = () => {
+    if (!collapsed) return
+    clearPeekTimer()
+    if (peekState === 'leaving') {
+      setPeekState('peeking')
+      return
+    }
+    peekTimerRef.current = window.setTimeout(() => {
+      setPeekState('peeking')
+    }, 180)
+  }
+
+  const handleMouseLeave = () => {
+    clearPeekTimer()
+    peekTimerRef.current = window.setTimeout(() => {
+      setPeekState('leaving')
+      peekTimerRef.current = window.setTimeout(() => {
+        setPeekState('closed')
+      }, 170)
+    }, 200)
+  }
+
   const onToggleCollapse = () => {
     $sidebarCollapsed.set(!$sidebarCollapsed.get())
+    $sidebarAutoCollapsed.set(false)
+    setPeekState('closed')
   }
 
   const onOpenSettings = () => {
     $settingsOpen.set(true)
   }
 
+  const isPeekingOrLeaving = collapsed && (peekState === 'peeking' || peekState === 'leaving')
+
   if (collapsed) {
     return (
-      <aside className="sidebar sidebar-collapsed">
-        <button
-          type="button"
-          className="sidebar-icon-btn sidebar-brand-mini"
-          title="展开边栏"
-          onClick={onToggleCollapse}
+      <>
+        <aside
+          className="sidebar sidebar-collapsed"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
         >
-          <BrandLogo size={22} />
-        </button>
-        <button
-          type="button"
-          className="sidebar-icon-btn"
-          title="搜索会话"
-          onClick={() => {
-            $sidebarCollapsed.set(false)
-            openSearch()
-          }}
-        >
-          <SearchIcon />
-        </button>
-        <button
-          type="button"
-          className="sidebar-icon-btn new-chat-mini"
-          title="新建会话"
-          onClick={() => void onNewChat()}
-        >
-          +
-        </button>
-        <div className="sidebar-spacer" />
-        <button
-          type="button"
-          className="sidebar-icon-btn"
-          title="设置"
-          onClick={onOpenSettings}
-        >
-          ⚙
-        </button>
-      </aside>
+          <button
+            type="button"
+            className="sidebar-icon-btn sidebar-brand-mini"
+            title="展开边栏"
+            onClick={onToggleCollapse}
+          >
+            <BrandLogo size={22} />
+          </button>
+          <button
+            type="button"
+            className="sidebar-icon-btn"
+            title="搜索会话 (⌘K)"
+            onClick={() => {
+              $sidebarAutoCollapsed.set(false)
+              openSearch()
+            }}
+          >
+            <SearchIcon />
+          </button>
+          <button
+            type="button"
+            className="sidebar-icon-btn new-chat-mini"
+            title="新建会话"
+            onClick={() => void onNewChat()}
+          >
+            +
+          </button>
+          <div className="sidebar-spacer" />
+          <button
+            type="button"
+            className="sidebar-icon-btn"
+            title="设置"
+            onClick={onOpenSettings}
+          >
+            ⚙
+          </button>
+        </aside>
+
+        {isPeekingOrLeaving && (
+          <aside
+            className={`sidebar sidebar-peek${peekState === 'leaving' ? ' is-leaving' : ''}`}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+          >
+            <div className="sidebar-header" data-tauri-drag-region="true">
+              <BrandWordmark size={22} />
+              <div className="sidebar-actions">
+                <button
+                  type="button"
+                  className="sidebar-icon-btn"
+                  title="搜索会话"
+                  onClick={openSearch}
+                >
+                  <SearchIcon />
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-icon-btn"
+                  title="收起边栏"
+                  onClick={onToggleCollapse}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <path d="M9 3v18" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="sidebar-new-chat-wrapper">
+              <button type="button" className="btn-new-chat" onClick={() => void onNewChat()}>
+                <span className="plus-icon">+</span>
+                <span>New chat</span>
+              </button>
+            </div>
+
+            <div className="sidebar-recent-list" ref={listRef}>
+              {workspaceGroups.map((ws) => {
+                const folded = isWorkspaceCollapsed(ws)
+                return (
+                  <div
+                    key={ws.cwdKey}
+                    className={`sidebar-workspace${ws.isCurrent ? ' is-current' : ''}${folded ? ' is-collapsed' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="sidebar-workspace-title"
+                      title={ws.fullPath}
+                      aria-expanded={!folded}
+                      onClick={() => toggleWorkspace(ws)}
+                    >
+                      <FolderIcon open={!folded} />
+                      <span className="sidebar-workspace-name">{ws.label}</span>
+                    </button>
+                    <CollapsibleWorkspaceBody open={!folded}>
+                      <div className="sidebar-group">
+                        {ws.chats.map((chat) => (
+                          <ChatRow
+                            key={chat.id}
+                            chat={chat}
+                            isActive={chat.id === activeChatId}
+                            menuOpen={menuOpenChatId === chat.id}
+                            onSelect={() => void onSelectChat(chat.id, chat.cwd)}
+                            onOpenMenu={() =>
+                              setMenuOpenChatId((id) =>
+                                id === chat.id ? null : chat.id,
+                              )
+                            }
+                            onRename={() => {
+                              setMenuOpenChatId(null)
+                              setRenameChat(chat)
+                              setRenameInput(chat.title)
+                              setRenameError(null)
+                            }}
+                            onDelete={() => {
+                              setMenuOpenChatId(null)
+                              setConfirmDelete(chat)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </CollapsibleWorkspaceBody>
+                  </div>
+                )
+              })}
+              {workspaceGroups.length === 0 && (
+                <p className="sidebar-empty-hint">暂无历史会话</p>
+              )}
+            </div>
+
+            <div className="sidebar-footer">
+              <div className="user-profile">
+                <div className="user-avatar">👤</div>
+                <span className="user-name">My Account</span>
+              </div>
+              <button
+                type="button"
+                className="sidebar-icon-btn"
+                title="设置"
+                onClick={onOpenSettings}
+              >
+                ⚙
+              </button>
+            </div>
+          </aside>
+        )}
+      </>
     )
   }
 
   return (
     <>
       <aside className="sidebar">
-        <div className="sidebar-header">
+        <div className="sidebar-header" data-tauri-drag-region="true">
           <BrandWordmark size={22} />
           <div className="sidebar-actions">
             <button

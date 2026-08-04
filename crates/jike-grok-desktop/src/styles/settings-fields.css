@@ -42,7 +42,7 @@
   max-width: 560px;
   padding: 18px 20px;
   border: 1px solid var(--border-solid);
-  border-radius: 12px;
+  border-radius: 6px;
   background: var(--surface-elevated);
 }
 
@@ -61,7 +61,7 @@
 }
 
 .settings-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px !important;
 }
 
@@ -85,7 +85,7 @@
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface-hover);
   border: 1px solid var(--border-solid);
   cursor: default;
@@ -144,7 +144,7 @@
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border-strong-solid);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 8px 12px;
   font-size: 14px;
   color: var(--text-primary);

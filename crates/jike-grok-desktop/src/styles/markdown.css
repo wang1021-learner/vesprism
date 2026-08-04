@@ -2,13 +2,13 @@
 /* extracted from index.css lines 2076-2418 */
 
 /* ═══════════════════════════════════════════════════
-   Markdown 样式 — 简约正文（对齐 Hermes flat / OpenWorker .md）
+   Markdown 样式 — 简约正文
    原则：无卡片嵌套、细线优先、用留白分层，少阴影与色块
    ═══════════════════════════════════════════════════ */
 
 .md-body {
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.7;
   word-break: break-word;
   color: var(--text-primary);
   letter-spacing: -0.005em;
@@ -74,11 +74,11 @@
 
 /* ── 行内代码 ── */
 .md-body code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.88em;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
   background: var(--surface-muted);
   border: 1px solid var(--border-solid);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 0.1em 0.35em;
 }
 
@@ -86,18 +86,21 @@
 .md-body pre {
   background: var(--surface-muted);
   border: 1px solid var(--border-solid);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 10px 12px;
   margin: 0.5em 0 0.85em;
   overflow-x: auto;
   box-shadow: none;
+  white-space: pre-wrap;       /* 允许代码竖向折行 */
+  word-wrap: break-word;       /* 允许长单词换行 */
+  word-break: break-all;       /* 确保极端长字符串也会折行 */
 }
 
 .md-body pre code {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
@@ -124,7 +127,7 @@
   margin: 0.55em 0 0.85em;
   padding: 8px 12px;
   border-left: 2px solid;
-  border-radius: 0 6px 6px 0;
+  border-radius: 6px;
   font-size: 13.5px;
   line-height: 1.55;
   background: var(--surface-muted);
@@ -291,15 +294,16 @@
   border-bottom: 1px solid var(--border-solid);
 }
 
-/* Streamdown 代码块：弱化默认卡片感，细线 + 浅底 */
+/* Streamdown 代码块：弱化默认卡片感，极浅底无粗边框 */
 .md-body [data-streamdown='code-block'],
 .md-body [data-slot='code-card'] {
   margin: 0.5em 0 0.85em;
-  border: 1px solid var(--border-solid) !important;
-  border-radius: 8px !important;
-  background: var(--surface-muted) !important;
+  border: 1px solid rgba(0, 0, 0, 0.04) !important;
+  border-radius: 6px !important;
+  background: #fafafa !important;
   box-shadow: none !important;
   overflow: hidden;
+  position: relative;
 }
 
 .md-body [data-streamdown='code-block'] pre,
@@ -308,6 +312,33 @@
   border: none;
   background: transparent;
   border-radius: 0;
+}
+
+/* 隐藏并美化 Streamdown 默认的下载/复制按钮 */
+.md-body [data-streamdown='code-block'] button,
+.md-body [data-slot='code-card'] button {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--text-tertiary, #94a3b8) !important;
+  box-shadow: none !important;
+  border-radius: 6px !important;
+  padding: 4px !important;
+  cursor: pointer !important;
+  opacity: 0; /* 默认隐藏 */
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease !important;
+}
+
+/* 鼠标悬停代码块时显示按钮 */
+.md-body [data-streamdown='code-block']:hover button,
+.md-body [data-slot='code-card']:hover button {
+  opacity: 1;
+}
+
+/* 鼠标悬停按钮时高亮 */
+.md-body [data-streamdown='code-block'] button:hover,
+.md-body [data-slot='code-card'] button:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.05)) !important;
+  color: var(--text-primary, #111) !important;
 }
 
 /* ── 流式阶段（保留兼容） ── */
@@ -319,8 +350,8 @@
   margin: 0;
   padding: 0;
   font: inherit;
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.7;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;

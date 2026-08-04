@@ -12,7 +12,7 @@
   border: 1px solid var(--border-strong-solid);
   background: var(--surface-elevated);
   color: var(--text-primary);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 500;
@@ -27,7 +27,7 @@
   border: none;
   background: var(--ink-deep);
   color: var(--surface-elevated);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 500;

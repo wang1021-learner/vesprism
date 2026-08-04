@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -11,6 +10,7 @@ import { useStore } from '@nanostores/react'
 import type { ChatMessage, PermissionRequest } from '../../types'
 import { $activeChatId, $sessionPhase } from '../../store'
 import { MessageItem } from './MessageItem'
+import { ChatTimeline } from './ChatTimeline'
 
 /** 行间距（原 .messages-container gap: 24px） */
 const ROW_GAP = 24
@@ -84,7 +84,6 @@ export const MessageList = memo(function MessageList({
   const [showJump, setShowJump] = useState(false)
   /** 贴底完成前 opacity:0，避免首帧停在顶部 */
   const [scrollReady, setScrollReady] = useState(true)
-  const scrollRaf = useRef(0)
   const lastScrollHeight = useRef(0)
   const lastChatKey = useRef('')
   const prevCount = useRef(0)
@@ -138,15 +137,6 @@ export const MessageList = memo(function MessageList({
     lastScrollHeight.current = el.scrollHeight
   }, [])
 
-  const scheduleStick = useCallback(() => {
-    if (userPinnedUp.current) return
-    if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current)
-    scrollRaf.current = requestAnimationFrame(() => {
-      scrollRaf.current = 0
-      if (userPinnedUp.current) return
-      stickToBottom()
-    })
-  }, [stickToBottom])
 
   const pauseAutoScroll = useCallback(() => {
     if (userPinnedUp.current) return
@@ -389,6 +379,8 @@ export const MessageList = memo(function MessageList({
           </span>
         </button>
       ) : null}
+
+      <ChatTimeline messages={messages} virtualizer={virtualizer} />
     </div>
   )
 })

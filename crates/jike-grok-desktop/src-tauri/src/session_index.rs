@@ -1,7 +1,7 @@
-//! Codex 风格会话索引：SQLite WAL + session_id。
+//! 会话索引：SQLite WAL + session_id。
 //!
-//! - 正文仍在磁盘 `updates.jsonl` / session 目录（rollout 等价）
-//! - 本库只存侧栏列表元数据，对齐 `~/.codex/state_*.sqlite` 的 threads 表思路
+//! - 正文仍在磁盘 `updates.jsonl` / session 目录
+//! - 本库只存侧栏列表元数据 threads 表
 
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};

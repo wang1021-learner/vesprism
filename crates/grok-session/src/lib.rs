@@ -11,7 +11,7 @@ mod display_messages;
 pub use display_messages::{load_display_messages, load_display_messages_from_session_dir, DisplayMessage};
 
 use agent_client_protocol::{
-    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ExtRequest,
+    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ExtNotification, ExtRequest,
     InitializeRequest, LoadSessionRequest, ModelId, NewSessionRequest, PromptRequest,
     ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
@@ -25,6 +25,8 @@ use tokio::sync::watch;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xai_grok_shell::agent::app::spawn_agent_local;
 use xai_grok_shell::agent::config::Config as AgentConfig;
+use xai_grok_shell::extensions::notification::RetryState;
+pub use xai_grok_shell::session::{RewindConflictInfo, RewindMode, RewindPointInfo, RewindResponse};
 
 /// 会话摘要（来自官方持久化层，直接复用不重新定义）。
 pub use xai_grok_shell::session::persistence::Summary;
@@ -108,6 +110,24 @@ pub enum SessionEvent {
         message: String,
         prompt_id: Option<String>,
     },
+    /// 上下文超限（不可重试的终态失败，error_type == "context_length"）。
+    ContextOverflow {
+        message: String,
+    },
+    /// 速率限制耗尽重试（HTTP 429）。
+    RateLimitExceeded {
+        message: String,
+    },
+    /// 认证失效，需要重新登录（error_type == "auth"）。
+    AuthExpired {
+        message: String,
+    },
+    /// 正在重试中，用于前端展示重试进度而非静默等待。
+    RetryInProgress {
+        attempt: u32,
+        max_retries: u32,
+        reason: String,
+    },
     /// 其它未专门映射的通知（调试用）。
     Other(String),
     /// 新工具调用（或完整快照）。
@@ -117,6 +137,10 @@ pub enum SessionEvent {
     /// 上下文用量（来自 session/update `_meta.totalTokens`，会话累计估计）。
     TokenUsage {
         total_tokens: u64,
+    },
+    /// 会话标题已生成/更新（官方引擎 LLM 自动生成，或用户手动改名）。
+    TitleChanged {
+        title: String,
     },
     /// 工具权限门控：通过 `respond` 发送选中的 `option_id` 作答。
     PermissionRequest {
@@ -141,6 +165,22 @@ impl std::fmt::Debug for SessionEvent {
             Self::Error { message, prompt_id } => {
                 write!(f, "Error {{ message: {:?}, prompt_id: {:?} }}", message, prompt_id)
             }
+            Self::ContextOverflow { message } => {
+                write!(f, "ContextOverflow {{ message: {:?} }}", message)
+            }
+            Self::RateLimitExceeded { message } => {
+                write!(f, "RateLimitExceeded {{ message: {:?} }}", message)
+            }
+            Self::AuthExpired { message } => {
+                write!(f, "AuthExpired {{ message: {:?} }}", message)
+            }
+            Self::RetryInProgress { attempt, max_retries, reason } => {
+                write!(
+                    f,
+                    "RetryInProgress {{ attempt: {}, max_retries: {}, reason: {:?} }}",
+                    attempt, max_retries, reason
+                )
+            }
             Self::Other(o) => write!(f, "Other({:?})", o),
             Self::ToolCall(t) => write!(
                 f,
@@ -155,6 +195,7 @@ impl std::fmt::Debug for SessionEvent {
             Self::TokenUsage { total_tokens } => {
                 write!(f, "TokenUsage {{ total_tokens: {} }}", total_tokens)
             }
+            Self::TitleChanged { title } => write!(f, "TitleChanged {{ title: {:?} }}", title),
             Self::PermissionRequest {
                 description,
                 options,
@@ -243,6 +284,69 @@ impl Client for GuiClient {
                 })
                 .await;
         }
+        Ok(())
+    }
+
+    async fn ext_notification(
+        &self,
+        args: ExtNotification,
+    ) -> agent_client_protocol::Result<()> {
+        if args.method.as_ref() != "x.ai/session_notification" {
+            return Ok(());
+        }
+
+        #[derive(serde::Deserialize)]
+        struct XaiNotificationEnvelope {
+            update: xai_grok_shell::extensions::notification::SessionUpdate,
+        }
+
+        match serde_json::from_str::<XaiNotificationEnvelope>(args.params.get()) {
+            Ok(env) => match env.update {
+                xai_grok_shell::extensions::notification::SessionUpdate::RetryState(retry_state) => {
+                    let event = match retry_state {
+                        RetryState::Failed { error_type, message } if error_type == "context_length" => {
+                            SessionEvent::ContextOverflow { message }
+                        }
+                        RetryState::Failed { error_type, message } if error_type == "auth" => {
+                            SessionEvent::AuthExpired { message }
+                        }
+                        RetryState::Exhausted { reason, is_rate_limited: true, .. } => {
+                            SessionEvent::RateLimitExceeded { message: reason }
+                        }
+                        RetryState::Retrying { attempt, max_retries, reason } => {
+                            SessionEvent::RetryInProgress { attempt, max_retries, reason }
+                        }
+                        other_retry_state => {
+                            SessionEvent::Other(format!("{:?}", other_retry_state))
+                        }
+                    };
+                    let _ = self.event_tx.send(event).await;
+                }
+                // 官方 LLM 标题生成完成通知（`x.ai/session_notification` 扩展，
+                // 与标准 SessionInfoUpdate 双路送达；此前落入 other 被丢弃）。
+                xai_grok_shell::extensions::notification::SessionUpdate::SessionSummaryGenerated {
+                    session_summary,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::TitleChanged {
+                            title: session_summary,
+                        })
+                        .await;
+                }
+                other => {
+                    let _ = self.event_tx.send(SessionEvent::Other(format!("{:?}", other))).await;
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    raw_params = %args.params.get(),
+                    "failed to parse x.ai/session_notification envelope"
+                );
+            }
+        }
+
         Ok(())
     }
 }
@@ -652,7 +756,15 @@ pub fn session_update_to_event(
         SessionUpdate::ToolCallUpdate(tcu) => {
             SessionEvent::ToolCallUpdate(tool_call_update_to_info(&tcu))
         }
-        other => SessionEvent::Other(format!("{:?}", other)),
+        // 官方引擎 LLM 自动生成标题后经 SessionInfoUpdate 通知（grok-session 之前
+        // 落入 other 被丢弃，导致前端 header 永远显示首句而非聪明标题）。
+        SessionUpdate::SessionInfoUpdate(update) => match update.title.value() {
+            Some(title) => SessionEvent::TitleChanged {
+                title: title.clone(),
+            },
+            None => SessionEvent::Other(format!("SessionInfoUpdate({update:?})")),
+        },
+        other => SessionEvent::Other(format!("{other:?}")),
     }
 }
 
@@ -912,25 +1024,55 @@ impl GrokSession {
         Ok(())
     }
 
-    /// 获取当前会话累计 token 用量与拆分明细（x.ai/session/usage 扩展方法）。
-    /// 主动请求，非订阅；建议在收到 TurnEnded 后调用刷新。
-    pub async fn get_usage(&self) -> anyhow::Result<xai_grok_shell::extensions::notification::PromptUsage> {
+    /// 获取当前会话可回滚的历史点列表（x.ai/rewind/points 扩展方法）。
+    /// 用于前端渲染"撤销到哪一轮"的选择器。
+    pub async fn get_rewind_points(
+        &self,
+    ) -> anyhow::Result<Vec<RewindPointInfo>> {
         let params = serde_json::value::to_raw_value(&serde_json::json!({
-            "sessionId": self.session_id.to_string(),
+            "session_id": self.session_id.to_string(),
         }))
-        .map_err(|e| anyhow::anyhow!("序列化 get_usage 参数失败: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("序列化 get_rewind_points 参数失败: {e}"))?;
         let resp = self
             .connection
-            .ext_method(ExtRequest::new("x.ai/session/usage", params.into()))
+            .ext_method(ExtRequest::new("x.ai/rewind/points", params.into()))
             .await
-            .map_err(|e| anyhow::anyhow!("get_usage 失败: {e:?}"))?;
+            .map_err(|e| anyhow::anyhow!("get_rewind_points 失败: {e:?}"))?;
         let value: serde_json::Value = serde_json::from_str(resp.0.get())
-            .map_err(|e| anyhow::anyhow!("解析 usage 响应失败: {e}"))?;
-        let usage = value
-            .get("usage")
-            .ok_or_else(|| anyhow::anyhow!("usage 响应缺少 usage 字段"))?;
-        serde_json::from_value(usage.clone())
-            .map_err(|e| anyhow::anyhow!("反序列化 PromptUsage 失败: {e}"))
+            .map_err(|e| anyhow::anyhow!("解析 rewind points 响应失败: {e}"))?;
+        let points = value
+            .get("rewind_points")
+            .ok_or_else(|| anyhow::anyhow!("rewind points 响应缺少 rewind_points 字段"))?;
+        serde_json::from_value(points.clone())
+            .map_err(|e| anyhow::anyhow!("反序列化 RewindPointInfo 列表失败: {e}"))
+    }
+
+    /// 执行回滚（撤销）操作（x.ai/rewind/execute 扩展方法）。
+    ///
+    /// `target_prompt_index`：回滚到该 prompt 之前的状态（0-based，语义是
+    /// "恢复 prompt N 运行前的状态"，prompt 0..N-1 保留）。
+    /// `mode`：`all` / `conversation_only` / `files_only`。
+    /// `force`：是否强制回滚（忽略冲突）。
+    pub async fn execute_rewind(
+        &self,
+        target_prompt_index: usize,
+        mode: RewindMode,
+        force: bool,
+    ) -> anyhow::Result<RewindResponse> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "session_id": self.session_id.to_string(),
+            "target_prompt_index": target_prompt_index,
+            "mode": mode,
+            "force": force,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 execute_rewind 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/rewind/execute", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("execute_rewind 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("反序列化 RewindResponse 失败: {e}"))
     }
 
     /// 订阅会话状态变化（如「正在生成中」指示器）。

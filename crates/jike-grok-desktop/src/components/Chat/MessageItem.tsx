@@ -290,7 +290,7 @@ const ToolLine = memo(function ToolLine({
   tool: ToolCallData
   streaming: boolean
 }) {
-  // 有 diff 默认展开（对齐 Hermes：completed edit 的 diff 直接可见）
+  // 有 diff 默认展开（completed edit 的 diff 直接可见）
   const [expanded, setExpanded] = useState(() => (tool.diffs?.length ?? 0) > 0)
   const duration = formatDuration(tool.timing)
   const live =

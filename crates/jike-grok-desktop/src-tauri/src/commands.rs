@@ -1,21 +1,58 @@
-use crate::state::{ActorCommand, AppState};
+use crate::state::{ActorCommand, AppState, SupervisorCommand};
 use std::path::PathBuf;
 use tauri::State;
 use tokio::sync::oneshot;
 
-/// 向会话 Actor 发送命令并等待一次性回执。
+/// 向指定 tab 的会话 Actor 发送命令并等待一次性回执。
 async fn send_cmd(
     state: &AppState,
+    tab_id: &str,
     make: impl FnOnce(oneshot::Sender<Result<(), String>>) -> ActorCommand,
 ) -> Result<(), String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard.get(tab_id).cloned().ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
     let (reply_tx, reply_rx) = oneshot::channel();
-    state
-        .cmd_tx
+    cmd_tx
         .send(make(reply_tx))
         .map_err(|_| "会话线程已退出".to_string())?;
     reply_rx
         .await
         .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 打开一个新 tab（Supervisor 分配 tab_id 并启动对应 TabActor）。
+#[tauri::command]
+pub async fn open_tab(state: State<'_, AppState>) -> Result<String, String> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    state
+        .supervisor_tx
+        .send(SupervisorCommand::OpenTab { reply: reply_tx })
+        .map_err(|_| "Supervisor 线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
+}
+
+/// 关闭指定 tab（从共享表移除 sender，TabActor 优雅退出）。
+#[tauri::command]
+pub async fn close_tab(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    state
+        .supervisor_tx
+        .send(SupervisorCommand::CloseTab { tab_id, reply: reply_tx })
+        .map_err(|_| "Supervisor 线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
+}
+
+/// 手动重启指定 tab（关旧 actor、起空壳、广播 TabRecovering；前端负责重放会话）。
+#[tauri::command]
+pub async fn restart_tab(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    state
+        .supervisor_tx
+        .send(SupervisorCommand::RestartTab { tab_id, reply: reply_tx })
+        .map_err(|_| "Supervisor 线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
 }
 
 /// 编译期推算 monorepo 仓库根（兜底默认工作区）。
@@ -167,13 +204,14 @@ pub fn set_workspace_cwd(cwd: String, state: State<'_, AppState>) -> Result<Stri
 
 /// 在进程内为指定 `cwd` 启动 Grok agent 会话。
 #[tauri::command]
-pub async fn start_session(cwd: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::Start { cwd, reply }).await
+pub async fn start_session(tab_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::Start { cwd, reply }).await
 }
 
 /// 发送用户消息；流式回复通过 `session-event` 推送。
 #[tauri::command]
 pub async fn send_prompt(
+    tab_id: String,
     text: String,
     prompt_id: String,
     state: State<'_, AppState>,
@@ -181,7 +219,7 @@ pub async fn send_prompt(
     if text.trim().is_empty() {
         return Err("消息不能为空".into());
     }
-    send_cmd(&state, |reply| ActorCommand::SendPrompt {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::SendPrompt {
         text,
         prompt_id,
         reply,
@@ -191,24 +229,25 @@ pub async fn send_prompt(
 
 /// 取消当前生成轮次。
 #[tauri::command]
-pub async fn cancel_turn(state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::Cancel { reply }).await
+pub async fn cancel_turn(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::Cancel { reply }).await
 }
 
 /// 销毁旧会话并以新 cwd 重建。
 #[tauri::command]
-pub async fn restart_session(cwd: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::Restart { cwd, reply }).await
+pub async fn restart_session(tab_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::Restart { cwd, reply }).await
 }
 
 /// 回答界面上的工具权限请求。
 #[tauri::command]
 pub async fn respond_permission(
+    tab_id: String,
     request_id: u64,
     option_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::RespondPermission {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::RespondPermission {
         request_id,
         option_id,
         reply,
@@ -293,19 +332,6 @@ pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<Str
     }
 
     std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
-}
-
-/// 获取当前会话累计 token 用量拆分（输入/输出/缓存命中/推理 token 等）。
-#[tauri::command]
-pub async fn get_session_usage(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let (reply_tx, reply_rx) = oneshot::channel();
-    state
-        .cmd_tx
-        .send(ActorCommand::GetUsage { reply: reply_tx })
-        .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 把 Artifact 预览内容写入用户通过系统"另存为"对话框选择的路径。
@@ -1107,11 +1133,11 @@ pub fn save_model_settings(
 
 /// 热重载运行中 agent 的模型目录（写盘后调用，无需 restart_session）。
 #[tauri::command]
-pub async fn reload_models(state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::ReloadModels { reply }).await
+pub async fn reload_models(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::ReloadModels { reply }).await
 }
 
-/// 会话摘要（前端友好字段；Codex 风格：列表来自 threads 索引）。
+/// 会话摘要（前端友好字段：列表来自 threads 索引）。
 #[derive(serde::Serialize)]
 pub struct SessionSummaryDto {
     pub id: String,
@@ -1149,8 +1175,13 @@ pub struct DisplayMessageDto {
 }
 
 #[tauri::command]
-pub async fn load_session(session_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::LoadSession { session_id, cwd, reply }).await
+pub async fn load_session(
+    tab_id: String,
+    session_id: String,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::LoadSession { session_id, cwd, reply }).await
 }
 
 /// 会话搜索结果（官方 FTS：标题 + 用户消息正文）。
@@ -1166,7 +1197,7 @@ pub struct SessionSearchHitDto {
     pub matched_fields: Vec<String>,
 }
 
-/// 搜索会话（Codex/Claude 侧栏搜索应对标：服务端 FTS，不是前端扫 title）。
+/// 搜索会话（服务端 FTS，不是前端扫 title）。
 ///
 /// 使用官方 `session_search.sqlite`（WAL + FTS5），首次会后台建索引。
 #[tauri::command]
@@ -1232,7 +1263,7 @@ pub struct SearchSessionsResultDto {
     pub total_estimate: Option<usize>,
 }
 
-/// Codex 风格：只读盘投影历史消息，不启 agent、不事件回放。
+/// 只读盘投影历史消息，不启 agent、不事件回放。
 #[tauri::command]
 pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessageDto>, String> {
     let sid = session_id.clone();
@@ -1260,7 +1291,7 @@ pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessa
     .map_err(|e| format!("get_session_messages 任务失败: {e}"))?
 }
 
-/// 列出会话（Codex：扫盘重建 threads.sqlite 索引后读库）。
+/// 列出会话（扫盘重建 threads.sqlite 索引后读库）。
 ///
 /// - `cwd` 用于当前工作空间排到前面
 /// - 空会话已过滤
@@ -1311,7 +1342,7 @@ pub(crate) fn build_thread_row_by_id(session_id: &str) -> Option<crate::session_
     Some(thread_row_from_summary(&summary))
 }
 
-/// 列出会话（Codex threads 排序）。纯读：只查已经维护好的本地索引，不再每次全量重建。
+/// 列出会话（threads 排序）。纯读：只查已经维护好的本地索引，不再每次全量重建。
 #[tauri::command]
 pub async fn list_sessions(cwd: String, limit: Option<u32>) -> Result<Vec<SessionSummaryDto>, String> {
     tokio::task::spawn_blocking(move || {
@@ -1335,12 +1366,13 @@ pub async fn list_sessions(cwd: String, limit: Option<u32>) -> Result<Vec<Sessio
 /// 删除会话：走 Actor，保证删当前会话时先释放再删盘，避免文件锁失败。
 #[tauri::command]
 pub async fn delete_session(
+    tab_id: String,
     session_id: String,
     cwd: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let sid = session_id.clone();
-    send_cmd(&state, |reply| ActorCommand::DeleteSession {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::DeleteSession {
         session_id,
         cwd,
         reply,
@@ -1366,11 +1398,12 @@ pub async fn rename_session(
 
 #[tauri::command]
 pub async fn set_current_model(
+    tab_id: String,
     model_id: String,
     reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    send_cmd(&state, |reply| ActorCommand::SetModel {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::SetModel {
         model_id,
         reasoning_effort,
         reply,
@@ -1428,3 +1461,48 @@ pub fn read_file_text(path: String, state: State<'_, AppState>) -> Result<String
     std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
 }
 
+/// 获取当前会话可撤销的历史点列表
+#[tauri::command]
+pub async fn get_rewind_points(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<grok_session::RewindPointInfo>, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard.get(&tab_id).cloned().ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::GetRewindPoints { reply: reply_tx })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 执行会话撤销到指定历史点
+#[tauri::command]
+pub async fn execute_rewind(
+    tab_id: String,
+    target_prompt_index: usize,
+    mode: grok_session::RewindMode,
+    force: bool,
+    state: State<'_, AppState>,
+) -> Result<grok_session::RewindResponse, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard.get(&tab_id).cloned().ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ExecuteRewind {
+            target_prompt_index,
+            mode,
+            force,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}

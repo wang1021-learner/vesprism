@@ -33,7 +33,7 @@
   width: 48px;
   height: 48px;
   margin: 0 auto 14px;
-  border-radius: 12px;
+  border-radius: 6px;
   display: grid;
   place-items: center;
   font-size: 22px;
@@ -62,11 +62,11 @@
   text-align: left;
   font-size: 12px;
   line-height: 1.45;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   color: var(--text-tertiary);
   background: var(--surface-muted);
   border: 1px solid var(--border-solid);
-  border-radius: 8px;
+  border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 120px;

@@ -1,5 +1,5 @@
 /**
- * Hermes 对齐的工具审批条（floating fallback）：
+ * 工具审批条（floating fallback）：
  * - 一行：⚠ 需要审批 + 短描述（可截断）
  * - 一行：紧凑 [运行 Ctrl⏎]  拒绝 Esc  命令▾
  * - 命令默认隐藏，展开才见 mono 块
@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PermissionOption, PermissionRequest } from '../types'
-import { $permission } from '../store'
+import { $activeTabId, patchActiveTab } from '../store'
 import { respondPermission } from '../bridge'
 
 interface Props {
@@ -95,7 +95,7 @@ export function PermissionModal({ permission }: Props) {
   const allow = permission ? pickAllow(permission.options) : undefined
   const deny = permission ? pickDeny(permission.options) : undefined
 
-  // Hermes：标题固定「需要审批」；旁注用类型（运行终端命令），再跟短命令摘要
+  // 标题固定「需要审批」；旁注用类型（运行终端命令），再跟短命令摘要
   const kindLabel =
     permission?.kindLabel && permission.kindLabel !== '需要审批'
       ? permission.kindLabel
@@ -111,7 +111,7 @@ export function PermissionModal({ permission }: Props) {
     setShowCommand(false)
     if (!permission) return
     runRef.current?.focus()
-  }, [permission?.id])
+  }, [permission])
 
   useEffect(() => {
     if (!permission || busy) return
@@ -141,9 +141,9 @@ export function PermissionModal({ permission }: Props) {
     try {
       const requestId = Number(permission.id)
       if (!Number.isNaN(requestId)) {
-        await respondPermission(requestId, optionId)
+        await respondPermission($activeTabId.get(), requestId, optionId)
       }
-      $permission.set(null)
+      patchActiveTab({ permission: null })
       window.dispatchEvent(new CustomEvent('jike:focus-composer'))
     } catch {
       setBusy(false)
@@ -153,7 +153,7 @@ export function PermissionModal({ permission }: Props) {
   return (
     <div className="perm-dock" role="alertdialog" aria-label="需要审批">
       <div className="perm-card">
-        {/* Hermes fallback 首行：图标 + 标题 + 截断描述 */}
+        {/* fallback 首行：图标 + 标题 + 截断描述 */}
         <div className="perm-row-head">
           <span className="perm-ico" aria-hidden>
             <AlertIcon />
@@ -166,7 +166,7 @@ export function PermissionModal({ permission }: Props) {
           ) : null}
         </div>
 
-        {/* Hermes ApprovalBar：h-6 紧凑操作条 */}
+        {/* ApprovalBar：h-6 紧凑操作条 */}
         <div className="perm-row-actions">
           {allow ? (
             <div className="perm-run-split">

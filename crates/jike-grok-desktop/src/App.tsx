@@ -2,6 +2,8 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef } from 'react'
 import { Composer } from './components/Composer'
 import { MessageList } from './components/Chat/MessageList'
+import { TabBar } from './components/TabBar'
+import { CommandPalette } from './components/CommandPalette'
 import {
   ErrorBoundary,
   MainViewportErrorFallback,
@@ -13,18 +15,20 @@ import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
 import { ToastHost } from './components/Toast'
 import {
-  $activeChatId, $activeSessionId, $chats, $composerInput, $contextUsedTokens,
-  $defaultModelId, $engineStatus, $error, $generating, $messages, $models,
-  $permission, $reasoningEffort, $rightPanelOpen, $sessionPhase,
+  $activeTabId,
+  $activeChatId, $chats, $composerInput,
+  $defaultModelId, $error, $generating, $messages, $models,
+  $permission, $reasoningEffort, $sessionPhase,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
+  createTab, getTabState, hasTab, patchActiveTab, patchTab, switchTab,
   pushToast,
 } from './store'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
-  listenSessionEvents, sendPrompt, setCurrentModel, startSession,
-  workspaceCwd,
+  listenSessionEvents, loadSession, openTab, sendPrompt, setCurrentModel,
+  startSession, workspaceCwd,
 } from './bridge'
-import { pushTranscriptEvent } from './lib/sessionOpen'
+import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './lib/sessionOpen'
 import { generateId } from './lib/generateId'
 import { removeUserMessageByPromptId } from './lib/sessionTranscript'
 import { parsePermissionDescription } from './types'
@@ -60,6 +64,7 @@ function DesktopApp() {
   return (
     <div className="app-container">
       <ToastHost />
+      <CommandPalette />
       <ErrorBoundary name="侧栏">
         <AppSidebar />
       </ErrorBoundary>
@@ -70,7 +75,7 @@ function DesktopApp() {
         )}
       >
         <div className="main-viewport">
-          <AppHeader />
+          <TabBar />
           <AppError />
           <ErrorBoundary
             name="消息区"
@@ -80,7 +85,7 @@ function DesktopApp() {
           >
             <AppMessages />
           </ErrorBoundary>
-          {/* Hermes 风格：审批条在输入框上方，非全屏 modal */}
+          {/* 审批条在输入框上方，非全屏 modal */}
           <AppPermission />
           <AppComposer />
           <SettingsModal />
@@ -156,7 +161,6 @@ async function bootstrap() {
   }
   try {
     const cwd = await workspaceCwd()
-    $workspaceCwd.set(cwd)
     const settings = await getModelSettings()
     $models.set(settings.models)
     $defaultModelId.set(settings.default_id || settings.models[0]?.id || '')
@@ -166,49 +170,70 @@ async function bootstrap() {
     if (cwd) wsSet.add(cwd)
     $workspaceOptions.set([...wsSet])
     listenSessionEvents(handleSessionEvent)
-    await startSession(cwd)
-    $sessionPhase.set('ready')
-    $engineStatus.set('idle')
+    const tabId = await openTab()
+    // 注册 tab 分片并投影为当前 tab（cwd 随 createTab 写入 map）
+    createTab(tabId, { cwd })
+    switchTab(tabId)
+    await startSession(tabId, cwd)
+    patchActiveTab({ phase: 'ready', status: 'idle' })
   } catch (e) {
-    $error.set(String(e))
+    patchActiveTab({ error: String(e) })
   }
 }
 
 function handleSessionEvent(ev: import('./bridge').SessionEventPayload) {
-  if (pushTranscriptEvent(ev)) return
+  // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
+  // 后台 tab 崩溃、收消息、Plan F 恢复重放都依赖它）；仅活跃 tab 由
+  // patchTab 内部额外投影到全局 atom。单 tab 时代的「非活跃即丢弃」闸门已移除。
+  const tabId = ev.tab_id || $activeTabId.get()
+  if (tabId && !hasTab(tabId)) return // 已关闭 tab 的迟到事件
+  if (pushTranscriptEvent(ev, tabId)) return
 
   switch (ev.type) {
     case 'turn_ended':
-      $engineStatus.set('idle')
+      patchTab(tabId, { status: 'idle' })
       break
     case 'error':
-      $error.set(ev.message || 'Unknown error')
-      $engineStatus.set('idle')
+      patchTab(tabId, { error: ev.message || 'Unknown error', status: 'idle' })
       break
     case 'permission_request':
-      if ($sessionPhase.get() === 'loading') break
+      if (getTabState(tabId)?.phase === 'loading') break
       if (ev.request_id != null && ev.options?.length) {
         const raw = ev.description || '工具权限请求'
         const parsed = parsePermissionDescription(raw)
-        $permission.set({
-          id: String(ev.request_id),
-          tool: raw,
-          options: ev.options.map((o) => ({ id: o.id, name: o.name, kind: o.kind })),
-          kindLabel: parsed.kindLabel,
-          title: parsed.title,
-          command: parsed.command,
-          summary: parsed.summary,
+        patchTab(tabId, {
+          permission: {
+            id: String(ev.request_id),
+            tool: raw,
+            options: ev.options.map((o) => ({ id: o.id, name: o.name, kind: o.kind })),
+            kindLabel: parsed.kindLabel,
+            title: parsed.title,
+            command: parsed.command,
+            summary: parsed.summary,
+          },
         })
       }
       break
     case 'status_changed':
-      if ($sessionPhase.get() === 'loading') break
-      if (ev.status) $engineStatus.set(ev.status as import('./types').SessionStatus)
+      if (getTabState(tabId)?.phase === 'loading') break
+      if (ev.status) patchTab(tabId, { status: ev.status as import('./types').SessionStatus })
+      break
+    case 'title_changed':
+      if (ev.title) patchTab(tabId, { chatTitle: ev.title })
+      break
+    // 后端 Phase 2：tab 崩溃自动重建 / 连续崩溃标记 Failed。
+    // 重建（含手动重试）→ 按 map 里该 tab 的状态重放会话身份 + 模型。
+    case 'tab_recovering':
+      console.log(`[tab] ${ev.tab_id} 已重建为空壳（第 ${ev.attempt ?? '?'} 次），开始重放`)
+      if (ev.tab_id) void replayTabAfterCrash(ev.tab_id)
+      break
+    case 'tab_failed':
+      console.warn(`[tab] ${ev.tab_id} 连续崩溃 ${ev.attempts ?? '?'} 次，标记 Failed，等待手动重启`)
+      patchTab(tabId, { phase: 'failed' })
       break
     case 'session_id_changed':
       if (ev.session_id) {
-        $activeSessionId.set(ev.session_id)
-        $activeChatId.set(ev.session_id)
+        patchTab(tabId, { sessionId: ev.session_id, chatId: ev.session_id })
       }
       break
     case 'other':
@@ -224,44 +249,40 @@ function AppSidebar() {
   return <Sidebar collapsed={collapsed} activeChatId={activeId} />
 }
 
-function AppHeader() {
-  const collapsed = useStore($sidebarCollapsed)
-  const panelOpen = useStore($rightPanelOpen)
-  const messages = useStore($messages)
-  const firstUser = messages.find((m) => m.role === 'user' && m.text.trim())
-  const title = firstUser ? firstUser.text.trim().replace(/\s+/g, ' ') : '新对话'
-
-  return (
-    <header className="main-header">
-      <div className="header-left">
-        {collapsed && (
-          <button type="button" className="sidebar-toggle-btn" title="展开会话边栏"
-            onClick={() => $sidebarCollapsed.set(false)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" />
-            </svg>
-          </button>
-        )}
-        <h1 className="chat-title" title={title}>{title}</h1>
-      </div>
-      <div className="header-right">
-        <button
-          type="button"
-          className={`header-panel-btn${panelOpen ? ' is-active' : ''}`}
-          title={panelOpen ? '关闭右侧面板' : '打开右侧面板'}
-          aria-pressed={panelOpen}
-          onClick={() => $rightPanelOpen.set(!panelOpen)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
-            <rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
-            <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
-            <rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
-          </svg>
-        </button>
-      </div>
-    </header>
-  )
+/**
+ * Plan F 恢复：TabActor 重建为空壳（panic 自动 / 手动重试）后，
+ * 用 map 里该 tab 的状态快照重放会话身份（load_session / start_session）+ 模型。
+ */
+async function replayTabAfterCrash(tabId: string) {
+  const st = getTabState(tabId)
+  if (!st) return
+  // 清挂起的 UI 状态（旧 actor 的权限 oneshot 已随 panic 失效）
+  patchTab(tabId, { permission: null, error: '' })
+  const cwd = st.cwd || $workspaceCwd.get()
+  try {
+    if (st.sessionId) {
+      // 走标准 attach 流程：历史回放期间吞 transcript 类事件
+      beginAttachRuntime(tabId)
+      await loadSession(tabId, st.sessionId, cwd)
+      finishAttachRuntime(tabId)
+    } else {
+      await startSession(tabId, cwd)
+      patchTab(tabId, { phase: 'ready', status: 'idle' })
+    }
+    // 重放模型 / 推理档
+    const modelId = $defaultModelId.get()
+    if (modelId) {
+      const entry = $models.get().find((m) => m.id === modelId)
+      const effort = entry?.supports_reasoning_effort
+        ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
+        : undefined
+      await setCurrentModel(tabId, modelId, effort)
+    }
+    pushToast('会话已自动恢复', 'success')
+  } catch (e) {
+    patchTab(tabId, { error: String(e) })
+    pushToast('会话恢复失败，可重试', 'error')
+  }
 }
 
 function AppError() {
@@ -287,9 +308,7 @@ function AppComposer() {
   const effort = useStore($reasoningEffort)
   const cwd = useStore($workspaceCwd)
   const wsOptions = useStore($workspaceOptions)
-  const tokens = useStore($contextUsedTokens)
   const messages = useStore($messages)
-
   const canSend = ready && !generating && input.trim().length > 0
   const canSwitchWs = ready && !generating && !messages.some((m) => m.role === 'user')
 
@@ -299,32 +318,40 @@ function AppComposer() {
     if (!msg) return
     // 与 bridge / 引擎 meta.promptId 对齐；generateId 兼容无 randomUUID 的 WebView
     const promptId = generateId('p_')
-    $composerInput.set('')
+    patchActiveTab({ composerInput: '' })
     // 乐观 UI：立刻插入用户气泡，不依赖 user_text_chunk 回显时机
-    $messages.set([
-      ...$messages.get(),
-      {
-        id: generateId('msg_'),
-        role: 'user' as const,
-        text: msg,
-        promptId,
-      },
-    ])
+    patchActiveTab({
+      messages: [
+        ...$messages.get(),
+        {
+          id: generateId('msg_'),
+          role: 'user' as const,
+          text: msg,
+          promptId,
+        },
+      ],
+    })
     try {
-      $engineStatus.set('generating')
-      $error.set('')
-      await sendPrompt(msg, promptId)
+      patchActiveTab({ status: 'generating', error: '' })
+      await sendPrompt($activeTabId.get(), msg, promptId)
     } catch (e) {
       // invoke 失败：撤回乐观气泡并还原输入，避免「空列表 / 幽灵消息」
-      $messages.set(removeUserMessageByPromptId($messages.get(), promptId))
-      $composerInput.set(msg)
-      $error.set(String(e))
-      $engineStatus.set('idle')
+      patchActiveTab({
+        messages: removeUserMessageByPromptId($messages.get(), promptId),
+        composerInput: msg,
+        error: String(e),
+        status: 'idle',
+      })
     }
   }, [])
 
   const onCancel = useCallback(async () => {
-    try { await cancelTurn(); $engineStatus.set('idle') } catch (e) { $error.set(String(e)) }
+    try {
+      await cancelTurn($activeTabId.get())
+      patchActiveTab({ status: 'idle' })
+    } catch (e) {
+      patchActiveTab({ error: String(e) })
+    }
   }, [])
 
   const onSwitchModel = useCallback((id: string) => {
@@ -334,13 +361,13 @@ function AppComposer() {
       : undefined
     $defaultModelId.set(id)
     if (nextEffort) $reasoningEffort.set(nextEffort)
-    void setCurrentModel(id, nextEffort)
+    void setCurrentModel($activeTabId.get(), id, nextEffort)
       .then(() => {
         const label = entry?.model?.trim() || entry?.name?.trim() || id
         pushToast(`已切换模型 · ${label}`, 'success')
       })
       .catch((e) => {
-        $error.set(String(e))
+        patchActiveTab({ error: String(e) })
         pushToast(`切换模型失败 · ${String(e)}`, 'error')
       })
   }, [])
@@ -354,7 +381,7 @@ function AppComposer() {
         pushToast(`已切换思考强度 · ${e}`, 'success')
       })
       .catch((err) => {
-        $error.set(String(err))
+        patchActiveTab({ error: String(err) })
         pushToast(`切换思考强度失败`, 'error')
       })
   }, [])
@@ -364,15 +391,12 @@ function AppComposer() {
     try {
       const { setWorkspaceCwd, restartSession } = await import('./bridge')
       const applied = await setWorkspaceCwd(newCwd)
-      $workspaceCwd.set(applied)
+      patchActiveTab({ cwd: applied, phase: 'restarting' })
       $workspaceOptions.set([...new Set([...$workspaceOptions.get(), applied])])
-      $sessionPhase.set('restarting')
-      await restartSession(applied)
-      $sessionPhase.set('ready')
-      $engineStatus.set('idle')
+      await restartSession($activeTabId.get(), applied)
+      patchActiveTab({ phase: 'ready', status: 'idle' })
     } catch (e) {
-      $error.set(String(e))
-      $sessionPhase.set('ready')
+      patchActiveTab({ error: String(e), phase: 'ready' })
     }
   }, [cwd])
 
@@ -384,14 +408,14 @@ function AppComposer() {
         await onSelectWorkspace(selected.trim())
       }
     } catch (e) {
-      $error.set(String(e))
+      patchActiveTab({ error: String(e) })
     }
   }, [cwd, onSelectWorkspace])
 
   return (
     <Composer
       input={input}
-      setInput={(v) => $composerInput.set(v)}
+      setInput={(v) => patchActiveTab({ composerInput: v })}
       canSend={canSend}
       engineGenerating={generating}
       shellReady={ready}
@@ -401,7 +425,6 @@ function AppComposer() {
       reasoningEffort={effort}
       workspaceCwd={cwd}
       workspaceOptions={wsOptions}
-      contextUsedTokens={tokens}
       canSwitchWorkspace={canSwitchWs}
       onSwitchModel={onSwitchModel}
       onSwitchReasoningEffort={onSwitchReasoningEffort}

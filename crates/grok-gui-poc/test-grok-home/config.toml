@@ -8,3 +8,6 @@ context_window = 1000000
 env_key = "DEEPSEEK_API_KEY"
 name = "DeepSeek V4 Flash"
 system_prompt_label = "DeepSeek V4 Flash（由 xAI Grok Build 框架驱动）"
+
+[marketplace]
+default_skills_installs_purged = true

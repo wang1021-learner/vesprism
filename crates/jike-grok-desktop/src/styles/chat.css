@@ -1,4 +1,4 @@
-/* Main viewport, header, messages, activity */
+/* Main viewport, messages, activity */
 /* from index.css L1048-2075 */
 
 .main-viewport {
@@ -7,7 +7,7 @@
   display: flex;
   flex-direction: column;
   background: var(--surface-elevated);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-sm) var(--radius-sm) var(--radius-xl) var(--radius-xl);
   border: 1px solid var(--border-solid);
   box-shadow: var(--shadow-sm);
   position: relative;
@@ -16,115 +16,8 @@
   overflow: hidden;
 }
 
-/* Header */
-.main-header {
-  height: 52px;
-  width: 100%;
-  flex-shrink: 0;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--surface-elevated);
-  border-bottom: 1px solid var(--border-solid);
-  box-sizing: border-box;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  /* 标题过长时在右侧控件前截断 */
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  margin-right: 12px;
-}
-
-/* 当前对话标题（用户第一句话） */
-.chat-title {
-  margin: 0;
-  padding: 0 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.3;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-toggle-btn {
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  color: var(--text-tertiary);
-  cursor: pointer;
-}
-
-.sidebar-toggle-btn:hover {
-  background: var(--surface-hover);
-  color: var(--ink-deep);
-}
-
-.sidebar-toggle-btn.is-active {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-/* 极简模型选择下拉 */
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* 右侧面板开关（文件 / 输出） */
-.header-panel-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border-solid);
-  border-radius: 8px;
-  background: var(--surface-elevated);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease,
-    color 0.12s ease,
-    box-shadow 0.12s ease;
-}
-
-.header-panel-btn:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-strong-solid);
-  color: var(--text-primary);
-}
-
-.header-panel-btn.is-active {
-  background: var(--surface-muted, var(--surface-hover));
-  border-color: var(--border-strong-solid);
-  color: var(--text-primary);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);
-}
-
-.header-panel-btn:active {
-  transform: scale(0.96);
-}
-
-.header-panel-btn svg {
-  display: block;
-}
+/* Header 已删除（2026-08）：标题由 TabBar 的 tab 项承担，
+   折叠展开按钮移到 TabBar 行（tabbar-sidebar-toggle） */
 
 .header-model-select {
   border: 1px solid var(--border-solid);
@@ -184,7 +77,7 @@
   border: 1px solid var(--border-solid);
   background: var(--surface-elevated);
   color: var(--text-primary);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 5px 12px;
   font-size: 13px;
   font-weight: 500;
@@ -224,6 +117,8 @@
   display: flex;
   flex-direction: column;
   scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
 /* 打开历史：贴底完成前不可见，避免首帧停在顶部再跳到底 */
@@ -238,7 +133,8 @@
 }
 
 .chat-viewport:hover {
-  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+  /* Firefox 等非 webkit 浏览器回退 */
+  scrollbar-color: var(--text-muted, rgba(0, 0, 0, 0.15)) transparent;
 }
 
 /* 对齐旧 App.css：消息栏 90% / max 768 */
@@ -335,7 +231,7 @@
 .empty-icon {
   width: 52px;
   height: 52px;
-  border-radius: 14px;
+  border-radius: 6px;
   background: var(--surface-muted);
   color: var(--text-secondary);
   border: 1px solid var(--border-solid);
@@ -378,11 +274,11 @@
   background: var(--surface-muted);
   color: var(--text-primary);
   border: 1px solid var(--border-solid);
-  border-radius: 16px 16px 4px 16px;
+  border-radius: 6px;
   padding: 11px 18px;
   max-width: 85%;
-  font-size: 14.5px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.6;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
@@ -402,8 +298,8 @@
 
 .assistant-content {
   width: 100%;
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: 15px;
+  line-height: 1.7;
   color: var(--text-primary);
 }
 
@@ -465,7 +361,7 @@
   width: 2px;
   transform: translateX(-50%);
   background: var(--activity-rail);
-  border-radius: 1px;
+  border-radius: 6px;
   opacity: 0.95;
 }
 
@@ -602,9 +498,9 @@
 .activity-body {
   margin: 2px 0 6px 0;
   padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--surface-muted);
-  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  background: #fafafa;
+  border: 1px solid rgba(0, 0, 0, 0.04);
   max-height: min(40vh, 320px);
   overflow: auto;
 }
@@ -613,12 +509,12 @@
 .tool-output-pre {
   margin: 0;
   padding: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
 }
 
 .tool-diff-block+.tool-diff-block {
@@ -652,7 +548,7 @@
   height: 20px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   font-size: 12px;
   line-height: 1;
@@ -689,22 +585,22 @@
   color: var(--success-deep, #047857);
   background: var(--success-soft, rgba(16, 185, 129, 0.12));
   padding: 2px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 .diff-stat-remove {
   color: var(--danger, #dc2626);
   background: rgba(239, 68, 68, 0.1);
   padding: 2px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 /* ── Cursor 风格 diff 行 ── */
 .diff-lines {
   margin: 0;
   padding: 2px 0;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   overflow-x: auto;
   white-space: pre;
   color: var(--text-secondary);
@@ -717,12 +613,12 @@
   white-space: pre;
 }
 .diff-add {
-  background: rgba(16, 185, 129, 0.08);
+  background: rgba(16, 185, 129, 0.04);
   border-left-color: #10b981;
   color: #065f46;
 }
 .diff-remove {
-  background: rgba(239, 68, 68, 0.08);
+  background: rgba(239, 68, 68, 0.04);
   border-left-color: #ef4444;
   color: #991b1b;
 }
@@ -731,7 +627,7 @@
 .tool-card {
   width: 100%;
   border: 1px solid var(--border-solid);
-  border-radius: 12px;
+  border-radius: 6px;
   background: var(--surface-muted);
   overflow: hidden;
 }
@@ -760,7 +656,7 @@
   padding: 0 12px 12px;
   max-height: min(40vh, 320px);
   overflow: auto;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--text-secondary);
   white-space: pre-wrap;
@@ -775,29 +671,26 @@
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 600;
-  background: var(--border-solid);
-  color: var(--text-secondary);
+  font-weight: 500;
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 .tool-kind-badge[data-kind='execute'] {
-  background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--text-secondary);
 }
 
 .tool-kind-badge[data-kind='read'] {
-  background: var(--success-soft);
-  color: var(--success-deep);
+  color: var(--text-secondary);
 }
 
 .tool-kind-badge[data-kind='edit'] {
-  background: var(--warning-soft);
-  color: var(--warning-deep);
+  color: var(--text-secondary);
 }
 
 .tool-kind-badge[data-kind='search'] {
-  background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--text-secondary);
 }
 
 .tool-kind-icon {
@@ -814,7 +707,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
 }
 
 .tool-status {
@@ -855,7 +748,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   border-top: 1px solid var(--border-solid);
   padding-top: 10px;
 }
@@ -917,7 +810,7 @@
 .bubble-thought {
   background: var(--surface-muted);
   border: 1px solid var(--border-solid);
-  border-radius: 12px;
+  border-radius: 6px;
   padding: 0;
   max-width: 90%;
   font-size: 13px;
@@ -1025,6 +918,6 @@
   font-size: 12px;
   color: var(--text-tertiary);
   background: var(--surface-hover);
-  border-radius: 12px;
+  border-radius: 6px;
   padding: 4px 12px;
 }

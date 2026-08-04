@@ -1,5 +1,4 @@
-/* Hermes-style tool approval (floating fallback over composer)
- * Reference: hermes desktop PendingApprovalFallback + ApprovalBar
+/* Tool approval (floating fallback over composer)
  * — compact card, one title row, h-6 action strip, command collapsed
  */
 
@@ -15,7 +14,7 @@
 .perm-card {
   pointer-events: auto;
   padding: 0.5rem 0.75rem;
-  border-radius: 0.75rem;
+  border-radius: 6px;
   border: 1px solid color-mix(in srgb, var(--cta) 30%, var(--border-solid));
   background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
   box-shadow: var(--shadow-md);
@@ -23,7 +22,7 @@
   -webkit-backdrop-filter: blur(16px);
 }
 
-/* 首行：ico + 需要审批 + 截断旁注（Hermes: text-sm + truncate tertiary） */
+/* 首行：ico + 需要审批 + 截断旁注（text-sm + truncate tertiary） */
 .perm-row-head {
   display: flex;
   align-items: center;
@@ -66,7 +65,7 @@
   color: var(--text-tertiary);
 }
 
-/* 操作条：与 Hermes ApprovalBar 同高 h-6 */
+/* 操作条：h-6 */
 .perm-row-actions {
   display: flex;
   align-items: center;
@@ -143,7 +142,7 @@
   font-size: 0.625rem;
   font-weight: 500;
   opacity: 0.55;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.01em;
 }
 
@@ -163,7 +162,7 @@
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.35;
   color: var(--text-primary);

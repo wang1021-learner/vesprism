@@ -1,0 +1,150 @@
+/* Chat Timeline Minimap Component */
+
+.chat-timeline-container {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+.chat-timeline-ticks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 4px 0;
+}
+
+.chat-timeline-tick-btn {
+  display: flex;
+  height: 8px;
+  width: 28px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.chat-timeline-tick-line {
+  display: block;
+  height: 1px;
+  width: 12px;
+  transition: opacity 100ms ease-out;
+}
+
+.chat-timeline-tick-line:not(.is-active) {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--text-tertiary) 0,
+    var(--text-tertiary) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  opacity: 0.7;
+}
+
+.chat-timeline-tick-line.is-active {
+  background: var(--accent);
+  opacity: 1;
+}
+
+/* Timeline Popover */
+.chat-timeline-popover {
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 50;
+  max-height: min(22rem, calc(100vh - 8rem));
+  width: 320px;
+  max-width: min(20rem, calc(100vw - 2rem));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-solid);
+  padding: 4px;
+  color: var(--text-primary);
+  
+  /* The frosted glass effect */
+  background: color-mix(in srgb, var(--surface-elevated) 96%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  
+  box-shadow: var(--shadow-md);
+  
+  transition: opacity 100ms ease-out, transform 100ms ease-out;
+}
+
+.chat-timeline-popover.is-closed {
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(4px, -50%);
+}
+
+.chat-timeline-popover.is-open {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+/* 隐藏 popover 里面的滚动条，使用和系统一致的滚动条 */
+.chat-timeline-popover::-webkit-scrollbar {
+  width: 4px;
+}
+.chat-timeline-popover::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-timeline-popover::-webkit-scrollbar-thumb {
+  background: var(--text-quaternary);
+  border-radius: 6px;
+}
+
+.chat-timeline-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  user-select: none;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  text-align: left;
+  outline: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background-color 100ms ease-out, color 100ms ease-out;
+}
+
+.chat-timeline-row-text {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.chat-timeline-row.is-active {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+
+.chat-timeline-row.timeline-row-hovered {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  transition: none; /* instant hover */
+}

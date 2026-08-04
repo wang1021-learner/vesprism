@@ -9,6 +9,7 @@
 @import './styles/sidebar.css';
 @import './styles/chat.css';
 @import './styles/markdown.css';
+@import './styles/timeline.css';
 @import './styles/chat-empty.css';
 @import './styles/composer.css';
 @import './styles/modals.css';
@@ -20,3 +21,21 @@
 @import './styles/toast.css';
 @import './styles/error-boundary.css';
 @import './styles/right-panel.css';
+@import './styles/tabbar.css';
+
+/* JetBrains Mono — 内嵌代码字体（Apache-2.0），代码块/源码视图优先使用 */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-bold.woff2') format('woff2');
+}

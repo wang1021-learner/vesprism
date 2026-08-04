@@ -4,7 +4,10 @@ import {
   $rightPanelOpen,
   $rightPanelTab,
   $rightPanelWidth,
+  $rightPanelFile,
   $rightPanelOutput,
+  $sidebarCollapsed,
+  $sidebarAutoCollapsed,
   $workspaceCwd,
   type RightPanelTab,
 } from '../../store'
@@ -128,6 +131,7 @@ function FileTree() {
     try {
       const text = await readFileText(fp)
       $rightPanelOutput.set(text)
+      $rightPanelFile.set(name)
       $rightPanelTab.set('output')
     } catch (e) {
       setError(String(e))
@@ -151,7 +155,16 @@ function FileTree() {
             className={`tree-entry ${e.is_dir ? 'is-dir' : 'is-file'}`}
             onClick={() => (e.is_dir ? enterDir(e.name) : openFile(e.name))}
           >
-            <span className="tree-icon">{e.is_dir ? '📁' : '📄'}</span>
+            {e.is_dir ? (
+              <svg className="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            ) : (
+              <svg className="tree-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+              </svg>
+            )}
             <span className="tree-name">{e.name}</span>
           </div>
         ))}
@@ -162,8 +175,20 @@ function FileTree() {
 
 function OutputView() {
   const text = useStore($rightPanelOutput)
+  const fileName = useStore($rightPanelFile)
   if (!text) return <div className="right-panel-empty">点击文件查看内容</div>
-  return <pre className="right-panel-output">{text}</pre>
+  return (
+    <div className="right-panel-output-wrap">
+      <div className="right-panel-output-head">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6" />
+        </svg>
+        <span className="output-file-name">{fileName}</span>
+      </div>
+      <pre className="right-panel-output">{text}</pre>
+    </div>
+  )
 }
 
 // ── 主容器：开关动画 + 正确拉伸 ──
@@ -177,6 +202,10 @@ export function RightPanel() {
 
   useEffect(() => {
     if (open) {
+      if (!$sidebarCollapsed.get()) {
+        $sidebarCollapsed.set(true)
+        $sidebarAutoCollapsed.set(true)
+      }
       setMounted(true)
       setAnimating(true)
       const id = requestAnimationFrame(() => {
@@ -187,6 +216,10 @@ export function RightPanel() {
         cancelAnimationFrame(id)
         window.clearTimeout(t)
       }
+    }
+    if ($sidebarAutoCollapsed.get()) {
+      $sidebarCollapsed.set(false)
+      $sidebarAutoCollapsed.set(false)
     }
     setAnimating(true)
     setEntered(false)

@@ -140,7 +140,7 @@
   padding: 6px;
   background: var(--surface-elevated);
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 14px;
+  border-radius: 6px;
   box-shadow:
     0 4px 6px rgba(0, 0, 0, 0.04),
     0 16px 40px rgba(0, 0, 0, 0.12);
@@ -182,7 +182,7 @@
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 10px;
+  border-radius: 6px;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -268,14 +268,18 @@
   padding: 6px 12px 5px;
   background: var(--surface-elevated);
   border: 1px solid var(--border-solid);
-  border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+  border-radius: 10px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.05),
+    0 2px 8px rgba(0, 0, 0, 0.04);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .composer-card:focus-within {
   border-color: var(--border-strong-solid);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.03);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 4px 12px rgba(0, 0, 0, 0.05);
   outline: none;
 }
 
@@ -347,7 +351,7 @@
 .btn-circle {
   width: 28px;
   height: 28px;
-  border-radius: 9px;
+  border-radius: 6px;
   border: none;
   display: grid;
   place-items: center;
@@ -440,42 +444,20 @@
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
   padding: 0 2px;
   min-height: 18px;
 }
 
-.composer-below-left {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-
 .composer-below-center {
   position: relative;
   z-index: 2;
-  flex: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   min-width: 0;
   padding: 0 8px;
-}
-
-.composer-below-right {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 1;
-  flex-shrink: 0;
 }
 
 /* 可选免责文案：流式布局，不再 absolute 盖住左侧控件 */
@@ -509,117 +491,6 @@
   background: var(--surface-hover);
   border-color: rgba(0, 0, 0, 0.06);
   box-shadow: none;
-}
-
-/* 上下文用量环形指示 */
-.context-meter {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 2px;
-  font-size: 11.5px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  user-select: none;
-  position: relative;
-  cursor: pointer;
-}
-
-.context-detail-tooltip {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  right: 0;
-  z-index: 100;
-  background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border-solid);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  padding: 12px;
-  min-width: 200px;
-  color: var(--text-primary);
-  font-size: 12px;
-  pointer-events: none;
-  transition: all 0.15s ease;
-  animation: tooltip-fade-in 0.15s ease-out;
-}
-
-@keyframes tooltip-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.context-detail-tooltip .tooltip-loading,
-.context-detail-tooltip .tooltip-empty {
-  text-align: center;
-  color: var(--text-muted);
-  padding: 8px 0;
-}
-
-.context-detail-tooltip .tooltip-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.context-detail-tooltip .tooltip-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-
-.context-detail-tooltip .tooltip-label {
-  color: var(--text-secondary);
-}
-
-.context-detail-tooltip .tooltip-value {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.context-meter.warn {
-  color: var(--warning);
-}
-
-.context-meter.danger {
-  color: var(--danger);
-  font-weight: 600;
-}
-
-.context-meter-ring {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-}
-
-.context-meter-ring .ring-track {
-  fill: none;
-  stroke: var(--border-solid);
-  stroke-width: 2.2;
-}
-
-.context-meter-ring .ring-value {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-  transform-origin: 8px 8px;
-  transition: stroke-dasharray 0.25s ease;
-}
-
-.context-meter-pct {
-  opacity: 0.85;
 }
 
 .composer-below-spacer {
