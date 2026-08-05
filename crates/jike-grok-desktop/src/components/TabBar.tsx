@@ -11,9 +11,10 @@ import {
   createTab,
   patchActiveTab,
   removeTab,
+  resolveNewTabModel,
   switchTab,
 } from '../store'
-import { closeTab, openTab, restartTab, startSession } from '../bridge'
+import { closeTab, openTab, restartTab, setCurrentModel, startSession } from '../bridge'
 
 /**
  * 多会话标签栏：新建 / 切换 / 关闭 tab，failed 状态展示 + 手动重试。
@@ -30,13 +31,30 @@ export function TabBar() {
     if (busy) return
     setBusy(true)
     try {
+      const prevId = activeId
       const tabId = await openTab()
-      createTab(tabId)
+      const model = resolveNewTabModel(prevId || undefined)
+      createTab(tabId, {
+        modelId: model.modelId,
+        reasoningEffort: model.reasoningEffort,
+      })
       switchTab(tabId)
       // 新 tab 默认用当前 tab 的工作区（空则用历史列表第一个）
       const cwd = $workspaceCwd.get() || $workspaceOptions.get()[0] || ''
       await startSession(tabId, cwd)
-      patchActiveTab({ phase: 'ready', status: 'idle' })
+      if (model.modelId) {
+        try {
+          await setCurrentModel(tabId, model.modelId, model.reasoningEffort)
+        } catch {
+          /* 模型应用失败不阻断新会话 */
+        }
+      }
+      patchActiveTab({
+        phase: 'ready',
+        status: 'idle',
+        modelId: model.modelId,
+        reasoningEffort: model.reasoningEffort,
+      })
     } catch (e) {
       patchActiveTab({ error: String(e) })
     } finally {
@@ -102,6 +120,19 @@ export function TabBar() {
             onClick={() => switchTab(t.id)}
             title={t.title || '新对话'}
           >
+            <span
+              className={`tabbar-activity is-${t.activity || 'idle'}`}
+              aria-hidden
+              title={
+                t.activity === 'working'
+                  ? '进行中'
+                  : t.activity === 'permission'
+                    ? '等待确认'
+                    : t.activity === 'error'
+                      ? '错误'
+                      : '空闲'
+              }
+            />
             <span className="tabbar-title">{t.title || '新对话'}</span>
             {t.failed && (
               <button

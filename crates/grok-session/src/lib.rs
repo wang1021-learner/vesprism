@@ -11,9 +11,9 @@ mod display_messages;
 pub use display_messages::{load_display_messages, load_display_messages_from_session_dir, DisplayMessage};
 
 use agent_client_protocol::{
-    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ExtNotification, ExtRequest,
-    InitializeRequest, LoadSessionRequest, ModelId, NewSessionRequest, PromptRequest,
-    ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
+    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ExtNotification,
+    ExtRequest, ExtResponse, InitializeRequest, LoadSessionRequest, ModelId, NewSessionRequest,
+    PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
     SessionUpdate, SetSessionModelRequest,
 };
@@ -149,6 +149,71 @@ pub enum SessionEvent {
         options: Vec<(String, String)>,
         respond: oneshot::Sender<String>,
     },
+    /// 子 agent 已创建（父会话 `x.ai/session_notification`）。
+    SubagentSpawned {
+        subagent_id: String,
+        parent_session_id: String,
+        child_session_id: String,
+        subagent_type: String,
+        description: String,
+        model: Option<String>,
+        #[allow(dead_code)]
+        parent_prompt_id: Option<String>,
+    },
+    /// 子 agent 进度（运行中周期性推送）。
+    SubagentProgress {
+        subagent_id: String,
+        parent_session_id: String,
+        child_session_id: String,
+        duration_ms: u64,
+        turn_count: u32,
+        tool_call_count: u32,
+        tokens_used: u64,
+        context_usage_pct: u8,
+        tools_used: Vec<String>,
+        error_count: u32,
+    },
+    /// 子 agent 结束（completed / failed / cancelled）。
+    SubagentFinished {
+        subagent_id: String,
+        child_session_id: String,
+        status: String,
+        error: Option<String>,
+        tool_calls: u32,
+        turns: u32,
+        duration_ms: u64,
+        tokens_used: u64,
+        output: Option<String>,
+    },
+    /// AI 问卷（`x.ai/ask_user_question` 扩展方法）。
+    /// `respond` 回传 JSON 字符串（AskUserQuestionExtResponse 形态）。
+    UserQuestionRequest {
+        tool_call_id: String,
+        mode: String,
+        questions: Vec<UserQuestionItem>,
+        respond: oneshot::Sender<String>,
+    },
+}
+
+/// 问卷选项（与 ACP camelCase 对齐）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserQuestionOption {
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+}
+
+/// 单道问卷题。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserQuestionItem {
+    pub question: String,
+    pub options: Vec<UserQuestionOption>,
+    #[serde(default)]
+    pub multi_select: Option<bool>,
 }
 
 impl std::fmt::Debug for SessionEvent {
@@ -204,6 +269,47 @@ impl std::fmt::Debug for SessionEvent {
                 f,
                 "PermissionRequest {{ description: {:?}, options: {:?} }}",
                 description, options
+            ),
+            Self::SubagentSpawned {
+                subagent_id,
+                subagent_type,
+                description,
+                ..
+            } => write!(
+                f,
+                "SubagentSpawned {{ id: {:?}, type: {:?}, desc: {:?} }}",
+                subagent_id, subagent_type, description
+            ),
+            Self::SubagentProgress {
+                subagent_id,
+                turn_count,
+                tool_call_count,
+                ..
+            } => write!(
+                f,
+                "SubagentProgress {{ id: {:?}, turns: {}, tools: {} }}",
+                subagent_id, turn_count, tool_call_count
+            ),
+            Self::SubagentFinished {
+                subagent_id,
+                status,
+                ..
+            } => write!(
+                f,
+                "SubagentFinished {{ id: {:?}, status: {:?} }}",
+                subagent_id, status
+            ),
+            Self::UserQuestionRequest {
+                tool_call_id,
+                mode,
+                questions,
+                ..
+            } => write!(
+                f,
+                "UserQuestionRequest {{ tool_call_id: {:?}, mode: {:?}, n: {} }}",
+                tool_call_id,
+                mode,
+                questions.len()
             ),
         }
     }
@@ -334,6 +440,85 @@ impl Client for GuiClient {
                         })
                         .await;
                 }
+                xai_grok_shell::extensions::notification::SessionUpdate::SubagentSpawned {
+                    subagent_id,
+                    parent_session_id,
+                    parent_prompt_id,
+                    child_session_id,
+                    subagent_type,
+                    description,
+                    model,
+                    ..
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::SubagentSpawned {
+                            subagent_id,
+                            parent_session_id,
+                            child_session_id,
+                            subagent_type,
+                            description,
+                            model,
+                            parent_prompt_id,
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::SubagentProgress {
+                    subagent_id,
+                    parent_session_id,
+                    child_session_id,
+                    duration_ms,
+                    turn_count,
+                    tool_call_count,
+                    tokens_used,
+                    context_usage_pct,
+                    tools_used,
+                    error_count,
+                    ..
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::SubagentProgress {
+                            subagent_id,
+                            parent_session_id,
+                            child_session_id,
+                            duration_ms,
+                            turn_count,
+                            tool_call_count,
+                            tokens_used,
+                            context_usage_pct,
+                            tools_used,
+                            error_count,
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::SubagentFinished {
+                    subagent_id,
+                    child_session_id,
+                    status,
+                    error,
+                    tool_calls,
+                    turns,
+                    duration_ms,
+                    tokens_used,
+                    output,
+                    ..
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::SubagentFinished {
+                            subagent_id,
+                            child_session_id,
+                            status,
+                            error,
+                            tool_calls,
+                            turns,
+                            duration_ms,
+                            tokens_used,
+                            output,
+                        })
+                        .await;
+                }
                 other => {
                     let _ = self.event_tx.send(SessionEvent::Other(format!("{:?}", other))).await;
                 }
@@ -348,6 +533,78 @@ impl Client for GuiClient {
         }
 
         Ok(())
+    }
+
+    async fn ext_method(
+        &self,
+        args: ExtRequest,
+    ) -> agent_client_protocol::Result<ExtResponse> {
+        if args.method.as_ref() != "x.ai/ask_user_question" {
+            // 未实现的扩展方法：返回 null，与 ACP Client 默认行为一致。
+            return Ok(ExtResponse::new(
+                serde_json::value::RawValue::NULL.to_owned().into(),
+            ));
+        }
+
+        // 解析 camelCase 请求参数（对齐 AskUserQuestionExtRequest）。
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct AskParams {
+            tool_call_id: String,
+            #[serde(default)]
+            questions: Vec<UserQuestionItem>,
+            #[serde(default)]
+            mode: Option<String>,
+        }
+
+        let params: AskParams = match serde_json::from_str(args.params.get()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to parse x.ai/ask_user_question params");
+                return Err(agent_client_protocol::Error::invalid_params());
+            }
+        };
+
+        let mode = params
+            .mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("default")
+            .to_string();
+
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let _ = self
+            .event_tx
+            .send(SessionEvent::UserQuestionRequest {
+                tool_call_id: params.tool_call_id,
+                mode,
+                questions: params.questions,
+                respond: respond_tx,
+            })
+            .await;
+
+        // 前端回传 JSON 字符串；通道被 drop 时按取消处理（非错误）。
+        let response_json = match respond_rx.await {
+            Ok(s) if !s.trim().is_empty() => s,
+            _ => r#"{"outcome":"cancelled"}"#.to_string(),
+        };
+
+        let raw = match serde_json::value::RawValue::from_string(response_json) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "ask_user_question response is not valid JSON");
+                match serde_json::value::to_raw_value(&serde_json::json!({
+                    "outcome": "cancelled"
+                })) {
+                    Ok(r) => r,
+                    Err(_) => {
+                        return Err(agent_client_protocol::Error::internal_error());
+                    }
+                }
+            }
+        };
+        Ok(ExtResponse::new(raw.into()))
     }
 }
 
@@ -1073,6 +1330,45 @@ impl GrokSession {
             .map_err(|e| anyhow::anyhow!("execute_rewind 失败: {e:?}"))?;
         serde_json::from_str(resp.0.get())
             .map_err(|e| anyhow::anyhow!("反序列化 RewindResponse 失败: {e}"))
+    }
+
+    /// 取消运行中的子 agent（`x.ai/subagent/cancel`）。
+    pub async fn cancel_subagent(&self, subagent_id: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "subagentId": subagent_id,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 cancel_subagent 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/subagent/cancel", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("cancel_subagent 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 cancel_subagent 响应失败: {e}"))
+    }
+
+    /// 查询子 agent 快照（`x.ai/subagent/get`）。
+    ///
+    /// `block` 为 true 时阻塞等待结束；`timeout_ms` 默认 30000。
+    pub async fn get_subagent(
+        &self,
+        subagent_id: &str,
+        block: bool,
+        timeout_ms: Option<u64>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "subagentId": subagent_id,
+            "block": block,
+            "timeoutMs": timeout_ms.unwrap_or(30_000),
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 get_subagent 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/subagent/get", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("get_subagent 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 get_subagent 响应失败: {e}"))
     }
 
     /// 订阅会话状态变化（如「正在生成中」指示器）。

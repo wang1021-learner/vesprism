@@ -12,17 +12,31 @@ import { $activeChatId, $sessionPhase } from '../../store'
 import { MessageItem } from './MessageItem'
 import { ChatTimeline } from './ChatTimeline'
 
-/** 行间距（原 .messages-container gap: 24px） */
-const ROW_GAP = 24
+/** 默认行间距（turn 级）；scaffold / user 另见 gapBefore */
+const ROW_GAP = 12
 /** 列表底部留白 */
 const LIST_PAD_BOTTOM = 6
 /** 默认估高：减少首屏测高跳动 */
 const DEFAULT_ESTIMATE = 96
+/** 内容区最大宽度 48.75rem */
+const CONTENT_MAX_WIDTH = '48.75rem'
+
+/** scaffold(tool/thought)=4 · turn=12 · user 前=16 */
+function gapBefore(msg: ChatMessage | undefined, prev: ChatMessage | undefined): number {
+  if (!msg || !prev) return 0
+  if (msg.role === 'user') return 16
+  const scaffold = (r: string) => r === 'tool' || r === 'thought'
+  if (scaffold(msg.role) && scaffold(prev.role)) return 4
+  if (scaffold(msg.role) && prev.role === 'assistant') return 4
+  if (msg.role === 'assistant' && scaffold(prev.role)) return 4
+  return ROW_GAP
+}
 
 interface MessageListProps {
   messages: ChatMessage[]
   streaming: boolean
   permission: PermissionRequest | null
+  onFocusUserQuestion?: (toolCallId: string) => void
 }
 
 function DownArrowIcon() {
@@ -75,6 +89,7 @@ function estimateMessageHeight(msg: ChatMessage | undefined): number {
 export const MessageList = memo(function MessageList({
   messages,
   streaming,
+  onFocusUserQuestion,
 }: MessageListProps) {
   const phase = useStore($sessionPhase)
   const activeChatId = useStore($activeChatId)
@@ -330,7 +345,7 @@ export const MessageList = memo(function MessageList({
             height: totalSize + LIST_PAD_BOTTOM,
             position: 'relative',
             width: '90%',
-            maxWidth: 768,
+            maxWidth: CONTENT_MAX_WIDTH,
             margin: '0 auto',
           }}
         >
@@ -344,6 +359,9 @@ export const MessageList = memo(function MessageList({
                 (msg.role === 'thought' ||
                   msg.role === 'assistant' ||
                   msg.role === 'tool'))
+            const next = messages[vr.index + 1]
+            const padBottom =
+              vr.index < count - 1 ? gapBefore(next, msg) || ROW_GAP : 0
             return (
               <div
                 key={msg.id}
@@ -356,10 +374,14 @@ export const MessageList = memo(function MessageList({
                   left: 0,
                   width: '100%',
                   transform: `translateY(${vr.start}px)`,
-                  paddingBottom: vr.index < count - 1 ? ROW_GAP : 0,
+                  paddingBottom: padBottom,
                 }}
               >
-                <MessageItem message={msg} streaming={isLive} />
+                <MessageItem
+                  message={msg}
+                  streaming={isLive}
+                  onFocusUserQuestion={onFocusUserQuestion}
+                />
               </div>
             )
           })}

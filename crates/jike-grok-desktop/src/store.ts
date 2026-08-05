@@ -9,7 +9,15 @@
  *   严禁直接 set 全局 atom 绕过 map。
  */
 import { atom, computed } from 'nanostores'
-import type { ChatMessage, ModelInfo, PermissionRequest, SessionPhase, SessionStatus } from './types'
+import type {
+  ChatMessage,
+  ModelInfo,
+  PermissionRequest,
+  SessionPhase,
+  SessionStatus,
+  SubagentRuntime,
+  UserQuestionRequest,
+} from './types'
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
 
@@ -27,6 +35,10 @@ export interface TabState {
   phase: SessionPhase
   /** 权限请求（原 $permission） */
   permission: PermissionRequest | null
+  /** 挂起的 AI 问卷 */
+  userQuestion: UserQuestionRequest | null
+  /** 当前会话下的子 agent 列表 */
+  subagents: SubagentRuntime[]
   /** 顶部标题（原 $chatTitle） */
   chatTitle: string
   /** 输入框草稿（原 $composerInput） */
@@ -35,6 +47,10 @@ export interface TabState {
   cwd: string
   /** 错误 banner（原 $error） */
   error: string
+  /** 本 tab 当前模型 id */
+  modelId: string
+  /** 本 tab 推理强度 */
+  reasoningEffort: string
 }
 
 export function emptyTabState(): TabState {
@@ -45,22 +61,53 @@ export function emptyTabState(): TabState {
     status: 'unknown',
     phase: 'idle',
     permission: null,
+    userQuestion: null,
+    subagents: [],
     chatTitle: '',
     composerInput: '',
     cwd: '',
     error: '',
+    modelId: '',
+    reasoningEffort: 'medium',
   }
 }
 
 /** 当前活跃 tab id（Phase 2 之前只有一个，现在可多开/切换） */
 export const $activeTabId = atom('')
 
-/** TabBar 列表（id + 标题 + 失败标记，标题随 chatTitle 更新） */
+/**
+ * Tab 活动灯：
+ * - working 绿：生成 / 加载 / 子任务运行
+ * - permission 黄：权限或 AI 问卷待确认
+ * - error 红：异常
+ * - idle 灰
+ */
+export type TabActivity = 'idle' | 'working' | 'permission' | 'error'
+
+export function deriveTabActivity(s: TabState): TabActivity {
+  if (s.phase === 'failed' || (s.error && s.error.trim().length > 0)) return 'error'
+  if (s.permission || s.userQuestion) return 'permission'
+  const hasRunningSubagent = s.subagents.some((a) => a.status === 'running')
+  if (
+    hasRunningSubagent ||
+    s.status === 'generating' ||
+    s.status === 'initializing' ||
+    s.phase === 'loading' ||
+    s.phase === 'restarting' ||
+    s.phase === 'booting'
+  ) {
+    return 'working'
+  }
+  return 'idle'
+}
+
+/** TabBar 列表（id + 标题 + 失败标记 + 活动灯） */
 export interface TabInfo {
   id: string
   title: string
   /** 连续 panic 超限，tab 处于 Failed 状态（TabBar 显示重试按钮） */
   failed?: boolean
+  activity?: TabActivity
 }
 export const $tabs = atom<TabInfo[]>([])
 
@@ -79,8 +126,42 @@ export function getTabState(id: string): TabState | undefined {
 /** 注册一个新 tab（openTab 成功后调用） */
 export function createTab(id: string, initial: Partial<TabState> = {}): void {
   if (tabStates.has(id)) return
-  tabStates.set(id, { ...emptyTabState(), ...initial })
-  $tabs.set([...$tabs.get(), { id, title: initial.chatTitle ?? '' }])
+  const state = { ...emptyTabState(), ...initial }
+  tabStates.set(id, state)
+  $tabs.set([
+    ...$tabs.get(),
+    {
+      id,
+      title: initial.chatTitle ?? '',
+      activity: deriveTabActivity(state),
+      failed: state.phase === 'failed',
+    },
+  ])
+}
+
+/**
+ * 新建 tab 时解析初始模型：优先继承指定 tab，否则用设置页默认。
+ */
+export function resolveNewTabModel(inheritFromTabId?: string): {
+  modelId: string
+  reasoningEffort: string
+} {
+  if (inheritFromTabId) {
+    const s = tabStates.get(inheritFromTabId)
+    if (s?.modelId) {
+      return {
+        modelId: s.modelId,
+        reasoningEffort: s.reasoningEffort || 'medium',
+      }
+    }
+  }
+  const modelId = $defaultModelId.get() || ''
+  const entry = $models.get().find((m) => m.id === modelId)
+  return {
+    modelId,
+    reasoningEffort:
+      entry?.reasoning_effort || $reasoningEffort.get() || 'medium',
+  }
 }
 
 /** 移除一个 tab（closeTab 成功后调用） */
@@ -102,10 +183,14 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('status' in patch) $engineStatus.set(patch.status!)
   if ('phase' in patch) $sessionPhase.set(patch.phase!)
   if ('permission' in patch) $permission.set(patch.permission!)
+  if ('userQuestion' in patch) $userQuestion.set(patch.userQuestion!)
+  if ('subagents' in patch) $subagents.set(patch.subagents!)
   if ('chatTitle' in patch) $chatTitle.set(patch.chatTitle!)
   if ('composerInput' in patch) $composerInput.set(patch.composerInput!)
   if ('cwd' in patch) $workspaceCwd.set(patch.cwd!)
   if ('error' in patch) $error.set(patch.error!)
+  if ('modelId' in patch) $defaultModelId.set(patch.modelId!)
+  if ('reasoningEffort' in patch) $reasoningEffort.set(patch.reasoningEffort!)
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -119,10 +204,14 @@ function projectTab(id: string): void {
     status: s.status,
     phase: s.phase,
     permission: s.permission,
+    userQuestion: s.userQuestion,
+    subagents: s.subagents,
     chatTitle: s.chatTitle,
     composerInput: s.composerInput,
     cwd: s.cwd,
     error: s.error,
+    modelId: s.modelId,
+    reasoningEffort: s.reasoningEffort,
   })
 }
 
@@ -135,15 +224,19 @@ function resetProjection(): void {
     status: 'unknown',
     phase: 'idle',
     permission: null,
+    userQuestion: null,
+    subagents: [],
     chatTitle: '',
     composerInput: '',
     cwd: '',
     error: '',
+    modelId: '',
+    reasoningEffort: 'medium',
   })
 }
 
 /**
- * 写 map[id] 并同步 $tabs 标题；仅当 id 是当前活跃 tab 时投影到全局 atom。
+ * 写 map[id] 并同步 $tabs 标题/活动灯；仅当 id 是当前活跃 tab 时投影到全局 atom。
  * 所有会话级状态变更（引擎事件、组件操作）都必须走这里。
  */
 export function patchTab(id: string, patch: Partial<TabState>): void {
@@ -151,14 +244,20 @@ export function patchTab(id: string, patch: Partial<TabState>): void {
   if (!cur) return
   const next = { ...cur, ...patch }
   tabStates.set(id, next)
-  if ('chatTitle' in patch && patch.chatTitle) {
-    $tabs.set($tabs.get().map((t) => (t.id === id ? { ...t, title: patch.chatTitle! } : t)))
-  }
-  // failed 状态同步到 TabBar（重试按钮出现）；恢复时清除
-  if ('phase' in patch) {
-    const failed = patch.phase === 'failed'
-    $tabs.set($tabs.get().map((t) => (t.id === id ? { ...t, failed } : t)))
-  }
+  const activity = deriveTabActivity(next)
+  const failed = next.phase === 'failed'
+  $tabs.set(
+    $tabs.get().map((t) =>
+      t.id === id
+        ? {
+            ...t,
+            title: 'chatTitle' in patch && patch.chatTitle ? patch.chatTitle! : t.title,
+            activity,
+            failed,
+          }
+        : t,
+    ),
+  )
   if (id === $activeTabId.get()) {
     projectPatch(patch)
   }
@@ -185,12 +284,42 @@ export function switchTab(id: string): void {
 export const $activeSessionId = atom('')
 export const $messages = atom<ChatMessage[]>([])
 export const $permission = atom<PermissionRequest | null>(null)
+export const $userQuestion = atom<UserQuestionRequest | null>(null)
+export const $subagents = atom<SubagentRuntime[]>([])
 export const $error = atom('')
 export const $engineStatus = atom<SessionStatus>('unknown')
 export const $sessionPhase = atom<SessionPhase>('idle')
 
 export const $generating = computed($engineStatus, (s) => s === 'generating')
 export const $shellReady = computed($sessionPhase, (p) => p === 'ready')
+/** 有运行中的子 agent 时亮活动指示 */
+export const $hasRunningSubagents = computed($subagents, (list) =>
+  list.some((s) => s.status === 'running'),
+)
+
+/** 合并/更新某 tab 的子 agent 条目 */
+export function upsertSubagent(
+  tabId: string,
+  patch: Partial<SubagentRuntime> & { subagentId: string },
+): void {
+  const st = tabStates.get(tabId)
+  if (!st) return
+  const list = st.subagents.slice()
+  const idx = list.findIndex((s) => s.subagentId === patch.subagentId)
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], ...patch }
+  } else {
+    list.push({
+      parentSessionId: '',
+      childSessionId: '',
+      subagentType: 'general-purpose',
+      description: '',
+      status: 'running',
+      ...patch,
+    })
+  }
+  patchTab(tabId, { subagents: list })
+}
 
 // ── 模型（全局设置，跨 tab 共享 — 对齐官方 pager `models: ModelState shared across agents`） ──
 export const $models = atom<ModelInfo[]>([])

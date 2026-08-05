@@ -113,12 +113,19 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 0 4px;
+  /* 右侧留白给中部刻度簇，内容不贴边 */
+  padding: 16px 20px 4px 0;
   display: flex;
   flex-direction: column;
-  scrollbar-color: transparent transparent;
-  scrollbar-width: thin;
-  scrollbar-gutter: stable;
+  /* 隐藏系统滚动条；滚轮/触控板仍可滚 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.chat-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* 打开历史：贴底完成前不可见，避免首帧停在顶部再跳到底 */
@@ -132,21 +139,29 @@
   transition: opacity 0.08s ease-out;
 }
 
-.chat-viewport:hover {
-  /* Firefox 等非 webkit 浏览器回退 */
-  scrollbar-color: var(--text-muted, rgba(0, 0, 0, 0.15)) transparent;
-}
-
-/* 对齐旧 App.css：消息栏 90% / max 768 */
+/* 消息栏 90% / max 48.75rem；行间距由虚拟列表 padding 控制 */
 .messages-container {
-  max-width: 768px;
+  max-width: 48.75rem;
   width: 90%;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 12px;
   flex: 0 0 auto;
   padding-bottom: 6px;
+}
+
+/* AI 问卷工具卡状态 */
+.ask-user-status {
+  flex-shrink: 0;
+  margin-left: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.ask-user-status.is-pending {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 
 /* 虚拟列表：高度由 totalSize 撑开，项绝对定位 */
@@ -275,10 +290,10 @@
   color: var(--text-primary);
   border: 1px solid var(--border-solid);
   border-radius: 6px;
-  padding: 11px 18px;
+  padding: 10px 14px;
   max-width: 85%;
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.5;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
@@ -298,16 +313,20 @@
 
 .assistant-content {
   width: 100%;
-  font-size: 15px;
-  line-height: 1.7;
+  /* 与 .md-body 一致：原 15px → 13px */
+  font-size: 13px;
+  line-height: 1.65;
   color: var(--text-primary);
 }
 
-/* ──── 活动行：菱形节点 + 左侧竖轨（对齐对话 Run / Thought 时间线） ──── */
-.activity-row {
-  justify-content: flex-start;
-  width: 100%;
-  max-width: 100%;
+/* ──── 会话 scaffold：思考 / 工具（安静灰字，无通高绿轨） ──── */
+.messages-container,
+.messages-container-virtual {
+  --conversation-text-size: 0.8125rem;
+  --conversation-tool-size: 0.6875rem;
+  --conversation-line: 1.125rem;
+  --conversation-scaffold-text: color-mix(in srgb, var(--text-primary) 58%, transparent);
+  --conversation-scaffold-meta: color-mix(in srgb, var(--text-primary) 40%, transparent);
 }
 
 .thought-row,
@@ -316,205 +335,349 @@
   width: 100%;
 }
 
-.activity-line {
+.scaffold-row {
   display: flex;
-  align-items: stretch;
-  gap: 10px;
+  flex-direction: column;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
+  opacity: 0.67;
+  transition: opacity 120ms ease-out;
+  font-size: var(--conversation-tool-size);
+  color: var(--conversation-scaffold-text);
+}
+
+.scaffold-row:is(:hover, :has(:focus-visible)),
+.scaffold-row.is-live,
+.scaffold-row.is-awaiting {
+  opacity: 1;
+}
+
+.scaffold-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   width: 100%;
+  min-width: 0;
 }
 
-/* 左轨：通高竖线 + 节点（菱形 / spinner） */
-.activity-rail {
-  --activity-rail: var(--border-strong-solid);
-  --activity-node: var(--text-muted);
-  position: relative;
+.scaffold-glyph {
   flex-shrink: 0;
-  width: 14px;
-  display: flex;
-  justify-content: center;
-  align-self: stretch;
-  min-height: 1.6em;
-}
-
-.activity-rail.tone-thought {
-  --activity-rail: #c5cbd3;
-  --activity-node: #94a3b8;
-}
-
-.activity-rail.tone-tool {
-  --activity-rail: #86efac;
-  --activity-node: var(--success);
-}
-
-.activity-rail.tone-tool-failed {
-  --activity-rail: var(--danger-border);
-  --activity-node: var(--danger);
-}
-
-.activity-rail-line {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: var(--activity-rail);
-  border-radius: 6px;
-  opacity: 0.95;
-}
-
-.activity-rail-marker {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 1.45em;
-  margin-top: 1px;
-  background: var(--bg-canvas);
-  line-height: 1;
-}
-
-.activity-diamond {
-  display: block;
+  display: grid;
+  place-items: center;
+  width: 0.875rem;
+  height: var(--conversation-line);
   font-size: 11px;
   line-height: 1;
-  color: var(--activity-node);
-  /* 菱形更“实心”一点 */
-  transform: scale(1.05);
-  font-family:
-    'Segoe UI Symbol',
-    'Apple Symbols',
-    'Segoe UI',
-    sans-serif;
+  color: var(--text-tertiary);
+  align-self: flex-start;
 }
 
-.activity-main {
+.scaffold-glyph.is-error {
+  color: var(--danger);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.scaffold-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
-.activity-toggle {
+.scaffold-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scaffold-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   max-width: 100%;
   margin: 0;
-  padding: 1px 0;
+  padding: 0;
   border: none;
   background: transparent;
   font: inherit;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-tertiary);
+  font-size: var(--conversation-tool-size);
+  line-height: var(--conversation-line);
+  color: var(--conversation-scaffold-text);
   text-align: left;
   cursor: pointer;
   user-select: none;
+  transition: color 0.12s ease;
 }
 
-.activity-toggle:disabled {
+.scaffold-toggle:disabled {
   cursor: default;
 }
 
-.activity-toggle:not(:disabled):hover {
-  color: var(--text-secondary);
+.scaffold-toggle:not(:disabled):hover,
+.scaffold-toggle:not(:disabled):focus-visible {
+  color: var(--text-primary);
+  outline: none;
 }
 
-.activity-label {
+.scaffold-toggle.is-error .scaffold-label {
+  color: var(--danger);
+}
+
+.scaffold-toggle.is-live .scaffold-label {
+  color: var(--conversation-scaffold-meta);
+}
+
+.scaffold-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+  line-height: var(--conversation-line);
 }
 
-.activity-meta {
+.scaffold-label.is-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--conversation-scaffold-meta) 0%,
+    var(--text-secondary) 40%,
+    var(--conversation-scaffold-meta) 80%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: scaffold-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes scaffold-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scaffold-label.is-shimmer {
+    animation: none;
+    color: var(--conversation-scaffold-meta);
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
+  }
+}
+
+.scaffold-meta {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 0.625rem;
   font-weight: 500;
-  color: var(--text-muted);
-  opacity: 0.9;
+  font-variant-numeric: tabular-nums;
+  color: var(--conversation-scaffold-meta);
+  line-height: var(--conversation-line);
 }
 
-.activity-chevron {
+/* caret：默认隐藏，hover / open 显现；› 展开旋转 90° */
+.scaffold-caret {
   flex-shrink: 0;
-  display: inline-block;
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.875rem;
+  height: var(--conversation-line);
+  font-size: 0.75rem;
   line-height: 1;
-  transition: transform 0.12s ease;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
   transform: rotate(0deg);
-  opacity: 0.7;
 }
 
-.activity-chevron.open {
+.thought-row {
+  --disclosure-caret-rest: 0.35;
+}
+
+.thought-row .scaffold-caret {
+  opacity: var(--disclosure-caret-rest, 0);
+}
+
+.scaffold-row:hover .scaffold-caret,
+.scaffold-toggle:focus-visible .scaffold-caret,
+.scaffold-caret.is-open {
+  opacity: 0.85;
+}
+
+.scaffold-caret.is-open {
   transform: rotate(90deg);
 }
 
-/* 进行中：轨上 Braille spinner（灰=思考 / 绿=工具） */
 .activity-braille-spinner {
   flex-shrink: 0;
   display: inline-block;
   min-width: 1em;
   width: 1em;
   text-align: center;
-  font-size: 12px;
+  font-size: 0.95rem;
   line-height: 1;
-  font-weight: 600;
+  font-weight: 500;
   font-family:
     'Segoe UI Symbol',
     'Cascadia Mono',
     'Cascadia Code',
     'Apple Symbols',
-    'DejaVu Sans Mono',
     ui-monospace,
     monospace;
-  color: var(--activity-node, var(--text-secondary));
+  color: inherit;
   font-variant-emoji: text;
 }
 
-.activity-rail.tone-thought .activity-braille-spinner,
-.activity-line.thought-line.is-live .activity-label {
-  color: var(--text-secondary);
+/* 工具展开：细边框圆角壳 */
+.tool-row.is-open {
+  border-radius: 0.3125rem;
+  border: 1px solid color-mix(in srgb, var(--border-solid) 90%, transparent);
+  overflow: hidden;
+  padding: 0;
 }
 
-.activity-rail.tone-tool .activity-braille-spinner {
-  color: var(--success);
+.tool-row.is-open .scaffold-line {
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-solid) 85%, transparent);
 }
 
-.activity-line.tool-line.is-live .activity-label {
-  color: var(--text-secondary);
-}
-
-.activity-line.tool-line.status-failed .activity-label {
-  color: var(--danger);
-}
-
-.activity-body {
-  margin: 2px 0 6px 0;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: #fafafa;
-  border: 1px solid rgba(0, 0, 0, 0.04);
-  max-height: min(40vh, 320px);
+.scaffold-body {
+  position: relative;
+  margin: 0;
+  padding: 0.375rem 0.5rem;
+  max-height: min(36vh, 280px);
   overflow: auto;
+  display: grid;
+  gap: 0.375rem;
+  background: transparent;
 }
 
-.thought-body,
+.scaffold-section-label {
+  margin: 0;
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.scaffold-pre,
 .tool-output-pre {
   margin: 0;
-  padding: 0;
-  font-size: 13px;
-  line-height: 1.5;
+  padding: 0.2rem 0;
+  max-height: 5.5rem;
+  overflow: auto;
+  font-size: 0.7rem;
+  line-height: 1.55;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  background: transparent;
+}
+
+/* 思考展开：无边框，muted 小字 */
+.thought-expanded {
+  margin-top: 0.125rem;
+  max-height: 10rem;
+  overflow: auto;
+  padding-bottom: 0.2rem;
+}
+
+.thought-body-pre {
+  margin: 0;
+  padding: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  background: transparent;
+}
+
+.tool-row.kind-ask-user.is-awaiting {
+  outline: 1px dashed color-mix(in srgb, var(--text-tertiary) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--surface-muted) 45%, transparent);
+  padding: 0.15rem 0.25rem;
+}
+
+.ask-user-badge {
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted);
+  line-height: 1.2rem;
+}
+
+.ask-user-badge.is-pending {
+  color: var(--text-secondary);
+}
+
+/* 复制钮：展开体右上，默认极淡 */
+.tool-copy-btn {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.4rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.08;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.tool-row:hover .tool-copy-btn,
+.tool-copy-btn:focus-visible,
+.tool-copy-btn:hover {
+  opacity: 1;
+}
+
+.tool-copy-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.tool-copy-btn.is-copied {
+  opacity: 1;
+  color: var(--success);
+}
+
+.tool-diff-stats {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 4px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.diff-stat-add {
+  color: #059669;
+}
+
+.diff-stat-remove {
+  color: #e11d48;
 }
 
 .tool-diff-block+.tool-diff-block {

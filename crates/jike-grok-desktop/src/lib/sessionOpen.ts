@@ -104,12 +104,16 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
     case 'user_text_chunk':
     case 'tool_call':
     case 'tool_call_update':
+    case 'user_question_request':
+    case 'user_question_resolved':
       if (isAttachingRuntime(target)) return true
       if (target) {
         patchTab(target, { messages: applyTranscriptEvent(cur, ev) })
       } else {
         $messages.set(applyTranscriptEvent(cur, ev))
       }
+      // user_question_request 还需 App 挂起问卷面板，不吞掉
+      if (ev.type === 'user_question_request') return false
       return true
     case 'token_usage':
       return true

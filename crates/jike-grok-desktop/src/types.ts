@@ -72,6 +72,60 @@ export interface PermissionRequest {
   summary?: string
 }
 
+/** AI 问卷选项（与后端 UserQuestionOption camelCase 对齐） */
+export interface UserQuestionOption {
+  label: string
+  description?: string
+  preview?: string | null
+}
+
+/** 单道问卷题 */
+export interface UserQuestionItem {
+  question: string
+  options: UserQuestionOption[]
+  multiSelect?: boolean | null
+}
+
+/** 挂起的 AI 问卷（前端 TabState） */
+export interface UserQuestionRequest {
+  requestId: number
+  toolCallId: string
+  /** default | plan */
+  mode: string
+  questions: UserQuestionItem[]
+}
+
+/** 问卷提交载荷（回传 JSON outcome） */
+export type UserQuestionResponsePayload =
+  | {
+      outcome: 'accepted'
+      answers: Record<string, string[]>
+      annotations?: Record<string, { preview?: string; notes?: string }>
+    }
+  | { outcome: 'chat_about_this'; partial_answers?: Record<string, string> }
+  | { outcome: 'skip_interview'; partial_answers?: Record<string, string> }
+  | { outcome: 'cancelled' }
+
+/** 子 agent 运行时状态（SubagentStrip） */
+export type SubagentRuntime = {
+  subagentId: string
+  parentSessionId: string
+  childSessionId: string
+  subagentType: string
+  description: string
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  model?: string | null
+  durationMs?: number
+  turnCount?: number
+  toolCallCount?: number
+  tokensUsed?: number
+  contextUsagePct?: number
+  toolsUsed?: string[]
+  errorCount?: number
+  error?: string | null
+  output?: string | null
+}
+
 /**
  * 解析 grok-session `format_permission_description`。
  * 兼容多行与被压成一行的文案（IPC/显示层可能吞换行）。

@@ -14,6 +14,8 @@
 @import './styles/composer.css';
 @import './styles/modals.css';
 @import './styles/permission.css';
+@import './styles/user-question.css';
+@import './styles/subagent.css';
 @import './styles/settings.css';
 @import './styles/composer-extras.css';
 @import './styles/settings-fields.css';

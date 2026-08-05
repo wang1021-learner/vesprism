@@ -1,5 +1,6 @@
-/* Tool approval (floating fallback over composer)
- * — compact card, one title row, h-6 action strip, command collapsed
+/* 工具审批条 — 灰色浮动卡（与会话 scaffold 气质一致）
+ * 首行：警示 + 标题 + 旁注
+ * 操作：h-6 运行 | 拒绝 Esc | 命令▾
  */
 
 .perm-dock {
@@ -14,21 +15,22 @@
 .perm-card {
   pointer-events: auto;
   padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--cta) 30%, var(--border-solid));
-  background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
-  box-shadow: var(--shadow-md);
+  border-radius: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--border-strong-solid) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
+  box-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.08),
+    0 1px 2px rgba(15, 23, 42, 0.04);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
-/* 首行：ico + 需要审批 + 截断旁注（text-sm + truncate tertiary） */
 .perm-row-head {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
-  margin-bottom: 0.375rem;
+  margin-bottom: 0.5rem;
   font-size: 0.875rem;
   line-height: 1.25rem;
   color: var(--text-primary);
@@ -40,7 +42,7 @@
   place-items: center;
   width: 1rem;
   height: 1rem;
-  color: var(--cta);
+  color: var(--text-tertiary);
 }
 
 .perm-ico svg {
@@ -65,7 +67,6 @@
   color: var(--text-tertiary);
 }
 
-/* 操作条：h-6 */
 .perm-row-actions {
   display: flex;
   align-items: center;
@@ -78,8 +79,9 @@
   height: 1.5rem;
   overflow: hidden;
   border-radius: 0.375rem;
-  border: 1px solid color-mix(in srgb, var(--cta) 25%, transparent);
-  background: color-mix(in srgb, var(--cta) 10%, transparent);
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted);
+  color: var(--text-primary);
 }
 
 .perm-act {
@@ -100,6 +102,7 @@
   user-select: none;
   color: var(--text-tertiary);
   white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .perm-act:disabled {
@@ -110,29 +113,22 @@
 .perm-act-run {
   height: 100%;
   border-radius: 0;
-  color: var(--cta);
+  color: var(--text-primary);
   font-weight: 600;
+  gap: 0.25rem;
 }
 
 .perm-act-run:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--cta) 15%, transparent);
-}
-
-.perm-act-deny {
-  font-weight: 400;
-  padding: 0 0.375rem;
-}
-
-.perm-act-deny:hover:not(:disabled) {
-  color: var(--text-primary);
   background: var(--surface-hover);
 }
 
+.perm-act-deny,
 .perm-act-cmd {
   font-weight: 400;
   padding: 0 0.375rem;
 }
 
+.perm-act-deny:hover:not(:disabled),
 .perm-act-cmd:hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-hover);
@@ -144,6 +140,7 @@
   opacity: 0.55;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.01em;
+  color: var(--text-muted);
 }
 
 .perm-chevron {
@@ -166,7 +163,7 @@
   font-size: 0.75rem;
   line-height: 1.35;
   color: var(--text-primary);
-  background: var(--surface-elevated);
+  background: color-mix(in srgb, var(--surface-muted) 80%, transparent);
   border: 1px solid var(--border-solid);
   border-radius: 0.375rem;
 }

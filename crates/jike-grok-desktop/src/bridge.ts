@@ -115,6 +115,30 @@ export const reloadModels = (tabId: string) => invoke('reload_models', { tabId }
 export const respondPermission = (tabId: string, requestId: number, optionId: string) =>
   invoke('respond_permission', { tabId, requestId, optionId })
 
+// ── AI 问卷 ──
+export const respondUserQuestion = (
+  tabId: string,
+  requestId: number,
+  responseJson: string,
+) => invoke('respond_user_question', { tabId, requestId, responseJson })
+
+// ── 子 agent ──
+export const cancelSubagent = (tabId: string, subagentId: string) =>
+  invoke<Record<string, unknown>>('cancel_subagent', { tabId, subagentId })
+
+export const getSubagent = (
+  tabId: string,
+  subagentId: string,
+  block?: boolean,
+  timeoutMs?: number,
+) =>
+  invoke<Record<string, unknown>>('get_subagent', {
+    tabId,
+    subagentId,
+    block: block ?? false,
+    timeoutMs: timeoutMs ?? null,
+  })
+
 // ── 密钥 ──
 export const getEnvStatus = (keyName: string) =>
   invoke<{ key_name: string; is_set: boolean }>('get_env_status', { keyName })
@@ -182,6 +206,31 @@ export interface SessionEventPayload {
   /** TabActor 重建次数（tab_recovering） / 连续 panic 次数（tab_failed） */
   attempt?: number
   attempts?: number
+  // ── 子 agent ──
+  subagent_id?: string
+  parent_session_id?: string
+  child_session_id?: string
+  subagent_type?: string
+  model?: string | null
+  duration_ms?: number
+  turn_count?: number
+  tool_call_count?: number
+  tokens_used?: number
+  context_usage_pct?: number
+  tools_used?: string[]
+  error_count?: number
+  tool_calls?: number
+  turns?: number
+  error?: string | null
+  output?: string | null
+  // ── AI 问卷 ──
+  tool_call_id?: string
+  mode?: string
+  questions?: Array<{
+    question: string
+    options: Array<{ label: string; description?: string; preview?: string | null }>
+    multiSelect?: boolean | null
+  }>
 }
 
 let _unlisten: UnlistenFn | null = null

@@ -74,36 +74,40 @@ const BrailleSpinner = memo(function BrailleSpinner() {
   )
 })
 
-/** 左侧竖轨 + 菱形节点（对齐对话里 Run/Thought 时间线） */
+/**
+ * 安静 scaffold 状态位：进行中 spinner / 失败 ! / 成功留空（无菱形竖轨）
+ */
 type ActivityTone = 'thought' | 'tool' | 'tool-failed'
 
-const ActivityRail = memo(function ActivityRail({
+const ScaffoldGlyph = memo(function ScaffoldGlyph({
   tone,
   live,
 }: {
   tone: ActivityTone
   live: boolean
 }) {
-  return (
-    <div
-      className={`activity-rail tone-${tone}${live ? ' is-live' : ''}`}
-      aria-hidden
-    >
-      <span className="activity-rail-line" />
-      <span className="activity-rail-marker">
-        {live ? (
-          <BrailleSpinner />
-        ) : (
-          <span className="activity-diamond">◆</span>
-        )}
+  if (live) {
+    return (
+      <span className={`scaffold-glyph is-live tone-${tone}`} aria-hidden>
+        <BrailleSpinner />
       </span>
-    </div>
-  )
+    )
+  }
+  if (tone === 'tool-failed') {
+    return (
+      <span className="scaffold-glyph is-error" aria-hidden title="失败">
+        !
+      </span>
+    )
+  }
+  return <span className="scaffold-glyph is-idle" aria-hidden />
 })
 
 interface MessageItemProps {
   message: ChatMessage
   streaming?: boolean
+  /** 点击「Ask · 待回答」工具行时聚焦问卷面板 */
+  onFocusUserQuestion?: (toolCallId: string) => void
 }
 
 function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
@@ -129,6 +133,7 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
 export const MessageItem = memo(function MessageItem({
   message,
   streaming = false,
+  onFocusUserQuestion,
 }: MessageItemProps) {
   switch (message.role) {
     case 'system':
@@ -150,16 +155,23 @@ export const MessageItem = memo(function MessageItem({
         />
       )
 
-    case 'tool':
+    case 'tool': {
+      const tool = message.toolCall ?? legacyToolFromMessage(message)
+      if (tool.kind === 'ask_user') {
+        return (
+          <AskUserToolLine
+            tool={tool}
+            onFocus={onFocusUserQuestion}
+          />
+        )
+      }
       return (
         <ToolLine
-          tool={
-            message.toolCall ??
-            legacyToolFromMessage(message)
-          }
+          tool={tool}
           streaming={streaming || Boolean(message.isStreaming)}
         />
       )
+    }
 
     case 'assistant':
       // 不显示 Assistant 角标：左右气泡/活动行已能区分角色，角标冗余
@@ -197,7 +209,7 @@ function formatDuration(timing?: { start: number; end?: number }): string | null
   return `${Math.round(sec)}s`
 }
 
-/** 菱形时间线：灰菱形 + 竖轨 — Thought for 1.4s › */
+/** 思考行：安静灰字 + 右侧 caret；进行中 shimmer；展开体无重框 */
 const ThoughtLine = memo(function ThoughtLine({
   text,
   streaming,
@@ -207,56 +219,56 @@ const ThoughtLine = memo(function ThoughtLine({
   streaming: boolean
   timing?: { start: number; end?: number }
 }) {
-  const [expanded, setExpanded] = useState(false)
-  const duration = formatDuration(
-    streaming
-      ? timing?.start
-        ? { start: timing.start, end: Date.now() }
-        : undefined
-      : timing,
-  )
-  // 对齐对话 UI 文案：Thought for Xs / 思考中…
+  /** null = 流式时默认展开预览 */
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
+  const open = userOpen ?? streaming
+  const duration = formatDuration(streaming ? undefined : timing)
   const title = streaming
-    ? duration
-      ? `思考中… ${duration}`
-      : '思考中…'
+    ? 'Thinking…'
     : duration
       ? `Thought for ${duration}`
-      : 'Thought'
+      : timing?.end && timing.start && (timing.end - timing.start) / 1000 < 1
+        ? 'Thought briefly'
+        : 'Thought'
   const bodyRef = useRef<HTMLPreElement>(null)
   const canExpand = text.trim().length > 0
 
   useLayoutEffect(() => {
-    if (!expanded || !streaming) return
+    if (!open || !streaming) return
     const el = bodyRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
-  }, [expanded, streaming, text])
+  }, [open, streaming, text])
 
   return (
-    <div className="message-row activity-row thought-row">
-      <div className={`activity-line thought-line${streaming ? ' is-live' : ''}`}>
-        <ActivityRail tone="thought" live={streaming} />
-        <div className="activity-main">
+    <div
+      className={`message-row scaffold-row thought-row${streaming ? ' is-live' : ''}${open ? ' is-open' : ''}`}
+      data-conversation-scaffold=""
+    >
+      <div className="scaffold-line">
+        <ScaffoldGlyph tone="thought" live={streaming} />
+        <div className="scaffold-main">
           <button
             type="button"
-            className="activity-toggle"
-            onClick={() => canExpand && setExpanded((v) => !v)}
-            aria-expanded={expanded}
+            className={`scaffold-toggle${streaming ? ' is-live' : ''}`}
+            onClick={() => canExpand && setUserOpen(!open)}
+            aria-expanded={open}
             disabled={!canExpand}
-            title={expanded ? '收起思考' : '展开思考'}
+            title={open ? '收起思考' : '展开思考'}
           >
-            <span className="activity-label">{title}</span>
+            <span className={`scaffold-label${streaming ? ' is-shimmer' : ''}`}>{title}</span>
             {canExpand ? (
-              <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
+              <span className={`scaffold-caret${open ? ' is-open' : ''}`} aria-hidden>
                 ›
               </span>
             ) : null}
           </button>
-          {expanded && canExpand ? (
-            <pre ref={bodyRef} className="activity-body thought-body">
-              {text}
-            </pre>
+          {open && canExpand ? (
+            <div className="thought-expanded">
+              <pre ref={bodyRef} className="thought-body-pre">
+                {text}
+              </pre>
+            </div>
           ) : null}
         </div>
       </div>
@@ -269,20 +281,75 @@ function toolHeadline(tool: ToolCallData): string {
   const short =
     detail.length > 72 ? `${detail.slice(0, 70)}…` : detail
   const label = short || tool.title?.trim() || 'tool'
-  // 对齐对话 UI：Run <摘要>
+  // scaffold 风格工具行
   switch (tool.kind) {
+    case 'ask_user':
+      return `Ask · ${label}`
     case 'execute':
+      return `Run ${label}`
     case 'read':
+      return `Read ${label}`
     case 'edit':
+      return `Edit ${label}`
     case 'search':
+      return `Search ${label}`
     case 'fetch':
+      return `Fetch ${label}`
     case 'delete':
+      return `Delete ${label}`
     default:
       return `Run ${label}`
   }
 }
 
-/** 菱形时间线：绿菱形 + 竖轨 — Run xxx › */
+/** AI 问卷工具卡：Ask · 摘要 · 待回答 / 已回答 */
+const AskUserToolLine = memo(function AskUserToolLine({
+  tool,
+  onFocus,
+}: {
+  tool: ToolCallData
+  onFocus?: (toolCallId: string) => void
+}) {
+  const pending =
+    tool.status === 'pending' || tool.status === 'in_progress'
+  const detail = tool.detail?.trim() || tool.title || '向你提问'
+  const short = detail.length > 64 ? `${detail.slice(0, 62)}…` : detail
+  const statusText = pending
+    ? '待回答'
+    : tool.preview?.trim() || '已处理'
+
+  return (
+    <div
+      className={`message-row scaffold-row tool-row ask-user-row kind-ask-user${pending ? ' is-awaiting is-live' : ''}`}
+      data-tool-call-id={tool.toolCallId}
+      data-tool-kind="ask_user"
+      data-conversation-scaffold=""
+    >
+      <div className="scaffold-line">
+        <ScaffoldGlyph tone="thought" live={pending} />
+        <div className="scaffold-main">
+          <button
+            type="button"
+            className="scaffold-toggle is-ask-user"
+            onClick={() => {
+              if (pending && onFocus) onFocus(tool.toolCallId)
+            }}
+            title={pending ? '打开问卷' : undefined}
+          >
+            <span className="scaffold-label" title={detail}>
+              Ask · {short}
+            </span>
+            <span className={`ask-user-badge${pending ? ' is-pending' : ''}`}>
+              {statusText}
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+/** 工具行：小字灰标签 + 展开壳；成功无勾 */
 const ToolLine = memo(function ToolLine({
   tool,
   streaming,
@@ -290,7 +357,6 @@ const ToolLine = memo(function ToolLine({
   tool: ToolCallData
   streaming: boolean
 }) {
-  // 有 diff 默认展开（completed edit 的 diff 直接可见）
   const [expanded, setExpanded] = useState(() => (tool.diffs?.length ?? 0) > 0)
   const duration = formatDuration(tool.timing)
   const live =
@@ -301,7 +367,6 @@ const ToolLine = memo(function ToolLine({
   const headline = toolHeadline(tool)
   const tone: ActivityTone = failed ? 'tool-failed' : 'tool'
 
-  // diff 统计（+N -M）：非空行计数
   const diffStats = useMemo(() => {
     if (!tool.diffs?.length) return null
     let added = 0
@@ -314,62 +379,83 @@ const ToolLine = memo(function ToolLine({
   }, [tool.diffs])
   const showDiffStats = !live && diffStats !== null && (diffStats.added > 0 || diffStats.removed > 0)
 
-  // 复制完整输出（不受显示截断影响）
   const [copied, setCopied] = useState(false)
   const onCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(preview || tool.detail || tool.title)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1200)
-    } catch { /* clipboard 不可用时静默 */ }
+    } catch {
+      /* clipboard 不可用时静默 */
+    }
   }, [preview, tool.detail, tool.title])
 
   return (
-    <div className="message-row activity-row tool-row">
-      <div
-        className={`activity-line tool-line status-${tool.status}${live ? ' is-live' : ''}`}
-      >
-        <ActivityRail tone={tone} live={live} />
-        <div className="activity-main">
-          <div className="activity-toggle-row">
+    <div
+      className={[
+        'message-row scaffold-row tool-row',
+        `status-${tool.status}`,
+        live ? 'is-live' : '',
+        expanded ? 'is-open' : '',
+        failed ? 'is-error' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      data-tool-call-id={tool.toolCallId}
+      data-tool-kind={tool.kind || 'other'}
+      data-conversation-scaffold=""
+    >
+      <div className="scaffold-line">
+        <ScaffoldGlyph tone={tone} live={live} />
+        <div className="scaffold-main">
+          <div className="scaffold-toggle-row">
             <button
               type="button"
-              className="activity-toggle"
+              className={`scaffold-toggle${failed ? ' is-error' : ''}${live ? ' is-live' : ''}`}
               onClick={() => hasBody && setExpanded((v) => !v)}
               aria-expanded={expanded}
               disabled={!hasBody}
               title={hasBody ? (expanded ? '收起输出' : '展开输出') : undefined}
             >
-              <span className="activity-label" title={tool.detail || tool.title}>
+              <span className="scaffold-label" title={tool.detail || tool.title}>
                 {headline}
               </span>
-              {duration ? <span className="activity-meta">{duration}</span> : null}
+              {!live && duration ? <span className="scaffold-meta">{duration}</span> : null}
               {showDiffStats && diffStats ? (
                 <span className="tool-diff-stats" aria-label={`新增 ${diffStats.added} 行，删除 ${diffStats.removed} 行`}>
-                  <span className="diff-stat-add">+{diffStats.added}</span>
-                  <span className="diff-stat-remove">-{diffStats.removed}</span>
+                  {diffStats.added > 0 ? (
+                    <span className="diff-stat-add">+{diffStats.added}</span>
+                  ) : null}
+                  {diffStats.removed > 0 ? (
+                    <span className="diff-stat-remove">−{diffStats.removed}</span>
+                  ) : null}
                 </span>
               ) : null}
               {hasBody ? (
-                <span className={`activity-chevron${expanded ? ' open' : ''}`} aria-hidden>
+                <span className={`scaffold-caret${expanded ? ' is-open' : ''}`} aria-hidden>
                   ›
                 </span>
               ) : null}
             </button>
-            {preview && !live ? (
-              <button
-                type="button"
-                className={`tool-copy-btn${copied ? ' is-copied' : ''}`}
-                onClick={onCopy}
-                title="复制输出"
-              >
-                {copied ? '✓' : '⧉'}
-              </button>
-            ) : null}
           </div>
           {expanded && hasBody ? (
-            <div className="activity-body tool-body">
-              {preview ? <pre className="tool-output-pre">{preview}</pre> : null}
+            <div className="scaffold-body tool-body">
+              {preview ? (
+                <button
+                  type="button"
+                  className={`tool-copy-btn${copied ? ' is-copied' : ''}`}
+                  onClick={onCopy}
+                  title="复制输出"
+                >
+                  {copied ? '✓' : '⧉'}
+                </button>
+              ) : null}
+              {preview ? (
+                <>
+                  <div className="scaffold-section-label">output</div>
+                  <pre className="scaffold-pre tool-output-pre">{preview}</pre>
+                </>
+              ) : null}
               {tool.diffs?.map((d, i) => (
                 <div key={`${d.path}-${i}`} className="tool-diff-block">
                   <div className="tool-diff-path">{d.path || 'diff'}</div>

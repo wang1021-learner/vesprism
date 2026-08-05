@@ -464,6 +464,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         messages: [],
         composerInput: '',
         permission: null,
+        userQuestion: null,
+        subagents: [],
         error: '',
         chatId: '',
         sessionId: '',

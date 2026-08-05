@@ -7,8 +7,9 @@
    ═══════════════════════════════════════════════════ */
 
 .md-body {
-  font-size: 15px;
-  line-height: 1.7;
+  /* 相对原 15px 再小 2px → 13px（用户要求会话 AI 字号整体调小） */
+  font-size: 13px;
+  line-height: 1.65;
   word-break: break-word;
   color: var(--text-primary);
   letter-spacing: -0.005em;
@@ -75,7 +76,7 @@
 /* ── 行内代码 ── */
 .md-body code {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: 11px;
   background: var(--surface-muted);
   border: 1px solid var(--border-solid);
   border-radius: 6px;
@@ -100,7 +101,7 @@
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.55;
 }
 

@@ -38,6 +38,17 @@ export type TranscriptEvent = {
   status?: string
   session_id?: string
   stop_reason?: string
+  /** AI 问卷 */
+  tool_call_id?: string
+  mode?: string
+  questions?: Array<{
+    question: string
+    options: Array<{ label: string; description?: string; preview?: string | null }>
+    multiSelect?: boolean | null
+  }>
+  /** 问卷已解答时的摘要 */
+  answer_preview?: string
+  outcome?: string
 }
 
 function toolId(t: {
@@ -112,8 +123,60 @@ export function applyTranscriptEvent(
       if (!ev.update) return messages
       return patchTool(messages, ev.update)
     }
+    case 'user_question_request': {
+      const toolCallId = ev.tool_call_id || `ask_${ev.request_id ?? generateId('ask_')}`
+      const detail = formatAskUserDetail(ev.questions)
+      return upsertTool(sealStreamingTail(messages), {
+        toolCallId,
+        kind: 'ask_user',
+        status: 'pending',
+        title: 'Ask',
+        detail,
+        preview: '',
+        timing: { start: Date.now() },
+      })
+    }
+    case 'user_question_resolved': {
+      const toolCallId = ev.tool_call_id
+      if (!toolCallId) return messages
+      const preview = ev.answer_preview || formatAskUserAnswerPreview(ev.outcome)
+      return patchTool(messages, {
+        toolCallId,
+        kind: 'ask_user',
+        status: ev.outcome === 'cancelled' ? 'completed' : 'completed',
+        title: 'Ask',
+        preview,
+        detail: preview,
+      })
+    }
     default:
       return messages
+  }
+}
+
+/** 问卷工具卡详情：首题 + 题数 */
+export function formatAskUserDetail(
+  questions?: Array<{ question: string }>,
+): string {
+  if (!questions?.length) return '向你提问'
+  const first = questions[0].question.trim() || '向你提问'
+  if (questions.length === 1) return first
+  return `${first}（共 ${questions.length} 题）`
+}
+
+/** 问卷解答后的预览文案 */
+export function formatAskUserAnswerPreview(outcome?: string): string {
+  switch (outcome) {
+    case 'accepted':
+      return '已回答'
+    case 'chat_about_this':
+      return '改为讨论'
+    case 'skip_interview':
+      return '跳过问卷'
+    case 'cancelled':
+      return '已取消'
+    default:
+      return outcome ? `已处理 · ${outcome}` : '已处理'
   }
 }
 

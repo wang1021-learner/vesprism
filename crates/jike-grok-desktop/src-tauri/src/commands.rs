@@ -255,6 +255,78 @@ pub async fn respond_permission(
     .await
 }
 
+/// 回答 AI 问卷（`x.ai/ask_user_question`）；`response_json` 为完整 outcome JSON。
+#[tauri::command]
+pub async fn respond_user_question(
+    tab_id: String,
+    request_id: u64,
+    response_json: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::RespondUserQuestion {
+        request_id,
+        response_json,
+        reply,
+    })
+    .await
+}
+
+/// 取消指定子 agent。
+#[tauri::command]
+pub async fn cancel_subagent(
+    tab_id: String,
+    subagent_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::CancelSubagent {
+            subagent_id,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 查询子 agent 快照。
+#[tauri::command]
+pub async fn get_subagent(
+    tab_id: String,
+    subagent_id: String,
+    block: Option<bool>,
+    timeout_ms: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::GetSubagent {
+            subagent_id,
+            block: block.unwrap_or(false),
+            timeout_ms,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 桌面隔离目录（与 `GROK_HOME` / config.toml 同一位置）。
 fn desktop_home_dir() -> PathBuf {
     if let Ok(home) = std::env::var("GROK_HOME") {

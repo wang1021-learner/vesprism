@@ -2,13 +2,19 @@ import { useEffect, useRef, useState, useCallback, useMemo, memo } from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
 import type { ChatMessage } from '../../types'
 
-const MIN_ENTRIES = 4
+/** 至少 2 个锚点才显示刻度 */
+const MIN_ENTRIES = 2
 const HOVER_CLOSE_MS = 140
+
+type EntryKind = 'user' | 'ask_user'
 
 interface TimelineEntry {
   id: string
-  index: number // 对应在 messages 数组中的索引
+  /** 在 messages 中的索引 */
+  index: number
   preview: string
+  kind: EntryKind
+  awaiting?: boolean
 }
 
 function timelinePreview(text: string, max: number = 120): string {
@@ -17,12 +23,45 @@ function timelinePreview(text: string, max: number = 120): string {
   return `${collapsed.slice(0, max - 1).trimEnd()}…`
 }
 
+function buildEntries(messages: ChatMessage[]): TimelineEntry[] {
+  const list: TimelineEntry[] = []
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+    if (msg.role === 'user' && msg.text) {
+      list.push({
+        id: msg.id,
+        index: i,
+        preview: timelinePreview(msg.text),
+        kind: 'user',
+      })
+      continue
+    }
+    if (msg.role === 'tool' && msg.toolCall?.kind === 'ask_user') {
+      const tc = msg.toolCall
+      const awaiting =
+        tc.status === 'pending' || tc.status === 'in_progress'
+      const raw =
+        (awaiting ? tc.detail || tc.title : tc.preview || tc.detail || tc.title) ||
+        '向用户提问'
+      list.push({
+        id: msg.id,
+        index: i,
+        preview: timelinePreview(
+          awaiting ? `待回答 · ${raw}` : `已回答 · ${raw}`,
+        ),
+        kind: 'ask_user',
+        awaiting,
+      })
+    }
+  }
+  return list
+}
+
 interface ChatTimelineProps {
   messages: ChatMessage[]
   virtualizer: Virtualizer<HTMLDivElement, Element>
 }
 
-// Index-keyed ref-array setter
 const listRef =
   <T,>(refs: React.RefObject<(T | null)[]>, index: number) =>
   (node: T | null) => {
@@ -31,24 +70,21 @@ const listRef =
 
 const hoverProps = (index: number, paint: (index: number, on: boolean) => void) => ({
   onMouseEnter: () => paint(index, true),
-  onMouseLeave: () => paint(index, false)
+  onMouseLeave: () => paint(index, false),
 })
 
+/**
+ * 会话右缘中部短横刻度：
+ * - 垂直居中一撮实心短横，不按全高比例铺开
+ * - 无系统滚动条、无视口滑块
+ * - hover 左侧弹出预览，点击跳转
+ * - 含用户提问与 AI 问卷锚点
+ */
 export const ChatTimeline = memo(function ChatTimeline({
   messages,
-  virtualizer
+  virtualizer,
 }: ChatTimelineProps) {
-  // 从所有消息中提取 User Prompt
-  const entries = useMemo(() => {
-    const list: TimelineEntry[] = []
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]
-      if (msg.role === 'user' && msg.text) {
-        list.push({ id: msg.id, index: i, preview: timelinePreview(msg.text) })
-      }
-    }
-    return list
-  }, [messages])
+  const entries = useMemo(() => buildEntries(messages), [messages])
 
   const [activeIndex, setActiveIndex] = useState(0)
   const [open, setOpen] = useState(false)
@@ -62,7 +98,7 @@ export const ChatTimeline = memo(function ChatTimeline({
     setEverOpened(true)
   }
 
-  // 核心逻辑：无需测算 DOM，直接通过 virtualizer 的状态得出当前所在的用户提问
+  // 滚动时更新当前高亮刻度（不画滑块）
   useEffect(() => {
     if (entries.length < MIN_ENTRIES) return
     const el = virtualizer.scrollElement
@@ -71,22 +107,18 @@ export const ChatTimeline = memo(function ChatTimeline({
     let raf = 0
     const compute = () => {
       raf = 0
-      
-      // 1. 如果紧贴底部，活跃的永远是最后一个提问
       const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
       if (isAtBottom) {
-        setActiveIndex(prev => (prev === entries.length - 1 ? prev : entries.length - 1))
+        setActiveIndex((prev) =>
+          prev === entries.length - 1 ? prev : entries.length - 1,
+        )
         return
       }
 
-      // 2. 通过虚拟列表当前挂载的项目，找到视口顶部第一条显示的消息索引
       const visibleItems = virtualizer.getVirtualItems()
       if (visibleItems.length === 0) return
-      
       const topmostVisibleIndex = visibleItems[0].index
-      
-      // 3. 在 entries 中找到最后一个其 index <= topmostVisibleIndex 的问题
-      // （加一点 slack：哪怕刚滚走一点，也算当前问题）
+
       let nextActive = 0
       for (let i = 0; i < entries.length; i++) {
         if (entries[i].index <= topmostVisibleIndex + 1) {
@@ -95,26 +127,21 @@ export const ChatTimeline = memo(function ChatTimeline({
           break
         }
       }
-      
-      setActiveIndex(prev => (prev === nextActive ? prev : nextActive))
+      setActiveIndex((prev) => (prev === nextActive ? prev : nextActive))
     }
 
     const onScroll = () => {
-      if (!raf) {
-        raf = requestAnimationFrame(compute)
-      }
+      if (!raf) raf = requestAnimationFrame(compute)
     }
 
     onScroll()
     el.addEventListener('scroll', onScroll, { passive: true })
-
     return () => {
       el.removeEventListener('scroll', onScroll)
       if (raf) cancelAnimationFrame(raf)
     }
   }, [entries, virtualizer])
 
-  // 原生 DOM 操作，实现 0ms 延迟的高亮和悬停反馈，规避 React re-render
   const paint = useCallback((index: number, on: boolean) => {
     const tick = tickRefs.current[index]
     if (tick) {
@@ -123,9 +150,7 @@ export const ChatTimeline = memo(function ChatTimeline({
     const row = rowRefs.current[index]
     if (row) {
       row.classList.toggle('timeline-row-hovered', on)
-      if (on) {
-        row.scrollIntoView({ block: 'nearest' })
-      }
+      if (on) row.scrollIntoView({ block: 'nearest' })
     }
   }, [])
 
@@ -141,12 +166,27 @@ export const ChatTimeline = memo(function ChatTimeline({
 
   useEffect(() => () => window.clearTimeout(closeTimerRef.current), [])
 
-  const jump = useCallback(
-    (index: number) => {
-      // 通过虚拟列表自带的方法，直接定位到指定索引的消息
-      virtualizer.scrollToIndex(index, { align: 'start', behavior: 'smooth' })
+  const jumpToMessage = useCallback(
+    (entry: TimelineEntry) => {
+      virtualizer.scrollToIndex(entry.index, {
+        align: 'start',
+        behavior: 'smooth',
+      })
+      if (entry.kind === 'ask_user' && entry.awaiting) {
+        const msg = messages[entry.index]
+        const toolCallId = msg?.toolCallId || msg?.toolCall?.toolCallId
+        if (toolCallId) {
+          window.setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent('jike:focus-user-question', {
+                detail: { toolCallId },
+              }),
+            )
+          }, 120)
+        }
+      }
     },
-    [virtualizer]
+    [messages, virtualizer],
   )
 
   if (entries.length < MIN_ENTRIES) {
@@ -155,24 +195,32 @@ export const ChatTimeline = memo(function ChatTimeline({
 
   return (
     <div
-      aria-label="Conversation timeline"
+      aria-label="会话导航刻度"
       className="chat-timeline-container"
       onMouseEnter={keepOpen}
       onMouseLeave={closeSoon}
       role="navigation"
     >
-      <div className="chat-timeline-ticks">
+      <div className="chat-timeline-rail">
         {entries.map((entry, idx) => (
           <button
             key={entry.id}
             type="button"
             className="chat-timeline-tick-btn"
             aria-label={entry.preview}
-            onClick={() => jump(entry.index)}
+            aria-current={idx === activeIndex ? 'true' : undefined}
+            onClick={() => jumpToMessage(entry)}
             {...hoverProps(idx, paint)}
           >
             <span
-              className={`chat-timeline-tick-line ${idx === activeIndex ? 'is-active' : ''}`}
+              className={[
+                'chat-timeline-tick-mark',
+                idx === activeIndex ? 'is-active' : '',
+                entry.kind === 'ask_user' ? 'is-ask-user' : '',
+                entry.awaiting ? 'is-awaiting' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
               ref={listRef(tickRefs, idx)}
             />
           </button>
@@ -185,12 +233,24 @@ export const ChatTimeline = memo(function ChatTimeline({
             <button
               key={entry.id}
               type="button"
-              className={`chat-timeline-row ${idx === activeIndex ? 'is-active' : ''}`}
+              className={[
+                'chat-timeline-row',
+                idx === activeIndex ? 'is-active' : '',
+                entry.kind === 'ask_user' ? 'is-ask-user' : '',
+                entry.awaiting ? 'is-awaiting' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
               aria-label={entry.preview}
-              onClick={() => jump(entry.index)}
+              onClick={() => jumpToMessage(entry)}
               ref={listRef(rowRefs, idx)}
               {...hoverProps(idx, paint)}
             >
+              {entry.kind === 'ask_user' ? (
+                <span className="chat-timeline-row-kind" aria-hidden>
+                  ?
+                </span>
+              ) : null}
               <span className="chat-timeline-row-text">{entry.preview}</span>
             </button>
           ))}

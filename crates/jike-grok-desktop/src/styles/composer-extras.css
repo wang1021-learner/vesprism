@@ -43,8 +43,10 @@
   background: var(--surface-hover);
 }
 
-/* 下拉菜单内部智能 / 思考强度面板（对齐图 2） */
+/* 模型菜单 · 推理挡位：紫色分段 pills（无滑条） */
 .model-menu-reasoning-section {
+  --effort-accent: #6366f1;
+  --effort-soft: #eef2ff;
   padding: 8px 10px 10px;
   display: flex;
   flex-direction: column;
@@ -63,83 +65,64 @@
 
 .model-menu-reasoning-val-badge {
   font-weight: 500;
-  color: #6366f1;
-  background: #eef2ff;
+  color: var(--effort-accent);
+  background: var(--effort-soft);
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 13px;
-}
-
-.model-menu-slider-row {
-  display: flex;
-  align-items: center;
-  padding: 2px 0;
-}
-
-.model-menu-slider-row .effort-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 6px;
-  background: transparent;
-  outline: none;
-  margin: 14px 0 8px 0;
-}
-
-/* 轨道样式 */
-.model-menu-slider-row .effort-slider::-webkit-slider-runnable-track {
-  width: 100%;
-  height: 6px;
-  background: #e2e8f0;
-  border-radius: 6px;
-}
-
-/* 滑块(thumb)样式 */
-.model-menu-slider-row .effort-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  height: 18px;
-  width: 18px;
-  border-radius: 50%;
-  background: #6366f1;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  margin-top: -6px;
-  /* 让滑块居中于 6px 的轨道：(18 - 6) / 2 = 6 */
-  cursor: pointer;
-  border: none;
-}
-
-.model-menu-effort-ticks {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 4px;
-  /* 让数字和滑块圆心对齐 */
-  margin-top: 4px;
-}
-
-.effort-tick {
-  flex: 1;
-  text-align: center;
   font-size: 12px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s ease;
-  user-select: none;
 }
 
-.effort-tick:first-child {
-  text-align: left;
+.effort-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-muted) 90%, #e2e8f0);
+  border: 1px solid var(--border-solid);
 }
 
-.effort-tick:last-child {
-  text-align: right;
-}
-
-.effort-tick.active,
-.effort-tick:hover {
-  color: #6366f1;
+.effort-pill {
+  flex: 1 1 auto;
+  min-width: 3.25rem;
+  margin: 0;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
   font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.effort-pill:hover:not(:disabled):not(.is-active) {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface-elevated) 80%, transparent);
+}
+
+.effort-pill.is-active {
+  color: var(--effort-accent);
+  background: var(--surface-elevated);
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.12);
+  font-weight: 600;
+}
+
+.effort-pill:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 兼容旧类名（若残留） */
+.model-menu-slider-row,
+.effort-slider,
+.model-menu-effort-ticks,
+.effort-tick {
+  /* no-op */
 }
 
 /* Composer: 粘贴折叠卡片（类似于文件/文档附件卡片） */

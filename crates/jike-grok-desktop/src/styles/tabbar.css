@@ -65,6 +65,30 @@
   color: var(--danger);
 }
 
+/* 活动灯：空闲灰 / 工作绿 / 待确认黄 / 错误红 */
+.tabbar-activity {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+.tabbar-activity.is-working {
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
+}
+.tabbar-activity.is-permission {
+  background: #eab308;
+  box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.2);
+}
+.tabbar-activity.is-error {
+  background: #ef4444;
+}
+.tabbar-activity.is-idle {
+  background: #cbd5e1;
+  opacity: 0.7;
+}
+
 .tabbar-title {
   overflow: hidden;
   text-overflow: ellipsis;

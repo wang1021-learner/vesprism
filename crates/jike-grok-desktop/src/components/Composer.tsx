@@ -529,43 +529,34 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     {showReasoning && (
                       <div className="model-menu-reasoning-section">
                         <div className="model-menu-header">
-                          <span>推理挡位 (Reasoning Tier)</span>
-                          <span className="model-menu-reasoning-val-badge">Tier {effortIndex}</span>
+                          <span>推理挡位</span>
+                          <span className="model-menu-reasoning-val-badge">
+                            {availableReasoningLevels[effortIndex]?.label ||
+                              `Tier ${effortIndex}`}
+                          </span>
                         </div>
                         <div
-                          className="model-menu-slider-row"
+                          className="effort-pills"
+                          role="radiogroup"
+                          aria-label="思考强度"
                           title={
                             reasoningEffortUnverified
-                              ? '拖动调节思考强度（仅影响当前会话，不会修改该模型的默认档位；该服务商是否支持所有档位未经验证）'
-                              : '拖动调节思考强度（仅影响当前会话，不会修改该模型的默认档位）'
+                              ? '仅影响当前会话；该服务商是否支持所有档位未经验证'
+                              : '仅影响当前会话，不修改模型默认档位'
                           }
                         >
-                          <input
-                            type="range"
-                            className="effort-slider"
-                            min={0}
-                            max={availableReasoningLevels.length - 1}
-                            step={1}
-                            value={effortIndex}
-                            disabled={!shellReady || isGenerating}
-                            aria-label="思考强度"
-                            aria-valuetext={`Tier ${effortIndex}`}
-                            onChange={(e) => {
-                              const idx = Number(e.target.value)
-                              const lv = availableReasoningLevels[idx]
-                              if (lv) onSwitchReasoningEffort(lv.value)
-                            }}
-                          />
-                        </div>
-                        <div className="model-menu-effort-ticks">
                           {availableReasoningLevels.map((lv, idx) => (
-                            <span
+                            <button
                               key={lv.value}
-                              className={`effort-tick${idx === effortIndex ? ' active' : ''}`}
+                              type="button"
+                              role="radio"
+                              aria-checked={idx === effortIndex}
+                              className={`effort-pill${idx === effortIndex ? ' is-active' : ''}`}
+                              disabled={!shellReady || isGenerating}
                               onClick={() => onSwitchReasoningEffort(lv.value)}
                             >
-                              {idx}
-                            </span>
+                              {lv.label}
+                            </button>
                           ))}
                         </div>
                       </div>

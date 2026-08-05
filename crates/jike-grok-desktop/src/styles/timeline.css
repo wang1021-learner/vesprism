@@ -1,129 +1,154 @@
-/* Chat Timeline Minimap Component */
+/* 右缘中部短横刻度簇（垂直居中，无通高轨/滑块） */
 
 .chat-timeline-container {
   position: absolute;
-  right: 0;
+  right: 4px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 40;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  pointer-events: auto;
+  flex-direction: row-reverse;
+  align-items: center;
+  pointer-events: none;
 }
 
-.chat-timeline-ticks {
+/* 刻度簇：垂直居中，gap 舒适 */
+.chat-timeline-rail {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  padding: 4px 0;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  width: 20px;
+  pointer-events: auto;
+  cursor: default;
 }
 
 .chat-timeline-tick-btn {
   display: flex;
-  height: 8px;
-  width: 28px;
-  cursor: pointer;
+  width: 20px;
+  height: 10px;
   align-items: center;
   justify-content: flex-end;
-  padding-right: 4px;
+  padding: 0 3px 0 0;
   background: transparent;
   border: none;
   outline: none;
+  cursor: pointer;
 }
 
-.chat-timeline-tick-line {
+/* 短横线：默认细、短、浅灰 */
+.chat-timeline-tick-mark {
   display: block;
-  height: 1px;
+  height: 1.5px;
+  width: 8px;
+  border-radius: 1px;
+  background: #c9ced6;
+  opacity: 0.85;
+  transition:
+    width 100ms ease-out,
+    background 100ms ease-out,
+    opacity 100ms ease-out;
+}
+
+.chat-timeline-tick-btn:hover .chat-timeline-tick-mark {
   width: 12px;
-  transition: opacity 100ms ease-out;
-}
-
-.chat-timeline-tick-line:not(.is-active) {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--text-tertiary) 0,
-    var(--text-tertiary) 1px,
-    transparent 1px,
-    transparent 2px
-  );
-  opacity: 0.7;
-}
-
-.chat-timeline-tick-line.is-active {
-  background: var(--accent);
+  background: #94a3b8;
   opacity: 1;
 }
 
-/* Timeline Popover */
+/* 当前段：更长、更深 */
+.chat-timeline-tick-mark.is-active {
+  width: 14px;
+  height: 2px;
+  background: #334155;
+  opacity: 1;
+}
+
+/* 问卷入口：略粗；待回答更深 */
+.chat-timeline-tick-mark.is-ask-user {
+  width: 10px;
+  background: #94a3b8;
+}
+
+.chat-timeline-tick-mark.is-ask-user.is-awaiting {
+  width: 12px;
+  background: #64748b;
+  opacity: 1;
+}
+
+.chat-timeline-tick-mark.is-ask-user.is-active {
+  width: 14px;
+  background: #334155;
+}
+
+/* 预览列表：贴在刻度左侧 */
 .chat-timeline-popover {
-  position: absolute;
-  right: 100%;
-  top: 50%;
-  transform: translateY(-50%);
+  position: relative;
+  right: 0;
+  margin-right: 6px;
   z-index: 50;
   max-height: min(22rem, calc(100vh - 8rem));
-  width: 320px;
-  max-width: min(20rem, calc(100vw - 2rem));
+  width: 220px;
+  max-width: min(16rem, calc(100vw - 3rem));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-solid);
+  border-radius: 10px;
+  border: 1px solid #e8eaed;
   padding: 4px;
   color: var(--text-primary);
-  
-  /* The frosted glass effect */
-  background: color-mix(in srgb, var(--surface-elevated) 96%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  
-  box-shadow: var(--shadow-md);
-  
-  transition: opacity 100ms ease-out, transform 100ms ease-out;
+  background: #ffffff;
+  box-shadow:
+    0 4px 20px rgba(15, 23, 42, 0.08),
+    0 1px 3px rgba(15, 23, 42, 0.04);
+  transition:
+    opacity 100ms ease-out,
+    transform 100ms ease-out;
+  pointer-events: auto;
+  scrollbar-width: none;
+}
+
+.chat-timeline-popover::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .chat-timeline-popover.is-closed {
   pointer-events: none;
   opacity: 0;
-  transform: translate(4px, -50%);
+  transform: translateX(4px);
 }
 
 .chat-timeline-popover.is-open {
   pointer-events: auto;
   opacity: 1;
-  transform: translate(0, -50%);
-}
-
-/* 隐藏 popover 里面的滚动条，使用和系统一致的滚动条 */
-.chat-timeline-popover::-webkit-scrollbar {
-  width: 4px;
-}
-.chat-timeline-popover::-webkit-scrollbar-track {
-  background: transparent;
-}
-.chat-timeline-popover::-webkit-scrollbar-thumb {
-  background: var(--text-quaternary);
-  border-radius: 6px;
+  transform: translateX(0);
 }
 
 .chat-timeline-row {
   position: relative;
   display: flex;
+  align-items: center;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   user-select: none;
   overflow: hidden;
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
+  border-radius: 6px;
+  padding: 7px 10px;
   text-align: left;
   outline: none;
   border: none;
   background: transparent;
   cursor: pointer;
-  color: var(--text-secondary);
-  transition: background-color 100ms ease-out, color 100ms ease-out;
+  color: #64748b;
+  transition:
+    background-color 100ms ease-out,
+    color 100ms ease-out;
 }
 
 .chat-timeline-row-text {
@@ -135,16 +160,35 @@
   text-overflow: ellipsis;
   font-weight: 500;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.35;
+}
+
+.chat-timeline-row-kind {
+  flex-shrink: 0;
+  width: 0.9rem;
+  margin-right: 4px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.chat-timeline-row.is-ask-user.is-awaiting .chat-timeline-row-kind {
+  color: #475569;
 }
 
 .chat-timeline-row.is-active {
-  background: var(--surface-muted);
-  color: var(--text-primary);
+  background: #f1f3f5;
+  color: #0f172a;
+}
+
+.chat-timeline-row.is-ask-user.is-awaiting {
+  color: #334155;
 }
 
 .chat-timeline-row.timeline-row-hovered {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  transition: none; /* instant hover */
+  background: #eef0f3;
+  color: #0f172a;
+  transition: none;
 }

@@ -2,7 +2,7 @@
 //! 保证 `spawn_local` / `?Send` 的 ACP 客户端可以正常工作。
 
 use grok_session::{
-    GrokSession, SessionEvent, SessionStatus, ToolCallInfo, ToolCallUpdateInfo,
+    GrokSession, SessionEvent, SessionStatus, ToolCallInfo, ToolCallUpdateInfo, UserQuestionItem,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -95,6 +95,24 @@ pub enum ActorCommand {
         force: bool,
         reply: oneshot::Sender<Result<grok_session::RewindResponse, String>>,
     },
+    /// 取消子 agent
+    CancelSubagent {
+        subagent_id: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 查询子 agent 快照
+    GetSubagent {
+        subagent_id: String,
+        block: bool,
+        timeout_ms: Option<u64>,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 回答 AI 问卷（response_json 为 AskUserQuestionExtResponse JSON）
+    RespondUserQuestion {
+        request_id: u64,
+        response_json: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// 由 Tauri 托管的应用状态；命令侧可廉价克隆。
@@ -158,6 +176,47 @@ pub enum FrontendEvent {
         request_id: u64,
         description: String,
         options: Vec<PermissionOptionDto>,
+    },
+    /// 子 agent 已创建。
+    SubagentSpawned {
+        subagent_id: String,
+        parent_session_id: String,
+        child_session_id: String,
+        subagent_type: String,
+        description: String,
+        model: Option<String>,
+    },
+    /// 子 agent 进度。
+    SubagentProgress {
+        subagent_id: String,
+        parent_session_id: String,
+        child_session_id: String,
+        duration_ms: u64,
+        turn_count: u32,
+        tool_call_count: u32,
+        tokens_used: u64,
+        context_usage_pct: u8,
+        tools_used: Vec<String>,
+        error_count: u32,
+    },
+    /// 子 agent 结束。
+    SubagentFinished {
+        subagent_id: String,
+        child_session_id: String,
+        status: String,
+        error: Option<String>,
+        tool_calls: u32,
+        turns: u32,
+        duration_ms: u64,
+        tokens_used: u64,
+        output: Option<String>,
+    },
+    /// AI 问卷请求（前端展示后通过 respond_user_question 回传 JSON）。
+    UserQuestionRequest {
+        request_id: u64,
+        tool_call_id: String,
+        mode: String,
+        questions: Vec<UserQuestionItem>,
     },
     /// 会话状态变更。
     StatusChanged { status: SessionStatus },
@@ -417,6 +476,39 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::CancelSubagent { subagent_id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.cancel_subagent(&subagent_id).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("取消子 agent 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::GetSubagent {
+            subagent_id,
+            block,
+            timeout_ms,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.get_subagent(&subagent_id, block, timeout_ms).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("查询子 agent 失败: {e}")));
+                }
+            }
+        }
         ActorCommand::RespondPermission {
             request_id,
             option_id,
@@ -431,6 +523,22 @@ async fn handle_command(
             }
             None => {
                 let _ = reply.send(Err(format!("未知权限请求 id={request_id}")));
+            }
+        },
+        ActorCommand::RespondUserQuestion {
+            request_id,
+            response_json,
+            reply,
+        } => match pending_permissions.remove(&request_id) {
+            Some(tx) => {
+                if tx.send(response_json).is_err() {
+                    let _ = reply.send(Err("问卷请求已失效".into()));
+                } else {
+                    let _ = reply.send(Ok(()));
+                }
+            }
+            None => {
+                let _ = reply.send(Err(format!("未知问卷请求 id={request_id}")));
             }
         },
         ActorCommand::Restart { cwd, reply } => {
@@ -791,6 +899,105 @@ fn forward_event(
                             PermissionOptionDto { id, name, kind }
                         })
                         .collect(),
+                },
+            );
+        }
+        SessionEvent::SubagentSpawned {
+            subagent_id,
+            parent_session_id,
+            child_session_id,
+            subagent_type,
+            description,
+            model,
+            ..
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::SubagentSpawned {
+                    subagent_id,
+                    parent_session_id,
+                    child_session_id,
+                    subagent_type,
+                    description,
+                    model,
+                },
+            );
+        }
+        SessionEvent::SubagentProgress {
+            subagent_id,
+            parent_session_id,
+            child_session_id,
+            duration_ms,
+            turn_count,
+            tool_call_count,
+            tokens_used,
+            context_usage_pct,
+            tools_used,
+            error_count,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::SubagentProgress {
+                    subagent_id,
+                    parent_session_id,
+                    child_session_id,
+                    duration_ms,
+                    turn_count,
+                    tool_call_count,
+                    tokens_used,
+                    context_usage_pct,
+                    tools_used,
+                    error_count,
+                },
+            );
+        }
+        SessionEvent::SubagentFinished {
+            subagent_id,
+            child_session_id,
+            status,
+            error,
+            tool_calls,
+            turns,
+            duration_ms,
+            tokens_used,
+            output,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::SubagentFinished {
+                    subagent_id,
+                    child_session_id,
+                    status,
+                    error,
+                    tool_calls,
+                    turns,
+                    duration_ms,
+                    tokens_used,
+                    output,
+                },
+            );
+        }
+        SessionEvent::UserQuestionRequest {
+            tool_call_id,
+            mode,
+            questions,
+            respond,
+        } => {
+            // 与权限共用 pending map；回传的是 JSON 字符串而非 option_id。
+            let request_id = *next_id;
+            *next_id += 1;
+            pending.insert(request_id, respond);
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::UserQuestionRequest {
+                    request_id,
+                    tool_call_id,
+                    mode,
+                    questions,
                 },
             );
         }

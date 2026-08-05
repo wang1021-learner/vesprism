@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { MessageList } from './components/Chat/MessageList'
 import { TabBar } from './components/TabBar'
@@ -10,6 +10,8 @@ import {
   MessagesErrorFallback,
 } from './components/ErrorBoundary'
 import { PermissionModal } from './components/Permission'
+import { UserQuestionPanel } from './components/UserQuestion'
+import { SubagentStrip } from './components/SubagentStrip'
 import { RightPanel } from './components/RightPanel'
 import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
@@ -18,10 +20,10 @@ import {
   $activeTabId,
   $activeChatId, $chats, $composerInput,
   $defaultModelId, $error, $generating, $messages, $models,
-  $permission, $reasoningEffort, $sessionPhase,
+  $permission, $userQuestion, $reasoningEffort, $sessionPhase,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
   createTab, getTabState, hasTab, patchActiveTab, patchTab, switchTab,
-  pushToast,
+  pushToast, upsertSubagent,
 } from './store'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
@@ -76,6 +78,7 @@ function DesktopApp() {
       >
         <div className="main-viewport">
           <TabBar />
+          <SubagentStrip />
           <AppError />
           <ErrorBoundary
             name="消息区"
@@ -85,7 +88,8 @@ function DesktopApp() {
           >
             <AppMessages />
           </ErrorBoundary>
-          {/* 审批条在输入框上方，非全屏 modal */}
+          {/* 问卷 / 审批条在输入框上方，非全屏 modal */}
+          <AppUserQuestion />
           <AppPermission />
           <AppComposer />
           <SettingsModal />
@@ -214,6 +218,77 @@ function handleSessionEvent(ev: import('./bridge').SessionEventPayload) {
         })
       }
       break
+    case 'user_question_request':
+      if (getTabState(tabId)?.phase === 'loading') break
+      if (ev.request_id != null && ev.questions?.length) {
+        patchTab(tabId, {
+          userQuestion: {
+            requestId: ev.request_id,
+            toolCallId: ev.tool_call_id || `ask_${ev.request_id}`,
+            mode: ev.mode || 'default',
+            questions: ev.questions.map((q) => ({
+              question: q.question,
+              options: (q.options || []).map((o) => ({
+                label: o.label,
+                description: o.description,
+                preview: o.preview,
+              })),
+              multiSelect: q.multiSelect,
+            })),
+          },
+        })
+      }
+      break
+    case 'subagent_spawned':
+      if (ev.subagent_id) {
+        upsertSubagent(tabId, {
+          subagentId: ev.subagent_id,
+          parentSessionId: ev.parent_session_id || '',
+          childSessionId: ev.child_session_id || '',
+          subagentType: ev.subagent_type || 'general-purpose',
+          description: ev.description || '',
+          model: ev.model,
+          status: 'running',
+        })
+      }
+      break
+    case 'subagent_progress':
+      if (ev.subagent_id) {
+        upsertSubagent(tabId, {
+          subagentId: ev.subagent_id,
+          parentSessionId: ev.parent_session_id,
+          childSessionId: ev.child_session_id,
+          status: 'running',
+          durationMs: ev.duration_ms,
+          turnCount: ev.turn_count,
+          toolCallCount: ev.tool_call_count,
+          tokensUsed: ev.tokens_used,
+          contextUsagePct: ev.context_usage_pct,
+          toolsUsed: ev.tools_used,
+          errorCount: ev.error_count,
+        })
+      }
+      break
+    case 'subagent_finished':
+      if (ev.subagent_id) {
+        const st = (ev.status || 'completed').toLowerCase()
+        const status =
+          st === 'failed' || st === 'cancelled' || st === 'completed'
+            ? (st as 'failed' | 'cancelled' | 'completed')
+            : 'completed'
+        upsertSubagent(tabId, {
+          subagentId: ev.subagent_id,
+          childSessionId: ev.child_session_id,
+          status,
+          error: ev.error,
+          toolCallCount: ev.tool_calls,
+          turnCount: ev.turns,
+          durationMs: ev.duration_ms,
+          tokensUsed: ev.tokens_used,
+          output: ev.output,
+        })
+      }
+      break
     case 'status_changed':
       if (getTabState(tabId)?.phase === 'loading') break
       if (ev.status) patchTab(tabId, { status: ev.status as import('./types').SessionStatus })
@@ -256,8 +331,8 @@ function AppSidebar() {
 async function replayTabAfterCrash(tabId: string) {
   const st = getTabState(tabId)
   if (!st) return
-  // 清挂起的 UI 状态（旧 actor 的权限 oneshot 已随 panic 失效）
-  patchTab(tabId, { permission: null, error: '' })
+  // 清挂起的 UI 状态（旧 actor 的权限 / 问卷 oneshot 已随 panic 失效）
+  patchTab(tabId, { permission: null, userQuestion: null, error: '', subagents: [] })
   const cwd = st.cwd || $workspaceCwd.get()
   try {
     if (st.sessionId) {
@@ -269,13 +344,15 @@ async function replayTabAfterCrash(tabId: string) {
       await startSession(tabId, cwd)
       patchTab(tabId, { phase: 'ready', status: 'idle' })
     }
-    // 重放模型 / 推理档
-    const modelId = $defaultModelId.get()
+    // 重放该 Tab 记忆的模型 / 推理档（回退全局投影）
+    const modelId = st.modelId || $defaultModelId.get()
     if (modelId) {
-      const entry = $models.get().find((m) => m.id === modelId)
-      const effort = entry?.supports_reasoning_effort
-        ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
-        : undefined
+      const effort =
+        st.reasoningEffort ||
+        $models.get().find((m) => m.id === modelId)?.reasoning_effort ||
+        $reasoningEffort.get() ||
+        'medium'
+      patchTab(tabId, { modelId, reasoningEffort: effort })
       await setCurrentModel(tabId, modelId, effort)
     }
     pushToast('会话已自动恢复', 'success')
@@ -295,7 +372,19 @@ function AppMessages() {
   const msgs = useStore($messages)
   const streaming = useStore($generating)
   const perm = useStore($permission)
-  return <MessageList messages={msgs} streaming={streaming} permission={perm} />
+  const onFocusUserQuestion = useCallback((toolCallId: string) => {
+    window.dispatchEvent(
+      new CustomEvent('jike:focus-user-question', { detail: { toolCallId } }),
+    )
+  }, [])
+  return (
+    <MessageList
+      messages={msgs}
+      streaming={streaming}
+      permission={perm}
+      onFocusUserQuestion={onFocusUserQuestion}
+    />
+  )
 }
 
 function AppComposer() {
@@ -355,13 +444,18 @@ function AppComposer() {
   }, [])
 
   const onSwitchModel = useCallback((id: string) => {
+    const tabId = $activeTabId.get()
     const entry = $models.get().find((m) => m.id === id)
     const nextEffort = entry?.supports_reasoning_effort
       ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
-      : undefined
+      : $reasoningEffort.get() || 'medium'
     $defaultModelId.set(id)
     if (nextEffort) $reasoningEffort.set(nextEffort)
-    void setCurrentModel($activeTabId.get(), id, nextEffort)
+    // 每 Tab 独立记忆模型 / 推理档
+    if (tabId) {
+      patchTab(tabId, { modelId: id, reasoningEffort: nextEffort || 'medium' })
+    }
+    void setCurrentModel(tabId, id, nextEffort)
       .then(() => {
         const label = entry?.model?.trim() || entry?.name?.trim() || id
         pushToast(`已切换模型 · ${label}`, 'success')
@@ -373,10 +467,14 @@ function AppComposer() {
   }, [])
 
   const onSwitchReasoningEffort = useCallback((e: string) => {
-    $reasoningEffort.set(e)
+    const tabId = $activeTabId.get()
     const id = $defaultModelId.get()
-    if (!id) return
-    void setCurrentModel(id, e)
+    $reasoningEffort.set(e)
+    if (tabId) {
+      patchTab(tabId, { reasoningEffort: e, ...(id ? { modelId: id } : {}) })
+    }
+    if (!id || !tabId) return
+    void setCurrentModel(tabId, id, e)
       .then(() => {
         pushToast(`已切换思考强度 · ${e}`, 'success')
       })
@@ -439,4 +537,15 @@ function AppComposer() {
 function AppPermission() {
   const perm = useStore($permission)
   return <PermissionModal permission={perm} />
+}
+
+function AppUserQuestion() {
+  const req = useStore($userQuestion)
+  const [focusKey, setFocusKey] = useState(0)
+  useEffect(() => {
+    const onFocus = () => setFocusKey((k) => k + 1)
+    window.addEventListener('jike:focus-user-question', onFocus)
+    return () => window.removeEventListener('jike:focus-user-question', onFocus)
+  }, [])
+  return <UserQuestionPanel request={req} focusKey={focusKey} />
 }
