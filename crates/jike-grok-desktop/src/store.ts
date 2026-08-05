@@ -140,7 +140,7 @@ export function createTab(id: string, initial: Partial<TabState> = {}): void {
 }
 
 /**
- * 新建 tab 时解析初始模型：优先继承指定 tab，否则用设置页默认。
+ * 新建 tab 时解析初始模型：优先继承指定 tab，否则用设置页默认，再退回当前投影。
  */
 export function resolveNewTabModel(inheritFromTabId?: string): {
   modelId: string
@@ -155,13 +155,22 @@ export function resolveNewTabModel(inheritFromTabId?: string): {
       }
     }
   }
-  const modelId = $defaultModelId.get() || ''
+  const modelId =
+    $settingsDefaultModelId.get() || $defaultModelId.get() || ''
   const entry = $models.get().find((m) => m.id === modelId)
   return {
     modelId,
     reasoningEffort:
       entry?.reasoning_effort || $reasoningEffort.get() || 'medium',
   }
+}
+
+/** 测试用：清空 tab map 与活跃投影（仅 vitest） */
+export function resetTabsForTests(): void {
+  tabStates.clear()
+  $tabs.set([])
+  $activeTabId.set('')
+  resetProjection()
 }
 
 /** 移除一个 tab（closeTab 成功后调用） */
@@ -321,8 +330,18 @@ export function upsertSubagent(
   patchTab(tabId, { subagents: list })
 }
 
-// ── 模型（全局设置，跨 tab 共享 — 对齐官方 pager `models: ModelState shared across agents`） ──
+// ── 模型 ──
+/** 模型目录（全局共享，对齐官方 pager models catalog） */
 export const $models = atom<ModelInfo[]>([])
+/**
+ * 设置页「默认模型」（config 级，跨 tab）。
+ * 新建 tab / 冷启动首 tab 用它；不等于当前 tab 正在用的模型。
+ */
+export const $settingsDefaultModelId = atom('')
+/**
+ * 当前 tab 的模型 id / 推理强度（TabState 投影）。
+ * 组件读点可继续用这两个 atom；写点必须 patchTab / patchActiveTab。
+ */
 export const $defaultModelId = atom('')
 export const $reasoningEffort = atom('medium')
 

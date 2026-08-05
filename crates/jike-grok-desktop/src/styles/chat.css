@@ -609,11 +609,16 @@
 }
 
 .ask-user-badge {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: min(18rem, 55%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.625rem;
   font-weight: 500;
   color: var(--text-tertiary);
-  padding: 0 0.35rem;
+  padding: 0 0.4rem;
   border-radius: 999px;
   border: 1px solid var(--border-solid);
   background: var(--surface-muted);
@@ -622,6 +627,16 @@
 
 .ask-user-badge.is-pending {
   color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.ask-user-badge.is-done {
+  color: var(--text-secondary);
+  max-width: min(22rem, 62%);
+}
+
+.tool-row.kind-ask-user.is-answered .scaffold-toggle {
+  opacity: 0.92;
 }
 
 /* 复制钮：展开体右上，默认极淡 */

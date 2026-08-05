@@ -39,29 +39,40 @@
   cursor: pointer;
 }
 
-/* 短横线：默认细、短、浅灰 */
+/* 短横线：默认细、短、浅灰；右对齐呈阶梯感 */
 .chat-timeline-tick-mark {
   display: block;
   height: 1.5px;
-  width: 8px;
+  width: 9px;
   border-radius: 1px;
-  background: #c9ced6;
-  opacity: 0.85;
+  background: #c4c9d2;
+  opacity: 0.8;
   transition:
     width 100ms ease-out,
     background 100ms ease-out,
-    opacity 100ms ease-out;
+    opacity 100ms ease-out,
+    box-shadow 100ms ease-out;
 }
 
 .chat-timeline-tick-btn:hover .chat-timeline-tick-mark {
-  width: 12px;
+  width: 13px;
   background: #94a3b8;
   opacity: 1;
 }
 
+.chat-timeline-tick-btn:focus-visible {
+  outline: none;
+}
+
+.chat-timeline-tick-btn:focus-visible .chat-timeline-tick-mark {
+  width: 13px;
+  background: #64748b;
+  box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.18);
+}
+
 /* 当前段：更长、更深 */
 .chat-timeline-tick-mark.is-active {
-  width: 14px;
+  width: 15px;
   height: 2px;
   background: #334155;
   opacity: 1;

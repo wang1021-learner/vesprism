@@ -1,21 +1,26 @@
 /**
- * AI 问卷浮层（gray card above composer）：
- * - 多题逐步作答
- * - Esc 取消
- * - plan 模式额外：讨论 / 跳过
+ * AI 问卷浮层（输入栏上方灰卡）：
+ * - 多题逐步作答；单选 / 多选
+ * - Esc 取消；plan 模式：讨论 / 跳过
+ * - 提交后工具卡回显所选答案
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   UserQuestionRequest,
   UserQuestionResponsePayload,
 } from '../types'
-import { $activeTabId, patchActiveTab, patchTab, getTabState } from '../store'
+import {
+  $activeTabId,
+  $messages,
+  getTabState,
+  patchActiveTab,
+  patchTab,
+} from '../store'
 import { respondUserQuestion } from '../bridge'
 import {
   applyTranscriptEvent,
   formatAskUserAnswerPreview,
 } from '../lib/sessionTranscript'
-import { $messages } from '../store'
 
 interface Props {
   request: UserQuestionRequest | null
@@ -55,6 +60,36 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
     return singleSel[step] != null
   }, [current, isMulti, multiSel, singleSel, step])
 
+  /** 收集全部已选题答案（提交用） */
+  const collectAnswers = useCallback(() => {
+    if (!request) {
+      return {
+        answers: {} as Record<string, string[]>,
+        annotations: {} as Record<string, { notes?: string }>,
+      }
+    }
+    const answers: Record<string, string[]> = {}
+    const annotations: Record<string, { notes?: string }> = {}
+    request.questions.forEach((q, i) => {
+      const key = q.question
+      if (q.multiSelect) {
+        const set = multiSel[i]
+        if (!set || set.size === 0) return
+        answers[key] = [...set]
+          .map((idx) => q.options[idx]?.label || '')
+          .filter(Boolean)
+      } else {
+        const idx = singleSel[i]
+        if (idx == null) return
+        const label = q.options[idx]?.label || ''
+        if (label) answers[key] = [label]
+      }
+      const notes = otherNotes[i]?.trim()
+      if (notes) annotations[key] = { notes }
+    })
+    return { answers, annotations }
+  }, [request, multiSel, singleSel, otherNotes])
+
   const submit = useCallback(
     async (payload: UserQuestionResponsePayload) => {
       if (!request || busy) return
@@ -68,13 +103,16 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
         setBusy(false)
         return
       }
-      // 更新 transcript 工具卡 + 清问卷
+      const answerPreview =
+        payload.outcome === 'accepted' && 'answers' in payload
+          ? formatAskUserAnswerPreview('accepted', payload.answers)
+          : formatAskUserAnswerPreview(payload.outcome)
       const cur = getTabState(tabId)?.messages ?? $messages.get()
       const next = applyTranscriptEvent(cur, {
         type: 'user_question_resolved',
         tool_call_id: request.toolCallId,
         outcome: payload.outcome,
-        answer_preview: formatAskUserAnswerPreview(payload.outcome),
+        answer_preview: answerPreview,
       })
       patchTab(tabId, { messages: next, userQuestion: null })
       setBusy(false)
@@ -87,43 +125,49 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
   }, [submit])
 
   const onAccept = useCallback(() => {
-    if (!request) return
-    const answers: Record<string, string[]> = {}
-    const annotations: Record<string, { notes?: string }> = {}
-    request.questions.forEach((q, i) => {
-      const key = q.question
-      if (q.multiSelect) {
-        const set = multiSel[i]
-        if (!set || set.size === 0) return
-        answers[key] = [...set].map((idx) => q.options[idx]?.label || '').filter(Boolean)
-      } else {
-        const idx = singleSel[i]
-        if (idx == null) return
-        const label = q.options[idx]?.label || ''
-        if (label) answers[key] = [label]
-      }
-      const notes = otherNotes[i]?.trim()
-      if (notes) annotations[key] = { notes }
-    })
+    if (!request || !canNext) return
+    const { answers, annotations } = collectAnswers()
+    // 最后一题通过 canNext；前面已逐步作答。至少要有一题答案
+    if (Object.keys(answers).length === 0) return
     void submit({
       outcome: 'accepted',
       answers,
       annotations: Object.keys(annotations).length ? annotations : undefined,
     })
-  }, [request, multiSel, singleSel, otherNotes, submit])
+  }, [request, canNext, collectAnswers, submit])
 
-  // Esc 取消
+  // Esc 取消；数字键 1–9 快选当前题
   useEffect(() => {
-    if (!request) return
+    if (!request || !current) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         onCancel()
+        return
+      }
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+      const n = Number(e.key)
+      if (!Number.isInteger(n) || n < 1 || n > 9) return
+      const idx = n - 1
+      if (idx >= current.options.length) return
+      e.preventDefault()
+      if (isMulti) {
+        setMultiSel((prev) => {
+          const next = { ...prev }
+          const set = new Set(next[step] ?? [])
+          if (set.has(idx)) set.delete(idx)
+          else set.add(idx)
+          next[step] = set
+          return next
+        })
+      } else {
+        setSingleSel((p) => ({ ...p, [step]: idx }))
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [request, onCancel])
+  }, [request, current, isMulti, step, onCancel])
 
   if (!request || !current) return null
 
@@ -139,35 +183,51 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
   }
 
   return (
-    <div className="uq-dock" role="dialog" aria-label="AI 问卷" id="user-question-panel">
+    <div
+      className="uq-dock"
+      role="dialog"
+      aria-label="AI 问卷"
+      aria-modal="false"
+      id="user-question-panel"
+    >
       <div className="uq-card">
         <div className="uq-head">
           <span className="uq-badge">Ask</span>
           <span className="uq-step">
             {step + 1} / {total}
+            {isMulti ? ' · 可多选' : ''}
           </span>
           <button
             type="button"
             className="uq-close"
             onClick={onCancel}
             title="取消 (Esc)"
+            aria-label="取消问卷"
             disabled={busy}
           >
             ✕
           </button>
         </div>
 
-        <div className="uq-question">{current.question}</div>
+        <div className="uq-question" id={`uq-q-${step}`}>
+          {current.question}
+        </div>
 
-        <div className="uq-options" role={isMulti ? 'group' : 'radiogroup'}>
+        <div
+          className="uq-options"
+          role={isMulti ? 'group' : 'radiogroup'}
+          aria-labelledby={`uq-q-${step}`}
+        >
           {current.options.map((opt, i) => {
             const selected = isMulti
-              ? multiSel[step]?.has(i)
+              ? Boolean(multiSel[step]?.has(i))
               : singleSel[step] === i
             return (
               <button
                 key={`${opt.label}-${i}`}
                 type="button"
+                role={isMulti ? 'checkbox' : 'radio'}
+                aria-checked={selected}
                 className={`uq-option${selected ? ' is-selected' : ''}`}
                 onClick={() => {
                   if (isMulti) toggleMulti(i)
@@ -175,13 +235,23 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
                 }}
                 disabled={busy}
               >
-                <span className="uq-option-label">{opt.label}</span>
-                {opt.description ? (
-                  <span className="uq-option-desc">{opt.description}</span>
-                ) : null}
-                {opt.preview && selected ? (
-                  <pre className="uq-option-preview">{opt.preview}</pre>
-                ) : null}
+                <span className="uq-option-mark" aria-hidden>
+                  {isMulti ? (selected ? '☑' : '☐') : selected ? '●' : '○'}
+                </span>
+                <span className="uq-option-body">
+                  <span className="uq-option-label">
+                    {i < 9 ? (
+                      <kbd className="uq-option-key">{i + 1}</kbd>
+                    ) : null}
+                    {opt.label}
+                  </span>
+                  {opt.description ? (
+                    <span className="uq-option-desc">{opt.description}</span>
+                  ) : null}
+                  {opt.preview && selected ? (
+                    <pre className="uq-option-preview">{opt.preview}</pre>
+                  ) : null}
+                </span>
               </button>
             )
           })}
@@ -251,7 +321,7 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
                 onClick={onAccept}
                 disabled={!canNext || busy}
               >
-                提交
+                {busy ? '提交中…' : '提交'}
               </button>
             )}
           </div>

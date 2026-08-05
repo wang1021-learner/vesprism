@@ -7,9 +7,11 @@ import {
   createTab,
   getTabState,
   patchTab,
+  removeTab,
   switchTab,
 } from '../store'
 import {
+  closeTab,
   getSessionMessages,
   loadSession,
   openTab,
@@ -61,9 +63,13 @@ function hydrateDisplayMessage(m: DisplayMsg): ChatMessage {
   }
   return {
     id: m.id || generateId('msg_'),
-    role: role === 'user' || role === 'assistant' || role === 'thought' || role === 'system'
-      ? role
-      : 'assistant',
+    role:
+      role === 'user' ||
+      role === 'assistant' ||
+      role === 'thought' ||
+      role === 'system'
+        ? role
+        : 'assistant',
     text: m.text || '',
     promptId: m.prompt_id || undefined,
   }
@@ -71,7 +77,7 @@ function hydrateDisplayMessage(m: DisplayMsg): ChatMessage {
 
 /**
  * 打开子 agent 的 child session 到新 tab。
- * `childSessionId` 为子会话 id；`title` 可选展示标题。
+ * 失败时关闭新建 tab 并切回父 tab。
  */
 export async function openSubagentTab(
   childSessionId: string,
@@ -81,16 +87,20 @@ export async function openSubagentTab(
   if (!sid) return null
 
   const parentTab = $activeTabId.get()
+  const parentState = parentTab ? getTabState(parentTab) : undefined
   const cwd =
-    (opts?.cwd || getTabState(parentTab)?.cwd || $workspaceCwd.get() || '').trim()
+    (opts?.cwd || parentState?.cwd || $workspaceCwd.get() || '').trim()
   if (!cwd) return null
 
+  let tabId: string | null = null
   try {
-    const tabId = await openTab()
+    tabId = await openTab()
     createTab(tabId, {
       cwd,
       chatTitle: opts?.title || `子任务 · ${sid.slice(0, 8)}`,
       chatId: sid,
+      modelId: parentState?.modelId || '',
+      reasoningEffort: parentState?.reasoningEffort || 'medium',
     })
     switchTab(tabId)
 
@@ -107,12 +117,23 @@ export async function openSubagentTab(
     await loadSession(tabId, sid, cwd)
     if (gen !== currentLoadGen(tabId)) return tabId
     finishAttachRuntime(tabId)
-    patchTab(tabId, { sessionId: sid, chatId: sid })
+    patchTab(tabId, { sessionId: sid, chatId: sid, phase: 'ready', status: 'idle' })
     return tabId
   } catch (e) {
-    const active = $activeTabId.get()
-    abortOpenSession(active)
-    patchTab(active, { error: String(e), status: 'idle', phase: 'ready' })
+    const err = String(e)
+    if (tabId) {
+      abortOpenSession(tabId)
+      try {
+        await closeTab(tabId)
+      } catch {
+        /* 后端可能尚未登记成功 */
+      }
+      removeTab(tabId)
+    }
+    if (parentTab && getTabState(parentTab)) {
+      switchTab(parentTab)
+      patchTab(parentTab, { error: `打开子会话失败: ${err}` })
+    }
     return null
   }
 }

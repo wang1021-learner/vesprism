@@ -140,13 +140,13 @@ export function applyTranscriptEvent(
       const toolCallId = ev.tool_call_id
       if (!toolCallId) return messages
       const preview = ev.answer_preview || formatAskUserAnswerPreview(ev.outcome)
+      // 保留原题目 detail；preview 写答案摘要；取消也用 completed（工具卡终态）
       return patchTool(messages, {
         toolCallId,
         kind: 'ask_user',
-        status: ev.outcome === 'cancelled' ? 'completed' : 'completed',
+        status: 'completed',
         title: 'Ask',
         preview,
-        detail: preview,
       })
     }
     default:
@@ -164,8 +164,17 @@ export function formatAskUserDetail(
   return `${first}（共 ${questions.length} 题）`
 }
 
-/** 问卷解答后的预览文案 */
-export function formatAskUserAnswerPreview(outcome?: string): string {
+/**
+ * 问卷解答后的预览文案。
+ * accepted 且传入 answers 时拼选项，便于会话回顾。
+ */
+export function formatAskUserAnswerPreview(
+  outcome?: string,
+  answers?: Record<string, string[]>,
+): string {
+  if (outcome === 'accepted' && answers && Object.keys(answers).length > 0) {
+    return formatAcceptedAnswersPreview(answers)
+  }
   switch (outcome) {
     case 'accepted':
       return '已回答'
@@ -178,6 +187,25 @@ export function formatAskUserAnswerPreview(outcome?: string): string {
     default:
       return outcome ? `已处理 · ${outcome}` : '已处理'
   }
+}
+
+/** 把 answers 压成一行回顾文案：`题 → 选项` */
+export function formatAcceptedAnswersPreview(
+  answers: Record<string, string[]>,
+  maxItems: number = 3,
+  maxQ: number = 28,
+): string {
+  const entries = Object.entries(answers).filter(
+    ([, opts]) => opts && opts.length > 0,
+  )
+  if (entries.length === 0) return '已回答'
+  const lines = entries.map(([q, opts]) => {
+    const shortQ =
+      q.length > maxQ ? `${q.slice(0, maxQ - 1).trimEnd()}…` : q
+    return `${shortQ} → ${opts.join('、')}`
+  })
+  if (lines.length <= maxItems) return lines.join('；')
+  return `${lines.slice(0, maxItems).join('；')}…`
 }
 
 /**

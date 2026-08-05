@@ -10,12 +10,14 @@ import {
   $activeTabId,
   $subagents,
   patchActiveTab,
+  patchTab,
   pushToast,
   upsertSubagent,
 } from '../store'
 import type { SubagentRuntime } from '../types'
 import { cancelSubagent, getSubagent, getSessionMessages } from '../bridge'
 import { openSubagentTab } from '../lib/openSubagentTab'
+import { parseSubagentSnap } from '../lib/parseSubagentSnap'
 
 function formatDuration(ms?: number): string {
   if (ms == null || ms < 0) return ''
@@ -42,6 +44,23 @@ function statusLabel(s: SubagentRuntime['status']): string {
   }
 }
 
+function roleLabel(role: string): string {
+  switch (role) {
+    case 'user':
+      return '用户'
+    case 'assistant':
+      return '助手'
+    case 'thought':
+      return '思考'
+    case 'tool':
+      return '工具'
+    case 'system':
+      return '系统'
+    default:
+      return role
+  }
+}
+
 type TranscriptLine = { id: string; role: string; text: string }
 
 const SubagentChip = memo(function SubagentChip({
@@ -60,6 +79,7 @@ const SubagentChip = memo(function SubagentChip({
       className={`subagent-chip status-${item.status}${selected ? ' is-selected' : ''}`}
       title={item.description || item.subagentType}
       onClick={onSelect}
+      aria-pressed={selected}
     >
       <span className={`subagent-dot${running ? ' is-live' : ''}`} aria-hidden />
       <span className="subagent-type">{item.subagentType || 'subagent'}</span>
@@ -92,7 +112,7 @@ export const SubagentStrip = memo(function SubagentStrip() {
         const ar = a.status === 'running' ? 1 : 0
         const br = b.status === 'running' ? 1 : 0
         if (ar !== br) return br - ar
-        return 0
+        return (b.durationMs ?? 0) - (a.durationMs ?? 0)
       })
   }, [list])
 
@@ -100,6 +120,11 @@ export const SubagentStrip = memo(function SubagentStrip() {
     if (!detailId) return null
     return list.find((a) => a.subagentId === detailId) ?? null
   }, [detailId, list])
+
+  const finishedCount = useMemo(
+    () => list.filter((s) => s.status !== 'running').length,
+    [list],
+  )
 
   const loadDetailTranscript = useCallback(async (agent: SubagentRuntime) => {
     if (!agent.childSessionId) {
@@ -109,7 +134,7 @@ export const SubagentStrip = memo(function SubagentStrip() {
     try {
       const raw = await getSessionMessages(agent.childSessionId)
       const mapped: TranscriptLine[] = (raw || [])
-        .slice(-40)
+        .slice(-48)
         .map((m: { id?: string; role?: string; text?: string }, i: number) => ({
           id: m.id || `line_${i}`,
           role: m.role || 'assistant',
@@ -124,8 +149,14 @@ export const SubagentStrip = memo(function SubagentStrip() {
 
   const openDetail = useCallback(
     (agent: SubagentRuntime) => {
-      setDetailId(agent.subagentId)
-      void loadDetailTranscript(agent)
+      setDetailId((prev) => {
+        if (prev === agent.subagentId) {
+          setLines([])
+          return null
+        }
+        void loadDetailTranscript(agent)
+        return agent.subagentId
+      })
     },
     [loadDetailTranscript],
   )
@@ -135,35 +166,9 @@ export const SubagentStrip = memo(function SubagentStrip() {
     setRefreshing(true)
     try {
       const snap = await getSubagent(tabId, detail.subagentId, false)
-      const statusRaw = String(
-        (snap as { status?: string }).status || detail.status,
-      ).toLowerCase()
-      const status =
-        statusRaw === 'failed' ||
-        statusRaw === 'cancelled' ||
-        statusRaw === 'completed' ||
-        statusRaw === 'running'
-          ? (statusRaw as SubagentRuntime['status'])
-          : detail.status
-      upsertSubagent(tabId, {
-        subagentId: detail.subagentId,
-        status,
-        turnCount:
-          Number((snap as { turn_count?: number; turns?: number }).turn_count ??
-            (snap as { turns?: number }).turns) || detail.turnCount,
-        toolCallCount:
-          Number(
-            (snap as { tool_call_count?: number; tool_calls?: number })
-              .tool_call_count ?? (snap as { tool_calls?: number }).tool_calls,
-          ) || detail.toolCallCount,
-        tokensUsed:
-          Number((snap as { tokens_used?: number }).tokens_used) ||
-          detail.tokensUsed,
-        output:
-          (snap as { output?: string }).output ?? detail.output ?? undefined,
-        error: (snap as { error?: string }).error ?? detail.error,
-      })
-      await loadDetailTranscript(detail)
+      const patch = parseSubagentSnap(snap, detail)
+      upsertSubagent(tabId, patch)
+      await loadDetailTranscript({ ...detail, ...patch })
       pushToast('已刷新子任务状态', 'success')
     } catch (e) {
       pushToast(`刷新失败 · ${String(e)}`, 'error')
@@ -207,11 +212,28 @@ export const SubagentStrip = memo(function SubagentStrip() {
     }
   }, [detail, opening])
 
+  const clearFinished = useCallback(() => {
+    if (!tabId) return
+    const remaining = list.filter((s) => s.status === 'running')
+    patchTab(tabId, { subagents: remaining })
+    if (detail && detail.status !== 'running') {
+      setDetailId(null)
+      setLines([])
+    }
+    pushToast(
+      remaining.length === 0
+        ? '已清空子任务条'
+        : `已清除 ${list.length - remaining.length} 个结束任务`,
+      'info',
+    )
+  }, [tabId, list, detail])
+
   if (!sorted.length) return null
 
   const running = sorted.filter((s) => s.status === 'running')
-  const done = sorted.filter((s) => s.status !== 'running').slice(-6)
+  const done = sorted.filter((s) => s.status !== 'running').slice(0, 12)
   const shown = [...running, ...done]
+  const hiddenDone = Math.max(0, finishedCount - done.length)
 
   return (
     <>
@@ -226,6 +248,19 @@ export const SubagentStrip = memo(function SubagentStrip() {
               onSelect={() => openDetail(s)}
             />
           ))}
+          {hiddenDone > 0 ? (
+            <span className="subagent-strip-more">+{hiddenDone}</span>
+          ) : null}
+          {finishedCount > 0 ? (
+            <button
+              type="button"
+              className="subagent-strip-clear"
+              onClick={clearFinished}
+              title="清除已结束的子任务芯片"
+            >
+              清除结束
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -247,8 +282,12 @@ export const SubagentStrip = memo(function SubagentStrip() {
               <button
                 type="button"
                 className="subagent-detail-close"
-                onClick={() => setDetailId(null)}
+                onClick={() => {
+                  setDetailId(null)
+                  setLines([])
+                }}
                 title="关闭"
+                aria-label="关闭详情"
               >
                 ×
               </button>
@@ -287,7 +326,7 @@ export const SubagentStrip = memo(function SubagentStrip() {
               <div className="subagent-detail-transcript">
                 {lines.map((l) => (
                   <div key={l.id} className={`subagent-line role-${l.role}`}>
-                    <span className="subagent-line-role">{l.role}</span>
+                    <span className="subagent-line-role">{roleLabel(l.role)}</span>
                     <span className="subagent-line-text">{l.text}</span>
                   </div>
                 ))}
@@ -311,7 +350,7 @@ export const SubagentStrip = memo(function SubagentStrip() {
                   className="subagent-btn primary"
                   disabled={opening}
                   onClick={() => void onOpenTab()}
-                  title="在新标签打开子会话（三期）"
+                  title="在新标签打开子会话"
                 >
                   {opening ? '打开中…' : '新标签打开 ↗'}
                 </button>

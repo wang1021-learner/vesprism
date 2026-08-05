@@ -85,11 +85,11 @@
 
 .uq-option {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: flex-start;
-  gap: 0.15rem;
+  gap: 0.5rem;
   width: 100%;
-  padding: 0.4rem 0.55rem;
+  padding: 0.45rem 0.6rem;
   border-radius: 6px;
   border: 1px solid var(--border-solid);
   background: color-mix(in srgb, var(--surface) 80%, transparent);
@@ -97,21 +97,74 @@
   text-align: left;
   cursor: pointer;
   font: inherit;
+  transition:
+    border-color 100ms ease-out,
+    background 100ms ease-out,
+    box-shadow 100ms ease-out;
 }
 
-.uq-option:hover {
+.uq-option:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--text-secondary) 35%, var(--border-solid));
+}
+
+.uq-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text-secondary) 45%, transparent);
+  outline-offset: 1px;
 }
 
 .uq-option.is-selected {
   border-color: color-mix(in srgb, var(--text-secondary) 55%, var(--border-solid));
   background: color-mix(in srgb, var(--text-tertiary) 10%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.uq-option-mark {
+  flex-shrink: 0;
+  width: 1rem;
+  margin-top: 0.1rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.uq-option.is-selected .uq-option-mark {
+  color: var(--text-primary);
+}
+
+.uq-option-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .uq-option-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.uq-option-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  border-radius: 3px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted, var(--surface));
+  font-family: inherit;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  line-height: 1;
 }
 
 .uq-option-desc {

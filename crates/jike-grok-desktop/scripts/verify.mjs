@@ -25,7 +25,14 @@ run('npx', ['tsc', '-p', 'tsconfig.app.json', '--noEmit'])
 // vitest 存在则跑；失败不阻断若未安装
 const vitest = spawnSync(
   'npx',
-  ['vitest', 'run', 'src/lib/sessionTranscript.test.ts', 'src/store.tab-model.test.ts'],
+  [
+    'vitest',
+    'run',
+    'src/lib/sessionTranscript.test.ts',
+    'src/store.tab-model.test.ts',
+    'src/lib/parseSubagentSnap.test.ts',
+  ],
+
   { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' },
 )
 if (vitest.status !== 0) {

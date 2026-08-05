@@ -21,9 +21,10 @@ import {
   $activeChatId, $chats, $composerInput,
   $defaultModelId, $error, $generating, $messages, $models,
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
+  $settingsDefaultModelId,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
-  createTab, getTabState, hasTab, patchActiveTab, patchTab, switchTab,
-  pushToast, upsertSubagent,
+  createTab, getTabState, hasTab, patchActiveTab, patchTab, resolveNewTabModel,
+  switchTab, pushToast, upsertSubagent,
 } from './store'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
@@ -167,7 +168,9 @@ async function bootstrap() {
     const cwd = await workspaceCwd()
     const settings = await getModelSettings()
     $models.set(settings.models)
-    $defaultModelId.set(settings.default_id || settings.models[0]?.id || '')
+    const configDefault =
+      settings.default_id || settings.models[0]?.id || ''
+    $settingsDefaultModelId.set(configDefault)
     const chats = await listSessions(cwd, 80)
     $chats.set(chats.map(c => ({ id: c.id, title: c.title, cwd: c.cwd, updatedAt: c.updated_at })))
     const wsSet = new Set(chats.map(c => c.cwd))
@@ -175,10 +178,18 @@ async function bootstrap() {
     $workspaceOptions.set([...wsSet])
     listenSessionEvents(handleSessionEvent)
     const tabId = await openTab()
-    // 注册 tab 分片并投影为当前 tab（cwd 随 createTab 写入 map）
-    createTab(tabId, { cwd })
+    const { modelId, reasoningEffort } = resolveNewTabModel()
+    // 注册 tab 分片并投影为当前 tab（cwd / 模型随 createTab 写入 map）
+    createTab(tabId, { cwd, modelId, reasoningEffort })
     switchTab(tabId)
     await startSession(tabId, cwd)
+    if (modelId) {
+      try {
+        await setCurrentModel(tabId, modelId, reasoningEffort)
+      } catch {
+        /* 会话尚未就绪时可忽略，Composer 切换会再试 */
+      }
+    }
     patchActiveTab({ phase: 'ready', status: 'idle' })
   } catch (e) {
     patchActiveTab({ error: String(e) })
@@ -344,16 +355,18 @@ async function replayTabAfterCrash(tabId: string) {
       await startSession(tabId, cwd)
       patchTab(tabId, { phase: 'ready', status: 'idle' })
     }
-    // 重放该 Tab 记忆的模型 / 推理档（回退全局投影）
-    const modelId = st.modelId || $defaultModelId.get()
+    // 重放该 tab 自己记住的模型 / 推理档（不是全局默认）
+    const modelId = st.modelId || $settingsDefaultModelId.get()
     if (modelId) {
-      const effort =
-        st.reasoningEffort ||
-        $models.get().find((m) => m.id === modelId)?.reasoning_effort ||
-        $reasoningEffort.get() ||
-        'medium'
-      patchTab(tabId, { modelId, reasoningEffort: effort })
+      const entry = $models.get().find((m) => m.id === modelId)
+      const effort = entry?.supports_reasoning_effort
+        ? st.reasoningEffort || entry.reasoning_effort || 'medium'
+        : undefined
       await setCurrentModel(tabId, modelId, effort)
+      patchTab(tabId, {
+        modelId,
+        ...(effort ? { reasoningEffort: effort } : {}),
+      })
     }
     pushToast('会话已自动恢复', 'success')
   } catch (e) {

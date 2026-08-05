@@ -10,7 +10,9 @@
   /* 相对原 15px 再小 2px → 13px（用户要求会话 AI 字号整体调小） */
   font-size: 13px;
   line-height: 1.65;
-  word-break: break-word;
+  /* 正文可断词；代码块 / 树状图不得继承 break-all */
+  overflow-wrap: break-word;
+  word-break: normal;
   color: var(--text-primary);
   letter-spacing: -0.005em;
 }
@@ -74,35 +76,47 @@
 }
 
 /* ── 行内代码 ── */
-.md-body code {
+.md-body :not(pre) > code {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
-  background: var(--surface-muted);
-  border: 1px solid var(--border-solid);
-  border-radius: 6px;
-  padding: 0.1em 0.35em;
+  background: color-mix(in srgb, var(--surface-muted) 92%, #000 3%);
+  border: 1px solid color-mix(in srgb, var(--border-solid) 90%, transparent);
+  border-radius: 4px;
+  padding: 0.08em 0.32em;
+  word-break: break-word;
 }
 
-/* ── 代码块（Streamdown 内置 CodeBlock 接管，这里只做兜底） ── */
+/* ── 代码块：中性浅灰；过长竖向折行，无横滚 ── */
 .md-body pre {
-  background: var(--surface-muted);
-  border: 1px solid var(--border-solid);
+  background: var(--surface-muted, #f5f5f5);
+  border: 1px solid var(--border-solid, #ebebeb);
   border-radius: 6px;
-  padding: 10px 12px;
-  margin: 0.5em 0 0.85em;
-  overflow-x: auto;
+  padding: 0.65rem 0.8rem;
+  margin: 0.55em 0 0.9em;
+  overflow-x: hidden;
+  overflow-y: visible;
   box-shadow: none;
-  white-space: pre-wrap;       /* 允许代码竖向折行 */
-  word-wrap: break-word;       /* 允许长单词换行 */
-  word-break: break-all;       /* 确保极端长字符串也会折行 */
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+  max-width: 100%;
 }
 
 .md-body pre code {
+  display: block;
   border: none;
   background: transparent;
   padding: 0;
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.55;
+  color: var(--text-primary);
+  white-space: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+  max-width: 100%;
 }
 
 /* ── 引用块：仅左边线，无色块底 ── */
@@ -248,98 +262,217 @@
   margin-bottom: 0;
 }
 
-/* ── 表格：细线 + 弱表头，无阴影卡片壳 ── */
+/* ── 表格：圆角壳 + 细线 + 弱表头；单元格竖向折行，无横滚 ── */
 .md-table-wrapper {
-  margin: 0.55em 0 0.9em;
-  overflow-x: auto;
-  border-radius: 0;
-  border: none;
+  margin: 0.6em 0 1em;
+  overflow-x: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
   box-shadow: none;
+  max-width: 100%;
 }
 
 .md-table {
   border-collapse: collapse;
+  border-spacing: 0;
   width: 100%;
-  min-width: 16rem;
-  font-size: 13px;
+  table-layout: fixed; /* 列宽均分，内容折行而不是撑出横滚 */
+  font-size: 12.5px;
   line-height: 1.45;
 }
 
-.md-table th {
-  background: var(--surface-muted);
-  color: var(--text-secondary);
-  font-weight: 600;
-  border: 1px solid var(--border-solid);
-  padding: 7px 11px;
-  text-align: left;
-  white-space: nowrap;
-}
-
+.md-table th,
 .md-table td {
-  border: 1px solid var(--border-solid);
-  padding: 7px 11px;
-  color: var(--text-primary);
+  border: none;
+  border-bottom: 1px solid var(--border-solid);
+  border-right: 1px solid color-mix(in srgb, var(--border-solid) 85%, transparent);
+  padding: 0.55rem 0.75rem;
+  text-align: left;
   vertical-align: top;
-}
-
-.md-table tbody tr:nth-child(even) {
-  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .md-table th:last-child,
 .md-table td:last-child {
-  border-right: 1px solid var(--border-solid);
+  border-right: none;
 }
 
-.md-table tr:last-child td {
-  border-bottom: 1px solid var(--border-solid);
+.md-table th {
+  background: #f4f5f7;
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: normal;
+  font-size: 12px;
 }
 
-/* Streamdown 代码块：弱化默认卡片感，极浅底无粗边框 */
+.md-table td {
+  color: var(--text-primary);
+  background: #fff;
+}
+
+.md-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.md-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, #f8f9fb 88%, transparent);
+}
+
+/* 表内代码略紧凑 */
+.md-table code {
+  font-size: 10.5px;
+  padding: 0.05em 0.28em;
+}
+
+/* Streamdown 代码块：与应用中性灰一致 */
 .md-body [data-streamdown='code-block'],
 .md-body [data-slot='code-card'] {
-  margin: 0.5em 0 0.85em;
-  border: 1px solid rgba(0, 0, 0, 0.04) !important;
+  margin: 0.55em 0 0.95em !important;
+  border: 1px solid var(--border-solid, #ebebeb) !important;
   border-radius: 6px !important;
-  background: #fafafa !important;
+  background: var(--surface-muted, #f5f5f5) !important;
   box-shadow: none !important;
   overflow: hidden;
   position: relative;
+  max-width: 100%;
 }
 
 .md-body [data-streamdown='code-block'] pre,
-.md-body [data-slot='code-card'] pre {
-  margin: 0;
-  border: none;
-  background: transparent;
-  border-radius: 0;
+.md-body [data-slot='code-card'] pre,
+.md-body [data-streamdown='code-block'] .shiki,
+.md-body [data-slot='code-card'] .shiki {
+  margin: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  white-space: pre-wrap !important;
+  word-break: normal !important;
+  overflow-wrap: anywhere !important;
+  overflow-x: hidden !important;
+  max-width: 100%;
+  padding: 0.65rem 0.8rem !important;
+  tab-size: 2;
 }
 
-/* 隐藏并美化 Streamdown 默认的下载/复制按钮 */
+.md-body [data-streamdown='code-block'] code,
+.md-body [data-slot='code-card'] code {
+  display: block;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  font-size: 11px !important;
+  line-height: 1.55 !important;
+  color: var(--text-primary, #1c1c1c) !important;
+  white-space: inherit !important;
+  word-break: inherit !important;
+  overflow-wrap: inherit !important;
+  max-width: 100%;
+}
+
+/* 语言标签 / header：弱化 */
+.md-body [data-streamdown='code-block'] [data-streamdown='code-block-header'],
+.md-body [data-slot='code-card'] [data-slot='code-card-header'],
+.md-body [data-streamdown='code-block'] [class*='header'],
+.md-body [data-slot='code-card'] [class*='header'] {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-solid) 80%, transparent) !important;
+  color: var(--text-tertiary, #9a9a9a) !important;
+  font-size: 0.6875rem !important;
+  font-weight: 500 !important;
+  padding: 0.3rem 0.65rem !important;
+  min-height: 0 !important;
+}
+
+/* 彻底隐藏下载类控件（controls 已关，双保险） */
+.md-body [data-streamdown='code-block'] button[aria-label*='ownload' i],
+.md-body [data-slot='code-card'] button[aria-label*='ownload' i],
+.md-body [data-streamdown='code-block'] button[title*='ownload' i],
+.md-body [data-slot='code-card'] button[title*='ownload' i],
+.md-body [data-streamdown='code-block'] a[download],
+.md-body [data-slot='code-card'] a[download],
+.md-body button[aria-label*='Download' i],
+.md-body button[title*='Download' i] {
+  display: none !important;
+}
+
+/* 复制按钮：中性灰小方钮，悬停才显 */
 .md-body [data-streamdown='code-block'] button,
 .md-body [data-slot='code-card'] button {
-  background: transparent !important;
+  position: absolute !important;
+  top: 0.35rem !important;
+  right: 0.35rem !important;
+  z-index: 2;
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  min-width: 1.5rem !important;
+  min-height: 1.5rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
   border: 1px solid transparent !important;
-  color: var(--text-tertiary, #94a3b8) !important;
+  border-radius: 5px !important;
+  background: transparent !important;
+  color: var(--text-muted, #a3a3a3) !important;
   box-shadow: none !important;
-  border-radius: 6px !important;
-  padding: 4px !important;
   cursor: pointer !important;
-  opacity: 0; /* 默认隐藏 */
-  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease !important;
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease !important;
 }
 
-/* 鼠标悬停代码块时显示按钮 */
 .md-body [data-streamdown='code-block']:hover button,
-.md-body [data-slot='code-card']:hover button {
+.md-body [data-slot='code-card']:hover button,
+.md-body [data-streamdown='code-block'] button:focus-visible,
+.md-body [data-slot='code-card'] button:focus-visible {
   opacity: 1;
 }
 
-/* 鼠标悬停按钮时高亮 */
 .md-body [data-streamdown='code-block'] button:hover,
 .md-body [data-slot='code-card'] button:hover {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.05)) !important;
-  color: var(--text-primary, #111) !important;
+  background: color-mix(in srgb, var(--surface-elevated, #fff) 92%, transparent) !important;
+  border-color: var(--border-solid, #ebebeb) !important;
+  color: var(--text-secondary, #6b6b6b) !important;
+}
+
+.md-body [data-streamdown='code-block'] button:active,
+.md-body [data-slot='code-card'] button:active {
+  background: var(--surface-muted, #f0f0f0) !important;
+  color: var(--text-primary, #1c1c1c) !important;
+}
+
+.md-body [data-streamdown='code-block'] button svg,
+.md-body [data-slot='code-card'] button svg {
+  width: 0.875rem !important;
+  height: 0.875rem !important;
+  stroke-width: 1.75 !important;
+}
+
+/* Mermaid：中性底，限宽无横滚 */
+.md-body [data-streamdown='mermaid'],
+.md-body .mermaid {
+  margin: 0.6em 0 1em;
+  padding: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--border-solid, #ebebeb);
+  border-radius: 6px;
+  background: var(--surface-muted, #f5f5f5);
+  text-align: center;
+  max-width: 100%;
+}
+
+.md-body [data-streamdown='mermaid'] svg,
+.md-body .mermaid svg {
+  max-width: 100%;
+  height: auto;
 }
 
 /* ── 流式阶段（保留兼容） ── */

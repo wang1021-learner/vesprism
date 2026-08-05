@@ -312,15 +312,17 @@ const AskUserToolLine = memo(function AskUserToolLine({
 }) {
   const pending =
     tool.status === 'pending' || tool.status === 'in_progress'
-  const detail = tool.detail?.trim() || tool.title || '向你提问'
-  const short = detail.length > 64 ? `${detail.slice(0, 62)}…` : detail
-  const statusText = pending
-    ? '待回答'
-    : tool.preview?.trim() || '已处理'
+  const question = tool.detail?.trim() || tool.title || '向你提问'
+  const shortQ =
+    question.length > 48 ? `${question.slice(0, 46)}…` : question
+  const answer = tool.preview?.trim() || ''
+  const shortA =
+    answer.length > 56 ? `${answer.slice(0, 54)}…` : answer
+  const statusText = pending ? '待回答' : shortA || '已处理'
 
   return (
     <div
-      className={`message-row scaffold-row tool-row ask-user-row kind-ask-user${pending ? ' is-awaiting is-live' : ''}`}
+      className={`message-row scaffold-row tool-row ask-user-row kind-ask-user${pending ? ' is-awaiting is-live' : ''}${!pending && answer ? ' is-answered' : ''}`}
       data-tool-call-id={tool.toolCallId}
       data-tool-kind="ask_user"
       data-conversation-scaffold=""
@@ -334,12 +336,26 @@ const AskUserToolLine = memo(function AskUserToolLine({
             onClick={() => {
               if (pending && onFocus) onFocus(tool.toolCallId)
             }}
-            title={pending ? '打开问卷' : undefined}
+            title={
+              pending
+                ? '打开问卷'
+                : answer
+                  ? `${question}\n${answer}`
+                  : question
+            }
+            aria-label={
+              pending
+                ? `待回答问卷：${question}`
+                : `问卷已答：${question} ${answer}`
+            }
           >
-            <span className="scaffold-label" title={detail}>
-              Ask · {short}
+            <span className="scaffold-label" title={question}>
+              Ask · {shortQ}
             </span>
-            <span className={`ask-user-badge${pending ? ' is-pending' : ''}`}>
+            <span
+              className={`ask-user-badge${pending ? ' is-pending' : ' is-done'}`}
+              title={pending ? undefined : answer || undefined}
+            >
               {statusText}
             </span>
           </button>

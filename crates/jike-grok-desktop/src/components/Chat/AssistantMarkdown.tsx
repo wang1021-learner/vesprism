@@ -201,8 +201,13 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: Props
       parseMarkdownIntoBlocksFn={parseMarkdownIntoBlocks}
       plugins={plugins}
       components={components}
-      /* 简约：默认不显示行号，减少代码块视觉噪声（对齐竞品） */
+      /* 不显示行号；关闭下载，仅保留复制（样式见 markdown.css） */
       lineNumbers={false}
+      controls={{
+        code: { copy: true, download: false },
+        table: { copy: false, download: false, fullscreen: false },
+        mermaid: { copy: false, download: false, fullscreen: false, panZoom: false },
+      }}
     >
       {processedText}
     </Streamdown>

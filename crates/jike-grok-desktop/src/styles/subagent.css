@@ -28,6 +28,33 @@
   margin-right: 0.15rem;
 }
 
+.subagent-strip-more {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  padding: 0.15rem 0.35rem;
+}
+
+.subagent-strip-clear {
+  flex-shrink: 0;
+  margin-left: auto;
+  height: 1.35rem;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: transparent;
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.subagent-strip-clear:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover, var(--surface-muted));
+}
+
 .subagent-chip {
   display: inline-flex;
   align-items: center;
@@ -258,16 +285,35 @@
 
 .subagent-line {
   display: grid;
-  grid-template-columns: 4.5rem 1fr;
-  gap: 0.35rem;
+  grid-template-columns: 2.75rem 1fr;
+  gap: 0.4rem;
+  padding: 0.2rem 0.15rem;
   font-size: 0.7rem;
   line-height: 1.35;
+  border-radius: 4px;
+}
+
+.subagent-line.role-user {
+  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+}
+
+.subagent-line.role-tool {
+  opacity: 0.9;
 }
 
 .subagent-line-role {
   color: var(--text-muted);
   font-weight: 600;
-  text-transform: lowercase;
+  font-size: 0.625rem;
+  letter-spacing: 0.01em;
+}
+
+.subagent-line.role-user .subagent-line-role {
+  color: var(--text-secondary);
+}
+
+.subagent-line.role-assistant .subagent-line-role {
+  color: #475569;
 }
 
 .subagent-line-text {
