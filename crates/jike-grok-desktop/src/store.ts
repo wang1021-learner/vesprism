@@ -52,14 +52,14 @@ export interface TabState {
   /** 本 tab 推理强度 */
   reasoningEffort: string
   /**
-   * 专用面板 Tab：mcp / skills / tools；null=普通对话。
+   * 专用面板 Tab：mcp / skills / tools / workflows；null=普通对话。
    * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
    */
   utilityKind: UtilityKind | null
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
-export type UtilityKind = 'mcp' | 'skills' | 'tools'
+export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows'
 
 export function emptyTabState(): TabState {
   return {

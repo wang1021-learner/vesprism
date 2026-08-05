@@ -12,6 +12,7 @@ import {
   createTab,
   deriveTabActivity,
   emptyTabState,
+  findTabByUtilityKind,
   getTabState,
   patchTab,
   removeTab,
@@ -139,6 +140,14 @@ describe('Tab 活动灯', () => {
     expect(s.modelId).toBe('')
     expect(s.reasoningEffort).toBe('medium')
     expect(s.utilityKind).toBeNull()
+  })
+
+  it('findTabByUtilityKind 可复用 workflows 专用 Tab', () => {
+    createTab('tab-wf', { utilityKind: 'workflows', chatTitle: '自动化任务' })
+    createTab('tab-skill', { utilityKind: 'skills', chatTitle: '技能' })
+    expect(findTabByUtilityKind('workflows')).toBe('tab-wf')
+    expect(findTabByUtilityKind('skills')).toBe('tab-skill')
+    expect(findTabByUtilityKind('mcp')).toBeUndefined()
   })
 
   it('deriveTabActivity 优先级：error > permission > working > idle', () => {

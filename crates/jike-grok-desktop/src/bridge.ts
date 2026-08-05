@@ -191,6 +191,22 @@ export const listSessionCommands = (tabId: string, cwd?: string | null) =>
     cwd: cwd ?? null,
   })
 
+/** 自动化工作流列表项（官方 x.ai/workflows/list） */
+export type WorkflowDto = {
+  name: string
+  description?: string
+  when_to_use?: string | null
+  whenToUse?: string | null
+  source?: string
+  path?: string | null
+}
+
+/** 列出已发现的 Rhai 工作流（官方 x.ai/workflows/list） */
+export const listWorkflows = (tabId: string) =>
+  invoke<{ workflows?: WorkflowDto[] } & Record<string, unknown>>('list_workflows', {
+    tabId,
+  })
+
 /** 与官方 McpServerEntry 对齐的前端 DTO（字段宽松） */
 export type McpServerDto = {
   name: string

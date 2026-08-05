@@ -197,6 +197,16 @@ function McpIcon() {
   )
 }
 
+/** 自动化任务 — 流程/循环 */
+function WorkflowIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
+      <path d="M4 6h6v4H4zM14 6h6v4h-6zM9 14h6v4H9z" strokeLinejoin="round" />
+      <path d="M7 10v2h10v-2M12 10v4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function ChatBubbleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -654,11 +664,17 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     $settingsOpen.set(true)
   }
 
-  /** 侧栏「技能 / 工具 / MCP」：各开一个带标题的专用 Tab */
+  /** 侧栏「技能 / 工具 / MCP / 自动化任务」：各开一个带标题的专用 Tab */
   const onOpenUtilityTab = useCallback(
-    async (kind: 'skills' | 'tools' | 'mcp') => {
+    async (kind: 'skills' | 'tools' | 'mcp' | 'workflows') => {
       const title =
-        kind === 'skills' ? '技能' : kind === 'tools' ? '工具' : 'MCP'
+        kind === 'skills'
+          ? '技能'
+          : kind === 'tools'
+            ? '工具'
+            : kind === 'mcp'
+              ? 'MCP'
+              : '自动化任务'
       setMenuOpenChatId(null)
       await openChatTab({ title, utilityKind: kind })
     },
@@ -725,6 +741,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             onClick={() => void onOpenUtilityTab('mcp')}
           >
             <McpIcon />
+          </button>
+          <button
+            type="button"
+            className="sidebar-icon-btn"
+            title="自动化任务"
+            onClick={() => void onOpenUtilityTab('workflows')}
+          >
+            <WorkflowIcon />
           </button>
           <div className="sidebar-spacer" />
           <button
@@ -804,6 +828,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                 >
                   <McpIcon />
                   <span>MCP</span>
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-nav-btn"
+                  onClick={() => void onOpenUtilityTab('workflows')}
+                >
+                  <WorkflowIcon />
+                  <span>自动化任务</span>
                 </button>
               </div>
             </div>
@@ -946,6 +978,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             >
               <McpIcon />
               <span>MCP</span>
+            </button>
+            <button
+              type="button"
+              className="sidebar-nav-btn"
+              onClick={() => void onOpenUtilityTab('workflows')}
+            >
+              <WorkflowIcon />
+              <span>自动化任务</span>
             </button>
           </div>
         </div>

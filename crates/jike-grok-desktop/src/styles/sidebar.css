@@ -312,7 +312,7 @@
   font-weight: 400;
 }
 
-/* 技能 / 工具：New chat 下方两行全宽入口 */
+/* 技能 / 工具 / MCP / 自动化任务：New chat 下方全宽入口 */
 .sidebar-nav-row {
   display: flex;
   flex-direction: column;

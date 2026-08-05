@@ -141,6 +141,10 @@ pub enum ActorCommand {
         cwd: Option<String>,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
+    /// 列出自动化工作流（x.ai/workflows/list）
+    ListWorkflows {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
 }
 
 /// 由 Tauri 托管的应用状态；命令侧可廉价克隆。
@@ -615,6 +619,20 @@ async fn handle_command(
                 }
                 Err(e) => {
                     let _ = reply.send(Err(format!("列出命令/技能失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ListWorkflows { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.list_workflows().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("列出工作流失败: {e}")));
                 }
             }
         }

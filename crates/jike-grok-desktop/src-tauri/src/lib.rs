@@ -107,6 +107,7 @@ pub fn run() {
             commands::upsert_mcp_server,
             commands::delete_mcp_server,
             commands::list_session_commands,
+            commands::list_workflows,
             commands::restart_session,
             commands::get_env_status,
             commands::save_env_key,

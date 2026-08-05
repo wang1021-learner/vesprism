@@ -29,6 +29,7 @@ import {
 import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
+import { WorkflowsPanel } from './components/WorkflowsPanel'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, loadSession, openTab, sendPrompt, setCurrentModel,
@@ -384,6 +385,9 @@ function AppMainBody() {
   }
   if (kind === 'skills') {
     return <SkillsPanel />
+  }
+  if (kind === 'workflows') {
+    return <WorkflowsPanel />
   }
   return (
     <>

@@ -462,6 +462,28 @@ pub async fn list_session_commands(
         .map_err(|_| "会话线程无响应".to_string())?
 }
 
+/// 列出自动化工作流（官方 x.ai/workflows/list）。
+#[tauri::command]
+pub async fn list_workflows(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ListWorkflows { reply: reply_tx })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 桌面隔离目录（与 `GROK_HOME` / config.toml 同一位置）。
 fn desktop_home_dir() -> PathBuf {
     if let Ok(home) = std::env::var("GROK_HOME") {

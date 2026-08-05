@@ -1506,6 +1506,31 @@ impl GrokSession {
         }
     }
 
+    /// 列出已发现的自动化工作流（官方 `x.ai/workflows/list`）。
+    ///
+    /// 响应形如 `{ "workflows": [ { name, description, when_to_use?, source, path? }, … ] }`。
+    /// 若会话关闭了 workflow 启动能力，可能返回空列表。
+    pub async fn list_workflows(&self) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 list_workflows 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/workflows/list", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("list_workflows 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 workflows/list 响应失败: {e}"))?;
+        if value.get("workflows").is_some() {
+            Ok(value)
+        } else if let Some(inner) = value.get("result").cloned() {
+            Ok(inner)
+        } else {
+            Ok(value)
+        }
+    }
+
     /// 订阅会话状态变化（如「正在生成中」指示器）。
     pub fn subscribe_status(&self) -> watch::Receiver<SessionStatus> {
         self.status_tx.subscribe()

@@ -31,6 +31,7 @@ const vitest = spawnSync(
     'src/lib/sessionTranscript.test.ts',
     'src/store.tab-model.test.ts',
     'src/lib/parseSubagentSnap.test.ts',
+    'src/lib/parseWorkflows.test.ts',
   ],
 
   { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' },
