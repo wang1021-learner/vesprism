@@ -54,6 +54,7 @@ import {
   nextLoadGen,
 } from '../lib/sessionOpen'
 import type { ChatMessage, ToolCallData } from '../types'
+import { openChatTab } from '../lib/openChatTab'
 import { BrandLogo, BrandWordmark } from './BrandLogo'
 
 /** FTS 搜索结果行（可带 snippet） */
@@ -145,6 +146,53 @@ function SearchIcon() {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <circle cx="11" cy="11" r="7" />
       <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** 技能 — 书签/文档 */
+function SkillIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
+      <path
+        d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** 工具 — 扳手 */
+function ToolIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
+      <path
+        d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/** MCP — 插头/连接 */
+function McpIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
+      <path
+        d="M12 2v6M8 4v4M16 4v4"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7 10h10v3a5 5 0 0 1-5 5h0a5 5 0 0 1-5-5v-3Z"
+        strokeLinejoin="round"
+      />
+      <path d="M12 18v4" strokeLinecap="round" />
     </svg>
   )
 }
@@ -606,6 +654,17 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     $settingsOpen.set(true)
   }
 
+  /** 侧栏「技能 / 工具 / MCP」：各开一个带标题的专用 Tab */
+  const onOpenUtilityTab = useCallback(
+    async (kind: 'skills' | 'tools' | 'mcp') => {
+      const title =
+        kind === 'skills' ? '技能' : kind === 'tools' ? '工具' : 'MCP'
+      setMenuOpenChatId(null)
+      await openChatTab({ title, utilityKind: kind })
+    },
+    [],
+  )
+
   const isPeekingOrLeaving = collapsed && (peekState === 'peeking' || peekState === 'leaving')
 
   if (collapsed) {
@@ -642,6 +701,30 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             onClick={() => void onNewChat()}
           >
             +
+          </button>
+          <button
+            type="button"
+            className="sidebar-icon-btn"
+            title="技能"
+            onClick={() => void onOpenUtilityTab('skills')}
+          >
+            <SkillIcon />
+          </button>
+          <button
+            type="button"
+            className="sidebar-icon-btn"
+            title="工具"
+            onClick={() => void onOpenUtilityTab('tools')}
+          >
+            <ToolIcon />
+          </button>
+          <button
+            type="button"
+            className="sidebar-icon-btn"
+            title="MCP"
+            onClick={() => void onOpenUtilityTab('mcp')}
+          >
+            <McpIcon />
           </button>
           <div className="sidebar-spacer" />
           <button
@@ -697,6 +780,32 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                 <span className="plus-icon">+</span>
                 <span>New chat</span>
               </button>
+              <div className="sidebar-nav-row">
+                <button
+                  type="button"
+                  className="sidebar-nav-btn"
+                  onClick={() => void onOpenUtilityTab('skills')}
+                >
+                  <SkillIcon />
+                  <span>技能</span>
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-nav-btn"
+                  onClick={() => void onOpenUtilityTab('tools')}
+                >
+                  <ToolIcon />
+                  <span>工具</span>
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-nav-btn"
+                  onClick={() => void onOpenUtilityTab('mcp')}
+                >
+                  <McpIcon />
+                  <span>MCP</span>
+                </button>
+              </div>
             </div>
 
             <div className="sidebar-recent-list" ref={listRef}>
@@ -813,6 +922,32 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             <span className="plus-icon">+</span>
             <span>New chat</span>
           </button>
+          <div className="sidebar-nav-row">
+            <button
+              type="button"
+              className="sidebar-nav-btn"
+              onClick={() => void onOpenUtilityTab('skills')}
+            >
+              <SkillIcon />
+              <span>技能</span>
+            </button>
+            <button
+              type="button"
+              className="sidebar-nav-btn"
+              onClick={() => void onOpenUtilityTab('tools')}
+            >
+              <ToolIcon />
+              <span>工具</span>
+            </button>
+            <button
+              type="button"
+              className="sidebar-nav-btn"
+              onClick={() => void onOpenUtilityTab('mcp')}
+            >
+              <McpIcon />
+              <span>MCP</span>
+            </button>
+          </div>
         </div>
 
         <div className="sidebar-recent-list" ref={listRef}>

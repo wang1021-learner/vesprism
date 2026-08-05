@@ -113,6 +113,34 @@ pub enum ActorCommand {
         response_json: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 列出 MCP 服务器（x.ai/mcp/list）
+    ListMcpServers {
+        cache: bool,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 启用/禁用 MCP 服务器（x.ai/mcp/toggle）
+    ToggleMcpServer {
+        server_name: String,
+        enabled: bool,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 新增/更新 MCP（x.ai/mcp/upsert）
+    UpsertMcpServer {
+        server_name: String,
+        config: serde_json::Value,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 删除本地 MCP（x.ai/mcp/delete）
+    DeleteMcpServer {
+        server_name: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 列出会话可用命令/工具/技能（x.ai/commands/list）
+    /// `cwd` 有值时按工作区发现技能；否则用 sessionId 拉会话 catalog。
+    ListSessionCommands {
+        cwd: Option<String>,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
 }
 
 /// 由 Tauri 托管的应用状态；命令侧可廉价克隆。
@@ -506,6 +534,87 @@ async fn handle_command(
                 }
                 Err(e) => {
                     let _ = reply.send(Err(format!("查询子 agent 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ListMcpServers { cache, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.list_mcp_servers(cache).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("列出 MCP 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ToggleMcpServer {
+            server_name,
+            enabled,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.toggle_mcp_server(&server_name, enabled).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("切换 MCP 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::UpsertMcpServer {
+            server_name,
+            config,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.upsert_mcp_server(&server_name, config).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("保存 MCP 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::DeleteMcpServer {
+            server_name,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.delete_mcp_server(&server_name).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("删除 MCP 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ListSessionCommands { cwd, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.list_session_commands(cwd.as_deref()).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("列出命令/技能失败: {e}")));
                 }
             }
         }

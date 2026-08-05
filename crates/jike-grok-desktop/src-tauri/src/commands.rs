@@ -327,6 +327,141 @@ pub async fn get_subagent(
         .map_err(|_| "会话线程无响应".to_string())?
 }
 
+/// 列出 MCP 服务器（官方 x.ai/mcp/list）。
+#[tauri::command]
+pub async fn list_mcp_servers(
+    tab_id: String,
+    cache: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ListMcpServers {
+            cache: cache.unwrap_or(true),
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 启用/禁用 MCP 服务器（官方 x.ai/mcp/toggle）。
+#[tauri::command]
+pub async fn toggle_mcp_server(
+    tab_id: String,
+    server_name: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ToggleMcpServer {
+            server_name,
+            enabled,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 新增/更新 MCP 服务器（官方 x.ai/mcp/upsert）。
+#[tauri::command]
+pub async fn upsert_mcp_server(
+    tab_id: String,
+    server_name: String,
+    config: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::UpsertMcpServer {
+            server_name,
+            config,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 删除本地 MCP 服务器（官方 x.ai/mcp/delete）。
+#[tauri::command]
+pub async fn delete_mcp_server(
+    tab_id: String,
+    server_name: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::DeleteMcpServer {
+            server_name,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 列出当前会话可用命令与工具（官方 x.ai/commands/list）。
+/// 传入 `cwd` 时按工作区扫描技能（技能面板）；否则用 session catalog（工具面板）。
+#[tauri::command]
+pub async fn list_session_commands(
+    tab_id: String,
+    cwd: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ListSessionCommands {
+            cwd,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 桌面隔离目录（与 `GROK_HOME` / config.toml 同一位置）。
 fn desktop_home_dir() -> PathBuf {
     if let Ok(home) = std::env::var("GROK_HOME") {
@@ -1531,6 +1666,110 @@ pub fn read_file_text(path: String, state: State<'_, AppState>) -> Result<String
         return Err(format!("文件过大（{} bytes），上限 {} bytes", meta.len(), MAX_BYTES));
     }
     std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
+}
+
+/// 工作区文件相对 HEAD 的差异（绑定右栏当前打开的源码路径）
+#[derive(serde::Serialize)]
+pub struct FileWorkingDiffDto {
+    pub path: String,
+    pub old_text: String,
+    pub new_text: String,
+    /// clean | modified | untracked | not_git | missing
+    pub status: String,
+    pub message: Option<String>,
+}
+
+fn run_git(cwd: &std::path::Path, args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .map_err(|e| format!("执行 git 失败: {e}"))
+}
+
+#[tauri::command]
+pub fn file_working_diff(path: String, state: State<'_, AppState>) -> Result<FileWorkingDiffDto, String> {
+    let workspace_root = resolve_workspace_cwd(&state);
+    let canonical = ensure_within_workspace(&path, &workspace_root)?;
+    let path_display = canonical.to_string_lossy().to_string();
+
+    const MAX_BYTES: u64 = 2 * 1024 * 1024;
+    let new_text = if canonical.is_file() {
+        let meta = std::fs::metadata(&canonical)
+            .map_err(|e| format!("读取文件信息失败: {e}"))?;
+        if meta.len() > MAX_BYTES {
+            return Err(format!("文件过大（{} bytes），差异上限 {} bytes", meta.len(), MAX_BYTES));
+        }
+        std::fs::read_to_string(&canonical).map_err(|e| format!("读取工作区文件失败: {e}"))?
+    } else {
+        return Ok(FileWorkingDiffDto {
+            path: path_display,
+            old_text: String::new(),
+            new_text: String::new(),
+            status: "missing".into(),
+            message: Some("文件不存在".into()),
+        });
+    };
+
+    // 是否在 git 仓库内
+    let inside = run_git(&workspace_root, &["rev-parse", "--is-inside-work-tree"])?;
+    if !inside.status.success()
+        || !String::from_utf8_lossy(&inside.stdout)
+            .trim()
+            .eq_ignore_ascii_case("true")
+    {
+        return Ok(FileWorkingDiffDto {
+            path: path_display,
+            old_text: String::new(),
+            new_text,
+            status: "not_git".into(),
+            message: Some("当前工作区不是 git 仓库，无法对比 HEAD".into()),
+        });
+    }
+
+    // 相对仓库根的路径（git 用 /）
+    let rel = canonical
+        .strip_prefix(&workspace_root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| {
+            // 不在 workspace 根下时仍尝试 basename（少见）
+            canonical
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
+
+    if rel.is_empty() {
+        return Err("无法解析相对路径".into());
+    }
+
+    // HEAD 中是否有该路径
+    let show = run_git(&workspace_root, &["show", &format!("HEAD:{rel}")])?;
+    if !show.status.success() {
+        // 未跟踪 / 新文件
+        return Ok(FileWorkingDiffDto {
+            path: path_display,
+            old_text: String::new(),
+            new_text,
+            status: "untracked".into(),
+            message: Some("未纳入版本库（相对 HEAD 为新增文件）".into()),
+        });
+    }
+
+    let old_text = String::from_utf8_lossy(&show.stdout).into_owned();
+    let status = if old_text == new_text {
+        "clean"
+    } else {
+        "modified"
+    };
+
+    Ok(FileWorkingDiffDto {
+        path: path_display,
+        old_text,
+        new_text,
+        status: status.into(),
+        message: None,
+    })
 }
 
 /// 获取当前会话可撤销的历史点列表

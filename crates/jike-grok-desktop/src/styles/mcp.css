@@ -1,0 +1,435 @@
+/* MCP 管理面板 */
+
+.mcp-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-canvas, #f5f5f5);
+}
+
+.mcp-panel-inner {
+  width: min(100%, 48.75rem);
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2rem;
+}
+
+.mcp-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.mcp-panel-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.mcp-panel-desc {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.mcp-panel-desc code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.7rem;
+  padding: 0.05em 0.28em;
+  border-radius: 3px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+}
+
+.mcp-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.mcp-panel-stats {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcp-btn {
+  height: 1.75rem;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mcp-btn.primary {
+  background: var(--text-primary, #1c1c1c);
+  border-color: var(--text-primary, #1c1c1c);
+  color: #fff;
+  font-weight: 600;
+}
+
+.mcp-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  color: #fff;
+  background: var(--text-primary, #1c1c1c);
+}
+
+.mcp-btn.danger {
+  color: var(--danger, #b91c1c);
+  border-color: color-mix(in srgb, var(--danger, #b91c1c) 30%, var(--border-solid));
+}
+
+.mcp-btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft, #fef2f2);
+  color: var(--danger, #b91c1c);
+}
+
+.mcp-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.mcp-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 添加表单 */
+.mcp-form {
+  margin-bottom: 1rem;
+  padding: 0.9rem 1rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+}
+
+.mcp-form-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mcp-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem 0.75rem;
+}
+
+.mcp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.mcp-field-span {
+  grid-column: 1 / -1;
+}
+
+.mcp-input {
+  height: 2rem;
+  padding: 0 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface, #fff);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+
+.mcp-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text-secondary) 45%, var(--border-solid));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+select.mcp-input {
+  cursor: pointer;
+}
+
+.mcp-form-error {
+  margin-top: 0.65rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: var(--danger, #b91c1c);
+  background: var(--danger-soft, #fef2f2);
+  border: 1px solid color-mix(in srgb, var(--danger, #b91c1c) 25%, transparent);
+}
+
+.mcp-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+}
+
+.mcp-form-hint {
+  margin: 0.65rem 0 0;
+  font-size: 0.6875rem;
+  color: var(--text-muted, #a3a3a3);
+  line-height: 1.4;
+}
+
+.mcp-form-hint code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.65rem;
+  word-break: break-all;
+}
+
+.mcp-card-ops {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.55rem 0.65rem 0.55rem 0;
+  flex-shrink: 0;
+}
+
+.mcp-card-ops .mcp-toggle {
+  margin: 0;
+  align-self: stretch;
+}
+
+.mcp-card-ops .mcp-btn {
+  height: 1.5rem;
+  font-size: 0.6875rem;
+}
+
+.mcp-panel-empty,
+.mcp-panel-error {
+  padding: 1.25rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.mcp-panel-error {
+  color: var(--danger, #b91c1c);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.mcp-panel-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-tertiary);
+}
+
+.mcp-panel-code {
+  margin: 0.5rem 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted, #f5f5f5);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--text-primary);
+  overflow-x: hidden;
+}
+
+.mcp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.mcp-card {
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  overflow: hidden;
+}
+
+.mcp-card.is-off {
+  opacity: 0.78;
+}
+
+.mcp-card-main {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.mcp-card-expand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.mcp-card-expand:hover {
+  background: color-mix(in srgb, var(--surface-muted) 55%, transparent);
+}
+
+.mcp-card-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mcp-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.mcp-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 1.15rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted);
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: lowercase;
+}
+
+.mcp-pill.transport-http {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.mcp-pill.transport-stdio {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.mcp-pill.status-ready {
+  color: #15803d;
+}
+
+.mcp-pill.status-unavailable,
+.mcp-pill.warn {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.mcp-card-detail {
+  max-width: 100%;
+  font-size: 0.7rem;
+  color: var(--text-muted, #a3a3a3);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-toggle {
+  flex-shrink: 0;
+  align-self: center;
+  margin: 0 0.65rem 0 0;
+  height: 1.65rem;
+  min-width: 4.2rem;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mcp-toggle.is-on {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.mcp-toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong-solid);
+}
+
+.mcp-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mcp-tools {
+  list-style: none;
+  margin: 0;
+  padding: 0.15rem 0.75rem 0.65rem;
+  border-top: 1px solid var(--border-solid);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.mcp-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.3rem 0.35rem;
+  border-radius: 4px;
+}
+
+.mcp-tool.is-off {
+  opacity: 0.55;
+}
+
+.mcp-tool-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.mcp-tool-desc {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  line-height: 1.35;
+}
+
+.mcp-tools-empty {
+  padding: 0.45rem 0.85rem 0.65rem;
+  border-top: 1px solid var(--border-solid);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}

@@ -21,11 +21,14 @@ import {
   $activeChatId, $chats, $composerInput,
   $defaultModelId, $error, $generating, $messages, $models,
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
-  $settingsDefaultModelId,
+  $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
   createTab, getTabState, hasTab, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast, upsertSubagent,
 } from './store'
+import { McpPanel } from './components/McpPanel'
+import { ToolsPanel } from './components/ToolsPanel'
+import { SkillsPanel } from './components/SkillsPanel'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, loadSession, openTab, sendPrompt, setCurrentModel,
@@ -81,18 +84,7 @@ function DesktopApp() {
           <TabBar />
           <SubagentStrip />
           <AppError />
-          <ErrorBoundary
-            name="消息区"
-            fallback={(error, reset) => (
-              <MessagesErrorFallback error={error} onReset={reset} />
-            )}
-          >
-            <AppMessages />
-          </ErrorBoundary>
-          {/* 问卷 / 审批条在输入框上方，非全屏 modal */}
-          <AppUserQuestion />
-          <AppPermission />
-          <AppComposer />
+          <AppMainBody />
           <SettingsModal />
         </div>
       </ErrorBoundary>
@@ -379,6 +371,35 @@ function AppError() {
   const err = useStore($error)
   if (!err) return null
   return <div className="banner error">{err}</div>
+}
+
+/** 普通对话 vs MCP / 工具等专用面板 */
+function AppMainBody() {
+  const kind = useStore($utilityKind)
+  if (kind === 'mcp') {
+    return <McpPanel />
+  }
+  if (kind === 'tools') {
+    return <ToolsPanel />
+  }
+  if (kind === 'skills') {
+    return <SkillsPanel />
+  }
+  return (
+    <>
+      <ErrorBoundary
+        name="消息区"
+        fallback={(error, reset) => (
+          <MessagesErrorFallback error={error} onReset={reset} />
+        )}
+      >
+        <AppMessages />
+      </ErrorBoundary>
+      <AppUserQuestion />
+      <AppPermission />
+      <AppComposer />
+    </>
+  )
 }
 
 function AppMessages() {

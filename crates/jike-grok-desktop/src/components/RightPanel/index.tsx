@@ -5,13 +5,15 @@ import {
   $rightPanelTab,
   $rightPanelWidth,
   $rightPanelFile,
+  $rightPanelFilePath,
   $rightPanelOutput,
   $sidebarCollapsed,
   $sidebarAutoCollapsed,
   $workspaceCwd,
   type RightPanelTab,
 } from '../../store'
-import { listDir, readFileText } from '../../bridge'
+import { fileWorkingDiff, listDir, readFileText, type FileWorkingDiff } from '../../bridge'
+import { DiffLines } from '../Chat/DiffLines'
 
 const MIN_W = 260
 const MAX_RATIO = 0.55
@@ -58,6 +60,7 @@ function ResizeHandle() {
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'files', label: '文件' },
   { id: 'output', label: '源码' },
+  { id: 'diff', label: '差异' },
 ]
 
 function TabBar() {
@@ -132,6 +135,7 @@ function FileTree() {
       const text = await readFileText(fp)
       $rightPanelOutput.set(text)
       $rightPanelFile.set(name)
+      $rightPanelFilePath.set(fp)
       $rightPanelTab.set('output')
     } catch (e) {
       setError(String(e))
@@ -191,11 +195,124 @@ function OutputView() {
   )
 }
 
+const DIFF_STATUS_LABEL: Record<string, string> = {
+  clean: '无差异',
+  modified: '已修改',
+  untracked: '未跟踪',
+  not_git: '非 Git',
+  missing: '不存在',
+}
+
+function DiffView() {
+  const filePath = useStore($rightPanelFilePath)
+  const fileName = useStore($rightPanelFile)
+  const [data, setData] = useState<FileWorkingDiff | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!filePath) {
+      setData(null)
+      setError('')
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    fileWorkingDiff(filePath)
+      .then((res) => {
+        if (!cancelled) setData(res)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setData(null)
+          setError(String(e))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [filePath, tick])
+
+  if (!filePath) {
+    return <div className="right-panel-empty">先在「文件」中打开源码，差异会绑定该文件</div>
+  }
+
+  const status = data?.status ?? ''
+  const statusLabel = DIFF_STATUS_LABEL[status] ?? status
+  const showDiff =
+    data &&
+    (status === 'modified' || status === 'untracked') &&
+    (data.old_text.length > 0 || data.new_text.length > 0)
+
+  return (
+    <div className="right-panel-diff-wrap">
+      <div className="right-panel-output-head right-panel-diff-head">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+          <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+          <path d="M9 12h6" />
+        </svg>
+        <span className="output-file-name" title={filePath}>
+          {fileName || filePath}
+        </span>
+        {status && (
+          <span className={`diff-status-badge diff-status-${status}`}>{statusLabel}</span>
+        )}
+        <button
+          type="button"
+          className="diff-refresh-btn"
+          onClick={() => setTick((n) => n + 1)}
+          disabled={loading}
+          title="刷新差异"
+          aria-label="刷新差异"
+        >
+          刷新
+        </button>
+      </div>
+      {loading && <div className="tree-loading">对比中...</div>}
+      {error && <div className="tree-error">{error}</div>}
+      {!loading && !error && data && (
+        <>
+          {data.message && <div className="diff-status-msg">{data.message}</div>}
+          {status === 'clean' && (
+            <div className="right-panel-empty">与 HEAD 一致，无未提交改动</div>
+          )}
+          {showDiff && (
+            <div className="right-panel-diff-body">
+              <DiffLines oldText={data.old_text} newText={data.new_text} />
+            </div>
+          )}
+          {status === 'not_git' && !data.message && (
+            <div className="right-panel-empty">当前工作区不是 git 仓库</div>
+          )}
+          {status === 'missing' && !data.message && (
+            <div className="right-panel-empty">文件不存在</div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function PanelBody() {
+  const tab = useStore($rightPanelTab)
+  if (tab === 'files') return <FileTree />
+  if (tab === 'diff') return <DiffView />
+  return <OutputView />
+}
+
 // ── 主容器：开关动画 + 正确拉伸 ──
 export function RightPanel() {
   const open = useStore($rightPanelOpen)
   const width = useStore($rightPanelWidth)
-  const tab = useStore($rightPanelTab)
   const [mounted, setMounted] = useState(open)
   const [entered, setEntered] = useState(open)
   const [animating, setAnimating] = useState(false)
@@ -250,7 +367,7 @@ export function RightPanel() {
       <aside className="right-panel">
         <TabBar />
         <div className="right-panel-body">
-          {tab === 'files' ? <FileTree /> : <OutputView />}
+          <PanelBody />
         </div>
       </aside>
     </div>

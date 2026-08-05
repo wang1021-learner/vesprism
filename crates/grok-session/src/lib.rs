@@ -1371,6 +1371,141 @@ impl GrokSession {
             .map_err(|e| anyhow::anyhow!("解析 get_subagent 响应失败: {e}"))
     }
 
+    /// 列出 MCP 服务器（官方 `x.ai/mcp/list`）。
+    ///
+    /// `cache=false` 时绕过缓存并刷新到 live session（对齐官方 pager 扩展面板）。
+    pub async fn list_mcp_servers(&self, cache: bool) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "cache": cache,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 list_mcp_servers 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/list", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("list_mcp_servers 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/list 响应失败: {e}"))?;
+        // 兼容直接 body / 包一层 result
+        if value.get("servers").is_some() {
+            Ok(value)
+        } else if let Some(inner) = value.get("result").cloned() {
+            Ok(inner)
+        } else {
+            Ok(value)
+        }
+    }
+
+    /// 启用/禁用 MCP 服务器（官方 `x.ai/mcp/toggle`，无需重启会话）。
+    pub async fn toggle_mcp_server(
+        &self,
+        server_name: &str,
+        enabled: bool,
+    ) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "session_id": self.session_id.to_string(),
+            "server_name": server_name,
+            "enabled": enabled,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 toggle_mcp_server 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/toggle", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("toggle_mcp_server 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/toggle 响应失败: {e}"))
+    }
+
+    /// 新增/更新 MCP 服务器（官方 `x.ai/mcp/upsert`）。
+    ///
+    /// `config` 为扁平配置（与 config.toml `[mcp_servers.x]` 一致），例如：
+    /// `{ "command": "npx", "args": ["-y", "..."], "enabled": true }`
+    /// 或 `{ "url": "https://…", "enabled": true }`。
+    pub async fn upsert_mcp_server(
+        &self,
+        server_name: &str,
+        config: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut body = config;
+        if !body.is_object() {
+            return Err(anyhow::anyhow!("MCP 配置必须是 JSON 对象"));
+        }
+        let obj = body.as_object_mut().expect("object");
+        obj.insert(
+            "session_id".into(),
+            serde_json::Value::String(self.session_id.to_string()),
+        );
+        obj.insert(
+            "server_name".into(),
+            serde_json::Value::String(server_name.to_string()),
+        );
+        let params = serde_json::value::to_raw_value(&body)
+            .map_err(|e| anyhow::anyhow!("序列化 upsert_mcp_server 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/upsert", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("upsert_mcp_server 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/upsert 响应失败: {e}"))
+    }
+
+    /// 删除本地配置的 MCP 服务器（官方 `x.ai/mcp/delete`，不可删 managed）。
+    pub async fn delete_mcp_server(&self, server_name: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "session_id": self.session_id.to_string(),
+            "server_name": server_name,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 delete_mcp_server 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/delete", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("delete_mcp_server 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/delete 响应失败: {e}"))
+    }
+
+    /// 列出当前会话可用斜杠命令 + 工具名（官方 `x.ai/commands/list`）。
+    ///
+    /// - 仅 `session_id`：会话内 catalog（含 tools）
+    /// - 仅 `cwd`：按工作区发现技能 / 命令（技能面板用）
+    /// - 两者皆有时以 session 为准（与官方 handler 一致）
+    ///
+    /// 响应含 `commands` 与可选 `tools`（与 AvailableCommandsUpdate.meta.tools 同源）。
+    pub async fn list_session_commands(
+        &self,
+        cwd: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let params = if let Some(c) = cwd.filter(|s| !s.is_empty()) {
+            // 技能发现：按 cwd 扫磁盘 skills（不绑 session tools）
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "cwd": c,
+            }))
+        } else {
+            serde_json::value::to_raw_value(&serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+            }))
+        }
+        .map_err(|e| anyhow::anyhow!("序列化 list_session_commands 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/commands/list", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("list_session_commands 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 commands/list 响应失败: {e}"))?;
+        if value.get("commands").is_some() || value.get("tools").is_some() {
+            Ok(value)
+        } else if let Some(inner) = value.get("result").cloned() {
+            Ok(inner)
+        } else {
+            Ok(value)
+        }
+    }
+
     /// 订阅会话状态变化（如「正在生成中」指示器）。
     pub fn subscribe_status(&self) -> watch::Receiver<SessionStatus> {
         self.status_tx.subscribe()

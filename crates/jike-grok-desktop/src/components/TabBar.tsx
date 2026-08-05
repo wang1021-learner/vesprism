@@ -6,15 +6,12 @@ import {
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
   $tabs,
-  $workspaceCwd,
-  $workspaceOptions,
-  createTab,
   patchActiveTab,
   removeTab,
-  resolveNewTabModel,
   switchTab,
 } from '../store'
-import { closeTab, openTab, restartTab, setCurrentModel, startSession } from '../bridge'
+import { closeTab, restartTab } from '../bridge'
+import { openChatTab } from '../lib/openChatTab'
 
 /**
  * 多会话标签栏：新建 / 切换 / 关闭 tab，failed 状态展示 + 手动重试。
@@ -31,32 +28,7 @@ export function TabBar() {
     if (busy) return
     setBusy(true)
     try {
-      const prevId = activeId
-      const tabId = await openTab()
-      const model = resolveNewTabModel(prevId || undefined)
-      createTab(tabId, {
-        modelId: model.modelId,
-        reasoningEffort: model.reasoningEffort,
-      })
-      switchTab(tabId)
-      // 新 tab 默认用当前 tab 的工作区（空则用历史列表第一个）
-      const cwd = $workspaceCwd.get() || $workspaceOptions.get()[0] || ''
-      await startSession(tabId, cwd)
-      if (model.modelId) {
-        try {
-          await setCurrentModel(tabId, model.modelId, model.reasoningEffort)
-        } catch {
-          /* 模型应用失败不阻断新会话 */
-        }
-      }
-      patchActiveTab({
-        phase: 'ready',
-        status: 'idle',
-        modelId: model.modelId,
-        reasoningEffort: model.reasoningEffort,
-      })
-    } catch (e) {
-      patchActiveTab({ error: String(e) })
+      await openChatTab()
     } finally {
       setBusy(false)
     }

@@ -168,11 +168,18 @@
 
 .right-panel-body {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
+  /* 子面板各自滚动，避免源码/差异高度撑开后失去内层滚动条 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 0;
 }
 
 .right-panel-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding: 4px 6px 6px;
   font-size: 13px;
 }
@@ -253,11 +260,14 @@
   white-space: nowrap;
 }
 
-/* 源码视图：文件名顶栏 + 代码区 */
+/* 源码视图：文件名顶栏 + 代码区（双轴滚动，长行不折行） */
 .right-panel-output-wrap {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .right-panel-output-head {
@@ -282,16 +292,53 @@
 
 .right-panel-output {
   flex: 1;
-  padding: 10px 12px;
+  min-height: 0;
+  min-width: 0;
+  margin: 0;
+  /* 内边距：代码与边框/滚动条留白（右下多留一点给横纵滚动条） */
+  padding: 14px 16px 18px 14px;
   font-size: 12px;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Consolas, monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
+  /* 保留原始换行与空格；超长行横向滚动，多行纵向滚动 */
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  line-height: 1.65;
   color: var(--text-primary);
   background: var(--surface-muted);
   overflow: auto;
-  margin: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong, #c5c9d1) transparent;
+}
+
+.right-panel-output::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.right-panel-output::-webkit-scrollbar-thumb {
+  background: var(--border-strong, #c5c9d1);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.right-panel-output::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary, #8b919c);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+.right-panel-output::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px;
+}
+
+.right-panel-output::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .right-panel-empty {
@@ -299,4 +346,108 @@
   text-align: center;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+/* 差异：绑定当前打开源码 vs git HEAD */
+.right-panel-diff-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.right-panel-diff-head {
+  gap: 8px;
+}
+
+.right-panel-diff-head .output-file-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-status-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-tertiary);
+}
+
+.diff-status-modified {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.diff-status-untracked {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.diff-status-clean {
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+}
+
+.diff-status-not_git,
+.diff-status-missing {
+  color: #dc2626;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.diff-refresh-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 550;
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.diff-refresh-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong, var(--border-solid));
+}
+
+.diff-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.diff-status-msg {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-solid);
+  background: var(--surface-elevated);
+  flex-shrink: 0;
+}
+
+.right-panel-diff-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
+  background: var(--surface-muted);
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong, #c5c9d1) transparent;
+  padding: 10px 12px 14px;
+}
+
+.right-panel-diff-body .diff-lines {
+  padding: 4px 0 8px;
+  font-size: 12px;
+  /* 与源码一致：长行横向滚，不折到窄栏里 */
+  white-space: pre;
+  overflow-x: visible;
+  min-width: max-content;
 }

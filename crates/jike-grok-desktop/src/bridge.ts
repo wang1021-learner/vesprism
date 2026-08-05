@@ -139,6 +139,87 @@ export const getSubagent = (
     timeoutMs: timeoutMs ?? null,
   })
 
+// ── MCP（官方 x.ai/mcp/*） ──
+export const listMcpServers = (tabId: string, cache = true) =>
+  invoke<{ servers?: McpServerDto[] } & Record<string, unknown>>('list_mcp_servers', {
+    tabId,
+    cache,
+  })
+
+export const toggleMcpServer = (
+  tabId: string,
+  serverName: string,
+  enabled: boolean,
+) =>
+  invoke<Record<string, unknown>>('toggle_mcp_server', {
+    tabId,
+    serverName,
+    enabled,
+  })
+
+/** 新增/更新 MCP（config 扁平对象，对齐 config.toml） */
+export const upsertMcpServer = (
+  tabId: string,
+  serverName: string,
+  config: Record<string, unknown>,
+) =>
+  invoke<Record<string, unknown>>('upsert_mcp_server', {
+    tabId,
+    serverName,
+    config,
+  })
+
+export const deleteMcpServer = (tabId: string, serverName: string) =>
+  invoke<Record<string, unknown>>('delete_mcp_server', {
+    tabId,
+    serverName,
+  })
+
+/** 当前会话工具 + 斜杠命令 / 技能（官方 x.ai/commands/list） */
+export const listSessionCommands = (tabId: string, cwd?: string | null) =>
+  invoke<{
+    tools?: string[] | null
+    commands?: Array<{
+      name?: string
+      description?: string
+      input?: unknown
+      meta?: Record<string, unknown> | null
+      _meta?: Record<string, unknown> | null
+    }>
+  }>('list_session_commands', {
+    tabId,
+    cwd: cwd ?? null,
+  })
+
+/** 与官方 McpServerEntry 对齐的前端 DTO（字段宽松） */
+export type McpServerDto = {
+  name: string
+  displayName?: string | null
+  display_name?: string | null
+  source?: string
+  sourceLabel?: string | null
+  source_label?: string | null
+  type?: string
+  url?: string
+  command?: string
+  args?: string[]
+  session?: {
+    enabled?: boolean
+    status?: string | null
+    tools?: Array<{
+      name: string
+      displayName?: string | null
+      display_name?: string | null
+      description?: string | null
+      enabled?: boolean
+    }>
+    authRequired?: boolean
+    auth_required?: boolean
+    setupRequired?: boolean
+    setup_required?: boolean
+  } | null
+}
+
 // ── 密钥 ──
 export const getEnvStatus = (keyName: string) =>
   invoke<{ key_name: string; is_set: boolean }>('get_env_status', { keyName })
@@ -157,6 +238,18 @@ export const listDir = (path: string) =>
 
 export const readFileText = (path: string) =>
   invoke<string>('read_file_text', { path })
+
+/** 右栏「差异」：工作区文件相对 git HEAD */
+export type FileWorkingDiff = {
+  path: string
+  old_text: string
+  new_text: string
+  status: 'clean' | 'modified' | 'untracked' | 'not_git' | 'missing' | string
+  message?: string | null
+}
+
+export const fileWorkingDiff = (path: string) =>
+  invoke<FileWorkingDiff>('file_working_diff', { path })
 
 export const pickDirectory = () => invoke<string | null>('pick_directory')
 

@@ -51,7 +51,15 @@ export interface TabState {
   modelId: string
   /** 本 tab 推理强度 */
   reasoningEffort: string
+  /**
+   * 专用面板 Tab：mcp / skills / tools；null=普通对话。
+   * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
+   */
+  utilityKind: UtilityKind | null
 }
+
+/** 侧栏工具入口对应的专用面板类型 */
+export type UtilityKind = 'mcp' | 'skills' | 'tools'
 
 export function emptyTabState(): TabState {
   return {
@@ -69,6 +77,7 @@ export function emptyTabState(): TabState {
     error: '',
     modelId: '',
     reasoningEffort: 'medium',
+    utilityKind: null,
   }
 }
 
@@ -121,6 +130,14 @@ export function hasTab(id: string): boolean {
 /** 读某 tab 的当前状态（只读快照；不存在返回 undefined） */
 export function getTabState(id: string): TabState | undefined {
   return tabStates.get(id)
+}
+
+/** 查找已打开的专用面板 Tab（技能 / 工具 / MCP 各只应有一个） */
+export function findTabByUtilityKind(kind: UtilityKind): string | undefined {
+  for (const [id, st] of tabStates) {
+    if (st.utilityKind === kind) return id
+  }
+  return undefined
 }
 
 /** 注册一个新 tab（openTab 成功后调用） */
@@ -200,6 +217,7 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('error' in patch) $error.set(patch.error!)
   if ('modelId' in patch) $defaultModelId.set(patch.modelId!)
   if ('reasoningEffort' in patch) $reasoningEffort.set(patch.reasoningEffort!)
+  if ('utilityKind' in patch) $utilityKind.set(patch.utilityKind ?? null)
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -221,6 +239,7 @@ function projectTab(id: string): void {
     error: s.error,
     modelId: s.modelId,
     reasoningEffort: s.reasoningEffort,
+    utilityKind: s.utilityKind,
   })
 }
 
@@ -241,6 +260,7 @@ function resetProjection(): void {
     error: '',
     modelId: '',
     reasoningEffort: 'medium',
+    utilityKind: null,
   })
 }
 
@@ -368,15 +388,19 @@ export const $chats = atom<ChatSummary[]>([])
 export const $activeChatId = atom('') // TabState.chatId 投影
 export const $chatTitle = atom('') // TabState.chatTitle 投影
 export const $composerInput = atom('') // TabState.composerInput 投影
+/** 专用面板类型投影（mcp / skills / tools） */
+export const $utilityKind = atom<UtilityKind | null>(null)
 
 // ── 右侧栏 ──
-export type RightPanelTab = 'files' | 'output'
+export type RightPanelTab = 'files' | 'output' | 'diff'
 export const $rightPanelOpen = atom(false)
 export const $rightPanelTab = atom<RightPanelTab>('files')
 export const $rightPanelWidth = atom(320)
 export const $rightPanelOutput = atom('')
 /** 源码视图当前显示的文件名（文件树打开时设置） */
 export const $rightPanelFile = atom('')
+/** 源码 / 差异绑定的绝对路径 */
+export const $rightPanelFilePath = atom('')
 
 // ── Toast（顶部浮层，不进对话历史；如切换模型） ──
 export type ToastTone = 'info' | 'success' | 'error'

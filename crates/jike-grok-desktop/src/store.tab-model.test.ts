@@ -138,6 +138,7 @@ describe('Tab 活动灯', () => {
     expect(s.permission).toBeNull()
     expect(s.modelId).toBe('')
     expect(s.reasoningEffort).toBe('medium')
+    expect(s.utilityKind).toBeNull()
   })
 
   it('deriveTabActivity 优先级：error > permission > working > idle', () => {
