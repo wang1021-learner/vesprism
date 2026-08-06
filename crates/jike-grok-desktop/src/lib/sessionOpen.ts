@@ -3,6 +3,13 @@
  * 1. hydrateFromSnapshot — get_session_messages 投影结果一次写入 UI（可命中内存缓存）
  * 2. begin/finishAttachRuntime — load_session 挂引擎；期间丢弃历史 session-update
  * 3. 实时对话 — pushTranscriptEvent → applyTranscriptEvent
+ *
+ * 流式合帧在引擎侧完成：grok-session 的 desktop_initialize_request 通过官方
+ * bufferingSettings 打开 xai-grok-shell 的 ReplayBuffer
+ * （maxItems=32 / maxBytes=2048 / maxDurationMs=16），高频 agent_message_chunk /
+ * agent_thought_chunk 已按 ~16ms 一档合并后才推给前端。前端因此直接写 store：
+ * 每个事件 ≤ 一帧，无额外延迟、无缓冲竞态。渲染端（虚拟列表 + memo + streamdown
+ * 增量解析）保证单次更新的成本与增量成正比，无需再在事件层做二次合帧。
  */
 import {
   $activeTabId,
@@ -17,13 +24,9 @@ import {
 } from './sessionTranscript'
 import type { ChatMessage } from '../types'
 
-/** load_session 进行中：历史 chunk 一律丢弃（按 tab 分片，避免多 tab 互相吞消息） */
+/** load_session 进行中：历史 chunk 一律丢弃（按 tab 分片） */
 const attachingTabs = new Map<string, boolean>()
-
-/** 防止慢请求覆盖新选择（按 tab 分片：tab A 加载中切到 tab B 不影响 A 的加载） */
 const loadGens = new Map<string, number>()
-
-/** 会话消息内存缓存：切走再切回可跳过 getSessionMessages 磁盘读 */
 const messageCache = new Map<string, ChatMessage[]>()
 
 export function nextLoadGen(tabId?: string): number {
@@ -41,10 +44,8 @@ export function isAttachingRuntime(tabId?: string): boolean {
   return attachingTabs.get(tabId ?? $activeTabId.get()) ?? false
 }
 
-/** 缓存当前会话消息（切换前快照 / 投影结果） */
 export function cacheSessionMessages(sessionId: string, messages: ChatMessage[]): void {
   if (!sessionId) return
-  // 浅拷贝，避免后续 $messages 原地变异污染缓存
   messageCache.set(sessionId, messages.map((m) => ({ ...m })))
 }
 
@@ -61,20 +62,16 @@ export function clearSessionMessageCache(): void {
   messageCache.clear()
 }
 
-/** 磁盘消息秒开 */
 export function hydrateFromSnapshot(messages: ChatMessage[], tabId?: string): void {
-  const id = tabId ?? $activeTabId.get()
-  patchTab(id, { messages, phase: 'loading', status: 'initializing' })
+  patchTab(tabId ?? $activeTabId.get(), { messages, phase: 'loading', status: 'initializing' })
 }
 
-/** 开始绑定 runtime */
 export function beginAttachRuntime(tabId?: string): void {
   const id = tabId ?? $activeTabId.get()
   attachingTabs.set(id, true)
   patchTab(id, { phase: 'loading', status: 'initializing' })
 }
 
-/** runtime 就绪（load_session 返回后调用；可重复） */
 export function finishAttachRuntime(tabId?: string): void {
   const id = tabId ?? $activeTabId.get()
   if (!attachingTabs.get(id) && getTabState(id)?.phase === 'ready') return
@@ -82,21 +79,14 @@ export function finishAttachRuntime(tabId?: string): void {
   patchTab(id, { phase: 'ready', status: 'idle' })
 }
 
-/** 打开失败 / 新建会话时中止 */
 export function abortOpenSession(tabId?: string): void {
   const id = tabId ?? $activeTabId.get()
   attachingTabs.set(id, false)
   patchTab(id, { phase: 'ready', status: 'idle' })
 }
 
-/**
- * session-event → UI；attaching 时吞掉 transcript 类历史回放。
- * tabId：事件所属 tab（按 ev.tab_id 路由，非活跃 tab 的消息也照常累积进 map）。
- */
 export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolean {
   const target = tabId ?? $activeTabId.get()
-  // map 是事实源：目标 tab 的消息从 map 读（非活跃 tab 也能正确累积）；
-  // map 里没有（理论上 App 路由已过滤）才回退当前投影。
   const cur = target ? (getTabState(target)?.messages ?? $messages.get()) : $messages.get()
   switch (ev.type) {
     case 'agent_text_chunk':
@@ -118,11 +108,12 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
     case 'token_usage':
       return true
     case 'turn_ended':
-      // 定稿思考条：停止「思考中…」、写耗时，默认折叠
+      // 定稿思考条：停止「思考中…」、写耗时，默认折叠；
+      // 带 prompt_id 做回合归属判断（旧回合迟到收尾只 seal 旧区）
       if (target) {
-        patchTab(target, { messages: sealStreamingMessages(cur) })
+        patchTab(target, { messages: sealStreamingMessages(cur, ev.prompt_id) })
       } else {
-        $messages.set(sealStreamingMessages(cur))
+        $messages.set(sealStreamingMessages(cur, ev.prompt_id))
       }
       return false // 继续让 App 处理 idle 等
     case 'replay_complete':

@@ -18,6 +18,8 @@ import type {
   SubagentRuntime,
   UserQuestionRequest,
 } from './types'
+import { upsertSubagentMessage } from './lib/subagentMessage'
+
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
 
@@ -86,10 +88,10 @@ export const $activeTabId = atom('')
 
 /**
  * Tab 活动灯：
- * - working 绿：生成 / 加载 / 子任务运行
+ * - working 绿：仅「模型正在生成」或「子任务运行中」
  * - permission 黄：权限或 AI 问卷待确认
  * - error 红：异常
- * - idle 灰
+ * - idle 灰：含切换 Tab / 加载历史 / 重启会话（不闪绿）
  */
 export type TabActivity = 'idle' | 'working' | 'permission' | 'error'
 
@@ -97,14 +99,8 @@ export function deriveTabActivity(s: TabState): TabActivity {
   if (s.phase === 'failed' || (s.error && s.error.trim().length > 0)) return 'error'
   if (s.permission || s.userQuestion) return 'permission'
   const hasRunningSubagent = s.subagents.some((a) => a.status === 'running')
-  if (
-    hasRunningSubagent ||
-    s.status === 'generating' ||
-    s.status === 'initializing' ||
-    s.phase === 'loading' ||
-    s.phase === 'restarting' ||
-    s.phase === 'booting'
-  ) {
+  // 不把 loading / restarting / initializing 算作 working，避免切会话、开历史时绿灯闪一下
+  if (hasRunningSubagent || s.status === 'generating') {
     return 'working'
   }
   return 'idle'
@@ -121,7 +117,7 @@ export interface TabInfo {
 export const $tabs = atom<TabInfo[]>([])
 
 /** 唯一事实源：tabId -> 会话状态 */
-const tabStates = new Map<string, TabState>()
+export const tabStates = new Map<string, TabState>()
 
 export function hasTab(id: string): boolean {
   return tabStates.has(id)
@@ -132,10 +128,69 @@ export function getTabState(id: string): TabState | undefined {
   return tabStates.get(id)
 }
 
-/** 查找已打开的专用面板 Tab（技能 / 工具 / MCP 各只应有一个） */
+/** 查找已打开的专用面板 Tab（技能 / 工具 / MCP / 自动化任务 各只应有一个） */
 export function findTabByUtilityKind(kind: UtilityKind): string | undefined {
   for (const [id, st] of tabStates) {
     if (st.utilityKind === kind) return id
+  }
+  return undefined
+}
+
+/** 是否像绝对路径（Windows 盘符 / UNC / Unix 根） */
+export function looksAbsolutePath(p: string): boolean {
+  const s = p.trim()
+  if (!s) return false
+  // UNC：\\server\share（源码字面量 '\\\\' = 2 个反斜杠）
+  if (s.startsWith('/') || s.startsWith('\\')) return true
+  // C:\… 或 C:/…
+  return /^[a-zA-Z]:[\\/]/.test(s)
+}
+
+/**
+ * 解析当前应用应使用的工作区绝对路径。
+ * 专用面板 Tab 可能未写入 cwd，切换后 $workspaceCwd 会变成空串，需从其它 tab / 选项兜底。
+ */
+export function resolveWorkspaceCwd(): string {
+  const candidates: string[] = []
+  const push = (v?: string | null) => {
+    const s = (v ?? '').trim()
+    if (s) candidates.push(s)
+  }
+  push($workspaceCwd.get())
+  const active = $activeTabId.get()
+  if (active) push(tabStates.get(active)?.cwd)
+  for (const opt of $workspaceOptions.get()) push(opt)
+  for (const st of tabStates.values()) push(st.cwd)
+  for (const c of candidates) {
+    if (looksAbsolutePath(c)) return c
+  }
+  return candidates[0] || ''
+}
+
+/**
+ * 找普通对话 Tab：优先「空白新会话」（无 chatId、无消息），否则任意非 utility 的 Tab。
+ * 侧栏 New chat 在专用面板里应切回这类 Tab，而不是把面板改成对话。
+ */
+export function findNormalChatTab(preferBlank = true): string | undefined {
+  if (preferBlank) {
+    for (const [id, st] of tabStates) {
+      if (st.utilityKind) continue
+      if (!st.chatId && st.messages.length === 0) return id
+    }
+  }
+  for (const [id, st] of tabStates) {
+    if (!st.utilityKind) return id
+  }
+  return undefined
+}
+
+/** 查找已打开该历史会话的 Tab（sessionId 或 chatId 匹配） */
+export function findTabBySessionId(sessionId: string): string | undefined {
+  const sid = sessionId.trim()
+  if (!sid) return undefined
+  for (const [id, st] of tabStates) {
+    if (st.utilityKind) continue
+    if (st.sessionId === sid || st.chatId === sid) return id
   }
   return undefined
 }
@@ -273,20 +328,24 @@ export function patchTab(id: string, patch: Partial<TabState>): void {
   if (!cur) return
   const next = { ...cur, ...patch }
   tabStates.set(id, next)
+  // 渲染预算：流式时每 chunk 都 patchTab（推进消息），但 tab 标题/活动灯未必变化。
+  // 无条件 $tabs.set 会让 TabBar/Sidebar 等订阅者每帧重渲染；脏检查只在真正变化时通知。
   const activity = deriveTabActivity(next)
   const failed = next.phase === 'failed'
-  $tabs.set(
-    $tabs.get().map((t) =>
-      t.id === id
-        ? {
-            ...t,
-            title: 'chatTitle' in patch && patch.chatTitle ? patch.chatTitle! : t.title,
-            activity,
-            failed,
-          }
-        : t,
-    ),
-  )
+  const title =
+    'chatTitle' in patch && patch.chatTitle ? patch.chatTitle! : cur.chatTitle
+  const list = $tabs.get()
+  const current = list.find((t) => t.id === id)
+  if (
+    !current ||
+    current.activity !== activity ||
+    current.failed !== failed ||
+    current.title !== title
+  ) {
+    $tabs.set(
+      list.map((t) => (t.id === id ? { ...t, title, activity, failed } : t)),
+    )
+  }
   if (id === $activeTabId.get()) {
     projectPatch(patch)
   }
@@ -299,11 +358,35 @@ export function patchActiveTab(patch: Partial<TabState>): void {
   patchTab(id, patch)
 }
 
+/** 空白 tab 是否可回收：无会话、无内容、无运行中任务、非专用面板 */
+function isRecyclableBlank(st: TabState): boolean {
+  if (st.utilityKind) return false
+  if (st.chatId || st.sessionId) return false
+  if (st.messages.length > 0) return false
+  if (st.composerInput) return false
+  if (st.status === 'generating') return false
+  if (st.phase === 'loading' || st.phase === 'restarting' || st.phase === 'booting') {
+    return false
+  }
+  if (st.subagents.length > 0) return false
+  if (st.permission || st.userQuestion) return false
+  return true
+}
+
 /** 切换活跃 tab：先切 id 再投影（事件在两者之间到达时按新 id 路由，投影幂等） */
 export function switchTab(id: string): void {
   if (!tabStates.has(id)) return
+  const prev = $activeTabId.get()
   $activeTabId.set(id)
   projectTab(id)
+  // 切走时自动回收空白 tab（保留至少 1 个；生成中/加载中/有任务的一律不回收）
+  // 注意：须在切完之后回收，否则 removeTab(prev) 会把 active 置空并清投影
+  if (prev && prev !== id && tabStates.size > 1) {
+    const prevState = tabStates.get(prev)
+    if (prevState && isRecyclableBlank(prevState)) {
+      removeTab(prev)
+    }
+  }
 }
 
 // ── Tab（Phase 1：先只支持单 tab，Phase 2 再扩展成 map） ──
@@ -313,6 +396,8 @@ export function switchTab(id: string): void {
 export const $activeSessionId = atom('')
 export const $messages = atom<ChatMessage[]>([])
 export const $permission = atom<PermissionRequest | null>(null)
+/** 内嵌审批条是否在视口内（Permission.tsx 的 IntersectionObserver 维护；浮层兜底读它） */
+export const $permissionInlineVisible = atom(true)
 export const $userQuestion = atom<UserQuestionRequest | null>(null)
 export const $subagents = atom<SubagentRuntime[]>([])
 export const $error = atom('')
@@ -326,7 +411,7 @@ export const $hasRunningSubagents = computed($subagents, (list) =>
   list.some((s) => s.status === 'running'),
 )
 
-/** 合并/更新某 tab 的子 agent 条目 */
+/** 合并/更新某 tab 的子 agent 条目，并同步对话内 scaffold 行 */
 export function upsertSubagent(
   tabId: string,
   patch: Partial<SubagentRuntime> & { subagentId: string },
@@ -347,7 +432,27 @@ export function upsertSubagent(
       ...patch,
     })
   }
-  patchTab(tabId, { subagents: list })
+  // 上限 20 条：优先裁掉已结束的；全是运行中就裁最老的（按列表顺序）
+  const MAX_SUBAGENTS = 20
+  if (list.length > MAX_SUBAGENTS) {
+    const ended = list.filter((x) => x.status !== 'running')
+    const overflow = list.length - MAX_SUBAGENTS
+    if (ended.length >= overflow) {
+      let removed = 0
+      for (let i = 0; i < list.length && removed < overflow; i++) {
+        if (list[i].status !== 'running') {
+          list.splice(i, 1)
+          removed++
+          i--
+        }
+      }
+    } else {
+      list.splice(0, overflow)
+    }
+  }
+  const entry = list[idx >= 0 ? idx : list.length - 1]
+  const messages = upsertSubagentMessage(st.messages, entry)
+  patchTab(tabId, { subagents: list, messages })
 }
 
 // ── 模型 ──
@@ -368,6 +473,12 @@ export const $reasoningEffort = atom('medium')
 // ── 工作区（$workspaceCwd 是当前 tab 投影；历史列表全局） ──
 export const $workspaceCwd = atom('')
 export const $workspaceOptions = atom<string[]>([])
+/**
+ * 用户「主工作区」（设置/Composer 显式切换）。
+ * 侧栏分组置顶、默认展开用它——勿用当前 Tab 的 cwd，
+ * 否则点其它工作区下的历史会话会把整组拖到最上面。
+ */
+export const $preferredWorkspaceCwd = atom('')
 
 // ── UI ──
 export const $sidebarCollapsed = atom(false)

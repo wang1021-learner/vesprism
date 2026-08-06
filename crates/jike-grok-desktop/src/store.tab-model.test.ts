@@ -12,12 +12,17 @@ import {
   createTab,
   deriveTabActivity,
   emptyTabState,
+  $workspaceCwd,
+  $workspaceOptions,
+  findNormalChatTab,
   findTabByUtilityKind,
   getTabState,
+  looksAbsolutePath,
   patchTab,
   removeTab,
   resetTabsForTests,
   resolveNewTabModel,
+  resolveWorkspaceCwd,
   switchTab,
 } from './store'
 import type { ModelInfo } from './types'
@@ -72,6 +77,7 @@ beforeEach(() => {
 describe('Tab 模型分片', () => {
   it('createTab 写入 modelId，switchTab 投影到全局 atom', () => {
     createTab('tab-1', { modelId: 'model-a', reasoningEffort: 'low' })
+    patchTab('tab-1', { chatId: 'chat-1' })
     createTab('tab-2', { modelId: 'model-b', reasoningEffort: 'high' })
 
     switchTab('tab-1')
@@ -83,9 +89,34 @@ describe('Tab 模型分片', () => {
     expect($defaultModelId.get()).toBe('model-b')
     expect($reasoningEffort.get()).toBe('high')
 
-    // 后台 tab 的值不被覆盖
+    // 后台 tab 的值不被覆盖（tab-1 有 chatId 非空白，切走不回收）
     expect(getTabState('tab-1')?.modelId).toBe('model-a')
     expect(getTabState('tab-1')?.reasoningEffort).toBe('low')
+  })
+
+  it('切走空白 tab 自动回收；有内容/运行中的保留', () => {
+    createTab('blank-1', { modelId: 'model-a' })
+    createTab('blank-2', { modelId: 'model-b' })
+    createTab('real-1', { modelId: 'model-c' })
+    patchTab('real-1', { chatId: 'chat-1' })
+    createTab('busy-1', { modelId: 'model-d' })
+    patchTab('busy-1', { status: 'generating' })
+
+    // blank-1 → blank-2：blank-1 是空白，回收
+    switchTab('blank-1')
+    switchTab('blank-2')
+    expect(getTabState('blank-1')).toBeUndefined()
+
+    // blank-2 → real-1：blank-2 空白回收，real-1 保留
+    switchTab('real-1')
+    expect(getTabState('blank-2')).toBeUndefined()
+    expect(getTabState('real-1')).toBeDefined()
+
+    // real-1 → busy-1：real-1 非空白保留；busy-1 生成中，切走也不回收
+    switchTab('busy-1')
+    expect(getTabState('real-1')).toBeDefined()
+    switchTab('real-1')
+    expect(getTabState('busy-1')).toBeDefined()
   })
 
   it('patchTab 只投影活跃 tab 的模型变更', () => {
@@ -150,11 +181,57 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('mcp')).toBeUndefined()
   })
 
+  it('looksAbsolutePath / resolveWorkspaceCwd 兜底空投影', () => {
+    expect(looksAbsolutePath('')).toBe(false)
+    expect(looksAbsolutePath('relative')).toBe(false)
+    expect(looksAbsolutePath('D:\\grokbuild')).toBe(true)
+    expect(looksAbsolutePath('/home/u')).toBe(true)
+
+    $workspaceCwd.set('')
+    $workspaceOptions.set([])
+    createTab('tab-util', { utilityKind: 'tools', cwd: '' })
+    createTab('tab-chat', {
+      utilityKind: null,
+      cwd: 'D:\\repo\\app',
+      chatId: '',
+      messages: [],
+    })
+    switchTab('tab-util')
+    // 投影为空时仍能从其它 tab 取绝对路径
+    expect(resolveWorkspaceCwd()).toBe('D:\\repo\\app')
+  })
+
+  it('findNormalChatTab 优先空白普通对话', () => {
+    createTab('tab-tools', { utilityKind: 'tools', chatTitle: '工具' })
+    createTab('tab-old', {
+      utilityKind: null,
+      chatId: 'sess-1',
+      messages: [{ id: 'm1', role: 'user', text: 'hi' } as never],
+    })
+    createTab('tab-blank', { utilityKind: null, chatId: '', messages: [] })
+    expect(findNormalChatTab(true)).toBe('tab-blank')
+    expect(findNormalChatTab(false)).toBe('tab-old')
+  })
+
   it('deriveTabActivity 优先级：error > permission > working > idle', () => {
     expect(deriveTabActivity(emptyTabState())).toBe('idle')
     expect(
       deriveTabActivity({ ...emptyTabState(), status: 'generating' }),
     ).toBe('working')
+    // 加载历史 / 切换会话：不闪绿
+    expect(
+      deriveTabActivity({
+        ...emptyTabState(),
+        phase: 'loading',
+        status: 'initializing',
+      }),
+    ).toBe('idle')
+    expect(
+      deriveTabActivity({
+        ...emptyTabState(),
+        phase: 'restarting',
+      }),
+    ).toBe('idle')
     expect(
       deriveTabActivity({
         ...emptyTabState(),

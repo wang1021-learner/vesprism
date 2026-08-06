@@ -1,0 +1,97 @@
+import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import { Streamdown } from 'streamdown'
+import {
+  tailBoundedRemend,
+  parseMarkdownIntoBlocks,
+} from '@assistant-ui/react-streamdown'
+import { createMathPlugin } from '@streamdown/math'
+
+// ── 预处理（增量缓存：流式时仅处理新增后缀）──
+
+function preprocessMarkdown(text: string): string {
+  let processed = text
+  processed = processed.replace(/<preview>[\s\S]*?<\/preview>/g, '')
+  processed = processed.replace(/\\(((?:[^\]|\[^)])*?)\\)/g, '$$$1$$')
+  return processed
+}
+
+/** 增量预处理：text 增长时只对新增后缀做 regex + tailBoundedRemend */
+function useIncrementalPreprocess(text: string): string {
+  const cache = useRef({ input: '', output: '' })
+
+  return useMemo(() => {
+    const prev = cache.current.input
+    // 前缀未变 → 仅处理增量
+    if (text.length > prev.length && text.startsWith(prev)) {
+      const delta = text.slice(prev.length)
+      const output = cache.current.output + tailBoundedRemend(preprocessMarkdown(delta))
+      cache.current = { input: text, output }
+      return output
+    }
+    // 文本被替换（编辑 / 切会话）
+    const output = tailBoundedRemend(preprocessMarkdown(text))
+    cache.current = { input: text, output }
+    return output
+  }, [text])
+}
+
+// ── 懒加载插件 ──
+
+let codePluginCache: import('@streamdown/code').CodeHighlighterPlugin | null = null
+let mermaidPluginCache: import('@streamdown/mermaid').DiagramPlugin | null = null
+
+function useCodePlugin() {
+  const [plugin, setPlugin] = useState(codePluginCache)
+  useEffect(() => {
+    if (plugin) return
+    let cancelled = false
+    void import('@streamdown/code').then(({ code }) => {
+      codePluginCache = code
+      if (!cancelled) setPlugin(code)
+    })
+    return () => { cancelled = true }
+  }, [plugin])
+  return plugin
+}
+
+function useMermaidPlugin() {
+  const [plugin, setPlugin] = useState(mermaidPluginCache)
+  useEffect(() => {
+    if (plugin) return
+    let cancelled = false
+    void import('@streamdown/mermaid').then(({ mermaid: m }) => {
+      mermaidPluginCache = m
+      if (!cancelled) setPlugin(m)
+    })
+    return () => { cancelled = true }
+  }, [plugin])
+  return plugin
+}
+
+// ── GFM Alert 解析 ──
+
+type AlertType = 'note' | 'tip' | 'important' | 'warning' | 'caution'
+
+const ALERT_META: Record<AlertType, { label: string; icon: string }> = {
+  note: { label: 'Note', icon: 'ℹ' },
+  tip: { label: 'Tip', icon: '💡' },
+  important: { label: 'Important', icon: '❗' },
+  warning: { label: 'Warning', icon: '⚠' },
+  caution: { label: 'Caution', icon: '🔥' },
+}
+
+function extractTextContent(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(extractTextContent).join('')
+  if (node && typeof node === 'object' && 'props' in node) {
+    return extractTextContent((node as { props: { children?: ReactNode } }).props.children)
+  }
+  return ''
+}
+
+function detectAlert(children: ReactNode): { type: AlertType; body: ReactNode } | null {
+  const text = extractTextContent(children).trimStart()
+  const m = text.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i)
+  if (!m) return null
+  return { type: m[1].toLowerCase() as AlertType, body: children }
+}

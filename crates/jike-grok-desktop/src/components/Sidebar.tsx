@@ -13,29 +13,39 @@ import {
 } from 'react'
 import {
   $activeTabId,
-  $activeSessionId,
   $chats,
   $defaultModelId,
   $engineStatus,
-  $messages,
   $models,
   $reasoningEffort,
-  $sessionPhase,
   $settingsOpen,
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
   $commandPaletteOpen,
+  createTab,
+  findNormalChatTab,
+  findTabBySessionId,
   getTabState,
+  looksAbsolutePath,
   patchActiveTab,
   patchTab,
+  removeTab,
+  resolveNewTabModel,
+  resolveWorkspaceCwd,
+  switchTab,
   $workspaceCwd,
+  $preferredWorkspaceCwd,
   type ChatSummary,
 } from '../store'
+import { clearSessionAllowed } from '../lib/permissionMemory'
+import { tabStates, pushToast } from '../store'
 import {
+  closeTab,
   deleteSession,
   getSessionMessages,
   listSessions,
   loadSession,
+  openTab,
   renameSession,
   restartSession,
   searchSessions,
@@ -72,6 +82,8 @@ function hydrateDisplayMessage(m: {
   status?: string | null
   detail?: string | null
   preview?: string | null
+  start_ms?: number | null
+  end_ms?: number | null
 }): ChatMessage {
   const role = (
     ['user', 'assistant', 'system', 'thought', 'tool'].includes(m.role)
@@ -90,6 +102,11 @@ function hydrateDisplayMessage(m: {
       title,
       detail,
       preview,
+      // 历史耗时：磁盘 updates.jsonl 的 timestamp 解析（毫秒）
+      timing:
+        m.start_ms != null
+          ? { start: m.start_ms, ...(m.end_ms != null ? { end: m.end_ms } : {}) }
+          : undefined,
     }
     return {
       id: m.id,
@@ -274,8 +291,13 @@ interface Props {
 }
 
 export function Sidebar({ collapsed, activeChatId }: Props) {
+
+/** New Chat 软上限：超过提示不硬拦 */
+const MAX_TABS = 12
   const chats = useStore($chats)
   const cwd = useStore($workspaceCwd)
+  /** 主工作区：侧栏置顶/默认展开；勿用当前 Tab cwd（点历史会误把整组拖到最上面） */
+  const preferredCwd = useStore($preferredWorkspaceCwd)
 
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set())
   const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null)
@@ -297,7 +319,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const searchGenRef = useRef(0)
 
   const refreshChats = useCallback(async (workspace?: string) => {
-    const w = workspace ?? $workspaceCwd.get()
+    // 用主工作区做「当前优先」排序参数；列表本身含全部 cwd 的会话
+    const w =
+      workspace ||
+      $preferredWorkspaceCwd.get() ||
+      $workspaceCwd.get()
     if (!w) return
     try {
       const list = await listSessions(w, 300)
@@ -314,10 +340,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     }
   }, [])
 
+  // 仅主工作区变化时刷新列表；切 Tab / 打开其它 cwd 历史不重排侧栏
   useEffect(() => {
-    if (!cwd) return
-    void refreshChats(cwd)
-  }, [cwd, refreshChats])
+    if (!preferredCwd) return
+    void refreshChats(preferredCwd)
+  }, [preferredCwd, refreshChats])
 
   useEffect(() => {
     if (!menuOpenChatId) return
@@ -395,7 +422,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   }, [searchQuery, searchOpen])
 
   const workspaceGroups = useMemo((): WorkspaceGroup[] => {
-    const currentKey = normalizeCwdKey(cwd)
+    // 置顶 = 主工作区（设置/Composer 切换），不是当前 Tab 打开的历史会话 cwd
+    const pinKey = normalizeCwdKey(preferredCwd || cwd)
     const byWs = new Map<string, ChatSummary[]>()
     for (const c of chats) {
       const key = normalizeCwdKey(c.cwd)
@@ -411,7 +439,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         cwdKey: key,
         label: workspaceDisplayName(key),
         fullPath: key,
-        isCurrent: key === currentKey,
+        isCurrent: Boolean(pinKey) && key === pinKey,
         chats: sorted,
       })
     }
@@ -420,7 +448,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       return a.label.localeCompare(b.label, 'zh')
     })
     return groups
-  }, [chats, cwd])
+  }, [chats, preferredCwd, cwd])
 
   const toggleWorkspace = (ws: WorkspaceGroup) => {
     setCollapsedWorkspaces((prev) => {
@@ -445,36 +473,91 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     return !ws.isCurrent
   }
 
+  /**
+   * 打开历史会话：
+   * 1. 已在某 Tab 打开 → 立刻切换（不重载、不闪 loading）
+   * 2. 否则后台新开/复用空白 Tab 加载；消息秒开后再切过去，避免输入框长时间「正在加载会话」
+   */
   const onSelectChat = useCallback(async (id: string, sessionCwd?: string) => {
-    if ($sessionPhase.get() === 'loading') return
-    // 捕获发起时的 tab：从函数最开始就锁定，此后一律用 myTab，不再读 $activeTabId.get()
-    // （await 期间用户可能切走；若中途用 $activeTabId.get()，加载指令和 sessionId
-    //   会写进新活跃 tab，污染其状态）
-    const myTab = $activeTabId.get()
+    setMenuOpenChatId(null)
 
-    if (id === $activeSessionId.get() && $sessionPhase.get() === 'ready') {
-      patchTab(myTab, { chatId: id })
-      setMenuOpenChatId(null)
+    // 已打开：直接切换（phase 保持该 Tab 原状态，ready 则无绿闪）
+    const existing = findTabBySessionId(id)
+    if (existing) {
+      switchTab(existing)
       return
     }
 
-    // 切走前缓存当前会话消息，回来时可跳过磁盘投影
-    const prevId = $activeSessionId.get()
-    if (prevId && prevId !== id) {
-      const cur = $messages.get()
-      if (cur.length > 0) cacheSessionMessages(prevId, cur)
+    const title =
+      $chats.get().find((c) => c.id === id)?.title?.trim() || '历史会话'
+    const workCwd = (sessionCwd || resolveWorkspaceCwd() || cwd).trim()
+    if (!workCwd || !looksAbsolutePath(workCwd)) {
+      patchActiveTab({
+        error: '工作区路径无效，无法打开历史会话。请在设置中选择绝对路径工作区。',
+      })
+      return
     }
 
-    patchTab(myTab, { chatId: id })
-    setMenuOpenChatId(null)
-    // 历史会话直接用列表里的标题（LLM 生成的），等引擎 title_changed 事件再刷新
-    patchTab(myTab, { chatTitle: $chats.get().find((c) => c.id === id)?.title ?? '' })
-    const useCwd = (sessionCwd || cwd).trim() || cwd
-    const gen = nextLoadGen(myTab)
+    const activeId = $activeTabId.get()
+    const active = activeId ? getTabState(activeId) : undefined
+    const reuseBlank =
+      activeId &&
+      active &&
+      !active.utilityKind &&
+      !active.chatId &&
+      !active.sessionId &&
+      active.messages.length === 0 &&
+      active.phase !== 'loading'
 
+    let myTab = activeId
+    let createdNew = false
+    // 新 Tab：先创建不切换，等有消息再 switch，用户可继续在当前 Tab 操作
+    if (!reuseBlank) {
+      try {
+        const prevId = activeId
+        myTab = await openTab()
+        const model = resolveNewTabModel(prevId || undefined)
+        createTab(myTab, {
+          cwd: workCwd,
+          chatTitle: title,
+          chatId: id,
+          modelId: model.modelId,
+          reasoningEffort: model.reasoningEffort,
+          utilityKind: null,
+          phase: 'loading',
+          status: 'initializing',
+        })
+        createdNew = true
+      } catch (e) {
+        patchActiveTab({ error: `打开会话 Tab 失败: ${String(e)}` })
+        return
+      }
+    } else {
+      myTab = activeId
+      if (active?.sessionId) {
+        const cur = getTabState(myTab)?.messages ?? []
+        if (cur.length > 0) cacheSessionMessages(active.sessionId, cur)
+      }
+    }
+
+    const gen = nextLoadGen(myTab)
     try {
-      // 先清空 + loading，避免短暂仍显示上一会话（再从顶跳到底）
-      patchTab(myTab, { messages: [], phase: 'loading', status: 'initializing' })
+      patchTab(myTab, {
+        messages: [],
+        phase: 'loading',
+        status: 'initializing',
+        error: '',
+        chatId: id,
+        chatTitle: title,
+        cwd: workCwd,
+        utilityKind: null,
+        // 子 agent 状态随会话走；切历史必须清，避免状态灯/map 与消息流脱节
+        subagents: [],
+        permission: null,
+        userQuestion: null,
+      })
+      // 本次会话权限记忆按会话清，避免命令记忆跨会话串用
+      clearSessionAllowed(myTab)
 
       let messages = getCachedSessionMessages(id)
       if (!messages) {
@@ -486,20 +569,44 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         return
       }
 
+      // 消息先写入；新 Tab 在此再切换，用户看到的是内容而不是空白 loading
       hydrateFromSnapshot(messages, myTab)
+      if (createdNew || reuseBlank) {
+        switchTab(myTab)
+      }
 
       beginAttachRuntime(myTab)
-      await loadSession(myTab, id, useCwd)
+      await loadSession(myTab, id, workCwd)
       if (gen !== currentLoadGen(myTab)) return
       finishAttachRuntime(myTab)
-      patchTab(myTab, { sessionId: id })
-      // runtime 挂好后刷新缓存（含切走期间可能未写入的快照）——直接从 myTab
-      // 自己的 map 条目取，不依赖它是否仍是活跃 tab
+      // chatId 固定为侧栏历史 id，便于再次点击时命中已开 Tab
+      patchTab(myTab, {
+        sessionId: id,
+        chatId: id,
+        phase: 'ready',
+        status: 'idle',
+        error: '',
+      })
       cacheSessionMessages(id, getTabState(myTab)?.messages ?? [])
     } catch (e) {
       if (gen !== currentLoadGen(myTab)) return
       abortOpenSession(myTab)
-      patchTab(myTab, { status: 'idle', error: String(e) })
+      const err = String(e)
+      if (createdNew && myTab) {
+        try {
+          await closeTab(myTab)
+        } catch {
+          /* 后端可能未登记 */
+        }
+        removeTab(myTab)
+        const fallback = findNormalChatTab(false) || $activeTabId.get()
+        if (fallback && getTabState(fallback)) {
+          switchTab(fallback)
+          patchTab(fallback, { error: `打开历史会话失败: ${err}` })
+        }
+      } else {
+        patchTab(myTab, { phase: 'ready', status: 'idle', error: err })
+      }
     }
   }, [cwd])
 
@@ -509,16 +616,62 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   }
 
   const onNewChat = useCallback(async () => {
-    // 加载历史 / 挂 runtime / 重启中不可再点
-    const phase = $sessionPhase.get()
-    if (phase === 'loading' || phase === 'restarting' || phase === 'booting') return
-    if ($engineStatus.get() === 'generating') return
-
     setMenuOpenChatId(null)
-    try {
-      abortOpenSession()
-      // 清空 UI（与旧版 resetConversationUi 一致）
+
+    const workCwd = resolveWorkspaceCwd()
+    if (!workCwd || !looksAbsolutePath(workCwd)) {
       patchActiveTab({
+        error:
+          '工作区路径无效（Path is not absolute）。请先在设置中选择绝对路径工作区，再新建对话。',
+      })
+      return
+    }
+
+    // 软上限：超过提示但不硬拦（空白 tab 切走会自动回收）
+    if (tabStates.size >= MAX_TABS) {
+      pushToast(`已有 ${MAX_TABS} 个标签页，建议先关闭不用的`, 'info')
+    }
+
+    const activeId = $activeTabId.get()
+    const activeState = activeId ? getTabState(activeId) : undefined
+
+    // 当前 Tab 在加载历史 / 生成中 / 专用面板：新开空白对话 Tab，不阻塞、不冲掉当前页
+    const shouldOpenFreshTab =
+      !activeId ||
+      !activeState ||
+      Boolean(activeState.utilityKind) ||
+      activeState.phase === 'loading' ||
+      activeState.phase === 'restarting' ||
+      activeState.phase === 'booting' ||
+      activeState.status === 'generating' ||
+      Boolean(activeState.chatId || activeState.sessionId) ||
+      activeState.messages.length > 0
+
+    if (shouldOpenFreshTab) {
+      // 优先复用已有空白普通对话
+      const blank = findNormalChatTab(true)
+      if (
+        blank &&
+        blank !== activeId &&
+        getTabState(blank) &&
+        !getTabState(blank)?.chatId &&
+        (getTabState(blank)?.messages.length ?? 0) === 0
+      ) {
+        switchTab(blank)
+        await refreshChats()
+        return
+      }
+      const opened = await openChatTab({ title: '' })
+      if (opened) await refreshChats()
+      return
+    }
+
+    // 当前已是空白普通对话：原地 restart 即可
+    const tabId = activeId
+    if ($engineStatus.get() === 'generating') return
+    try {
+      abortOpenSession(tabId)
+      patchTab(tabId, {
         messages: [],
         composerInput: '',
         permission: null,
@@ -530,16 +683,16 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         chatTitle: '',
         phase: 'restarting',
         status: 'initializing',
+        utilityKind: null,
+        cwd: workCwd,
       })
 
-      // 后端：丢弃当前会话；空会话不进历史；启新 session
       try {
-        await restartSession($activeTabId.get(), cwd)
+        await restartSession(tabId, workCwd)
       } catch {
-        await startSession($activeTabId.get(), cwd)
+        await startSession(tabId, workCwd)
       }
 
-      // 新会话对齐当前默认模型 / 推理档
       const modelId = $defaultModelId.get().trim()
       if (modelId) {
         const entry = $models.get().find((m) => m.id === modelId)
@@ -547,19 +700,19 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
           ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
           : undefined
         try {
-          await setCurrentModel($activeTabId.get(), modelId, effort)
+          await setCurrentModel(tabId, modelId, effort)
           if (effort) $reasoningEffort.set(effort)
         } catch (e) {
           console.warn('新会话同步模型失败', e)
         }
       }
 
-      patchActiveTab({ phase: 'ready', status: 'idle' })
+      patchTab(tabId, { phase: 'ready', status: 'idle', error: '' })
       await refreshChats()
     } catch (e) {
-      patchActiveTab({ phase: 'ready', status: 'idle', error: String(e) })
+      patchTab(tabId, { phase: 'ready', status: 'idle', error: String(e) })
     }
-  }, [cwd, refreshChats])
+  }, [refreshChats])
 
   // App 快捷键 Ctrl/Cmd+N
   useEffect(() => {

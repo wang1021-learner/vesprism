@@ -179,7 +179,9 @@
 .message-virtual-row {
   /* 测高含 paddingBottom（原 gap: 24px） */
   box-sizing: border-box;
-  will-change: transform;
+  /* 不用 will-change: transform：每行常驻合成层会让可视区 20~40 行全部
+     成为独立层，滚动时合成开销大、掉帧卡断。transform 定位在滚动动画期间
+     会被浏览器隐式提升，无需常驻提示。 */
 }
 
 .jump-to-bottom-btn {
@@ -311,6 +313,42 @@
   gap: 0;
 }
 
+
+/* 流式正文：锁布局，减少 markdown 重排带来的上下抖动 */
+.assistant-row.is-streaming {
+  contain: layout style;
+}
+.assistant-row.is-streaming .assistant-content {
+  /* 内容只向下长，避免字号/行高微变把视口拽来拽去 */
+  overflow-anchor: none;
+  min-height: 1.2em;
+}
+
+/* 子任务行：安静 scaffold，进度刷新不撑高 */
+.subagent-tool-row {
+  contain: layout style;
+}
+.subagent-tool-row .scaffold-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(36rem, 70vw);
+}
+.subagent-tool-row .scaffold-body {
+  max-height: 12rem;
+  overflow: auto;
+}
+
+/* 思考流式：确保主列表能跟到底（内部不截断） */
+.thought-row.is-live .thought-expanded {
+  max-height: none;
+  overflow: visible;
+}
+.thought-row.is-live .thought-body-pre {
+  /* 长思考时保持阅读节奏，不闪动背景 */
+  background: transparent;
+}
+
 .assistant-content {
   width: 100%;
   /* 与 .md-body 一致：原 15px → 13px */
@@ -365,12 +403,45 @@
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  width: 0.875rem;
+  width: 1rem;
   height: var(--conversation-line);
   font-size: 11px;
   line-height: 1;
   color: var(--text-tertiary);
   align-self: flex-start;
+  opacity: 0.9;
+}
+
+.scaffold-glyph svg {
+  display: block;
+}
+
+/* 类型色：思考 / 终端 / 网络 / 读写 / 通用工具 */
+.scaffold-glyph.icon-thought {
+  color: color-mix(in srgb, #8b5cf6 72%, var(--text-tertiary));
+}
+.scaffold-glyph.icon-terminal {
+  color: color-mix(in srgb, #0d9488 75%, var(--text-tertiary));
+}
+.scaffold-glyph.icon-web,
+.scaffold-glyph.icon-search {
+  color: color-mix(in srgb, #2563eb 70%, var(--text-tertiary));
+}
+.scaffold-glyph.icon-read {
+  color: color-mix(in srgb, #64748b 80%, var(--text-tertiary));
+}
+.scaffold-glyph.icon-edit {
+  color: color-mix(in srgb, #d97706 75%, var(--text-tertiary));
+}
+.scaffold-glyph.icon-tool {
+  color: color-mix(in srgb, #475569 85%, var(--text-tertiary));
+}
+.scaffold-glyph.icon-ask {
+  color: color-mix(in srgb, #7c3aed 70%, var(--text-tertiary));
+}
+
+.scaffold-glyph.is-live {
+  color: var(--text-secondary);
 }
 
 .scaffold-glyph.is-error {
@@ -586,6 +657,49 @@
   max-height: 10rem;
   overflow: auto;
   padding-bottom: 0.2rem;
+  /* 折叠过渡：turn_ended 定稿时高度渐变到 0，避免思考区骤减 + instant 贴底造成「猛地拽回」 */
+  transition: max-height 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 思考折叠动画中：收起内边距/滚动，让高度能收到 0 */
+.thought-expanded.is-collapsing {
+  max-height: 0;
+  overflow: hidden;
+  margin-top: 0;
+  padding-bottom: 0;
+}
+
+/* 流式思考：不卡死在 10rem 内滚，交给主列表贴底跟滚 */
+.thought-row.is-live .thought-expanded {
+  max-height: none;
+  overflow: visible;
+}
+
+/* 子任务 scaffold：行内「打开」 */
+.subagent-inline-open {
+  flex-shrink: 0;
+  height: 1.25rem;
+  margin: 0;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 550;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.subagent-inline-open:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong-solid, var(--border-solid));
+}
+.subagent-inline-open:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.scaffold-glyph.icon-agent {
+  color: color-mix(in srgb, #6366f1 70%, var(--text-tertiary));
 }
 
 .thought-body-pre {
@@ -772,23 +886,28 @@
   border-radius: 6px;
 }
 
-/* ── Cursor 风格 diff 行 ── */
+/* ── Cursor 风格 diff 行（行窗口虚拟化：固定行高 + 内部滚动，对齐官方 Hermes）── */
 .diff-lines {
   margin: 0;
   padding: 2px 0;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 20px;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 12rem;
+  overscroll-behavior-y: auto;
   white-space: pre;
   color: var(--text-secondary);
 }
 .diff-line {
   display: block;
+  height: 20px;
+  line-height: 20px;
   min-width: max-content;
   border-left: 2px solid transparent;
   padding: 0 10px;
   white-space: pre;
+  box-sizing: border-box;
 }
 .diff-add {
   background: rgba(16, 185, 129, 0.04);

@@ -2,15 +2,18 @@
  * 打开会话 Tab（Tab 栏「+」与侧栏「技能 / 工具 / MCP / 自动化任务」共用）
  *
  * 专用面板（skills / tools / mcp / workflows）：已存在则 **切换**，不再重复新建。
+ * 创建时必须写入绝对 cwd，避免切换面板后 $workspaceCwd 变空导致 start/restart 失败。
  */
 import {
   $activeTabId,
-  $workspaceCwd,
-  $workspaceOptions,
   createTab,
   findTabByUtilityKind,
+  getTabState,
+  looksAbsolutePath,
   patchActiveTab,
+  patchTab,
   resolveNewTabModel,
+  resolveWorkspaceCwd,
   switchTab,
   type UtilityKind,
 } from '../store'
@@ -30,14 +33,26 @@ export type OpenChatTabOpts = {
 export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | null> {
   const title = (opts.title || '').trim()
   const utilityKind = opts.utilityKind ?? null
+  const cwd = resolveWorkspaceCwd()
 
-  // 专用面板：同类型已打开则直接切过去
+  // 专用面板：同类型已打开则直接切过去（并补全缺失的 cwd）
   if (utilityKind) {
     const existing = findTabByUtilityKind(utilityKind)
     if (existing) {
+      const st = getTabState(existing)
+      if (cwd && looksAbsolutePath(cwd) && (!st?.cwd || !looksAbsolutePath(st.cwd))) {
+        patchTab(existing, { cwd })
+      }
       switchTab(existing)
       return existing
     }
+  }
+
+  if (!cwd || !looksAbsolutePath(cwd)) {
+    patchActiveTab({
+      error: '工作区路径无效（不是绝对路径）。请在设置中选择工作区后再试。',
+    })
+    return null
   }
 
   try {
@@ -49,9 +64,9 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       reasoningEffort: model.reasoningEffort,
       chatTitle: title,
       utilityKind,
+      cwd,
     })
     switchTab(tabId)
-    const cwd = $workspaceCwd.get() || $workspaceOptions.get()[0] || ''
     await startSession(tabId, cwd)
     if (model.modelId) {
       try {
@@ -67,6 +82,8 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       reasoningEffort: model.reasoningEffort,
       chatTitle: title,
       utilityKind,
+      cwd,
+      error: '',
     })
     return tabId
   } catch (e) {

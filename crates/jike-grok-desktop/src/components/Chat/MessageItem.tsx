@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useStore } from '@nanostores/react'
 import type { ChatMessage, ToolCallData } from '../../types'
+import { $permission } from '../../store'
+import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
-import { DiffLines } from './DiffLines'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
 
@@ -75,32 +77,194 @@ const BrailleSpinner = memo(function BrailleSpinner() {
 })
 
 /**
- * 安静 scaffold 状态位：进行中 spinner / 失败 ! / 成功留空（无菱形竖轨）
+ * 安静 scaffold 状态位：
+ * - 进行中：spinner
+ * - 失败：!
+ * - 否则：类型图标（思考 / 终端 / 工具 / 网络…）
  */
 type ActivityTone = 'thought' | 'tool' | 'tool-failed'
+
+/** 行首图标语义（区分思考 / 终端 / 普通工具 / 网络等） */
+type ScaffoldIconKind =
+  | 'thought'
+  | 'terminal'
+  | 'tool'
+  | 'web'
+  | 'read'
+  | 'edit'
+  | 'search'
+  | 'ask'
+  | 'agent'
+
+function toolIconKind(tool: ToolCallData): ScaffoldIconKind {
+  const k = (tool.kind || '').toLowerCase()
+  const blob = `${tool.title || ''} ${tool.detail || ''}`.toLowerCase()
+  if (k === 'subagent') return 'agent'
+  if (k === 'ask_user') return 'ask'
+  if (k === 'execute') return 'terminal'
+  if (
+    k === 'fetch' ||
+    /web_search|web_fetch|open_page|browse|http|https:\/\//.test(blob)
+  ) {
+    return 'web'
+  }
+  if (k === 'search' || /\bgrep\b|\bsearch\b|ripgrep|rg\b/.test(blob)) {
+    return 'search'
+  }
+  if (k === 'read') return 'read'
+  if (k === 'edit' || k === 'write' || k === 'delete' || k === 'move') return 'edit'
+  // 终端类：命令行工具名或 curl 等
+  if (
+    /terminal|bash|shell|cmd\.exe|powershell|pwsh|curl(\.exe)?|wget|npm |pnpm |yarn |cargo |git |python|node\.exe/.test(
+      blob,
+    )
+  ) {
+    return 'terminal'
+  }
+  return 'tool'
+}
+
+const ScaffoldTypeIcon = memo(function ScaffoldTypeIcon({
+  kind,
+}: {
+  kind: ScaffoldIconKind
+}) {
+  const common = {
+    width: 12,
+    height: 12,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.85,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true as const,
+  }
+  switch (kind) {
+    case 'thought':
+      // Thinking：灯泡
+      return (
+        <svg {...common}>
+          <path d="M9 18h6" />
+          <path d="M10 22h4" />
+          <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
+        </svg>
+      )
+    case 'terminal':
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M7 9l3 3-3 3M12 15h5" />
+        </svg>
+      )
+    case 'web':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+        </svg>
+      )
+    case 'search':
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20l-3.5-3.5" />
+        </svg>
+      )
+    case 'read':
+      return (
+        <svg {...common}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6M8 13h8M8 17h6" />
+        </svg>
+      )
+    case 'edit':
+      return (
+        <svg {...common}>
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+        </svg>
+      )
+    case 'ask':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4" />
+          <path d="M12 17h.01" />
+        </svg>
+      )
+    case 'agent':
+      // 分支 / 子任务
+      return (
+        <svg {...common}>
+          <circle cx="6" cy="6" r="2.5" />
+          <circle cx="18" cy="6" r="2.5" />
+          <circle cx="12" cy="18" r="2.5" />
+          <path d="M6 8.5v3a4 4 0 0 0 4 4h2a4 4 0 0 0 4-4v-3M12 15.5V12" />
+        </svg>
+      )
+    case 'tool':
+    default:
+      return (
+        <svg {...common}>
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+        </svg>
+      )
+  }
+})
+
+const ICON_TITLE: Record<ScaffoldIconKind, string> = {
+  thought: 'Thinking',
+  terminal: '终端',
+  tool: '工具',
+  web: '网络',
+  read: '读取',
+  edit: '编辑',
+  search: '搜索',
+  ask: '提问',
+  agent: '子任务',
+}
 
 const ScaffoldGlyph = memo(function ScaffoldGlyph({
   tone,
   live,
+  iconKind,
 }: {
   tone: ActivityTone
   live: boolean
+  iconKind: ScaffoldIconKind
 }) {
   if (live) {
     return (
-      <span className={`scaffold-glyph is-live tone-${tone}`} aria-hidden>
+      <span
+        className={`scaffold-glyph is-live tone-${tone} icon-${iconKind}`}
+        aria-hidden
+        title={`${ICON_TITLE[iconKind]} · 进行中`}
+      >
         <BrailleSpinner />
       </span>
     )
   }
   if (tone === 'tool-failed') {
     return (
-      <span className="scaffold-glyph is-error" aria-hidden title="失败">
+      <span
+        className={`scaffold-glyph is-error icon-${iconKind}`}
+        aria-hidden
+        title={`${ICON_TITLE[iconKind]} · 失败`}
+      >
         !
       </span>
     )
   }
-  return <span className="scaffold-glyph is-idle" aria-hidden />
+  return (
+    <span
+      className={`scaffold-glyph is-idle icon-${iconKind}`}
+      aria-hidden
+      title={ICON_TITLE[iconKind]}
+    >
+      <ScaffoldTypeIcon kind={iconKind} />
+    </span>
+  )
 })
 
 interface MessageItemProps {
@@ -108,9 +272,19 @@ interface MessageItemProps {
   streaming?: boolean
   /** 点击「Ask · 待回答」工具行时聚焦问卷面板 */
   onFocusUserQuestion?: (toolCallId: string) => void
+  /** 该行是当前权限审批的发起行：工具行下方渲染内嵌审批条 */
+  isPermissionOrigin?: boolean
+}
+
+/** 内嵌审批条包装：读当前 tab 投影，有审批才渲染 */
+function InlinePermissionBarWrap() {
+  const permission = useStore($permission)
+  if (!permission) return null
+  return <InlinePermissionBar permission={permission} />
 }
 
 function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
+  if (prev.isPermissionOrigin !== next.isPermissionOrigin) return false
   if (prev.streaming !== next.streaming) return false
   if (!next.streaming && !prev.streaming) {
     return prev.message === next.message
@@ -130,10 +304,123 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
   )
 }
 
+/** 子任务行：对话内 scaffold（须在 MessageItem 前声明） */
+function SubagentToolLine({
+  tool,
+  streaming,
+}: {
+  tool: ToolCallData
+  streaming: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [opening, setOpening] = useState(false)
+  const failed = tool.status === 'failed'
+  const finished =
+    tool.status === 'completed' || tool.status === 'failed'
+  const live =
+    !finished &&
+    (tool.status === 'pending' ||
+      tool.status === 'in_progress' ||
+      streaming)
+  const preview = tool.preview?.trim() || ''
+  const childSid = tool.detail?.trim() || ''
+  const duration = formatDuration(tool.timing)
+  const headline = toolHeadline(tool)
+
+  const onOpen = useCallback(async () => {
+    if (!childSid || opening) return
+    setOpening(true)
+    try {
+      const { openSubagentTab, refreshSubagentTabMessages } = await import(
+        '../../lib/openSubagentTab'
+      )
+      const id = await openSubagentTab(childSid, {
+        title: tool.title,
+        activate: true,
+      })
+      if (id) {
+        await refreshSubagentTabMessages(childSid, {
+          outputFallback: preview,
+        })
+      }
+    } finally {
+      setOpening(false)
+    }
+  }, [childSid, opening, tool.title, preview])
+
+  return (
+    <div
+      className={[
+        'message-row scaffold-row tool-row subagent-tool-row',
+        `status-${tool.status}`,
+        live ? 'is-live' : '',
+        expanded ? 'is-open' : '',
+        failed ? 'is-error' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      data-tool-call-id={tool.toolCallId}
+      data-tool-kind="subagent"
+      data-conversation-scaffold=""
+    >
+      <div className="scaffold-line">
+        <ScaffoldGlyph
+          tone={failed ? 'tool-failed' : 'tool'}
+          live={live}
+          iconKind="agent"
+        />
+        <div className="scaffold-main">
+          <div className="scaffold-toggle-row">
+            <button
+              type="button"
+              className={`scaffold-toggle${failed ? ' is-error' : ''}${live ? ' is-live' : ''}`}
+              onClick={() => (preview ? setExpanded((v) => !v) : void onOpen())}
+              aria-expanded={expanded}
+              title={preview ? (expanded ? '收起结果' : '展开结果') : '打开子任务'}
+            >
+              <span className="scaffold-label" title={headline}>
+                {headline}
+              </span>
+              {!live && duration ? (
+                <span className="scaffold-meta">{duration}</span>
+              ) : null}
+              {preview ? (
+                <span className={`scaffold-caret${expanded ? ' is-open' : ''}`} aria-hidden>
+                  ›
+                </span>
+              ) : null}
+            </button>
+            {childSid ? (
+              <button
+                type="button"
+                className="subagent-inline-open"
+                disabled={opening}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void onOpen()
+                }}
+                title="在标签中打开子会话"
+              >
+                {opening ? '…' : '打开'}
+              </button>
+            ) : null}
+          </div>
+          {expanded && preview ? (
+            <div className="scaffold-body tool-body">
+              <pre className="scaffold-pre tool-output-pre">{preview}</pre>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export const MessageItem = memo(function MessageItem({
   message,
   streaming = false,
   onFocusUserQuestion,
+  isPermissionOrigin = false,
 }: MessageItemProps) {
   switch (message.role) {
     case 'system':
@@ -144,9 +431,15 @@ export const MessageItem = memo(function MessageItem({
       )
 
     case 'user':
+      // 子任务 instruction 不当作用户气泡展示（竞品也不露完整派发词）
+      if (isSubagentTaskPrompt(message.text || '')) return null
       return <UserBubble text={message.text} />
 
     case 'thought':
+      // 空/纯空白思考不渲染（交错噪声）
+      if (!(message.text || '').trim() && !streaming && !message.isStreaming) {
+        return null
+      }
       return (
         <ThoughtLine
           text={message.text}
@@ -165,23 +458,38 @@ export const MessageItem = memo(function MessageItem({
           />
         )
       }
+      if (tool.kind === 'subagent') {
+        return (
+          <SubagentToolLine
+            tool={tool}
+            streaming={streaming || Boolean(message.isStreaming)}
+          />
+        )
+      }
       return (
-        <ToolLine
-          tool={tool}
-          streaming={streaming || Boolean(message.isStreaming)}
-        />
+        <div className="toolline-with-approval">
+          <ToolLine
+            tool={tool}
+            streaming={streaming || Boolean(message.isStreaming)}
+          />
+          {isPermissionOrigin ? (
+            <InlinePermissionBarWrap />
+          ) : null}
+        </div>
       )
     }
 
-    case 'assistant':
+    case 'assistant': {
+      const live = streaming || Boolean(message.isStreaming)
       // 不显示 Assistant 角标：左右气泡/活动行已能区分角色，角标冗余
       return (
-        <div className="message-row assistant-row">
+        <div className={`message-row assistant-row${live ? ' is-streaming' : ''}`}>
           <div className="assistant-content md-body">
             <AssistantMarkdown text={message.text} />
           </div>
         </div>
       )
+    }
 
     default:
       return null
@@ -226,18 +534,52 @@ const ThoughtLine = memo(function ThoughtLine({
   const title = streaming
     ? 'Thinking…'
     : duration
-      ? `Thought for ${duration}`
+      ? `Thinking for ${duration}`
       : timing?.end && timing.start && (timing.end - timing.start) / 1000 < 1
-        ? 'Thought briefly'
-        : 'Thought'
-  const bodyRef = useRef<HTMLPreElement>(null)
+        ? 'Thinking briefly'
+        : 'Thinking'
+  const expandRef = useRef<HTMLDivElement>(null)
   const canExpand = text.trim().length > 0
+  /**
+   * 折叠动画：open 从 true→false（turn_ended 定稿）时，思考区若直接卸载，
+   * 几百 px 的高度骤减 + instant 贴底 = 内容被「猛地拽回底部」。
+   * 改为：量高 → 180ms 过渡到 0 → 过渡结束才卸载，高度渐变让贴底平滑收拢。
+   */
+  const [collapsing, setCollapsing] = useState(false)
+  const renderBody = open || collapsing
 
+  useEffect(() => {
+    const box = expandRef.current
+    if (open) {
+      if (collapsing) setCollapsing(false)
+      if (box) {
+        box.style.maxHeight = ''
+        box.classList.remove('is-collapsing')
+      }
+      return
+    }
+    // open=false：有 body 才折叠（空思考没有可折叠的高度）
+    if (!box) return
+    setCollapsing(true)
+    box.classList.add('is-collapsing')
+    // 读取 scrollHeight 会强制 reflow，让浏览器记住起始高度，rAF 后再设 0 才触发过渡
+    box.style.maxHeight = `${box.scrollHeight}px`
+    const raf = requestAnimationFrame(() => {
+      box.style.maxHeight = '0px'
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [open, collapsing])
+
+  const onBodyTransitionEnd = useCallback(() => {
+    if (collapsing) setCollapsing(false)
+  }, [collapsing])
+
+  // 流式时思考区随内容增长；若仍有内部滚动（收起态 max-height）则钉到底
   useLayoutEffect(() => {
     if (!open || !streaming) return
-    const el = bodyRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
+    const box = expandRef.current
+    if (!box) return
+    box.scrollTop = box.scrollHeight
   }, [open, streaming, text])
 
   return (
@@ -246,7 +588,7 @@ const ThoughtLine = memo(function ThoughtLine({
       data-conversation-scaffold=""
     >
       <div className="scaffold-line">
-        <ScaffoldGlyph tone="thought" live={streaming} />
+        <ScaffoldGlyph tone="thought" live={streaming} iconKind="thought" />
         <div className="scaffold-main">
           <button
             type="button"
@@ -263,11 +605,13 @@ const ThoughtLine = memo(function ThoughtLine({
               </span>
             ) : null}
           </button>
-          {open && canExpand ? (
-            <div className="thought-expanded">
-              <pre ref={bodyRef} className="thought-body-pre">
-                {text}
-              </pre>
+          {renderBody && canExpand ? (
+            <div
+              ref={expandRef}
+              className={`thought-expanded${collapsing ? ' is-collapsing' : ''}`}
+              onTransitionEnd={onBodyTransitionEnd}
+            >
+              <pre className="thought-body-pre">{text}</pre>
             </div>
           ) : null}
         </div>
@@ -277,6 +621,10 @@ const ThoughtLine = memo(function ThoughtLine({
 })
 
 function toolHeadline(tool: ToolCallData): string {
+  // 子任务：title 已是完整「子任务 · 名 · 状态」
+  if (tool.kind === 'subagent') {
+    return tool.title?.trim() || '子任务'
+  }
   const detail = tool.detail?.trim() || ''
   const short =
     detail.length > 72 ? `${detail.slice(0, 70)}…` : detail
@@ -328,7 +676,7 @@ const AskUserToolLine = memo(function AskUserToolLine({
       data-conversation-scaffold=""
     >
       <div className="scaffold-line">
-        <ScaffoldGlyph tone="thought" live={pending} />
+        <ScaffoldGlyph tone="thought" live={pending} iconKind="ask" />
         <div className="scaffold-main">
           <button
             type="button"
@@ -366,6 +714,9 @@ const AskUserToolLine = memo(function AskUserToolLine({
 })
 
 /** 工具行：小字灰标签 + 展开壳；成功无勾 */
+/** 工具输出显示上限：失败时的超长错误输出（stack trace）只渲染前缀，
+ *  避免超大文本节点拖慢滚动；复制按钮仍取完整 preview */
+const MAX_PREVIEW_CHARS = 20000
 const ToolLine = memo(function ToolLine({
   tool,
   streaming,
@@ -373,15 +724,29 @@ const ToolLine = memo(function ToolLine({
   tool: ToolCallData
   streaming: boolean
 }) {
-  const [expanded, setExpanded] = useState(() => (tool.diffs?.length ?? 0) > 0)
+  // 会话内不展示 diff（后续迁移到独立侧边栏），工具行只说明「正在修改文件」：
+  // 默认折叠为一行摘要（Edit 文件 + 状态 + +N −M 徽标），点开看工具输出 preview。
+  const [expanded, setExpanded] = useState(false)
   const duration = formatDuration(tool.timing)
-  const live =
-    streaming || tool.status === 'pending' || tool.status === 'in_progress'
+  // 终态以 tool.status 为准；勿因父级 streaming=true 把已完成工具继续转圈
   const failed = tool.status === 'failed'
+  const finished =
+    tool.status === 'completed' || tool.status === 'failed'
+  const live =
+    !finished &&
+    (tool.status === 'pending' ||
+      tool.status === 'in_progress' ||
+      streaming)
   const preview = tool.preview?.trim() || ''
-  const hasBody = preview.length > 0 || (tool.diffs?.length ?? 0) > 0
+  // 会话内不展示 diff：可展开内容只有工具输出 preview
+  const hasBody = preview.length > 0
   const headline = toolHeadline(tool)
   const tone: ActivityTone = failed ? 'tool-failed' : 'tool'
+  const iconKind = useMemo(
+    () => toolIconKind(tool),
+    // toolIconKind 只读 kind/title/detail；引用级依赖更稳（字段级会触发 exhaustive-deps 警告）
+    [tool],
+  )
 
   const diffStats = useMemo(() => {
     if (!tool.diffs?.length) return null
@@ -419,10 +784,11 @@ const ToolLine = memo(function ToolLine({
         .join(' ')}
       data-tool-call-id={tool.toolCallId}
       data-tool-kind={tool.kind || 'other'}
+      data-scaffold-icon={iconKind}
       data-conversation-scaffold=""
     >
       <div className="scaffold-line">
-        <ScaffoldGlyph tone={tone} live={live} />
+        <ScaffoldGlyph tone={tone} live={live} iconKind={iconKind} />
         <div className="scaffold-main">
           <div className="scaffold-toggle-row">
             <button
@@ -469,15 +835,13 @@ const ToolLine = memo(function ToolLine({
               {preview ? (
                 <>
                   <div className="scaffold-section-label">output</div>
-                  <pre className="scaffold-pre tool-output-pre">{preview}</pre>
+                  <pre className="scaffold-pre tool-output-pre">
+                    {preview.length > MAX_PREVIEW_CHARS
+                      ? `${preview.slice(0, MAX_PREVIEW_CHARS)}\n…输出过长，已截断显示（复制可获取完整输出）`
+                      : preview}
+                  </pre>
                 </>
               ) : null}
-              {tool.diffs?.map((d, i) => (
-                <div key={`${d.path}-${i}`} className="tool-diff-block">
-                  <div className="tool-diff-path">{d.path || 'diff'}</div>
-                  <DiffLines oldText={d.oldText ?? ''} newText={d.newText} />
-                </div>
-              ))}
             </div>
           ) : null}
         </div>
@@ -485,6 +849,17 @@ const ToolLine = memo(function ToolLine({
     </div>
   )
 })
+
+/** 子 agent 任务提示（父派发的完整 instruction）不渲染为用户气泡 — 对齐 Hermes 安静 scaffold */
+function isSubagentTaskPrompt(text: string): boolean {
+  const t = (text || "").trim()
+  if (!t) return false
+  // 子agent 任务 instruction
+  if (/的子\s*agent/i.test(t) && t.length > 40) return true
+  if (/^你是负责.+子\s*agent/i.test(t)) return true
+  if (/you are a sub-?agent/i.test(t) && t.length > 40) return true
+  return false
+}
 
 const UserBubble = memo(function UserBubble({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false)

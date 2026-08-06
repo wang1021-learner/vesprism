@@ -42,7 +42,8 @@
     "react-router-dom": "^7.17.0",
     "streamdown": "^2.5.0",
     "tailwind-merge": "^3.5.0",
-    "tailwindcss": "^4.2.4"
+    "tailwindcss": "^4.2.4",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",

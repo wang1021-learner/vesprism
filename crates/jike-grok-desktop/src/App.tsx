@@ -9,9 +9,9 @@ import {
   MainViewportErrorFallback,
   MessagesErrorFallback,
 } from './components/ErrorBoundary'
-import { PermissionModal } from './components/Permission'
+import { PendingApprovalFallback } from './components/Permission'
 import { UserQuestionPanel } from './components/UserQuestion'
-import { SubagentStrip } from './components/SubagentStrip'
+
 import { RightPanel } from './components/RightPanel'
 import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
@@ -23,8 +23,9 @@ import {
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
-  createTab, getTabState, hasTab, patchActiveTab, patchTab, resolveNewTabModel,
-  switchTab, pushToast, upsertSubagent,
+  $preferredWorkspaceCwd,
+  createTab, patchActiveTab, patchTab, resolveNewTabModel,
+  switchTab, pushToast,
 } from './store'
 import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
@@ -32,13 +33,12 @@ import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
-  listenSessionEvents, loadSession, openTab, sendPrompt, setCurrentModel,
+  listenSessionEvents, openTab, sendPrompt, setCurrentModel,
   startSession, workspaceCwd,
 } from './bridge'
-import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './lib/sessionOpen'
 import { generateId } from './lib/generateId'
 import { removeUserMessageByPromptId } from './lib/sessionTranscript'
-import { parsePermissionDescription } from './types'
+import { handleSessionEvent } from './lib/sessionEvents'
 
 export default function App() {
   // 浏览器直接打开 Vite 地址时没有 Tauri IPC，整页拦截并提示正确启动方式
@@ -83,7 +83,6 @@ function DesktopApp() {
       >
         <div className="main-viewport">
           <TabBar />
-          <SubagentStrip />
           <AppError />
           <AppMainBody />
           <SettingsModal />
@@ -164,6 +163,8 @@ async function bootstrap() {
     const configDefault =
       settings.default_id || settings.models[0]?.id || ''
     $settingsDefaultModelId.set(configDefault)
+    // 主工作区：侧栏置顶/展开用；与「打开历史会话后的 Tab cwd」解耦
+    if (cwd) $preferredWorkspaceCwd.set(cwd)
     const chats = await listSessions(cwd, 80)
     $chats.set(chats.map(c => ({ id: c.id, title: c.title, cwd: c.cwd, updatedAt: c.updated_at })))
     const wsSet = new Set(chats.map(c => c.cwd))
@@ -189,138 +190,9 @@ async function bootstrap() {
   }
 }
 
-function handleSessionEvent(ev: import('./bridge').SessionEventPayload) {
-  // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
-  // 后台 tab 崩溃、收消息、Plan F 恢复重放都依赖它）；仅活跃 tab 由
-  // patchTab 内部额外投影到全局 atom。单 tab 时代的「非活跃即丢弃」闸门已移除。
-  const tabId = ev.tab_id || $activeTabId.get()
-  if (tabId && !hasTab(tabId)) return // 已关闭 tab 的迟到事件
-  if (pushTranscriptEvent(ev, tabId)) return
 
-  switch (ev.type) {
-    case 'turn_ended':
-      patchTab(tabId, { status: 'idle' })
-      break
-    case 'error':
-      patchTab(tabId, { error: ev.message || 'Unknown error', status: 'idle' })
-      break
-    case 'permission_request':
-      if (getTabState(tabId)?.phase === 'loading') break
-      if (ev.request_id != null && ev.options?.length) {
-        const raw = ev.description || '工具权限请求'
-        const parsed = parsePermissionDescription(raw)
-        patchTab(tabId, {
-          permission: {
-            id: String(ev.request_id),
-            tool: raw,
-            options: ev.options.map((o) => ({ id: o.id, name: o.name, kind: o.kind })),
-            kindLabel: parsed.kindLabel,
-            title: parsed.title,
-            command: parsed.command,
-            summary: parsed.summary,
-          },
-        })
-      }
-      break
-    case 'user_question_request':
-      if (getTabState(tabId)?.phase === 'loading') break
-      if (ev.request_id != null && ev.questions?.length) {
-        patchTab(tabId, {
-          userQuestion: {
-            requestId: ev.request_id,
-            toolCallId: ev.tool_call_id || `ask_${ev.request_id}`,
-            mode: ev.mode || 'default',
-            questions: ev.questions.map((q) => ({
-              question: q.question,
-              options: (q.options || []).map((o) => ({
-                label: o.label,
-                description: o.description,
-                preview: o.preview,
-              })),
-              multiSelect: q.multiSelect,
-            })),
-          },
-        })
-      }
-      break
-    case 'subagent_spawned':
-      if (ev.subagent_id) {
-        upsertSubagent(tabId, {
-          subagentId: ev.subagent_id,
-          parentSessionId: ev.parent_session_id || '',
-          childSessionId: ev.child_session_id || '',
-          subagentType: ev.subagent_type || 'general-purpose',
-          description: ev.description || '',
-          model: ev.model,
-          status: 'running',
-        })
-      }
-      break
-    case 'subagent_progress':
-      if (ev.subagent_id) {
-        upsertSubagent(tabId, {
-          subagentId: ev.subagent_id,
-          parentSessionId: ev.parent_session_id,
-          childSessionId: ev.child_session_id,
-          status: 'running',
-          durationMs: ev.duration_ms,
-          turnCount: ev.turn_count,
-          toolCallCount: ev.tool_call_count,
-          tokensUsed: ev.tokens_used,
-          contextUsagePct: ev.context_usage_pct,
-          toolsUsed: ev.tools_used,
-          errorCount: ev.error_count,
-        })
-      }
-      break
-    case 'subagent_finished':
-      if (ev.subagent_id) {
-        const st = (ev.status || 'completed').toLowerCase()
-        const status =
-          st === 'failed' || st === 'cancelled' || st === 'completed'
-            ? (st as 'failed' | 'cancelled' | 'completed')
-            : 'completed'
-        upsertSubagent(tabId, {
-          subagentId: ev.subagent_id,
-          childSessionId: ev.child_session_id,
-          status,
-          error: ev.error,
-          toolCallCount: ev.tool_calls,
-          turnCount: ev.turns,
-          durationMs: ev.duration_ms,
-          tokensUsed: ev.tokens_used,
-          output: ev.output,
-        })
-      }
-      break
-    case 'status_changed':
-      if (getTabState(tabId)?.phase === 'loading') break
-      if (ev.status) patchTab(tabId, { status: ev.status as import('./types').SessionStatus })
-      break
-    case 'title_changed':
-      if (ev.title) patchTab(tabId, { chatTitle: ev.title })
-      break
-    // 后端 Phase 2：tab 崩溃自动重建 / 连续崩溃标记 Failed。
-    // 重建（含手动重试）→ 按 map 里该 tab 的状态重放会话身份 + 模型。
-    case 'tab_recovering':
-      console.log(`[tab] ${ev.tab_id} 已重建为空壳（第 ${ev.attempt ?? '?'} 次），开始重放`)
-      if (ev.tab_id) void replayTabAfterCrash(ev.tab_id)
-      break
-    case 'tab_failed':
-      console.warn(`[tab] ${ev.tab_id} 连续崩溃 ${ev.attempts ?? '?'} 次，标记 Failed，等待手动重启`)
-      patchTab(tabId, { phase: 'failed' })
-      break
-    case 'session_id_changed':
-      if (ev.session_id) {
-        patchTab(tabId, { sessionId: ev.session_id, chatId: ev.session_id })
-      }
-      break
-    case 'other':
-      break
-    default:
-      break
-  }
-}
+
+
 
 function AppSidebar() {
   const collapsed = useStore($sidebarCollapsed)
@@ -332,41 +204,7 @@ function AppSidebar() {
  * Plan F 恢复：TabActor 重建为空壳（panic 自动 / 手动重试）后，
  * 用 map 里该 tab 的状态快照重放会话身份（load_session / start_session）+ 模型。
  */
-async function replayTabAfterCrash(tabId: string) {
-  const st = getTabState(tabId)
-  if (!st) return
-  // 清挂起的 UI 状态（旧 actor 的权限 / 问卷 oneshot 已随 panic 失效）
-  patchTab(tabId, { permission: null, userQuestion: null, error: '', subagents: [] })
-  const cwd = st.cwd || $workspaceCwd.get()
-  try {
-    if (st.sessionId) {
-      // 走标准 attach 流程：历史回放期间吞 transcript 类事件
-      beginAttachRuntime(tabId)
-      await loadSession(tabId, st.sessionId, cwd)
-      finishAttachRuntime(tabId)
-    } else {
-      await startSession(tabId, cwd)
-      patchTab(tabId, { phase: 'ready', status: 'idle' })
-    }
-    // 重放该 tab 自己记住的模型 / 推理档（不是全局默认）
-    const modelId = st.modelId || $settingsDefaultModelId.get()
-    if (modelId) {
-      const entry = $models.get().find((m) => m.id === modelId)
-      const effort = entry?.supports_reasoning_effort
-        ? st.reasoningEffort || entry.reasoning_effort || 'medium'
-        : undefined
-      await setCurrentModel(tabId, modelId, effort)
-      patchTab(tabId, {
-        modelId,
-        ...(effort ? { reasoningEffort: effort } : {}),
-      })
-    }
-    pushToast('会话已自动恢复', 'success')
-  } catch (e) {
-    patchTab(tabId, { error: String(e) })
-    pushToast('会话恢复失败，可重试', 'error')
-  }
-}
+
 
 function AppError() {
   const err = useStore($error)
@@ -527,6 +365,7 @@ function AppComposer() {
     try {
       const { setWorkspaceCwd, restartSession } = await import('./bridge')
       const applied = await setWorkspaceCwd(newCwd)
+      $preferredWorkspaceCwd.set(applied)
       patchActiveTab({ cwd: applied, phase: 'restarting' })
       $workspaceOptions.set([...new Set([...$workspaceOptions.get(), applied])])
       await restartSession($activeTabId.get(), applied)
@@ -574,7 +413,7 @@ function AppComposer() {
 
 function AppPermission() {
   const perm = useStore($permission)
-  return <PermissionModal permission={perm} />
+  return <PendingApprovalFallback permission={perm} />
 }
 
 function AppUserQuestion() {

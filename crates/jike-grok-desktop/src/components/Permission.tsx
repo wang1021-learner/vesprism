@@ -1,64 +1,33 @@
-/**
- * 工具审批条（floating fallback）：
- * - 一行：⚠ 需要审批 + 短描述（可截断）
- * - 一行：紧凑 [运行 Ctrl⏎]  拒绝 Esc  命令▾
- * - 命令默认隐藏，展开才见 mono 块
- * - 绝不展示「类型：…工具：Execute…」原文墙
+/** 
+ * 工具审批（参考 Hermes 的位置 + choice 语义）：
+ * - 主：内嵌在「发起审批的工具行」下方（positional：挂起时最后一个 in_progress 工具行）
+ * - 兜底：输入框上方浮层，仅当内嵌条不可见时显示
+ * - 主按钮：运行(once)；下拉：本次会话允许 / 总是允许（确认弹窗）/ 拒绝
+ * - 键盘：Ctrl/⌘+Enter 运行 · Esc 拒绝
+ * - 子 agent 的权限请求已在后端自动放行，不会到达这里
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { PermissionOption, PermissionRequest } from '../types'
-import { $activeTabId, patchActiveTab } from '../store'
+import { useStore } from '@nanostores/react'
+import type { PermissionRequest } from '../types'
+import { $activeTabId, $permissionInlineVisible, patchActiveTab, pushToast } from '../store'
 import { respondPermission } from '../bridge'
-
-interface Props {
-  permission: PermissionRequest | null
-}
+import {
+  addAlwaysAllowed,
+  addSessionAllowed,
+  permissionSignature,
+  pickAllow,
+  pickDeny,
+} from '../lib/permissionMemory'
 
 function isMacPlatform(): boolean {
   if (typeof navigator === 'undefined') return false
   return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent)
 }
 
-function isAllowOption(opt: PermissionOption): boolean {
-  const kind = (opt.kind || '').toLowerCase()
-  const name = opt.name || ''
-  const lower = name.toLowerCase()
-  if (kind === 'allow') return true
-  if (kind === 'deny') return false
-  return (
-    /yes|proceed|allow|approve|accept|run|once/i.test(lower) ||
-    name.includes('允许') ||
-    name.includes('同意') ||
-    name.includes('继续')
-  )
-}
-
-function isDenyOption(opt: PermissionOption): boolean {
-  const kind = (opt.kind || '').toLowerCase()
-  const name = opt.name || ''
-  const lower = name.toLowerCase()
-  if (kind === 'deny') return true
-  if (kind === 'allow') return false
-  return (
-    /no|deny|reject|cancel|differently|refuse/i.test(lower) ||
-    name.includes('拒绝') ||
-    name.includes('取消') ||
-    name.includes('不允许')
-  )
-}
-
-function pickAllow(options: PermissionOption[]): PermissionOption | undefined {
-  return options.find(isAllowOption) || options[0]
-}
-
-function pickDeny(options: PermissionOption[]): PermissionOption | undefined {
-  return options.find(isDenyOption) || options[options.length - 1]
-}
-
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
-      className={`perm-chevron${open ? ' is-open' : ''}`}
+      className={'perm-chevron' + (open ? ' is-open' : '')}
       width="12"
       height="12"
       viewBox="0 0 24 24"
@@ -86,99 +55,133 @@ function AlertIcon() {
   )
 }
 
-export function PermissionModal({ permission }: Props) {
-  const [busy, setBusy] = useState(false)
+function LoaderIcon() {
+  return (
+    <svg className="perm-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="2.5" strokeDasharray="30 20" />
+    </svg>
+  )
+}
+/** 主审批条：组合按钮 + 拒绝 + 命令 + always 确认弹窗（Hermes ApprovalBar） */
+function ApprovalBar({
+  request,
+  surface,
+}: {
+  request: PermissionRequest
+  surface: 'inline' | 'floating'
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
   const [showCommand, setShowCommand] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [confirmAlways, setConfirmAlways] = useState(false)
   const runRef = useRef<HTMLButtonElement>(null)
   const mac = useMemo(() => isMacPlatform(), [])
+  const sig = useMemo(() => permissionSignature(request), [request])
 
-  const allow = permission ? pickAllow(permission.options) : undefined
-  const deny = permission ? pickDeny(permission.options) : undefined
-
-  // 标题固定「需要审批」；旁注用类型（运行终端命令），再跟短命令摘要
-  const kindLabel =
-    permission?.kindLabel && permission.kindLabel !== '需要审批'
-      ? permission.kindLabel
-      : ''
-  const command = (permission?.command || '').trim()
-  const summary = (permission?.summary || '').trim()
+  const allow = useMemo(() => pickAllow(request.options), [request.options])
+  const deny = useMemo(() => pickDeny(request.options), [request.options])
+  const command = (request.command || '').trim()
   const hasCommand = command.length > 0
-  // 旁注优先：类型 · 短命令；绝不显示 raw tool dump
-  const sideNote = [kindLabel, summary].filter(Boolean).join(' · ')
+  const respond = async (optionId: string) => {
+    if (busy) return
+    setBusy(optionId)
+    try {
+      const requestId = Number(request.id)
+      if (!Number.isNaN(requestId)) {
+        await respondPermission($activeTabId.get(), requestId, optionId)
+      }
+      // 响应已送达即收摊；若引擎仍在等待（罕见），新请求会重新弹
+      patchActiveTab({ permission: null })
+      window.dispatchEvent(new CustomEvent('jike:focus-composer'))
+    } catch (e) {
+      // 请求已失效（如 turn 已结束、tab 已重建）：收起弹窗而不是无声卡住
+      setBusy(null)
+      patchActiveTab({ permission: null })
+      pushToast(`审批未送达（请求可能已失效）：${String(e)}`, 'error')
+    }
+  }
 
   useEffect(() => {
-    setBusy(false)
-    setShowCommand(false)
-    if (!permission) return
-    runRef.current?.focus()
-  }, [permission])
-
-  useEffect(() => {
-    if (!permission || busy) return
+    if (confirmAlways) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
-        if (deny) void respond(deny.id)
+        if (deny && !busy) void respond(deny.id)
         return
       }
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         e.stopPropagation()
-        if (allow) void respond(allow.id)
+        if (allow && !busy) void respond(allow.id)
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
+    // respond 每次 render 重建，这里按选项 id 判断即可，无需整个函数入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permission, busy, allow?.id, deny?.id])
+  }, [request, allow?.id, deny?.id, busy, confirmAlways])
 
-  if (!permission) return null
+  useEffect(() => {
+    if (surface === 'inline') runRef.current?.focus()
+  }, [surface])
 
-  const respond = async (optionId: string) => {
-    if (busy) return
-    setBusy(true)
-    try {
-      const requestId = Number(permission.id)
-      if (!Number.isNaN(requestId)) {
-        await respondPermission($activeTabId.get(), requestId, optionId)
-      }
-      patchActiveTab({ permission: null })
-      window.dispatchEvent(new CustomEvent('jike:focus-composer'))
-    } catch {
-      setBusy(false)
-    }
+  const runOnce = (optionId: string) => void respond(optionId)
+
+  const onSessionAllow = () => {
+    setMenuOpen(false)
+    if (!allow) return
+    console.log('[perm] 本次会话允许 ->', { tabId: $activeTabId.get(), sig })
+    addSessionAllowed($activeTabId.get(), sig)
+    runOnce(allow.id)
+  }
+
+  const onAlwaysAllow = () => {
+    setMenuOpen(false)
+    setConfirmAlways(true)
+  }
+
+  const confirmAlwaysAllow = () => {
+    setConfirmAlways(false)
+    if (!allow) return
+    console.log('[perm] 总是允许 ->', { sig })
+    addAlwaysAllowed(sig)
+    runOnce(allow.id)
+  }
+
+  const onMenuDeny = () => {
+    setMenuOpen(false)
+    if (deny) runOnce(deny.id)
   }
 
   return (
-    <div className="perm-dock" role="alertdialog" aria-label="需要审批">
-      <div className="perm-card">
-        {/* fallback 首行：图标 + 标题 + 截断描述 */}
-        <div className="perm-row-head">
-          <span className="perm-ico" aria-hidden>
-            <AlertIcon />
-          </span>
-          <span className="perm-title">需要审批</span>
-          {sideNote ? (
-            <span className="perm-note" title={command || sideNote}>
-              {sideNote}
-            </span>
-          ) : null}
-        </div>
-
-        {/* ApprovalBar：h-6 紧凑操作条 */}
-        <div className="perm-row-actions">
+    <>
+      <div className={'perm-bar perm-bar-' + surface}>
+        <div className="perm-bar-actions">
           {allow ? (
             <div className="perm-run-split">
               <button
                 ref={runRef}
                 type="button"
                 className="perm-act perm-act-run"
-                disabled={busy}
-                onClick={() => void respond(allow.id)}
+                disabled={busy != null}
+                onClick={() => runOnce(allow.id)}
               >
-                运行
-                <span className="perm-kbd">{mac ? '⌘⏎' : 'Ctrl⏎'}</span>
+                {busy === allow.id ? <LoaderIcon /> : '运行'}
+                {busy !== allow.id && (
+                  <span className="perm-kbd">{mac ? '⌘⏎' : 'Ctrl⏎'}</span>
+                )}
+              </button>
+              <span className="perm-run-sep" aria-hidden />
+              <button
+                type="button"
+                className="perm-act perm-act-more"
+                aria-label="更多选项"
+                aria-expanded={menuOpen}
+                disabled={busy != null}
+                onClick={() => setMenuOpen((v) => !v)}
+              >
+                <ChevronIcon open={menuOpen} />
               </button>
             </div>
           ) : null}
@@ -187,11 +190,11 @@ export function PermissionModal({ permission }: Props) {
             <button
               type="button"
               className="perm-act perm-act-deny"
-              disabled={busy}
-              onClick={() => void respond(deny.id)}
+              disabled={busy != null}
+              onClick={() => runOnce(deny.id)}
             >
-              拒绝
-              <span className="perm-kbd">Esc</span>
+              {busy === deny.id ? <LoaderIcon /> : '拒绝'}
+              {busy !== deny.id && <span className="perm-kbd">Esc</span>}
             </button>
           ) : null}
 
@@ -208,9 +211,130 @@ export function PermissionModal({ permission }: Props) {
           ) : null}
         </div>
 
+        {menuOpen ? (
+          <div className="perm-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              className="perm-menu-item"
+              onClick={onSessionAllow}
+            >
+              本次会话允许
+              <span className="perm-menu-hint">同命令不再询问</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="perm-menu-item"
+              onClick={onAlwaysAllow}
+            >
+              总是允许
+              <span className="perm-menu-hint">写入本地配置</span>
+            </button>
+            {deny && deny.id !== allow?.id ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="perm-menu-item perm-menu-item-danger"
+                onClick={onMenuDeny}
+              >
+                拒绝
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {showCommand && hasCommand ? (
           <pre className="perm-command">{command}</pre>
         ) : null}
+      </div>
+
+      {confirmAlways ? (
+        <div className="perm-dialog-backdrop" role="presentation">
+          <div className="perm-dialog" role="alertdialog" aria-label="总是允许">
+            <div className="perm-dialog-title">总是允许该命令？</div>
+            <div className="perm-dialog-desc">
+              之后同类命令将不再询问（写入本地配置）。
+            </div>
+            {hasCommand ? <pre className="perm-command perm-dialog-cmd">{command}</pre> : null}
+            <div className="perm-dialog-actions">
+              <button
+                type="button"
+                className="perm-act perm-act-deny"
+                onClick={() => setConfirmAlways(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="perm-act perm-act-run"
+                autoFocus
+                onClick={confirmAlwaysAllow}
+              >
+                总是允许
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+/** 内嵌审批条：渲染在发起工具行下方；IntersectionObserver 上报可见性 */
+export function InlinePermissionBar({ permission }: { permission: PermissionRequest }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const en of entries) {
+          $permissionInlineVisible.set(en.isIntersecting)
+        }
+      },
+      { threshold: 0.15 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [permission])
+
+  return (
+    <div ref={ref} className="perm-inline-wrap">
+      <ApprovalBar request={permission} surface="inline" />
+    </div>
+  )
+}
+
+/** 兜底浮层：内嵌条不在视口内时，在输入框上方提示并给同一组操作 */
+export function PendingApprovalFallback({ permission }: { permission: PermissionRequest | null }) {
+  const inlineVisible = useStore($permissionInlineVisible)
+  if (!permission) return null
+  if (inlineVisible) return null
+
+  const kindLabel =
+    permission.kindLabel && permission.kindLabel !== '需要审批'
+      ? permission.kindLabel
+      : ''
+  const command = (permission.command || '').trim()
+  const summary = (permission.summary || '').trim()
+  const sideNote = [kindLabel, summary].filter(Boolean).join(' · ')
+  return (
+    <div className="perm-dock" role="alertdialog" aria-label="需要审批">
+      <div className="perm-card">
+        <div className="perm-row-head">
+          <span className="perm-ico" aria-hidden>
+            <AlertIcon />
+          </span>
+          <span className="perm-title">需要审批</span>
+          {sideNote ? (
+            <span className="perm-note" title={command || sideNote}>
+              {sideNote}
+            </span>
+          ) : null}
+        </div>
+        <ApprovalBar request={permission} surface="floating" />
       </div>
     </div>
   )

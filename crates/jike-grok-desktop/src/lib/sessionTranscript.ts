@@ -71,6 +71,18 @@ function normalizeDiffs(raw: unknown): ToolDiffData[] | undefined {
   })
 }
 
+/** 归一化工具状态（后端偶发 success / done / running 等） */
+function normalizeToolStatus(raw?: string | null): string {
+  const s = (raw || '').trim().toLowerCase()
+  if (!s) return 'pending'
+  if (s === 'success' || s === 'done' || s === 'ok' || s === 'complete') {
+    return 'completed'
+  }
+  if (s === 'running' || s === 'started' || s === 'start') return 'in_progress'
+  if (s === 'error' || s === 'cancelled' || s === 'canceled') return 'failed'
+  return s
+}
+
 function toToolData(t: NonNullable<TranscriptEvent['tool']>): ToolCallData {
   const now = Date.now()
   const kind = t.kind || 'other'
@@ -83,7 +95,7 @@ function toToolData(t: NonNullable<TranscriptEvent['tool']>): ToolCallData {
   return {
     toolCallId: toolId(t),
     kind,
-    status: t.status || 'pending',
+    status: normalizeToolStatus(t.status),
     title,
     detail,
     preview,
@@ -112,6 +124,9 @@ export function applyTranscriptEvent(
       const text = ev.text || ''
       if (!text) return messages
       const pid = ev.prompt_id ?? undefined
+      // 引擎自动注入的 workflow 完成唤醒 prompt（origin=WorkflowCompleted）：
+      // 只用于驱动主 agent 汇报结果，不展示为用户气泡
+      if (pid && pid.startsWith('workflow-completed-')) return messages
       const base = sealStreamingTail(messages)
       return mergeUserTextChunk(base, text, pid)
     }
@@ -291,15 +306,83 @@ export function removeUserMessageByPromptId(
   return next.length === messages.length ? messages : next
 }
 
+/**
+ * 引擎常把 reasoning 与正文交错下发，导致「Thinking briefly」夹在每句答案中间。
+ * 空/极短思考视为噪声：丢弃后让 assistant 分片重新合并成一条气泡。
+ */
+function isNoiseThought(m: ChatMessage): boolean {
+  if (m.role !== 'thought') return false
+  const t = (m.text || '').trim()
+  if (!t) return true
+  // 仍在流式的思考先保留，避免把正在写的 reasoning 吃掉
+  if (m.isStreaming) return false
+  const ms =
+    m.thoughtTiming?.start && m.thoughtTiming?.end
+      ? m.thoughtTiming.end - m.thoughtTiming.start
+      : 0
+  // 极短 + 短文案：交错噪声
+  if (ms > 0 && ms < 800 && t.length < 120) return true
+  if (ms === 0 && t.length < 40) return true
+  return false
+}
+
+function dropTrailingNoiseThoughts(messages: ChatMessage[]): ChatMessage[] {
+  let end = messages.length
+  while (end > 0 && isNoiseThought(messages[end - 1])) end--
+  return end === messages.length ? messages : messages.slice(0, end)
+}
+
+/** 合并相邻同角色 assistant/thought（去噪后正文可拼回一条） */
+function mergeAdjacentTextRoles(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length < 2) return messages
+  const out: ChatMessage[] = []
+  for (const m of messages) {
+    if (m.role === 'thought' && isNoiseThought(m)) continue
+    const last = out[out.length - 1]
+    if (
+      last &&
+      (m.role === 'assistant' || m.role === 'thought') &&
+      last.role === m.role
+    ) {
+      const timing =
+        m.role === 'thought'
+          ? {
+              start:
+                last.thoughtTiming?.start ??
+                m.thoughtTiming?.start ??
+                Date.now(),
+              end: m.thoughtTiming?.end ?? last.thoughtTiming?.end,
+            }
+          : undefined
+      out[out.length - 1] = {
+        ...last,
+        text: (last.text || '') + (m.text || ''),
+        isStreaming: Boolean(last.isStreaming || m.isStreaming),
+        ...(timing ? { thoughtTiming: timing } : {}),
+      }
+    } else {
+      out.push(m)
+    }
+  }
+  return out
+}
+
 function appendRole(
   messages: ChatMessage[],
   role: 'assistant' | 'thought',
   text: string,
 ): ChatMessage[] {
-  const last = messages[messages.length - 1]
+  // 纯空白思考不建行
+  if (role === 'thought' && !text.trim()) return messages
+
+  // 写正文前丢掉尾部噪声思考，才能并回上一条 assistant
+  let base =
+    role === 'assistant' ? dropTrailingNoiseThoughts(messages) : messages
+
+  const last = base[base.length - 1]
   if (last && last.role === role) {
     return [
-      ...messages.slice(0, -1),
+      ...base.slice(0, -1),
       {
         ...last,
         text: last.text + text,
@@ -312,10 +395,28 @@ function appendRole(
       },
     ]
   }
-  const sealed = sealStreamingTail(messages)
+  const sealed = sealStreamingTail(base)
+  // seal 后再清一次尾部噪声思考
+  base = role === 'assistant' ? dropTrailingNoiseThoughts(sealed) : sealed
+  const last2 = base[base.length - 1]
+  if (last2 && last2.role === role) {
+    return [
+      ...base.slice(0, -1),
+      {
+        ...last2,
+        text: last2.text + text,
+        isStreaming: true,
+        ...(role === 'thought' && last2.thoughtTiming
+          ? { thoughtTiming: { ...last2.thoughtTiming, end: undefined } }
+          : role === 'thought'
+            ? { thoughtTiming: { start: Date.now() } }
+            : {}),
+      },
+    ]
+  }
   const now = Date.now()
   return [
-    ...sealed,
+    ...base,
     {
       id: generateId('msg_'),
       role,
@@ -327,8 +428,30 @@ function appendRole(
 }
 
 /** 结束当前流式尾条（turn_ended / 换角色时） */
-export function sealStreamingMessages(messages: ChatMessage[]): ChatMessage[] {
-  return sealStreamingTail(messages)
+export function sealStreamingMessages(
+  messages: ChatMessage[],
+  turnPromptId?: string | null,
+): ChatMessage[] {
+  // 回合归属：turn_ended 的 prompt_id 若与「最后一条 user 气泡」不一致，
+  // 说明是旧回合（被中断）的迟到收尾——只 seal user 之前的内容，
+  // 不碰 user 之后新回合正在流式的行（否则回复会被切成两半）。
+  let lastUserIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      lastUserIdx = i
+      break
+    }
+  }
+  if (lastUserIdx >= 0) {
+    const lastUserPid = messages[lastUserIdx].promptId
+    if (turnPromptId && lastUserPid && turnPromptId !== lastUserPid) {
+      const head = sealStreamingTail(messages.slice(0, lastUserIdx))
+      return mergeAdjacentTextRoles(
+        dropTrailingNoiseThoughts([...head, ...messages.slice(lastUserIdx)]),
+      )
+    }
+  }
+  return mergeAdjacentTextRoles(dropTrailingNoiseThoughts(sealStreamingTail(messages)))
 }
 
 function sealStreamingTail(messages: ChatMessage[]): ChatMessage[] {
@@ -337,8 +460,10 @@ function sealStreamingTail(messages: ChatMessage[]): ChatMessage[] {
   const now = Date.now()
   const next = messages.map((m) => {
     // 工具：结束计时 + 未完成状态收成 completed（turn 结束时）
+    // 子 agent 独立生命周期：只听 subagent_finished，勿被父 turn_ended 误定稿
     if (m.role === 'tool' && m.toolCall) {
       const tc = m.toolCall
+      if ((tc.kind || '').toLowerCase() === 'subagent') return m
       const open =
         m.isStreaming ||
         tc.status === 'pending' ||
@@ -439,7 +564,12 @@ function patchTool(
   }
   const cur = messages[idx]
   const prev = cur.toolCall
-  const status = update.status ?? prev?.status ?? 'in_progress'
+  // 更新事件常不带 status：保留原状态，勿把 completed 打回 pending
+  const status = normalizeToolStatus(
+    update.status != null && String(update.status).trim() !== ''
+      ? update.status
+      : (prev?.status ?? 'in_progress'),
+  )
   const now = Date.now()
   const timing = prev?.timing
     ? status === 'completed' || status === 'failed'

@@ -106,7 +106,7 @@ export type UserQuestionResponsePayload =
   | { outcome: 'skip_interview'; partial_answers?: Record<string, string> }
   | { outcome: 'cancelled' }
 
-/** 子 agent 运行时状态（SubagentStrip） */
+/** 子 agent 运行时状态（会话内 scaffold 行 + TabState.subagents） */
 export type SubagentRuntime = {
   subagentId: string
   parentSessionId: string

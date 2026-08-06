@@ -40,6 +40,37 @@ describe('applyTranscriptEvent', () => {
     expect(msgs[0].isStreaming).toBe(true)
   })
 
+  it('极短思考夹在正文中间时，正文合并、噪声思考不残留', () => {
+    let msgs: ChatMessage[] = []
+    msgs = applyTranscriptEvent(msgs, { type: 'agent_text_chunk', text: '第一段' })
+    // 空思考
+    msgs = applyTranscriptEvent(msgs, { type: 'agent_thought_chunk', text: '   ' })
+    msgs = applyTranscriptEvent(msgs, { type: 'agent_text_chunk', text: '第二段' })
+    expect(msgs.filter((m) => m.role === 'assistant')).toHaveLength(1)
+    expect(msgs.find((m) => m.role === 'assistant')?.text).toBe('第一段第二段')
+
+    // 极短已结束的思考 + 再来正文
+    msgs = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        text: '前',
+        isStreaming: false,
+      },
+      {
+        id: 't1',
+        role: 'thought',
+        text: 'x',
+        isStreaming: false,
+        thoughtTiming: { start: 1000, end: 1100 },
+      },
+    ]
+    msgs = applyTranscriptEvent(msgs, { type: 'agent_text_chunk', text: '后' })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('assistant')
+    expect(msgs[0].text).toBe('前后')
+  })
+
   it('user_text_chunk 按 promptId 核销乐观气泡，不插第二条', () => {
     const optimistic = user('完整问题', 'p_abc')
     const msgs = applyTranscriptEvent([optimistic], {
@@ -108,6 +139,33 @@ describe('sealStreamingMessages', () => {
     const sealed = sealStreamingMessages(msgs)
     expect(sealed[0].isStreaming).toBeFalsy()
   })
+
+  it('不把还在跑的子 agent 行定稿成 completed', () => {
+    const msgs = [
+      assistant('父回复', true),
+      {
+        id: 'sa_msg',
+        role: 'tool' as const,
+        text: '子任务',
+        toolCallId: 'subagent_sa_1',
+        isStreaming: true,
+        toolCall: {
+          toolCallId: 'subagent_sa_1',
+          kind: 'subagent',
+          status: 'in_progress',
+          title: '子任务 · 调研 · 运行中',
+          detail: 'child_1',
+          preview: '',
+          timing: { start: Date.now() - 1000 },
+        },
+      },
+    ]
+    const sealed = sealStreamingMessages(msgs)
+    expect(sealed[0].isStreaming).toBeFalsy()
+    expect(sealed[1].isStreaming).toBe(true)
+    expect(sealed[1].toolCall?.status).toBe('in_progress')
+    expect(sealed[1].toolCall?.timing?.end).toBeUndefined()
+  })
 })
 
 describe('ask_user 工具卡', () => {
@@ -162,3 +220,45 @@ describe('ask_user 工具卡', () => {
   })
 })
 
+
+// ── 中断后立刻发送：旧回合 turn_ended 迟到不得误伤新回合 ──
+
+function msg(id: string, role: ChatMessage['role'], text: string, extra: Partial<ChatMessage> = {}): ChatMessage {
+  return { id, role, text, ...extra }
+}
+
+describe('回合归属 seal（中断后立刻发送的竞态）', () => {
+  it('旧回合 turn_ended 只 seal 旧区，新回合流式行保持流式', () => {
+    const msgs: ChatMessage[] = [
+      msg('u1', 'user', '第一轮问题', { promptId: 'p-A' }),
+      msg('a1', 'assistant', '第一轮回复中', { isStreaming: true }),
+      msg('u2', 'user', '中断后立刻发的新消息', { promptId: 'p-B' }),
+      msg('a2', 'assistant', '新回合回复中', { isStreaming: true }),
+    ]
+    // 旧回合（p-A）的迟到 turn_ended
+    const next = sealStreamingMessages(msgs, 'p-A')
+    // 旧区 a1 被定稿
+    expect(next[1].isStreaming).toBe(false)
+    // 新回合 a2 保持流式（不被误 seal）
+    expect(next[3].isStreaming).toBe(true)
+  })
+
+  it('正常 turn_ended（prompt_id 匹配最后一条 user）全部定稿', () => {
+    const msgs: ChatMessage[] = [
+      msg('u1', 'user', '问题', { promptId: 'p-A' }),
+      msg('a1', 'assistant', '回复中', { isStreaming: true }),
+    ]
+    const next = sealStreamingMessages(msgs, 'p-A')
+    expect(next[1].isStreaming).toBe(false)
+  })
+
+  it('无 prompt_id 兜底：全部定稿（旧行为）', () => {
+    const msgs: ChatMessage[] = [
+      msg('u1', 'user', '问题', { promptId: 'p-A' }),
+      msg('a1', 'assistant', '回复中', { isStreaming: true }),
+      msg('a2', 'assistant', '新回复中', { isStreaming: true }),
+    ]
+    const next = sealStreamingMessages(msgs, null)
+    expect(next.every((m) => m.role !== 'assistant' || !m.isStreaming)).toBe(true)
+  })
+})

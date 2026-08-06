@@ -495,13 +495,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <span className="composer-hint">
               {isGenerating
                 ? '生成中 · 点右侧方块可中断 · Esc 失焦'
-                : sessionPhase === 'loading'
-                  ? '正在加载会话…'
-                  : sessionPhase === 'booting' || sessionPhase === 'restarting'
-                    ? '会话准备中…'
-                    : sessionPhase === 'failed'
-                      ? '会话未就绪，可新建或重试'
-                      : 'Enter 发送 · Shift+Enter 换行'}
+                : sessionPhase === 'failed'
+                  ? '会话未就绪，可新建或重试'
+                  : sessionPhase === 'loading' ||
+                      sessionPhase === 'booting' ||
+                      sessionPhase === 'restarting'
+                    ? '' /* 加载中不占文案，避免干扰 */
+                    : 'Enter 发送 · Shift+Enter 换行'}
             </span>
           </div>
           <div className="toolbar-right">

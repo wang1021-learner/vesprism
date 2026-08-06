@@ -13,6 +13,16 @@ import {
 import { closeTab, restartTab } from '../bridge'
 import { openChatTab } from '../lib/openChatTab'
 
+/** Tab 标签展示最多 5 个字（按 Unicode 码点，中英一致）；完整标题放 title 悬停 */
+const TAB_TITLE_MAX_CHARS = 5
+
+function formatTabTitle(raw: string | undefined | null): string {
+  const full = (raw || '').trim() || '新对话'
+  const chars = Array.from(full)
+  if (chars.length <= TAB_TITLE_MAX_CHARS) return full
+  return chars.slice(0, TAB_TITLE_MAX_CHARS).join('') + '…'
+}
+
 /**
  * 多会话标签栏：新建 / 切换 / 关闭 tab，failed 状态展示 + 手动重试。
  * 状态层（$tabs + TabState map）已由 store 分片提供，本组件只做展示与命令编排。
@@ -90,7 +100,7 @@ export function TabBar() {
             key={t.id}
             className={`tabbar-item${t.id === activeId ? ' is-active' : ''}${t.failed ? ' is-failed' : ''}`}
             onClick={() => switchTab(t.id)}
-            title={t.title || '新对话'}
+            title={t.title?.trim() || '新对话'}
           >
             <span
               className={`tabbar-activity is-${t.activity || 'idle'}`}
@@ -105,7 +115,7 @@ export function TabBar() {
                       : '空闲'
               }
             />
-            <span className="tabbar-title">{t.title || '新对话'}</span>
+            <span className="tabbar-title">{formatTabTitle(t.title)}</span>
             {t.failed && (
               <button
                 type="button"

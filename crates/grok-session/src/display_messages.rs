@@ -36,6 +36,11 @@ pub struct DisplayMessage {
     /// 输出预览
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    /// 工具耗时（毫秒）：tool_call 行 timestamp 为 start，completed 的 update 为 end
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_ms: Option<i64>,
 }
 
 impl DisplayMessage {
@@ -51,6 +56,8 @@ impl DisplayMessage {
             status: None,
             detail: None,
             preview: None,
+            start_ms: None,
+            end_ms: None,
         }
     }
 }
@@ -225,6 +232,7 @@ fn apply_tool_call(msgs: &mut Vec<DisplayMessage>, next: &mut u64, update: &Valu
     } else {
         detail.clone()
     };
+    let start_ms = root.get("timestamp").and_then(|t| t.as_i64()).map(|s| s * 1000);
     upsert_tool(
         msgs,
         next,
@@ -240,6 +248,8 @@ fn apply_tool_call(msgs: &mut Vec<DisplayMessage>, next: &mut u64, update: &Valu
                 Some(preview.as_str())
             },
             text: &text,
+            start_ms,
+            end_ms: None,
         },
     );
 }
@@ -270,6 +280,15 @@ fn apply_tool_call_update(
         label
     };
 
+    // 终态（completed / failed）记 end；运行中不记（避免把中间 update 当完成）
+    let end_ms = match status.as_deref() {
+        Some("completed") | Some("failed") => root
+            .get("timestamp")
+            .and_then(|t| t.as_i64())
+            .map(|s| s * 1000),
+        _ => None,
+    };
+
     upsert_tool(
         msgs,
         next,
@@ -285,6 +304,8 @@ fn apply_tool_call_update(
                 Some(preview.as_str())
             },
             text,
+            start_ms: None,
+            end_ms,
         },
     );
 }
@@ -297,6 +318,9 @@ struct ToolFields<'a> {
     detail: Option<&'a str>,
     preview: Option<&'a str>,
     text: &'a str,
+    /// 毫秒时间戳（由行级 timestamp 秒转来）：start 只在首次写入，end 只在补全
+    start_ms: Option<i64>,
+    end_ms: Option<i64>,
 }
 
 fn upsert_tool(msgs: &mut Vec<DisplayMessage>, next: &mut u64, f: ToolFields<'_>) {
@@ -340,6 +364,13 @@ fn upsert_tool(msgs: &mut Vec<DisplayMessage>, next: &mut u64, f: ToolFields<'_>
                 m.text = f.text.to_string();
             }
         }
+        // timing：start 只填首次，end 补全（不覆盖已有）
+        if m.start_ms.is_none() {
+            m.start_ms = f.start_ms;
+        }
+        if m.end_ms.is_none() {
+            m.end_ms = f.end_ms;
+        }
         return;
     }
 
@@ -361,6 +392,8 @@ fn upsert_tool(msgs: &mut Vec<DisplayMessage>, next: &mut u64, f: ToolFields<'_>
         prompt_id: None,
         kind: f.kind.map(normalize_kind),
         status: Some(normalize_status(f.status.unwrap_or("pending"))),
+        start_ms: f.start_ms,
+        end_ms: f.end_ms,
         detail: f
             .detail
             .filter(|d| !d.is_empty())

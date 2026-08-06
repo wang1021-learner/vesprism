@@ -13,6 +13,7 @@ import {
   $reasoningEffort,
   $settingsOpen,
   $workspaceCwd,
+  $preferredWorkspaceCwd,
   patchActiveTab,
 } from '../store'
 import {
@@ -255,6 +256,7 @@ export function SettingsModal() {
 
       $models.set(trimmed)
       $defaultModelId.set(def)
+      $preferredWorkspaceCwd.set(appliedCwd)
       patchActiveTab({ cwd: appliedCwd })
       setModels(trimmed)
       setDefaultId(def)

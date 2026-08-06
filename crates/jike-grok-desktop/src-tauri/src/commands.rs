@@ -1401,6 +1401,10 @@ pub struct DisplayMessageDto {
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_ms: Option<i64>,
 }
 
 #[tauri::command]
@@ -1511,6 +1515,8 @@ pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessa
                         status: m.status,
                         detail: m.detail,
                         preview: m.preview,
+                        start_ms: m.start_ms,
+                        end_ms: m.end_ms,
                     })
                     .collect()
             })

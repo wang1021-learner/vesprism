@@ -167,3 +167,140 @@
   border: 1px solid var(--border-solid);
   border-radius: 0.375rem;
 }
+
+/* ── 内嵌审批条（参考 Hermes：工具行下方） ── */
+.perm-inline-wrap {
+  margin-top: 0.375rem;
+}
+
+.perm-bar {
+  position: relative;
+}
+
+.perm-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+}
+
+.perm-run-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-solid);
+}
+
+.perm-act-more {
+  height: 100%;
+  border-radius: 0;
+  padding: 0 0.25rem;
+  color: var(--text-tertiary);
+}
+
+.perm-act-more:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 下拉菜单 */
+.perm-menu {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 11rem;
+  padding: 4px;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.perm-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.375rem 0.625rem;
+  border: none;
+  border-radius: 0.375rem;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.perm-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.perm-menu-hint {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+
+/* 总是允许确认弹窗 */
+.perm-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.perm-dialog {
+  width: min(calc(100% - 3rem), 26rem);
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border-strong-solid);
+  background: var(--surface-elevated);
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.18);
+}
+
+.perm-dialog-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.perm-dialog-desc {
+  margin-top: 0.25rem;
+  font-size: 0.8125rem;
+  color: var(--text-tertiary);
+}
+
+.perm-dialog-cmd {
+  margin-top: 0.625rem;
+}
+
+.perm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.875rem;
+}
+
+/* 提交中旋转 */
+.perm-spin {
+  animation: perm-spin 0.9s linear infinite;
+}
+
+@keyframes perm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.perm-menu-item-danger {
+  color: #dc2626;
+}
+
+.perm-menu-item-danger:hover {
+  background: color-mix(in srgb, #dc2626 8%, transparent);
+  color: #dc2626;
+}

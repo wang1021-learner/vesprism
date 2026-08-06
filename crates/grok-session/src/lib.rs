@@ -318,6 +318,9 @@ impl std::fmt::Debug for SessionEvent {
 /// ACP 客户端：把 agent 推送转发到有界 mpsc，形成背压。
 struct GuiClient {
     event_tx: mpsc::Sender<SessionEvent>,
+    /// 本客户端的会话 id（initialize/new_session 或 load_session 后写入）：
+    /// 用于过滤子会话（workflow）推来的更新
+    session_id: std::sync::Arc<std::sync::Mutex<Option<SessionId>>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -326,6 +329,24 @@ impl Client for GuiClient {
         &self,
         args: RequestPermissionRequest,
     ) -> agent_client_protocol::Result<RequestPermissionResponse> {
+        // 子会话（workflow 子 agent）的工具权限：自动选 AllowOnce（运行一次），
+        // 不打扰父会话用户。官方 pager 对后台 turn 同样走 auto-approve。
+        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+        if own_id.as_ref().is_some_and(|id| *id != args.session_id) {
+            let allow_once = args
+                .options
+                .iter()
+                .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::AllowOnce)
+                .or_else(|| args.options.first());
+            if let Some(opt) = allow_once {
+                return Ok(RequestPermissionResponse::new(
+                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                        opt.option_id.clone(),
+                    )),
+                ));
+            }
+        }
+
         let options: Vec<(String, String)> = args
             .options
             .iter()
@@ -375,6 +396,13 @@ impl Client for GuiClient {
         &self,
         args: SessionNotification,
     ) -> agent_client_protocol::Result<()> {
+        // 子会话（workflow 子 agent / 后台任务）的更新会推送到父会话连接，
+        // 但 session_id 不同。丢弃它们，避免子 agent 的任务提示/思考/正文
+        // 混进父会话消息流（子 agent 状态走 SubagentSpawned/Progress/Finished）。
+        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+        if own_id.as_ref().is_some_and(|id| *id != args.session_id) {
+            return Ok(());
+        }
         let meta = args.meta.as_ref();
         let event = session_update_to_event(args.update, meta);
         let _ = self.event_tx.send(event).await;
@@ -1078,8 +1106,10 @@ impl GrokSession {
 
         // 历史回放可能瞬时灌入大量 session/update；256 易反压卡住 load_session
         let (event_tx, event_rx) = mpsc::channel(4096);
+        let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(None));
         let client = GuiClient {
             event_tx: event_tx.clone(),
+            session_id: client_session_id.clone(),
         };
 
         let (connection, io_task) =
@@ -1102,6 +1132,7 @@ impl GrokSession {
         let session_response = connection
             .new_session(NewSessionRequest::new(cwd.into()))
             .await?;
+        *client_session_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(session_response.session_id.clone());
 
         let _ = status_tx.send(SessionStatus::Idle);
 
@@ -1144,8 +1175,12 @@ impl GrokSession {
         let compat_gui_read = gui_read.compat();
         let compat_gui_write = gui_write.compat_write();
         let (event_tx, event_rx) = mpsc::channel(4096);
+        // 先转换参数（impl Into<SessionId> 无法 clone）
+        let session_id: SessionId = session_id.into();
+        let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(Some(session_id.clone())));
         let client = GuiClient {
             event_tx: event_tx.clone(),
+            session_id: client_session_id,
         };
         let (connection, io_task) =
             ClientSideConnection::new(client, compat_gui_write, compat_gui_read, |fut| {
@@ -1160,9 +1195,6 @@ impl GrokSession {
             .initialize(desktop_initialize_request())
             .await?;
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
-
-        // 先克隆一份 session_id 自用，避免依赖 LoadSessionResponse 的具体字段结构。
-        let session_id: SessionId = session_id.into();
         let load_session_id = session_id.clone();
         connection
             .load_session(LoadSessionRequest::new(load_session_id, cwd.into()))
