@@ -1,0 +1,167 @@
+/* Rewind 回滚选点弹层（复用 .modal-backdrop / .modal-card） */
+.rewind-card {
+  width: min(30rem, 100%);
+}
+.rewind-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.rewind-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.rewind-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.rewind-close:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}
+.rewind-desc {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.rewind-loading,
+.rewind-empty {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.rewind-error {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--danger-soft, rgba(220, 38, 38, 0.08));
+  color: var(--danger, #dc2626);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.rewind-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rewind-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.rewind-item:hover {
+  background: var(--surface-muted);
+}
+.rewind-item.is-selected {
+  border-color: var(--accent, #2563eb);
+  background: var(--surface-muted);
+}
+.rewind-item-preview {
+  color: var(--text-primary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rewind-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.rewind-snap-badge {
+  background: var(--surface-muted);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.rewind-snap-badge.is-conv {
+  opacity: 0.75;
+}
+.rewind-confirm {
+  margin-top: 10px;
+  border-top: 1px solid var(--border-solid);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rewind-modes {
+  display: flex;
+  gap: 6px;
+}
+.rewind-mode-btn {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.rewind-mode-btn.is-active {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+  background: var(--surface-muted);
+}
+.rewind-force {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.rewind-confirm-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.rewind-cancel {
+  background: transparent;
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.rewind-run {
+  background: var(--text-primary);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--surface-elevated);
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.rewind-run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

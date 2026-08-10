@@ -512,6 +512,22 @@ export const $rightPanelOutput = atom('')
 export const $rightPanelFile = atom('')
 /** 源码 / 差异绑定的绝对路径 */
 export const $rightPanelFilePath = atom('')
+/** git HEAD 变化版本号：官方 `git_head_changed` 事件时 +1，右栏差异据此自动刷新 */
+export const $gitHeadRevision = atom(0)
+export function bumpGitHeadRevision() {
+  $gitHeadRevision.set($gitHeadRevision.get() + 1)
+}
+
+// ── Rewind（会话历史回滚）弹层 ──
+export const $rewindOpen = atom(false)
+export const $rewindTabId = atom('')
+export function openRewind(tabId: string) {
+  $rewindTabId.set(tabId)
+  $rewindOpen.set(true)
+}
+export function closeRewind() {
+  $rewindOpen.set(false)
+}
 
 // ── Toast（顶部浮层，不进对话历史；如切换模型） ──
 export type ToastTone = 'info' | 'success' | 'error'

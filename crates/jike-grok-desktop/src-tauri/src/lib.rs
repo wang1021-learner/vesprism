@@ -130,6 +130,7 @@ pub fn run() {
             commands::workspace_changes,
             commands::get_rewind_points,
             commands::execute_rewind,
+            commands::fork_session,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

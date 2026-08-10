@@ -327,6 +327,34 @@ pub async fn get_subagent(
         .map_err(|_| "会话线程无响应".to_string())?
 }
 
+/// 派生新会话（x.ai/session/fork），返回新会话 id。
+#[tauri::command]
+pub async fn fork_session(
+    tab_id: String,
+    cwd: String,
+    new_session_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ForkSession {
+            cwd,
+            new_session_id,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 列出 MCP 服务器（官方 x.ai/mcp/list）。
 #[tauri::command]
 pub async fn list_mcp_servers(
@@ -795,11 +823,6 @@ fn table_u64(t: &toml::map::Map<String, toml::Value>, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn table_f64(t: &toml::map::Map<String, toml::Value>, key: &str) -> f64 {
-    t.get(key)
-        .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
-        .unwrap_or(0.0)
-}
 
 fn table_opt_f64(t: &toml::map::Map<String, toml::Value>, key: &str) -> Option<f64> {
     t.get(key)

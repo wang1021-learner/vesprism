@@ -10,6 +10,7 @@ import {
   $sidebarCollapsed,
   $sidebarAutoCollapsed,
   $workspaceCwd,
+  $gitHeadRevision,
   type RightPanelTab,
 } from '../../store'
 import { listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
@@ -212,6 +213,8 @@ const CHANGE_STATUS_BADGE: Record<string, string> = {
 /** 工作区改动总览：列出全部未提交文件，点开看该文件 diff（不再绑定打开的文件） */
 function DiffView() {
   const cwd = useStore($workspaceCwd)
+  // git_head_changed 事件驱动自动刷新（分支切换 / 提交后）
+  const gitRev = useStore($gitHeadRevision)
   const [changes, setChanges] = useState<WorkspaceChange[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -238,7 +241,7 @@ function DiffView() {
     return () => {
       cancelled = true
     }
-  }, [cwd, tick])
+  }, [cwd, tick, gitRev])
 
   return (
     <div className="right-panel-diff-wrap">

@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# tsc 编译产物兜底（源码目录不应出现 .js）
+src/**/*.js
+src/**/*.js.map
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -92,6 +92,40 @@ export const getSessionMessages = (sessionId: string) =>
 
 export const loadSession = (tabId: string, sessionId: string, cwd: string) =>
   invoke('load_session', { tabId, sessionId, cwd })
+export const forkSession = (tabId: string, cwd: string, newSessionId?: string) =>
+  invoke<string>('fork_session', { tabId, cwd, newSessionId })
+
+// ── Rewind（会话历史回滚）──
+export type RewindMode = 'all' | 'conversation_only' | 'files_only'
+export interface RewindPointInfo {
+  prompt_index: number
+  created_at: string
+  num_file_snapshots: number
+  has_file_changes: boolean
+  prompt_preview?: string | null
+}
+export interface RewindConflictInfo {
+  path: string
+  conflict_type: string
+}
+export interface RewindResponse {
+  success: boolean
+  target_prompt_index: number
+  mode: RewindMode
+  reverted_files: string[]
+  clean_files: string[]
+  conflicts: RewindConflictInfo[]
+  prompt_text?: string | null
+  error?: string | null
+}
+export const getRewindPoints = (tabId: string) =>
+  invoke<RewindPointInfo[]>('get_rewind_points', { tabId })
+export const executeRewind = (
+  tabId: string,
+  targetPromptIndex: number,
+  mode: RewindMode,
+  force: boolean
+) => invoke<RewindResponse>('execute_rewind', { tabId, targetPromptIndex, mode, force })
 
 export const deleteSession = (tabId: string, sessionId: string, cwd: string) =>
   invoke('delete_session', { tabId, sessionId, cwd })
@@ -277,8 +311,6 @@ export interface WorkspaceChange {
 export const workspaceChanges = () =>
   invoke<WorkspaceChange[]>('workspace_changes')
 
-export const pickDirectory = () => invoke<string | null>('pick_directory')
-
 // ── 流式事件（与后端 FrontendEvent snake_case tag 对齐）──
 export interface SessionEventPayload {
   type: string
@@ -325,6 +357,11 @@ export interface SessionEventPayload {
   /** TabActor 重建次数（tab_recovering） / 连续 panic 次数（tab_failed） */
   attempt?: number
   attempts?: number
+  /** RetryInProgress：自动重试进度 */
+  max_retries?: number
+  reason?: string
+  /** git_head_changed：官方 git HEAD 变化通知 */
+  branch?: string | null
   // ── 子 agent ──
   subagent_id?: string
   parent_session_id?: string

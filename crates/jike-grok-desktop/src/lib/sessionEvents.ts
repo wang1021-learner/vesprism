@@ -14,6 +14,7 @@ import {
   patchTab,
   pushToast,
   upsertSubagent,
+  bumpGitHeadRevision,
 } from '../store'
 import { loadSession, respondPermission, setCurrentModel, startSession } from '../bridge'
 import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './sessionOpen'
@@ -193,6 +194,35 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       break
     case 'title_changed':
       if (ev.title) patchTab(tabId, { chatTitle: ev.title })
+      break
+    // 终态错误（后端已映射事件，前端此前无 UI）：置 error banner + toast
+    case 'context_overflow':
+    case 'rate_limit_exceeded':
+    case 'auth_expired': {
+      const msg = ev.message || '会话失败'
+      patchTab(tabId, { error: msg, status: 'idle' })
+      pushToast(
+        ev.type === 'context_overflow'
+          ? '上下文超限，建议新建会话或压缩上下文'
+          : ev.type === 'rate_limit_exceeded'
+            ? '限流重试已耗尽，请稍后再试'
+            : '认证已失效，请到设置检查 API Key',
+        'error',
+      )
+      break
+    }
+    // 非终态：仅 toast 提示重试进度（不置 error banner，避免干扰流式输出）
+    case 'retry_in_progress': {
+      if (ev.attempt === 1) {
+        pushToast(
+          `自动重试中（${ev.attempt}/${ev.max_retries ?? '?'}）${ev.reason ? '：' + ev.reason : ''}`
+        )
+      }
+      break
+    }
+    // 官方 git HEAD 变化（分支切换 / 提交）：右栏「工作区改动」自动刷新
+    case 'git_head_changed':
+      bumpGitHeadRevision()
       break
     // 后端 Phase 2：tab 崩溃自动重建 / 连续崩溃标记 Failed。
     // 重建（含手动重试）→ 按 map 里该 tab 的状态重放会话身份 + 模型。

@@ -107,6 +107,12 @@ pub enum ActorCommand {
         timeout_ms: Option<u64>,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
+    /// 派生新会话（x.ai/session/fork）。返回新会话 id。
+    ForkSession {
+        cwd: String,
+        new_session_id: Option<String>,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
     /// 回答 AI 问卷（response_json 为 AskUserQuestionExtResponse JSON）
     RespondUserQuestion {
         request_id: u64,
@@ -203,6 +209,11 @@ pub enum FrontendEvent {
     TokenUsage { total_tokens: u64 },
     /// 会话标题更新（引擎 LLM 生成 / 手动改名）。
     TitleChanged { title: String },
+    /// 官方 git HEAD 变化通知（分支切换等；前端用于自动刷新右栏差异）。
+    GitHeadChanged {
+        session_id: String,
+        branch: Option<String>,
+    },
     /// 权限请求（前端展示选项后通过 command 回传）。
     PermissionRequest {
         request_id: u64,
@@ -538,6 +549,27 @@ async fn handle_command(
                 }
                 Err(e) => {
                     let _ = reply.send(Err(format!("查询子 agent 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ForkSession {
+            cwd,
+            new_session_id,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s
+                .fork_session(&s.session_id(), &std::path::Path::new(&cwd), new_session_id.as_deref())
+                .await
+            {
+                Ok(new_id) => {
+                    let _ = reply.send(Ok(new_id));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("派生会话失败: {e}")));
                 }
             }
         }
@@ -1004,6 +1036,13 @@ fn forward_event(
         }
         SessionEvent::TitleChanged { title } => {
             emit(app, tab_id, FrontendEvent::TitleChanged { title });
+        }
+        SessionEvent::GitHeadChanged { session_id, branch } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::GitHeadChanged { session_id, branch },
+            );
         }
         SessionEvent::PermissionRequest {
             description,

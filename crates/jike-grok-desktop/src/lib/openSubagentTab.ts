@@ -90,7 +90,7 @@ export type OpenSubagentTabOpts = {
   activate?: boolean
 }
 
-function mapDisplayMessages(
+export function mapDisplayMessages(
   raw: Array<{
     id: string
     role: string

@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import type { ChatMessage, ToolCallData } from '../../types'
-import { $permission } from '../../store'
+import { $activeTabId, $permission, openRewind } from '../../store'
 import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { forkCurrentSession } from '../../lib/forkSession'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
 
@@ -912,6 +913,26 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
               : `展开全部（${text.length.toLocaleString()} 字符）`}
           </button>
         ) : null}
+      </div>
+      <div className="bubble-actions">
+        <button
+          type="button"
+          className="bubble-fork-btn"
+          title="派生新会话（复制当前会话到新标签继续）"
+          aria-label="派生新会话"
+          onClick={() => void forkCurrentSession()}
+        >
+          派生
+        </button>
+        <button
+          type="button"
+          className="bubble-rewind-btn"
+          title="回滚会话（撤销到此提问之前，可恢复文件快照）"
+          aria-label="回滚会话"
+          onClick={() => openRewind($activeTabId.get())}
+        >
+          回滚
+        </button>
       </div>
     </div>
   )

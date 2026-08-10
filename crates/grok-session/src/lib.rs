@@ -158,6 +158,11 @@ pub enum SessionEvent {
     TitleChanged {
         title: String,
     },
+    /// 官方 git HEAD 变化通知（`x.ai/git_head_changed`；分支切换等）。
+    GitHeadChanged {
+        session_id: String,
+        branch: Option<String>,
+    },
     /// 工具权限门控：通过 `respond` 发送选中的 `option_id` 作答。
     PermissionRequest {
         description: String,
@@ -277,6 +282,11 @@ impl std::fmt::Debug for SessionEvent {
                 write!(f, "TokenUsage {{ total_tokens: {} }}", total_tokens)
             }
             Self::TitleChanged { title } => write!(f, "TitleChanged {{ title: {:?} }}", title),
+            Self::GitHeadChanged { session_id, branch } => write!(
+                f,
+                "GitHeadChanged {{ session_id: {:?}, branch: {:?} }}",
+                session_id, branch
+            ),
             Self::PermissionRequest {
                 description,
                 options,
@@ -441,8 +451,27 @@ impl Client for GuiClient {
         &self,
         args: ExtNotification,
     ) -> agent_client_protocol::Result<()> {
-        if args.method.as_ref() != "x.ai/session_notification" {
-            return Ok(());
+        match args.method.as_ref() {
+            "x.ai/session_notification" => {}
+            "x.ai/git_head_changed" => {
+                // 官方 git HEAD 变化通知（分支切换等）；前端用于自动刷新右栏差异。
+                #[derive(serde::Deserialize)]
+                struct GitHeadChangedParams {
+                    session_id: String,
+                    branch: Option<String>,
+                }
+                if let Ok(p) = serde_json::from_str::<GitHeadChangedParams>(args.params.get()) {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::GitHeadChanged {
+                            session_id: p.session_id,
+                            branch: p.branch,
+                        })
+                        .await;
+                }
+                return Ok(());
+            }
+            _ => return Ok(()),
         }
 
         #[derive(serde::Deserialize)]
@@ -1448,6 +1477,50 @@ impl GrokSession {
             .map_err(|e| anyhow::anyhow!("get_subagent 失败: {e:?}"))?;
         serde_json::from_str(resp.0.get())
             .map_err(|e| anyhow::anyhow!("解析 get_subagent 响应失败: {e}"))
+    }
+
+    /// 派生新会话（`x.ai/session/fork`），返回新会话 id。
+    ///
+    /// `cwd` 为父会话工作目录（子会话落盘同目录）；`new_session_id` 可省略让引擎自选。
+    /// 对应官方 pager 的 `fork_session_params`（非 worktree 场景不携带 `sourceWorkspaceDir`）。
+    pub async fn fork_session(
+        &self,
+        source_session_id: &str,
+        cwd: &std::path::Path,
+        new_session_id: Option<&str>,
+    ) -> anyhow::Result<String> {
+        let cwd_str = cwd.to_string_lossy().into_owned();
+        let mut payload = serde_json::json!({
+            "sourceSessionId": source_session_id,
+            "sourceCwd": cwd_str,
+            "newCwd": cwd_str,
+            "sessionKind": "fork",
+        });
+        if let Some(nid) = new_session_id {
+            payload["newSessionId"] = serde_json::Value::String(nid.to_string());
+        }
+        let params = serde_json::value::to_raw_value(&payload)
+            .map_err(|e| anyhow::anyhow!("序列化 fork 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/session/fork", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("fork 失败: {e:?}"))?;
+        // 响应形如 {"newSessionId": "..."} 或 {"result": {"newSessionId": "..."}}；error 优先
+        let v: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 fork 响应失败: {e}"))?;
+        if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
+            anyhow::bail!("fork 失败: {err}");
+        }
+        v.get("newSessionId")
+            .and_then(|x| x.as_str())
+            .or_else(|| {
+                v.get("result")
+                    .and_then(|r| r.get("newSessionId"))
+                    .and_then(|x| x.as_str())
+            })
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow::anyhow!("fork 响应缺少 newSessionId"))
     }
 
     /// 列出 MCP 服务器（官方 `x.ai/mcp/list`）。

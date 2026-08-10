@@ -16,8 +16,10 @@ import { RightPanel } from './components/RightPanel'
 import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
 import { ToastHost } from './components/Toast'
+import { RewindPicker } from './components/RewindPicker'
+import { syncWindowTitle } from './lib/windowTitle'
 import {
-  $activeTabId,
+  $activeTabId, $tabs,
   $activeChatId, $chats, $composerInput,
   $defaultModelId, $error, $generating, $messages, $models,
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
@@ -68,10 +70,19 @@ function DesktopApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // 窗口系统标题跟随活跃 Tab 标题（任务栏 / Alt-Tab）
+  const winActiveId = useStore($activeTabId)
+  const winTabs = useStore($tabs)
+  useEffect(() => {
+    const t = winTabs.find((t) => t.id === winActiveId)
+    syncWindowTitle(t?.title || '')
+  }, [winActiveId, winTabs])
+
   return (
     <div className="app-container">
       <ToastHost />
       <CommandPalette />
+      <RewindPicker />
       <ErrorBoundary name="侧栏">
         <AppSidebar />
       </ErrorBoundary>
