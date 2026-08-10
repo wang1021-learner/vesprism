@@ -1595,7 +1595,11 @@ pub async fn list_all_sessions() -> anyhow::Result<Vec<Summary>> {
 
 /// 按 session id 查询单条最新摘要，供索引增量更新使用，避免为了刷新一条记录去拉全量列表。
 pub fn get_session_summary(session_id: &str) -> Option<Summary> {
-    xai_grok_shell::session::persistence::find_summary_by_session_id(session_id)
+    // 官方已将该查询函数收为 pub(crate)，这里改用公开的 find_session_dir_by_id
+    // 自行读取 summary.json，语义与官方原实现一致（2026-08-10 合并 upstream 适配）。
+    let dir = xai_grok_shell::session::persistence::find_session_dir_by_id(session_id)?;
+    let bytes = std::fs::read(dir.join("summary.json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// 删除指定 session_id 的本地持久化记录。
