@@ -16,7 +16,7 @@
 
 .error-boundary-fallback.is-compact {
   background: var(--surface-elevated);
-  border-radius: var(--radius-xl);
+  border-radius: 6px;
   border: 1px solid var(--border-solid);
   margin: 8px 12px;
   min-height: 200px;

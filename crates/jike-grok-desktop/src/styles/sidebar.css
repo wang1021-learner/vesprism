@@ -6,7 +6,7 @@
   width: 280px;
   height: 100%;
   background: var(--surface-elevated);
-  border-radius: var(--radius-xl);
+  border-radius: 6px;
   border: 1px solid var(--border-solid);
   box-shadow: var(--shadow-sm);
   display: flex;
@@ -27,7 +27,7 @@
   z-index: 150;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
   border: 1px solid var(--border-solid);
-  border-radius: var(--radius-xl);
+  border-radius: 6px;
   background: var(--surface-elevated);
   animation: sidebar-peek-slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
@@ -64,7 +64,7 @@
   align-items: center;
   padding-top: 12px;
   background: var(--surface-elevated);
-  border-radius: var(--radius-xl);
+  border-radius: 6px;
   border: 1px solid var(--border-solid);
   box-shadow: var(--shadow-sm);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;

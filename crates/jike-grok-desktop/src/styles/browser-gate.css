@@ -18,7 +18,7 @@
   width: min(560px, 100%);
   background: var(--surface-elevated);
   border: 1px solid var(--border-solid);
-  border-radius: var(--radius-xl);
+  border-radius: 6px;
   box-shadow: var(--shadow-md);
   padding: 28px 28px 24px;
 }
