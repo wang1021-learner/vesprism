@@ -43,10 +43,7 @@ use super::modes::{
     permission_mode_toast,
 };
 use super::permissions::drain_permission_queue;
-use super::prompt::{
-    dispatch_doctor, dispatch_send_prompt, dispatch_send_prompt_inner,
-    input_can_trigger_project_picker,
-};
+use super::prompt::{dispatch_doctor, dispatch_send_prompt, dispatch_send_prompt_inner};
 use super::session::fork::build_child_fork_marker;
 use super::session::lifecycle::{dispatch_new_session_inner, drain_startup_actions, finish_trust};
 use super::session::load::{dispatch_load_session_with_restore, reanchor_grouped_selection};
@@ -76,6 +73,7 @@ use std::time::Instant;
 fn test_app() -> AppView {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     AppView {
+        pending_startup: None,
         active_view: ActiveView::Welcome,
         auth_return_view: None,
         agents: IndexMap::new(),
@@ -85,8 +83,6 @@ fn test_app() -> AppView {
         settings_registry: std::sync::Arc::new(crate::settings::SettingsRegistry::defaults()),
         current_ui: xai_grok_shell::agent::config::UiConfig::default(),
         cwd: PathBuf::from("/tmp"),
-        project_picker_shown: true,
-        project_picker_disabled: false,
         cwd_has_git_ancestor: false,
         acp_tx: tx,
         scratch: crate::scrollback::render::ScratchBuffer::new(),
@@ -143,6 +139,7 @@ fn test_app() -> AppView {
         new_session_worktree_mode: crate::app::app_view::WorktreeMode::Never,
         fork_worktree_mode: crate::app::app_view::WorktreeMode::Ask,
         restore_code: None,
+        suppress_code_restore_once: None,
         resume_local_miss: None,
         agent_override: None,
         bootstrap_acp_commands: Vec::new(),
@@ -742,12 +739,6 @@ fn two_agent_app_with_bg_task() -> AppView {
     assert!(matches!(app.active_view, ActiveView::Agent(AgentId(0))));
     app
 }
-fn project_picker_app() -> AppView {
-    let mut app = test_app();
-    app.cwd = PathBuf::from("/tmp");
-    app.project_picker_shown = false;
-    app
-}
 /// Test helper: open Settings then OpenResetConfirm for `key`.
 /// Extracted so individual tests don't have to repeat the
 /// open-then-open ritual.
@@ -779,6 +770,7 @@ fn make_picker_entry(id: &str, cwd: &str) -> crate::app::app_view::SessionPicker
         branch: None,
         repo_name: "repo".into(),
         worktree_label: None,
+        last_turn_summary: None,
         card_detail: None,
     }
 }

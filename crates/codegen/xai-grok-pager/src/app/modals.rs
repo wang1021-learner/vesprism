@@ -434,6 +434,35 @@ impl AgentView {
             }
         }
 
+        // UsageInfo: chrome (Esc/close) first, then tabs / scroll / copy.
+        if let ActiveModal::UsageInfo { state } = modal {
+            let chrome_cfg = mw::ModalWindowConfig {
+                title: "",
+                tabs: None,
+                shortcuts: &[],
+                sizing: mw::ModalSizing::default(),
+                fold_info: None,
+            };
+            match mw::handle_modal_key(&mut state.window, key, &chrome_cfg) {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::Unhandled => {
+                    use crate::views::usage_modal::{self, UsageModalOutcome};
+                    return match usage_modal::handle_usage_modal_key(state, key) {
+                        UsageModalOutcome::CopySessionId => {
+                            self.copy_usage_modal_session_id();
+                            InputOutcome::Changed
+                        }
+                        UsageModalOutcome::Changed => InputOutcome::Changed,
+                        UsageModalOutcome::Unchanged => InputOutcome::Unchanged,
+                    };
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // ResetSettingsConfirm: y/n routing. Handled before generic
         // char-match so Esc/F2/Ctrl+, route to Cancel (not modal close).
         if let Some(ActiveModal::ResetSettingsConfirm { modal, .. }) = self.active_modal.as_ref() {
@@ -484,6 +513,7 @@ impl AgentView {
             | ActiveModal::ShortcutsHelp { .. }
             | ActiveModal::MemoryBrowser { .. }
             | ActiveModal::Settings { .. }
+            | ActiveModal::UsageInfo { .. }
             | ActiveModal::ResetSettingsConfirm { .. }
             | ActiveModal::RememberNoteReview { .. } => unreachable!(),
         }
@@ -1089,10 +1119,15 @@ impl AgentView {
                         }
                     }
                     PickerOutcome::SubmitQuery => {
-                        let query = state.query().trim().to_string();
-                        if !query.is_empty() {
+                        // Free-text load only for a UUID session id.
+                        // Own the id before clearing the modal (state is a
+                        // reborrow of `active_modal`).
+                        let load_id =
+                            crate::views::session_picker::session_id_for_direct_load(state.query())
+                                .map(str::to_owned);
+                        if let Some(sid) = load_id {
                             self.active_modal = None;
-                            InputOutcome::Action(Action::LoadSession(query, None, false))
+                            InputOutcome::Action(Action::LoadSession(sid, None, false))
                         } else {
                             InputOutcome::Unchanged
                         }
@@ -1566,6 +1601,46 @@ impl AgentView {
             }
         }
 
+        // UsageInfo: chrome (close / tab clicks / footer copy), then wheel scroll.
+        if let Some(ActiveModal::UsageInfo { state }) = &mut self.active_modal {
+            use crate::views::usage_modal::{self, COPY_SESSION_ID_SHORTCUT, UsageModalOutcome};
+            let outcome =
+                mw::handle_modal_mouse(&mut state.window, mouse.kind, mouse.column, mouse.row);
+            match outcome {
+                ModalWindowOutcome::CloseRequested => {
+                    self.active_modal = None;
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::TabChanged(idx) => {
+                    state.set_tab(usage_modal::UsageInfoTab::from_index(idx));
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::ShortcutActivated(id) => {
+                    if id == COPY_SESSION_ID_SHORTCUT {
+                        self.copy_usage_modal_session_id();
+                    }
+                    return InputOutcome::Changed;
+                }
+                ModalWindowOutcome::Handled => return InputOutcome::Changed,
+                ModalWindowOutcome::Unhandled => {
+                    return match usage_modal::handle_usage_modal_mouse(
+                        state,
+                        mouse.kind,
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        UsageModalOutcome::CopySessionId => {
+                            self.copy_usage_modal_session_id();
+                            InputOutcome::Changed
+                        }
+                        UsageModalOutcome::Changed => InputOutcome::Changed,
+                        UsageModalOutcome::Unchanged => InputOutcome::Unchanged,
+                    };
+                }
+                _ => return InputOutcome::Changed,
+            }
+        }
+
         // ResetSettingsConfirm: route mouse events through the
         // modal-window chrome.
         if let Some(ActiveModal::ResetSettingsConfirm { settings_state, .. }) =
@@ -1629,6 +1704,18 @@ impl AgentView {
             }
             _ => InputOutcome::Changed,
         }
+    }
+
+    /// Copy the usage modal's session ID and toast the delivery outcome.
+    fn copy_usage_modal_session_id(&mut self) {
+        let Some(ActiveModal::UsageInfo { state }) = self.active_modal.as_ref() else {
+            return;
+        };
+        let Some(id) = state.ctx.session_id.clone() else {
+            return;
+        };
+        let delivery = crate::clipboard::copy_text_or_file(&id);
+        self.show_toast(delivery.toast_message().as_ref());
     }
 
     /// Draw the active modal overlay: the per-`ActiveModal`-variant render
@@ -2322,6 +2409,15 @@ impl AgentView {
                         !searching,
                     );
                 }
+            } else if let modal::ActiveModal::UsageInfo { state } = active_modal {
+                crate::views::usage_modal::render_usage_modal(
+                    buf,
+                    area,
+                    state,
+                    self.credit_balance.as_ref(),
+                    compact,
+                    &theme,
+                );
             } else if let modal::ActiveModal::MemoryBrowser { state: mem_state } = active_modal {
                 crate::views::memory_modal::render_memory_modal(buf, area, mem_state, compact);
             } else if let modal::ActiveModal::Settings {
@@ -2388,6 +2484,7 @@ mod session_picker_delete_tests {
             branch: None,
             repo_name: "repo".into(),
             worktree_label: None,
+            last_turn_summary: None,
             card_detail: None,
         }
     }
@@ -2727,6 +2824,43 @@ mod session_picker_delete_tests {
         assert!(
             !st.selection_hidden,
             "typing a query restores the selection highlight"
+        );
+    }
+
+    /// Paste garbage + Enter with no rows must not LoadSession.
+    #[test]
+    fn enter_with_garbage_query_does_not_load_session() {
+        let mut agent = make_agent();
+        open_picker(&mut agent, vec![]);
+        if let Some(ActiveModal::SessionPicker { state, .. }) = agent.active_modal.as_mut() {
+            state.set_query("this is pasted garbage!!!");
+        }
+        let out = agent.handle_palette_or_arg_input(&key_code(KeyCode::Enter));
+        assert!(
+            matches!(out, InputOutcome::Unchanged),
+            "garbage query must be a no-op, got {out:?}"
+        );
+        assert!(
+            matches!(agent.active_modal, Some(ActiveModal::SessionPicker { .. })),
+            "picker must stay open"
+        );
+    }
+
+    #[test]
+    fn enter_with_uuid_query_loads_session() {
+        let mut agent = make_agent();
+        open_picker(&mut agent, vec![]);
+        let sid = "019fb61a-85a5-7ba0-a4ec-24647dca1893";
+        if let Some(ActiveModal::SessionPicker { state, .. }) = agent.active_modal.as_mut() {
+            state.set_query(sid);
+        }
+        let out = agent.handle_palette_or_arg_input(&key_code(KeyCode::Enter));
+        assert!(
+            matches!(
+                out,
+                InputOutcome::Action(Action::LoadSession(ref id, None, false)) if id == sid
+            ),
+            "UUID query should direct-load, got {out:?}"
         );
     }
 }

@@ -55,6 +55,22 @@ pub trait AsyncFileSystem: Send + Sync {
     async fn write_file(&self, path: &Path, data: &[u8]) -> Result<(), ComputerError>;
 
     async fn delete_file(&self, path: &Path) -> Result<(), ComputerError>;
+
+    /// Whether `path` exists as a readable regular file, without reading
+    /// its contents. `Ok(false)` means a definitive not-found; other probe
+    /// failures surface as `Err`.
+    ///
+    /// The default errs with `ErrorKind::Unsupported` — callers must treat
+    /// `Err` as "unknown" and fail closed. Backends opt in by overriding
+    /// with a cheap stat/lookup; a full-content read is never an acceptable
+    /// probe (the target may be arbitrarily large or remote).
+    async fn file_exists(&self, path: &Path) -> Result<bool, ComputerError> {
+        let _ = path;
+        Err(ComputerError::io_with_kind(
+            "file_exists is not supported by this backend",
+            std::io::ErrorKind::Unsupported,
+        ))
+    }
 }
 
 // ============================================================================
@@ -190,7 +206,13 @@ pub struct TaskSnapshot {
     pub end_time: Option<std::time::SystemTime>,
     pub output: String,
     pub output_file: PathBuf,
+    /// `output` may not be the whole output: read `output_file` for the rest.
+    /// Says the copy is partial, not how it came to be.
     pub truncated: bool,
+    /// Total bytes the task has written, when the source tracks it. `output`
+    /// may hold only part of that; zero means unknown.
+    #[serde(default)]
+    pub output_total_bytes: usize,
     pub exit_code: Option<i32>,
     pub signal: Option<String>,
     pub completed: bool,
@@ -240,6 +262,12 @@ impl TaskSnapshot {
     /// backing work).
     pub fn is_outstanding(&self) -> bool {
         !self.completed
+    }
+
+    /// The output on hand, and the size of the output it came from. Readers
+    /// take the size from here so the "not tracked" case is handled once.
+    pub fn output_view(&self) -> crate::util::truncate::PartialOutput<'_> {
+        crate::util::truncate::PartialOutput::part_of(&self.output, self.output_total_bytes)
     }
 
     /// Incomplete and backgrounded — tray/`tasks_snapshot` predicate (not FG in-flight).
@@ -418,6 +446,30 @@ mod tests {
             ce.io_error_kind(),
             Some(std::io::ErrorKind::PermissionDenied)
         );
+    }
+
+    #[tokio::test]
+    async fn file_exists_default_is_unsupported() {
+        struct MinimalFs;
+
+        #[async_trait::async_trait]
+        impl AsyncFileSystem for MinimalFs {
+            async fn read_file(&self, _path: &Path) -> Result<Vec<u8>, ComputerError> {
+                panic!("the default file_exists must not read file contents");
+            }
+            async fn write_file(&self, _path: &Path, _data: &[u8]) -> Result<(), ComputerError> {
+                unreachable!()
+            }
+            async fn delete_file(&self, _path: &Path) -> Result<(), ComputerError> {
+                unreachable!()
+            }
+        }
+
+        let err = MinimalFs
+            .file_exists(Path::new("/any"))
+            .await
+            .expect_err("default probe must err");
+        assert_eq!(err.io_error_kind(), Some(std::io::ErrorKind::Unsupported));
     }
 
     #[test]

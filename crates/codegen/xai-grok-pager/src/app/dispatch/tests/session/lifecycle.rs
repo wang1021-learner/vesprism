@@ -340,6 +340,47 @@ fn worktree_session_created_sets_session_and_cwd() {
     assert!(app.agents[&id].session.state.is_idle());
 }
 #[test]
+fn worktree_session_created_clears_sticky_branch_from_main_repo() {
+    let mut app = test_app_git();
+    dispatch(
+        Action::NewWorktreeSession {
+            load_session_id: None,
+            label: None,
+            git_ref: None,
+        },
+        &mut app,
+    );
+    let id = AgentId(0);
+    {
+        let agent = app.agents.get_mut(&id).unwrap();
+        agent.current_branch = Some("main-random".into());
+        agent.main_repo = Some("~/old-main".into());
+        agent.is_worktree = false;
+    }
+    let worktree_path = PathBuf::from("/tmp/grok-worktrees/pager-sticky");
+    let session_cwd = worktree_path.clone();
+    dispatch(
+        Action::TaskComplete(TaskResult::WorktreeSessionCreated {
+            agent_id: id,
+            session_id: acp::SessionId::new("wt-sticky-1"),
+            worktree_path,
+            session_cwd: session_cwd.clone(),
+            models: None,
+            scheduler_background_loops: None,
+        }),
+        &mut app,
+    );
+    let agent = &app.agents[&id];
+    assert!(
+        agent.current_branch.is_none(),
+        "sticky main-repo branch must not survive the worktree cwd switch"
+    );
+    assert!(agent.main_repo.is_none());
+    assert!(agent.is_worktree);
+    assert!(agent.session.is_worktree);
+    assert_eq!(agent.session.cwd, session_cwd);
+}
+#[test]
 fn worktree_session_preserves_subdirectory_offset() {
     let mut app = test_app();
     app.cwd = PathBuf::from("/repo/crates/codegen/xai-grok-pager");
@@ -738,7 +779,7 @@ fn session_failed_orphan_on_welcome_with_survivor_uses_startup_warning() {
     );
 }
 #[test]
-fn switch_model_without_session_does_nothing() {
+fn switch_model_without_session_sends_nothing_to_server() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     app.agents.get_mut(&id).unwrap().session.session_id = None;
@@ -750,7 +791,11 @@ fn switch_model_without_session_does_nothing() {
         },
         &mut app,
     );
-    assert!(effects.is_empty());
+    assert!(
+        !effects
+            .iter()
+            .any(|e| matches!(e, Effect::SwitchModel { .. }))
+    );
     assert!(!app.agents[&id].session.model_switch_pending);
 }
 #[test]
@@ -925,12 +970,86 @@ fn switch_model_deferred_when_no_session_id() {
         },
         &mut app,
     );
-    assert!(effects.is_empty());
+    assert!(
+        matches!(
+            &effects[..],
+            [Effect::PersistPreferredModel { model_id: m, .. }] if m == &model_id
+        ),
+        "expected persist-only, got {effects:?}"
+    );
+    assert_eq!(
+        app.agents[&id].session.models.current,
+        Some(model_id.clone())
+    );
     assert_eq!(
         app.agents[&id].session.deferred_model_switch,
-        Some((model_id, None))
+        Some(crate::app::agent::DeferredModelSwitch {
+            model_id,
+            effort: None,
+            prev_model_id: None,
+        })
     );
     assert!(!app.agents[&id].session.model_switch_pending);
+}
+#[test]
+fn deferred_switch_threads_stash_prev_into_effect() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_a = acp::ModelId::new(std::sync::Arc::from("model-a"));
+    let model_b = acp::ModelId::new(std::sync::Arc::from("model-b"));
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.session.session_id = None;
+    agent.session.models.current = Some(model_a.clone());
+    dispatch(
+        Action::SwitchModel {
+            model_id: model_b.clone(),
+            effort: None,
+        },
+        &mut app,
+    );
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::SessionCreated {
+            agent_id: id,
+            session_id: "prev-session".into(),
+            models: None,
+            scheduler_background_loops: None,
+        }),
+        &mut app,
+    );
+    assert!(effects.iter().any(|e| matches!(
+        e,
+        Effect::SwitchModel { model_id, prev_model_id, .. }
+            if *model_id == model_b && *prev_model_id == Some(model_a.clone())
+    )));
+}
+#[test]
+fn deferred_switch_prefers_authoritative_current_as_prev() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let model_b = acp::ModelId::new(std::sync::Arc::from("model-b"));
+    let server_model = acp::ModelId::new(std::sync::Arc::from("server-model"));
+    let agent = app.agents.get_mut(&id).unwrap();
+    agent.session.session_id = None;
+    agent.session.deferred_model_switch = Some(crate::app::agent::DeferredModelSwitch {
+        model_id: model_b.clone(),
+        effort: None,
+        prev_model_id: None,
+    });
+    agent.session.models.current = Some(server_model.clone());
+    let effects = dispatch(
+        Action::TaskComplete(TaskResult::SessionCreated {
+            agent_id: id,
+            session_id: "auth-session".into(),
+            models: None,
+            scheduler_background_loops: None,
+        }),
+        &mut app,
+    );
+    assert!(effects.iter().any(|e| matches!(
+        e,
+        Effect::SwitchModel { model_id, prev_model_id, .. }
+            if *model_id == model_b && *prev_model_id == Some(server_model.clone())
+    )));
 }
 #[test]
 fn deferred_model_switch_applied_on_session_created() {
@@ -943,7 +1062,11 @@ fn deferred_model_switch_applied_on_session_created() {
         .get_mut(&id)
         .unwrap()
         .session
-        .deferred_model_switch = Some((model_id.clone(), None));
+        .deferred_model_switch = Some(crate::app::agent::DeferredModelSwitch {
+        model_id: model_id.clone(),
+        effort: None,
+        prev_model_id: None,
+    });
     let effects = dispatch(
         Action::TaskComplete(TaskResult::SessionCreated {
             agent_id: id,
@@ -981,7 +1104,11 @@ fn deferred_model_switch_applied_on_worktree_session_created() {
         .get_mut(&id)
         .unwrap()
         .session
-        .deferred_model_switch = Some((model_id.clone(), None));
+        .deferred_model_switch = Some(crate::app::agent::DeferredModelSwitch {
+        model_id: model_id.clone(),
+        effort: None,
+        prev_model_id: None,
+    });
     let session_id: acp::SessionId = "wt-session".into();
     let effects = dispatch(
         Action::TaskComplete(TaskResult::WorktreeSessionCreated {
@@ -1595,6 +1722,213 @@ fn dispatch_new_session_has_empty_scrollback() {
     let new_id = AgentId(1);
     assert_eq!(app.agents[&new_id].scrollback.len(), 0);
 }
+/// Dashboard attach follows the new session after `/new`.
+#[test]
+fn dispatch_new_session_repoints_dashboard_attached_agent() {
+    use crate::views::dashboard::DashboardRowId;
+    let mut app = test_app_with_agent();
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(0));
+    app.active_view = ActiveView::Agent(AgentId(0));
+    dispatch(Action::NewSession, &mut app);
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(1)),
+        "new session must switch active view to the new agent"
+    );
+    let d = app.dashboard.as_ref().unwrap();
+    assert_eq!(
+        d.attached_agent,
+        Some(AgentId(1)),
+        "attached_agent must re-point after /new so overlay back-out keeps working",
+    );
+    assert_eq!(
+        d.selected,
+        Some(DashboardRowId::TopLevel(AgentId(1))),
+        "focus_row must move selection to the new agent row",
+    );
+}
+/// Failed `/new` restores overlay attach to the survivor (not a dead placeholder).
+#[test]
+fn session_failed_orphan_restores_dashboard_attach_to_survivor() {
+    use crate::views::dashboard::DashboardRowId;
+    let mut app = test_app_with_agent();
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(0));
+    app.active_view = ActiveView::Agent(AgentId(0));
+    dispatch(Action::NewSession, &mut app);
+    let fail_id = AgentId(1);
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == fail_id),
+        "precondition: /new activated the orphan"
+    );
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().attached_agent,
+        Some(fail_id),
+        "precondition: attach followed /new onto the orphan"
+    );
+    assert!(
+        app.agents[&fail_id].session.session_id.is_none(),
+        "precondition: create has not completed"
+    );
+    dispatch(
+        Action::TaskComplete(TaskResult::SessionFailed {
+            agent_id: fail_id,
+            error: "No space left on device".to_string(),
+        }),
+        &mut app,
+    );
+    assert!(!app.agents.contains_key(&fail_id));
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(0)),
+        "view recovery returns to the survivor"
+    );
+    let d = app.dashboard.as_ref().unwrap();
+    assert_eq!(
+        d.attached_agent,
+        Some(AgentId(0)),
+        "attach must follow back to the survivor so overlay back-out keeps working",
+    );
+    assert_eq!(
+        d.selected,
+        Some(DashboardRowId::TopLevel(AgentId(0))),
+        "row focus must follow attach to the survivor",
+    );
+}
+/// Last-session orphan failure clears overlay attach when returning to Welcome.
+#[test]
+fn session_failed_last_orphan_clears_dashboard_attach() {
+    let mut app = test_app_with_agent();
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(0));
+    app.active_view = ActiveView::Agent(AgentId(0));
+    {
+        let a = app.agents.get_mut(&AgentId(0)).unwrap();
+        a.session.session_id = None;
+        a.session.forked_from = None;
+    }
+    dispatch(
+        Action::TaskComplete(TaskResult::SessionFailed {
+            agent_id: AgentId(0),
+            error: "No space left on device".to_string(),
+        }),
+        &mut app,
+    );
+    assert!(app.agents.is_empty());
+    assert!(matches!(app.active_view, ActiveView::Welcome));
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().attached_agent,
+        None,
+        "Welcome recovery must clear overlay attach",
+    );
+}
+/// `/new` must not invent dashboard attach when none was set.
+#[test]
+fn dispatch_new_session_without_dashboard_attach_leaves_attached_none() {
+    let mut app = test_app_with_agent();
+    ensure_dashboard_state(&mut app);
+    assert!(app.dashboard.as_ref().unwrap().attached_agent.is_none());
+    dispatch(Action::NewSession, &mut app);
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().attached_agent,
+        None,
+        "/new must not enable overlay chrome when the prior session was not attached",
+    );
+}
+#[test]
+fn dispatch_new_session_keeps_stale_attach_on_other_agent() {
+    let mut app = test_app_with_agent();
+    insert_placeholder_agent(&mut app, AgentId(1));
+    app.next_agent_id = 2;
+    app.active_view = ActiveView::Agent(AgentId(0));
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(1));
+    dispatch(Action::NewSession, &mut app);
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(2)),
+        "new session must switch active view to the new agent"
+    );
+    assert_eq!(
+        app.dashboard.as_ref().unwrap().attached_agent,
+        Some(AgentId(1)),
+        "attach on a different agent must not be re-pointed to the new session",
+    );
+}
+/// Re-point must use top-level `active_view` id, not `get_active_agent`
+/// (subagent child views use placeholder `AgentId(0)`).
+#[test]
+fn dispatch_new_session_repoints_attach_while_subagent_view_open() {
+    use crate::views::dashboard::DashboardRowId;
+    let mut app = test_app();
+    let parent = AgentId(5);
+    let session = make_test_agent_session(&app, parent, "parent-session");
+    let mut parent_view = AgentView::new(session, ScrollbackState::new());
+    let child_session = make_test_agent_session(&app, AgentId(0), "child-session");
+    let child = AgentView::new(child_session, ScrollbackState::new());
+    parent_view
+        .subagent_views
+        .insert("child-sid".into(), Box::new(child));
+    parent_view.active_subagent = Some("child-sid".into());
+    app.agents.insert(parent, parent_view);
+    app.next_agent_id = 6;
+    app.active_view = ActiveView::Agent(parent);
+    assert_eq!(
+        get_active_agent(&app).map(|a| a.session.id),
+        Some(AgentId(0)),
+        "precondition: get_active_agent resolves subagent AgentId(0)"
+    );
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(parent);
+    dispatch(Action::NewSession, &mut app);
+    let new_id = AgentId(6);
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == new_id),
+        "new session must switch to the new top-level agent"
+    );
+    let d = app.dashboard.as_ref().unwrap();
+    assert_eq!(
+        d.attached_agent,
+        Some(new_id),
+        "attach must re-point from top-level parent, not subagent AgentId(0)",
+    );
+    assert_eq!(
+        d.selected,
+        Some(DashboardRowId::TopLevel(new_id)),
+        "focus_row must select the new agent row",
+    );
+}
+/// Worktree Always `/new` must re-point attach the same way as plain `/new`.
+#[test]
+fn dispatch_new_worktree_session_repoints_dashboard_attached_agent() {
+    use crate::views::dashboard::DashboardRowId;
+    let mut app = test_app_with_agent();
+    app.cwd_has_git_ancestor = true;
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(0));
+    app.active_view = ActiveView::Agent(AgentId(0));
+    dispatch(
+        Action::NewWorktreeSession {
+            load_session_id: None,
+            label: None,
+            git_ref: None,
+        },
+        &mut app,
+    );
+    assert!(
+        matches!(app.active_view, ActiveView::Agent(id) if id == AgentId(1)),
+        "worktree /new must switch active view to the new agent"
+    );
+    let d = app.dashboard.as_ref().unwrap();
+    assert_eq!(
+        d.attached_agent,
+        Some(AgentId(1)),
+        "attached_agent must re-point after worktree /new so overlay back-out keeps working",
+    );
+    assert_eq!(
+        d.selected,
+        Some(DashboardRowId::TopLevel(AgentId(1))),
+        "focus_row must move selection to the new agent row",
+    );
+}
 #[test]
 fn translate_local_submit_always_returns_persist_always_for_new_session() {
     use crate::views::question_view::{LocalQuestionKind, QuestionViewState};
@@ -1720,6 +2054,16 @@ fn delete_current_session_confirm_emits_effect() {
             .local_kind,
         Some(crate::views::question_view::LocalQuestionKind::DeleteCurrentSession)
     ));
+    assert_eq!(
+        app.agents[&AgentId(0)]
+            .question_view
+            .as_ref()
+            .unwrap()
+            .questions[0]
+            .options[0]
+            .description,
+        "Remove history and return home"
+    );
     assert!(
         dispatch(
             Action::DeleteCurrentSessionAnswered { confirmed: false },
@@ -1749,6 +2093,138 @@ fn delete_current_session_confirm_emits_effect() {
                 after: AfterSessionDelete::Welcome,
                 ..
             }) if session_id == "sess-current"
+        ),
+        "got {effects:?}"
+    );
+}
+#[test]
+fn delete_current_session_confirm_from_dashboard_emits_dashboard_after() {
+    use crate::app::actions::AfterSessionDelete;
+    let mut app = test_app_with_agent();
+    {
+        let a = app.agents.get_mut(&AgentId(0)).unwrap();
+        a.session.session_id = Some(acp::SessionId::new("sess-dashboard"));
+        a.session.cwd = std::path::PathBuf::from("/repo");
+    }
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(0));
+    assert!(dispatch(Action::DeleteCurrentSession, &mut app).is_empty());
+    assert_eq!(
+        app.agents[&AgentId(0)]
+            .question_view
+            .as_ref()
+            .unwrap()
+            .questions[0]
+            .options[0]
+            .description,
+        "Remove history and return to the dashboard"
+    );
+    let effects = dispatch(
+        Action::DeleteCurrentSessionAnswered { confirmed: true },
+        &mut app,
+    );
+    assert!(
+        matches!(
+            effects.first(),
+            Some(Effect::CancelTurn {
+                cancel_subagents: true,
+                ..
+            })
+        ),
+        "must cancel the turn/subagents before delete, got {effects:?}"
+    );
+    assert!(
+        matches!(
+            effects.last(),
+            Some(Effect::DeleteSession {
+                session_id,
+                after: AfterSessionDelete::Dashboard,
+                ..
+            }) if session_id == "sess-dashboard"
+        ),
+        "got {effects:?}"
+    );
+}
+/// Dashboard state can exist without overlay attach; must still Welcome.
+#[test]
+fn delete_current_session_dashboard_state_without_attach_stays_welcome() {
+    use crate::app::actions::AfterSessionDelete;
+    let mut app = test_app_with_agent();
+    {
+        let a = app.agents.get_mut(&AgentId(0)).unwrap();
+        a.session.session_id = Some(acp::SessionId::new("sess-no-attach"));
+        a.session.cwd = std::path::PathBuf::from("/repo");
+    }
+    ensure_dashboard_state(&mut app);
+    assert!(app.dashboard.as_ref().unwrap().attached_agent.is_none());
+    assert!(dispatch(Action::DeleteCurrentSession, &mut app).is_empty());
+    assert_eq!(
+        app.agents[&AgentId(0)]
+            .question_view
+            .as_ref()
+            .unwrap()
+            .questions[0]
+            .options[0]
+            .description,
+        "Remove history and return home"
+    );
+    let effects = dispatch(
+        Action::DeleteCurrentSessionAnswered { confirmed: true },
+        &mut app,
+    );
+    assert!(
+        matches!(
+            effects.last(),
+            Some(Effect::DeleteSession {
+                after: AfterSessionDelete::Welcome,
+                ..
+            })
+        ),
+        "got {effects:?}"
+    );
+}
+/// Stale attach on a different agent must not steer /delete to Dashboard.
+#[test]
+fn delete_current_session_stale_attach_other_agent_stays_welcome() {
+    use crate::app::actions::AfterSessionDelete;
+    let mut app = test_app_with_agent();
+    {
+        let a = app.agents.get_mut(&AgentId(0)).unwrap();
+        a.session.session_id = Some(acp::SessionId::new("sess-active"));
+        a.session.cwd = std::path::PathBuf::from("/repo");
+    }
+    let other = AgentId(1);
+    let session = make_test_agent_session(&app, other, "other");
+    app.agents
+        .insert(other, AgentView::new(session, ScrollbackState::new()));
+    app.agents.get_mut(&other).unwrap().session.session_id =
+        Some(acp::SessionId::new("sess-other"));
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(other);
+    app.active_view = ActiveView::Agent(AgentId(0));
+    assert!(dispatch(Action::DeleteCurrentSession, &mut app).is_empty());
+    assert_eq!(
+        app.agents[&AgentId(0)]
+            .question_view
+            .as_ref()
+            .unwrap()
+            .questions[0]
+            .options[0]
+            .description,
+        "Remove history and return home"
+    );
+    let effects = dispatch(
+        Action::DeleteCurrentSessionAnswered { confirmed: true },
+        &mut app,
+    );
+    assert!(
+        matches!(
+            effects.last(),
+            Some(Effect::DeleteSession {
+                session_id,
+                after: AfterSessionDelete::Welcome,
+                ..
+            }) if session_id == "sess-active"
         ),
         "got {effects:?}"
     );
@@ -1796,6 +2272,36 @@ fn delete_current_session_complete_welcome_and_guard() {
     assert!(!effects.iter().any(|e| matches!(e, Effect::Quit)));
 }
 #[test]
+fn delete_current_session_complete_returns_to_dashboard() {
+    use crate::app::actions::{AfterSessionDelete, TaskResult};
+    let mut app = test_app_with_agent();
+    app.agents.get_mut(&AgentId(0)).unwrap().session.session_id =
+        Some(acp::SessionId::new("sess-dash"));
+    ensure_dashboard_state(&mut app);
+    app.dashboard.as_mut().unwrap().attached_agent = Some(AgentId(0));
+    app.active_view = ActiveView::Agent(AgentId(0));
+    let effects = dispatch_task_result(
+        TaskResult::DeleteSessionComplete {
+            source: "current".into(),
+            session_id: "sess-dash".into(),
+            after: AfterSessionDelete::Dashboard,
+        },
+        &mut app,
+    );
+    assert!(matches!(app.active_view, ActiveView::AgentDashboard));
+    assert!(app.agents.is_empty());
+    assert!(app.dashboard.is_some());
+    assert!(
+        app.dashboard.as_ref().unwrap().attached_agent.is_none(),
+        "delete complete must clear attach on the removed agent"
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::UnregisterActiveSession { .. }))
+    );
+}
+#[test]
 fn entry_title_falls_back_to_short_session_id_when_no_prompt() {
     use crate::views::session_title::entry_title;
     let mut app = test_app_with_agent();
@@ -1804,58 +2310,6 @@ fn entry_title_falls_back_to_short_session_id_when_no_prompt() {
     }
     let title = entry_title(&app.agents[&AgentId(0)]);
     assert_eq!(title, "session abcdef01");
-}
-#[test]
-fn new_session_defers_create_session_for_non_project_dir() {
-    let mut app = project_picker_app();
-    let effects = dispatch(Action::NewSession, &mut app);
-    assert!(app.agents.contains_key(&AgentId(0)));
-    assert!(
-        !effects
-            .iter()
-            .any(|e| matches!(e, Effect::CreateSession { .. })),
-    );
-}
-#[test]
-fn new_session_creates_session_for_project_dir() {
-    let mut app = test_app();
-    app.project_picker_shown = false;
-    app.cwd = PathBuf::from("/Users/someone/my-project");
-    let effects = dispatch(Action::NewSession, &mut app);
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::CreateSession { .. })),
-    );
-}
-#[tokio::test]
-async fn project_selected_creates_session_and_sends_prompt() {
-    let mut app = project_picker_app();
-    dispatch(Action::NewSession, &mut app);
-    let id = AgentId(0);
-    let dir = std::env::temp_dir();
-    let selected = dunce::canonicalize(&dir).unwrap_or(dir);
-    let effects = dispatch(
-        Action::ProjectSelected {
-            path: selected.clone(),
-            stashed_prompt: "hello".into(),
-            disable_picker: false,
-        },
-        &mut app,
-    );
-    assert_eq!(app.agents[&id].session.cwd, selected);
-    assert_eq!(app.cwd, selected);
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::SetWorkingDir { path } if path == &selected))
-    );
-    assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::CreateSession { cwd, .. } if cwd == &selected))
-    );
-    assert_eq!(app.agents[&id].session.queue_len(), 1);
 }
 #[test]
 fn bg_task_killed_no_op_for_unknown_session() {
@@ -1985,12 +2439,9 @@ fn cycle_mode_pre_session_clears_stale_yolo_under_pin() {
         "Plan+yolo resets to Normal (matches the with-session catch-all), not always-approve"
     );
 }
-/// Pre-session (welcome screen / fresh tab): Shift+Tab must cycle the
-/// mode locally (optimistic pending + deferred ACP push) AND kick off
-/// session creation — without emitting duplicate CreateSession effects
-/// on repeated presses.
+/// While session creation is in flight, Shift+Tab cycles the mode locally (optimistic pending plus a deferred ACP push) and never creates a session.
 #[test]
-fn dispatch_cycle_mode_pre_session_cycles_locally_and_creates_session() {
+fn dispatch_cycle_mode_pre_session_cycles_locally() {
     let mut app = test_app_with_agent();
     app.agents.get_mut(&AgentId(0)).unwrap().session.session_id = None;
     let effects = dispatch(Action::CycleMode, &mut app);
@@ -2006,10 +2457,10 @@ fn dispatch_cycle_mode_pre_session_cycles_locally_and_creates_session() {
         "Plan must be deferred to SessionCreated"
     );
     assert!(
-        effects
+        !effects
             .iter()
             .any(|e| matches!(e, Effect::CreateSession { .. })),
-        "first press must create the session, got {effects:?}"
+        "cycling a mode must not create a session, got {effects:?}"
     );
     let effects = dispatch(Action::CycleMode, &mut app);
     let agent = &app.agents[&AgentId(0)];
@@ -2021,7 +2472,7 @@ fn dispatch_cycle_mode_pre_session_cycles_locally_and_creates_session() {
         !effects
             .iter()
             .any(|e| matches!(e, Effect::CreateSession { .. })),
-        "no duplicate CreateSession, got {effects:?}"
+        "still no CreateSession, got {effects:?}"
     );
     assert!(
         effects.iter().any(|e| matches!(
