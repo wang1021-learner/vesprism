@@ -1575,14 +1575,23 @@ impl GrokSession {
         new_session_id: Option<&str>,
     ) -> anyhow::Result<String> {
         let cwd_str = cwd.to_string_lossy().into_owned();
+        // 官方语义：sourceCwd 是父会话的真实落盘目录（可能不在当前 cwd 下，
+        // 如跨 cwd 恢复的历史会话）；解析不到时回退传入的 cwd。
+        let source_cwd =
+            xai_grok_shell::session::resolve_local_session_any_cwd(source_session_id)
+                .unwrap_or_else(|| cwd_str.clone());
         let mut payload = serde_json::json!({
             "sourceSessionId": source_session_id,
-            "sourceCwd": cwd_str,
+            "sourceCwd": source_cwd,
             "newCwd": cwd_str,
             "sessionKind": "fork",
         });
         if let Some(nid) = new_session_id {
             payload["newSessionId"] = serde_json::Value::String(nid.to_string());
+        }
+        // worktree 会话：官方要求携带 sourceWorkspaceDir（对齐 parent_session_is_worktree）
+        if Self::parent_session_is_worktree(source_session_id, cwd) {
+            payload["sourceWorkspaceDir"] = serde_json::Value::String(cwd_str);
         }
         let params = serde_json::value::to_raw_value(&payload)
             .map_err(|e| anyhow::anyhow!("序列化 fork 参数失败: {e}"))?;
@@ -1606,6 +1615,38 @@ impl GrokSession {
             })
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow::anyhow!("fork 响应缺少 newSessionId"))
+    }
+
+    /// 会话是否为 worktree 派生（对齐官方 pager `parent_session_is_worktree` 的
+    /// summary.json 检测：session_kind / source_workspace_dir / worktree_label）。
+    fn parent_session_is_worktree(session_id: &str, cwd: &std::path::Path) -> bool {
+        use xai_grok_shell::util::grok_home::{encode_cwd_dirname, grok_home};
+        let cwd_str = cwd.to_string_lossy();
+        let summary_path = grok_home()
+            .join("sessions")
+            .join(encode_cwd_dirname(&cwd_str))
+            .join(session_id)
+            .join("summary.json");
+        if let Ok(bytes) = std::fs::read(&summary_path)
+            && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            if v.get("session_kind").and_then(|k| k.as_str()) == Some("worktree") {
+                return true;
+            }
+            if v.get("source_workspace_dir")
+                .and_then(|k| k.as_str())
+                .is_some_and(|s| !s.is_empty())
+            {
+                return true;
+            }
+            if v.get("worktree_label")
+                .and_then(|k| k.as_str())
+                .is_some_and(|s| !s.is_empty())
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// 终止后台任务（`x.ai/task/kill`）。

@@ -16,8 +16,10 @@ import { forkSession, getSessionMessages, loadSession, openTab } from '../bridge
 import {
   beginAttachRuntime,
   cacheSessionMessages,
+  currentLoadGen,
   finishAttachRuntime,
   hydrateFromSnapshot,
+  nextLoadGen,
 } from './sessionOpen'
 import { mapDisplayMessages } from './openSubagentTab'
 
@@ -44,10 +46,13 @@ export async function forkCurrentSession(): Promise<void> {
       status: 'initializing',
     })
     switchTab(newTabId)
+    // 加载代际保护：attach 过程中用户切换/重开时放弃迟到写入（对齐 openSubagentTab）
+    const gen = nextLoadGen(newTabId)
 
     // 磁盘投影（fork 后历史已落盘）→ attach 恢复
     try {
       const raw = await getSessionMessages(newId)
+      if (gen !== currentLoadGen(newTabId)) return
       const messages = mapDisplayMessages(raw)
       if (messages.length) {
         cacheSessionMessages(newId, messages)
@@ -59,6 +64,7 @@ export async function forkCurrentSession(): Promise<void> {
 
     beginAttachRuntime(newTabId)
     await loadSession(newTabId, newId, cwd)
+    if (gen !== currentLoadGen(newTabId)) return
     finishAttachRuntime(newTabId)
     patchTab(newTabId, {
       sessionId: newId,
