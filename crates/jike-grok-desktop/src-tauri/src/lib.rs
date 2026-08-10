@@ -127,6 +127,7 @@ pub fn run() {
             commands::list_dir,
             commands::read_file_text,
             commands::file_working_diff,
+            commands::workspace_changes,
             commands::get_rewind_points,
             commands::execute_rewind,
         ])

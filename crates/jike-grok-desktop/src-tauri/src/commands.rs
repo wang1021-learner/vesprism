@@ -1800,6 +1800,109 @@ pub fn file_working_diff(path: String, state: State<'_, AppState>) -> Result<Fil
     })
 }
 
+/// 工作区未提交改动总览（右栏「差异」不再绑定单文件，展示整个工作区）。
+#[derive(serde::Serialize)]
+pub struct WorkspaceChangeDto {
+    pub path: String,
+    /// modified | untracked | deleted | renamed
+    pub status: String,
+    pub old_text: String,
+    pub new_text: String,
+}
+
+const WORKSPACE_CHANGES_MAX: usize = 60;
+
+#[tauri::command]
+pub fn workspace_changes(state: State<'_, AppState>) -> Result<Vec<WorkspaceChangeDto>, String> {
+    let workspace_root = resolve_workspace_cwd(&state);
+
+    // 非 git 仓库直接报错（前端显示空态）
+    let inside = run_git(&workspace_root, &["rev-parse", "--is-inside-work-tree"])?;
+    if !inside.status.success()
+        || !String::from_utf8_lossy(&inside.stdout)
+            .trim()
+            .eq_ignore_ascii_case("true")
+    {
+        return Err("当前工作区不是 git 仓库".into());
+    }
+
+    // --porcelain -z：NUL 分隔，可靠解析文件名（含空格/中文）
+    let out = run_git(&workspace_root, &["status", "--porcelain", "-z"])?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let raw = out.stdout;
+    let mut parts: Vec<&[u8]> = raw.split(|b| *b == 0).collect();
+    if parts.last().map(|p| p.is_empty()).unwrap_or(false) {
+        parts.pop();
+    }
+
+    let mut changes: Vec<WorkspaceChangeDto> = Vec::new();
+    let mut idx = 0usize;
+    while idx < parts.len() && changes.len() < WORKSPACE_CHANGES_MAX {
+        let entry = parts[idx];
+        if entry.len() < 3 {
+            idx += 1;
+            continue;
+        }
+        let xy = &entry[0..2];
+        let mut path_bytes = &entry[3..];
+        // renamed：`R  old new ` → 取新路径（下一段）
+        if xy[0] == b'R' || xy[1] == b'R' {
+            if idx + 1 < parts.len() {
+                path_bytes = parts[idx + 1];
+                idx += 1;
+            }
+        }
+        idx += 1;
+        let rel = String::from_utf8_lossy(path_bytes).to_string();
+        if rel.is_empty() {
+            continue;
+        }
+        let status = if xy == b"??" {
+            "untracked"
+        } else if xy[0] == b'D' || xy[1] == b'D' {
+            "deleted"
+        } else if xy[0] == b'R' || xy[1] == b'R' {
+            "renamed"
+        } else {
+            "modified"
+        };
+        // 只关心工作区 vs HEAD；跳过 index 暂存差异的额外处理（统一以 HEAD 为基准）
+        let full = workspace_root.join(&rel);
+        const MAX_BYTES: u64 = 2 * 1024 * 1024;
+        let new_text = if status == "deleted" {
+            String::new()
+        } else if full.is_file() {
+            match std::fs::metadata(&full) {
+                Ok(m) if m.len() <= MAX_BYTES => {
+                    std::fs::read_to_string(&full).unwrap_or_default()
+                }
+                _ => String::new(),
+            }
+        } else {
+            String::new()
+        };
+        let old_text = if status == "untracked" {
+            String::new()
+        } else {
+            let shown = run_git(&workspace_root, &["show", &format!("HEAD:{}", rel)]);
+            match shown {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+                _ => String::new(),
+            }
+        };
+        changes.push(WorkspaceChangeDto {
+            path: rel,
+            status: status.into(),
+            old_text,
+            new_text,
+        });
+    }
+    Ok(changes)
+}
+
+
 /// 获取当前会话可撤销的历史点列表
 #[tauri::command]
 pub async fn get_rewind_points(

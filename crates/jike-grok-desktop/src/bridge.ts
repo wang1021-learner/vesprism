@@ -267,6 +267,16 @@ export type FileWorkingDiff = {
 export const fileWorkingDiff = (path: string) =>
   invoke<FileWorkingDiff>('file_working_diff', { path })
 
+export interface WorkspaceChange {
+  path: string
+  status: 'modified' | 'untracked' | 'deleted' | 'renamed' | string
+  old_text: string
+  new_text: string
+}
+
+export const workspaceChanges = () =>
+  invoke<WorkspaceChange[]>('workspace_changes')
+
 export const pickDirectory = () => invoke<string | null>('pick_directory')
 
 // ── 流式事件（与后端 FrontendEvent snake_case tag 对齐）──

@@ -12,7 +12,7 @@ import {
   $workspaceCwd,
   type RightPanelTab,
 } from '../../store'
-import { fileWorkingDiff, listDir, readFileText, type FileWorkingDiff } from '../../bridge'
+import { listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
 import { DiffLines } from '../Chat/DiffLines'
 
 const MIN_W = 260
@@ -195,39 +195,40 @@ function OutputView() {
   )
 }
 
-const DIFF_STATUS_LABEL: Record<string, string> = {
-  clean: '无差异',
+const CHANGE_STATUS_LABEL: Record<string, string> = {
   modified: '已修改',
   untracked: '未跟踪',
-  not_git: '非 Git',
-  missing: '不存在',
+  deleted: '已删除',
+  renamed: '重命名',
 }
 
+const CHANGE_STATUS_BADGE: Record<string, string> = {
+  modified: 'diff-status-modified',
+  untracked: 'diff-status-untracked',
+  deleted: 'diff-status-deleted',
+  renamed: 'diff-status-renamed',
+}
+
+/** 工作区改动总览：列出全部未提交文件，点开看该文件 diff（不再绑定打开的文件） */
 function DiffView() {
-  const filePath = useStore($rightPanelFilePath)
-  const fileName = useStore($rightPanelFile)
-  const [data, setData] = useState<FileWorkingDiff | null>(null)
+  const cwd = useStore($workspaceCwd)
+  const [changes, setChanges] = useState<WorkspaceChange[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [tick, setTick] = useState(0)
+  const [openPath, setOpenPath] = useState('')
 
   useEffect(() => {
-    if (!filePath) {
-      setData(null)
-      setError('')
-      setLoading(false)
-      return
-    }
     let cancelled = false
     setLoading(true)
     setError('')
-    fileWorkingDiff(filePath)
+    workspaceChanges()
       .then((res) => {
-        if (!cancelled) setData(res)
+        if (!cancelled) setChanges(res)
       })
       .catch((e: unknown) => {
         if (!cancelled) {
-          setData(null)
+          setChanges([])
           setError(String(e))
         }
       })
@@ -237,18 +238,7 @@ function DiffView() {
     return () => {
       cancelled = true
     }
-  }, [filePath, tick])
-
-  if (!filePath) {
-    return <div className="right-panel-empty">先在「文件」中打开源码，差异会绑定该文件</div>
-  }
-
-  const status = data?.status ?? ''
-  const statusLabel = DIFF_STATUS_LABEL[status] ?? status
-  const showDiff =
-    data &&
-    (status === 'modified' || status === 'untracked') &&
-    (data.old_text.length > 0 || data.new_text.length > 0)
+  }, [cwd, tick])
 
   return (
     <div className="right-panel-diff-wrap">
@@ -260,43 +250,63 @@ function DiffView() {
           <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
           <path d="M9 12h6" />
         </svg>
-        <span className="output-file-name" title={filePath}>
-          {fileName || filePath}
-        </span>
-        {status && (
-          <span className={`diff-status-badge diff-status-${status}`}>{statusLabel}</span>
+        <span className="output-file-name">工作区改动</span>
+        {!loading && changes.length > 0 && (
+          <span className="diff-status-badge diff-status-modified">{changes.length}</span>
         )}
         <button
           type="button"
           className="diff-refresh-btn"
-          onClick={() => setTick((n) => n + 1)}
+          onClick={() => {
+            setTick((n) => n + 1)
+            setOpenPath('')
+          }}
           disabled={loading}
-          title="刷新差异"
-          aria-label="刷新差异"
+          title="刷新改动"
+          aria-label="刷新改动"
         >
           刷新
         </button>
       </div>
       {loading && <div className="tree-loading">对比中...</div>}
       {error && <div className="tree-error">{error}</div>}
-      {!loading && !error && data && (
-        <>
-          {data.message && <div className="diff-status-msg">{data.message}</div>}
-          {status === 'clean' && (
-            <div className="right-panel-empty">与 HEAD 一致，无未提交改动</div>
-          )}
-          {showDiff && (
-            <div className="right-panel-diff-body">
-              <DiffLines oldText={data.old_text} newText={data.new_text} />
-            </div>
-          )}
-          {status === 'not_git' && !data.message && (
-            <div className="right-panel-empty">当前工作区不是 git 仓库</div>
-          )}
-          {status === 'missing' && !data.message && (
-            <div className="right-panel-empty">文件不存在</div>
-          )}
-        </>
+      {!loading && !error && changes.length === 0 && (
+        <div className="right-panel-empty">与 HEAD 一致，无未提交改动</div>
+      )}
+      {!loading && !error && changes.length > 0 && (
+        <ul className="workspace-changes">
+          {changes.map((ch) => {
+            const open = openPath === ch.path
+            const hasBody = ch.old_text.length > 0 || ch.new_text.length > 0
+            return (
+              <li key={ch.path} className={`workspace-change${open ? ' is-open' : ''}`}>
+                <button
+                  type="button"
+                  className="workspace-change-head"
+                  onClick={() => setOpenPath(open ? '' : ch.path)}
+                  title={hasBody ? (open ? '收起' : '展开 diff') : '无内容可展示'}
+                >
+                  <span className={`diff-status-badge ${CHANGE_STATUS_BADGE[ch.status] ?? 'diff-status-modified'}`}>
+                    {CHANGE_STATUS_LABEL[ch.status] ?? ch.status}
+                  </span>
+                  <span className="workspace-change-path" title={ch.path}>
+                    {ch.path}
+                  </span>
+                  {hasBody && (
+                    <span className={`scaffold-caret${open ? ' is-open' : ''}`} aria-hidden>
+                      ›
+                    </span>
+                  )}
+                </button>
+                {open && hasBody && (
+                  <div className="right-panel-diff-body">
+                    <DiffLines oldText={ch.old_text} newText={ch.new_text} />
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
       )}
     </div>
   )

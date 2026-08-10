@@ -33,7 +33,7 @@
   background: var(--surface-elevated);
   border: 1px solid var(--border-solid);
   overflow: hidden;
-  border-radius: var(--radius-xl);
+  border-radius: 6px;
   margin: 0;
   box-sizing: border-box;
   transform: translateX(16px);
@@ -450,4 +450,48 @@
   white-space: pre;
   overflow-x: visible;
   min-width: max-content;
+}
+
+/* ── 工作区改动总览（差异 Tab） ── */
+.workspace-changes {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.workspace-change + .workspace-change {
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.12));
+}
+.workspace-change-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workspace-change-head:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.workspace-change-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.workspace-change.is-open .workspace-change-head {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.workspace-change .right-panel-diff-body {
+  padding: 0 4px 6px;
 }
