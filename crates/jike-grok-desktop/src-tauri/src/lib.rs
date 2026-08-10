@@ -131,6 +131,8 @@ pub fn run() {
             commands::get_rewind_points,
             commands::execute_rewind,
             commands::fork_session,
+            commands::kill_task,
+            commands::list_running_subagents,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

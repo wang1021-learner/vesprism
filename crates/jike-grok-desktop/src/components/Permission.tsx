@@ -62,6 +62,19 @@ function LoaderIcon() {
     </svg>
   )
 }
+/** 安全预检发现 → 中文短文案（官方 ClassifierSecurityFinding token） */
+const SECURITY_FINDING_LABELS: Record<string, string> = {
+  fail_closed_policy: '策略自动拒绝',
+  unparseable_shell: '命令无法解析',
+  opaque_shell: '命令内容不透明',
+  exec_or_ambient_git: '执行/环境 Git 操作',
+  env_injection: '环境变量注入风险',
+  unvetted_env: '未经验证的环境变量',
+  file_write: '写文件操作',
+  dangerous_command: '危险命令',
+  special_exec_surface: '特殊执行面',
+}
+
 /** 主审批条：组合按钮 + 拒绝 + 命令 + always 确认弹窗（Hermes ApprovalBar） */
 function ApprovalBar({
   request,
@@ -210,6 +223,20 @@ function ApprovalBar({
             </button>
           ) : null}
         </div>
+
+        {request.securityFindings && request.securityFindings.length > 0 ? (
+          <div className="perm-findings" role="note">
+            <span className="perm-findings-ico" aria-hidden>
+              ⚠
+            </span>
+            <span className="perm-findings-text">
+              预检发现：
+              {request.securityFindings
+                .map((f) => SECURITY_FINDING_LABELS[f] || f)
+                .join('、')}
+            </span>
+          </div>
+        ) : null}
 
         {menuOpen ? (
           <div className="perm-menu" role="menu">

@@ -65,6 +65,8 @@ pub enum ActorCommand {
     LoadSession {
         session_id: String,
         cwd: String,
+        /// 官方 `--restore-code` 等价：resume 时是否恢复代码快照
+        restore_code: Option<bool>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 删除会话（若删的是当前会话，会先释放再开新会话）。
@@ -112,6 +114,15 @@ pub enum ActorCommand {
         cwd: String,
         new_session_id: Option<String>,
         reply: oneshot::Sender<Result<String, String>>,
+    },
+    /// 终止后台任务（x.ai/task/kill）。
+    KillTask {
+        task_id: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 查询仍在运行的子 agent（x.ai/subagent/list_running；重启/重连对账）。
+    ListRunningSubagents {
+        reply: oneshot::Sender<Result<Vec<grok_session::RunningSubagentInfo>, String>>,
     },
     /// 回答 AI 问卷（response_json 为 AskUserQuestionExtResponse JSON）
     RespondUserQuestion {
@@ -214,11 +225,23 @@ pub enum FrontendEvent {
         session_id: String,
         branch: Option<String>,
     },
+    /// bash 命令转入后台执行（官方 x.ai/task_backgrounded 通知）。
+    TaskBackgrounded {
+        tool_call_id: String,
+        task_id: String,
+        command: String,
+        cwd: String,
+        output_file: String,
+        monitor_description: Option<String>,
+        description: Option<String>,
+    },
     /// 权限请求（前端展示选项后通过 command 回传）。
     PermissionRequest {
         request_id: u64,
         description: String,
         options: Vec<PermissionOptionDto>,
+        /// 安全预检发现（官方分类器/评估 token，如 opaque_shell / dangerous_command）
+        security_findings: Vec<String>,
     },
     /// 子 agent 已创建。
     SubagentSpawned {
@@ -573,6 +596,34 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::KillTask { task_id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.kill_task(&task_id).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("终止后台任务失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ListRunningSubagents { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.list_running_subagents().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("查询运行中子 agent 失败: {e}")));
+                }
+            }
+        }
         ActorCommand::ListMcpServers { cache, reply } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
@@ -704,7 +755,12 @@ async fn handle_command(
             begin_fresh_session(app, tab_id, session, status_rx, pending_permissions, cwd, reply, true)
                 .await;
         }
-        ActorCommand::LoadSession { session_id, cwd, reply } => {
+        ActorCommand::LoadSession {
+            session_id,
+            cwd,
+            restore_code,
+            reply,
+        } => {
             // 切到历史会话前：若当前是空会话则删掉，避免列表残留
             if let Some(old_session) = session.take() {
                 let old_id = old_session.session_id();
@@ -715,7 +771,7 @@ async fn handle_command(
             pending_permissions.clear();
 
             emit(app, tab_id, FrontendEvent::StatusChanged { status: SessionStatus::Initializing });
-            match GrokSession::resume(session_id, cwd).await {
+            match GrokSession::resume(session_id, cwd, restore_code).await {
                 Ok(mut s) => {
                     *status_rx = Some(s.subscribe_status());
                     let sid = s.session_id();
@@ -1044,9 +1100,33 @@ fn forward_event(
                 FrontendEvent::GitHeadChanged { session_id, branch },
             );
         }
+        SessionEvent::TaskBackgrounded {
+            tool_call_id,
+            task_id,
+            command,
+            cwd,
+            output_file,
+            monitor_description,
+            description,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::TaskBackgrounded {
+                    tool_call_id,
+                    task_id,
+                    command,
+                    cwd,
+                    output_file,
+                    monitor_description,
+                    description,
+                },
+            );
+        }
         SessionEvent::PermissionRequest {
             description,
             options,
+            security_findings,
             respond,
         } => {
             let request_id = *next_id;
@@ -1065,6 +1145,7 @@ fn forward_event(
                             PermissionOptionDto { id, name, kind }
                         })
                         .collect(),
+                    security_findings,
                 },
             );
         }

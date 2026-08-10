@@ -79,6 +79,8 @@ export interface PermissionRequest {
   command?: string
   /** 一行摘要（截断） */
   summary?: string
+  /** 安全预检发现（官方 token：opaque_shell / dangerous_command 等） */
+  securityFindings?: string[]
 }
 
 /** AI 问卷选项（与后端 UserQuestionOption camelCase 对齐） */

@@ -93,7 +93,9 @@ export function RewindPicker() {
       if (sid && cwd) {
         beginAttachRuntime(tabId)
         try {
-          await loadSession(tabId, sid, cwd)
+          // conversation_only 回滚后不恢复代码快照（官方 --restore-code 语义：
+          // 对话回滚但工作区改动保留）
+          await loadSession(tabId, sid, cwd, mode === 'conversation_only' ? false : undefined)
         } finally {
           finishAttachRuntime(tabId)
         }

@@ -15,6 +15,7 @@ import {
   pushToast,
   upsertSubagent,
   bumpGitHeadRevision,
+  setBackgroundTask,
 } from '../store'
 import { loadSession, respondPermission, setCurrentModel, startSession } from '../bridge'
 import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './sessionOpen'
@@ -71,6 +72,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           title: parsed.title,
           command: parsed.command,
           summary: parsed.summary,
+          securityFindings: ev.security_findings ?? [],
         }
         // 记忆命中（本次会话/总是允许）→ 自动放行，不弹审批条。
         // 用严格版 pickAllow：找不到明确「允许」选项（如只有拒绝项）就不自动放行
@@ -223,6 +225,18 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     // 官方 git HEAD 变化（分支切换 / 提交）：右栏「工作区改动」自动刷新
     case 'git_head_changed':
       bumpGitHeadRevision()
+      break
+    // bash 命令转入后台执行：登记后台任务（工具卡显示徽标 + 终止入口）
+    case 'task_backgrounded':
+      if (ev.tool_call_id && ev.task_id) {
+        setBackgroundTask(tabId, ev.tool_call_id, {
+          taskId: ev.task_id,
+          command: ev.command || '',
+          outputFile: ev.output_file || undefined,
+          monitorDescription: ev.monitor_description ?? null,
+          description: ev.description ?? null,
+        })
+      }
       break
     // 后端 Phase 2：tab 崩溃自动重建 / 连续崩溃标记 Failed。
     // 重建（含手动重试）→ 按 map 里该 tab 的状态重放会话身份 + 模型。

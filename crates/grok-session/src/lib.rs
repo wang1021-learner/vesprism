@@ -104,6 +104,26 @@ pub struct ToolCallUpdateInfo {
     pub todo: Option<TodoSnapshotDto>,
 }
 
+/// 运行中子 agent 快照（`x.ai/subagent/list_running` 响应项；camelCase 对齐官方 DTO）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningSubagentInfo {
+    pub subagent_id: String,
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    pub subagent_type: String,
+    pub description: String,
+    pub started_at_epoch_ms: u64,
+    pub duration_ms: u64,
+    pub turn_count: u32,
+    pub tool_call_count: u32,
+    pub tokens_used: u64,
+    pub context_window_tokens: u64,
+    pub context_usage_pct: u8,
+    pub tools_used: Vec<String>,
+    pub error_count: u32,
+}
+
 /// 面向 GUI / REPL 的业务层事件。
 pub enum SessionEvent {
     /// AI 回复文本片段（流式）。
@@ -163,11 +183,25 @@ pub enum SessionEvent {
         session_id: String,
         branch: Option<String>,
     },
+    /// bash 命令转入后台执行（官方 `x.ai/task_backgrounded` 通知）。
+    TaskBackgrounded {
+        /// 对应工具行（bash 工具调用）
+        tool_call_id: String,
+        /// 后台任务注册表 ID（kill 用）
+        task_id: String,
+        command: String,
+        cwd: String,
+        output_file: String,
+        monitor_description: Option<String>,
+        description: Option<String>,
+    },
     /// 工具权限门控：通过 `respond` 发送选中的 `option_id` 作答。
     PermissionRequest {
         description: String,
         /// `(选项 id, 显示名称)`
         options: Vec<(String, String)>,
+        /// 安全预检发现（官方分类器/评估经请求 meta `x.ai/security_findings` 下发）
+        security_findings: Vec<String>,
         respond: oneshot::Sender<String>,
     },
     /// 子 agent 已创建（父会话 `x.ai/session_notification`）。
@@ -287,6 +321,11 @@ impl std::fmt::Debug for SessionEvent {
                 "GitHeadChanged {{ session_id: {:?}, branch: {:?} }}",
                 session_id, branch
             ),
+            Self::TaskBackgrounded { task_id, command, .. } => write!(
+                f,
+                "TaskBackgrounded {{ task_id: {:?}, command: {:?} }}",
+                task_id, command
+            ),
             Self::PermissionRequest {
                 description,
                 options,
@@ -379,6 +418,19 @@ impl Client for GuiClient {
             .map(|o| (o.option_id.to_string(), o.name.clone()))
             .collect();
 
+        // 安全预检发现（官方注入请求 meta 的 `x.ai/security_findings` token 列表）
+        let security_findings = args
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("x.ai/security_findings"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         if options.is_empty() {
             let _ = self
                 .event_tx
@@ -399,6 +451,7 @@ impl Client for GuiClient {
             .send(SessionEvent::PermissionRequest {
                 description,
                 options: options.clone(),
+                security_findings,
                 respond: respond_tx,
             })
             .await;
@@ -589,6 +642,28 @@ impl Client for GuiClient {
                             duration_ms,
                             tokens_used,
                             output,
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::TaskBackgrounded {
+                    tool_call_id,
+                    task_id,
+                    command,
+                    cwd,
+                    output_file,
+                    monitor_description,
+                    description,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::TaskBackgrounded {
+                            tool_call_id,
+                            task_id,
+                            command,
+                            cwd,
+                            output_file,
+                            monitor_description,
+                            description,
                         })
                         .await;
                 }
@@ -1224,7 +1299,11 @@ impl GrokSession {
     /// 恢复一个已有会话（通过 load_session），不影响 start() 原有逻辑。
     ///
     /// 必须在 `LocalSet` 中调用。
-    pub async fn resume(session_id: impl Into<SessionId>, cwd: impl Into<String>) -> anyhow::Result<Self> {
+    pub async fn resume(
+        session_id: impl Into<SessionId>,
+        cwd: impl Into<String>,
+        restore_code: Option<bool>,
+    ) -> anyhow::Result<Self> {
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
         let agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
@@ -1272,9 +1351,15 @@ impl GrokSession {
             .await?;
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
         let load_session_id = session_id.clone();
-        connection
-            .load_session(LoadSessionRequest::new(load_session_id, cwd.into()))
-            .await?;
+        let mut load_req = LoadSessionRequest::new(load_session_id, cwd.into());
+        if let Some(rc) = restore_code {
+            // 官方 `--restore-code` 等价：resume 时是否恢复代码快照
+            // （conversation-only 回滚后传 false，避免覆盖工作区改动）
+            let mut m = agent_client_protocol::Meta::new();
+            m.insert("x.ai/restore_code".into(), serde_json::Value::Bool(rc));
+            load_req = load_req.meta(Some(m));
+        }
+        connection.load_session(load_req).await?;
 
         let _ = status_tx.send(SessionStatus::Idle);
         Ok(Self {
@@ -1521,6 +1606,44 @@ impl GrokSession {
             })
             .map(|s| s.to_string())
             .ok_or_else(|| anyhow::anyhow!("fork 响应缺少 newSessionId"))
+    }
+
+    /// 终止后台任务（`x.ai/task/kill`）。
+    pub async fn kill_task(&self, task_id: &str) -> anyhow::Result<serde_json::Value> {
+        let params = xai_grok_shell::extensions::task::KillTaskRequest {
+            session_id: self.session_id.to_string(),
+            task_id: task_id.to_string(),
+        };
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化 kill_task 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/task/kill", raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("kill_task 失败: {e:?}"))?;
+        serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 kill_task 响应失败: {e}"))
+    }
+
+    /// 查询仍在运行的子 agent（`x.ai/subagent/list_running`；重启/重连对账用）。
+    pub async fn list_running_subagents(&self) -> anyhow::Result<Vec<RunningSubagentInfo>> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 list_running 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/subagent/list_running", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("list_running 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 list_running 响应失败: {e}"))?;
+        let subs = value
+            .get("subagents")
+            .or_else(|| value.get("result").and_then(|r| r.get("subagents")))
+            .ok_or_else(|| anyhow::anyhow!("list_running 响应缺少 subagents 字段"))?;
+        serde_json::from_value(subs.clone())
+            .map_err(|e| anyhow::anyhow!("反序列化 RunningSubagentInfo 失败: {e}"))
     }
 
     /// 列出 MCP 服务器（官方 `x.ai/mcp/list`）。

@@ -336,6 +336,40 @@
   color: var(--text-primary);
 }
 
+/* bash 后台任务徽标（task_backgrounded）：工具行右侧 */
+.bg-task-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.bg-task-kill {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.bg-task-kill:hover {
+  color: var(--danger, #dc2626);
+  background: rgba(220, 38, 38, 0.08);
+}
+.bg-task-kill:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Assistant 正文（无角色角标，靠布局与用户气泡区分） */
 .assistant-row {
   flex-direction: column;

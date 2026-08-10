@@ -379,6 +379,10 @@ pub struct AcpPrompter {
     /// When `false` (default, fail-safe), the per-tool "Always allow …" options
     /// are stripped (see [`REMEMBER_TOOL_APPROVALS_GATED_IDS`]).
     remember_tool_approvals: bool,
+    /// 当前请求的安全预检发现（jike 桌面端：manager 每次 request 前设置，
+    /// tokens 对齐 `ClassifierSecurityFinding`，如 "opaque_shell" / "dangerous_command"；
+    /// 注入权限请求 meta 供客户端展示，空则不带）。
+    current_findings: std::sync::Mutex<Vec<String>>,
 }
 
 /// Per-tool always-allow/always-reject option ids stripped when the gate is off.
@@ -551,6 +555,7 @@ impl AcpPrompter {
             hub_permission: None,
             // Fail-safe default; opt in via `with_remember_tool_approvals`.
             remember_tool_approvals: false,
+            current_findings: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -559,6 +564,11 @@ impl AcpPrompter {
     pub fn with_remember_tool_approvals(mut self, enabled: bool) -> Self {
         self.remember_tool_approvals = enabled;
         self
+    }
+
+    /// 设置当前请求的安全预检发现（manager 在 `request` 前调用；请求间串行覆盖）。
+    pub fn set_security_findings(&self, findings: Vec<String>) {
+        *self.current_findings.lock().unwrap_or_else(|e| e.into_inner()) = findings;
     }
 
     /// Route the permission prompt to chat over the server when `Some`;
@@ -626,14 +636,34 @@ impl AcpPrompter {
         access: &AccessKind,
         protected_edit: Option<crate::permission::ProtectedEditReason>,
     ) -> Option<acp::Meta> {
-        if let Some(bash) = self.bash_selection_meta(access) {
-            return Some(bash);
+        let base = if let Some(bash) = self.bash_selection_meta(access) {
+            Some(bash)
+        } else if let Some(reason) = protected_edit {
+            let payload = crate::permission::ProtectedEditPermission::from_reason(reason);
+            serde_json::to_value(payload)
+                .ok()
+                .and_then(|v| v.as_object().cloned())
+        } else {
+            None
+        };
+        // jike 桌面端：安全预检发现注入请求 meta（`x.ai/security_findings`），
+        // 客户端审批 UI 据此展示预检警告；无发现时不带该 key。
+        let findings = self
+            .current_findings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if findings.is_empty() {
+            return base;
         }
-        let reason = protected_edit?;
-        let payload = crate::permission::ProtectedEditPermission::from_reason(reason);
-        serde_json::to_value(payload)
-            .ok()
-            .and_then(|v| v.as_object().cloned())
+        let mut meta = base.unwrap_or_default();
+        meta.insert(
+            "x.ai/security_findings".into(),
+            serde_json::Value::Array(
+                findings.into_iter().map(serde_json::Value::String).collect(),
+            ),
+        );
+        Some(meta)
     }
 
     /// Build the per-access-kind option map WITHOUT the

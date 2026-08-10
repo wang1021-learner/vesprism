@@ -355,6 +355,54 @@ pub async fn fork_session(
         .map_err(|_| "会话线程无响应".to_string())?
 }
 
+/// 终止后台任务（官方 x.ai/task/kill）。
+#[tauri::command]
+pub async fn kill_task(
+    tab_id: String,
+    task_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::KillTask {
+            task_id,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 查询仍在运行的子 agent（官方 x.ai/subagent/list_running；重启/重连对账）。
+#[tauri::command]
+pub async fn list_running_subagents(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<grok_session::RunningSubagentInfo>, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::ListRunningSubagents { reply: reply_tx })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx
+        .await
+        .map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 列出 MCP 服务器（官方 x.ai/mcp/list）。
 #[tauri::command]
 pub async fn list_mcp_servers(
@@ -1435,9 +1483,16 @@ pub async fn load_session(
     tab_id: String,
     session_id: String,
     cwd: String,
+    restore_code: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    send_cmd(&state, &tab_id, |reply| ActorCommand::LoadSession { session_id, cwd, reply }).await
+    send_cmd(&state, &tab_id, |reply| ActorCommand::LoadSession {
+        session_id,
+        cwd,
+        restore_code,
+        reply,
+    })
+    .await
 }
 
 /// 会话搜索结果（官方 FTS：标题 + 用户消息正文）。

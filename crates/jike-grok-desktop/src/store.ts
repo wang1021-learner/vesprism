@@ -24,6 +24,15 @@ import { upsertSubagentMessage } from './lib/subagentMessage'
 // ── Tab 分片 ──────────────────────────────────────────────────────────
 
 /** 单个 tab 的会话状态（字段语义对齐官方 RosterEntry：sessionId/title/cwd/modelId/activity） */
+/** bash 后台任务（官方 x.ai/task_backgrounded；key=toolCallId） */
+export interface BackgroundTaskInfo {
+  taskId: string
+  command: string
+  outputFile?: string
+  monitorDescription?: string | null
+  description?: string | null
+}
+
 export interface TabState {
   /** 引擎会话 id（原 $activeSessionId） */
   sessionId: string
@@ -53,6 +62,8 @@ export interface TabState {
   modelId: string
   /** 本 tab 推理强度 */
   reasoningEffort: string
+  /** bash 后台任务（key=toolCallId → 任务信息；活跃 tab 投影到 $backgroundTasks） */
+  backgroundTasks: Record<string, BackgroundTaskInfo>
   /**
    * 专用面板 Tab：mcp / skills / tools / workflows；null=普通对话。
    * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
@@ -80,6 +91,7 @@ export function emptyTabState(): TabState {
     modelId: '',
     reasoningEffort: 'medium',
     utilityKind: null,
+    backgroundTasks: {},
   }
 }
 
@@ -273,6 +285,7 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('modelId' in patch) $defaultModelId.set(patch.modelId!)
   if ('reasoningEffort' in patch) $reasoningEffort.set(patch.reasoningEffort!)
   if ('utilityKind' in patch) $utilityKind.set(patch.utilityKind ?? null)
+  if ('backgroundTasks' in patch) $backgroundTasks.set(patch.backgroundTasks!)
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -295,6 +308,7 @@ function projectTab(id: string): void {
     modelId: s.modelId,
     reasoningEffort: s.reasoningEffort,
     utilityKind: s.utilityKind,
+    backgroundTasks: s.backgroundTasks,
   })
 }
 
@@ -527,6 +541,29 @@ export function openRewind(tabId: string) {
 }
 export function closeRewind() {
   $rewindOpen.set(false)
+}
+
+// ── bash 后台任务（task_backgrounded）──
+export const $backgroundTasks = atom<Record<string, BackgroundTaskInfo>>({})
+/** 登记后台任务（事件到达时） */
+export function setBackgroundTask(
+  tabId: string,
+  toolCallId: string,
+  info: BackgroundTaskInfo
+): void {
+  const st = getTabState(tabId)
+  if (!st) return
+  patchTab(tabId, {
+    backgroundTasks: { ...st.backgroundTasks, [toolCallId]: info },
+  })
+}
+/** 移除后台任务（kill 成功 / 工具结束） */
+export function removeBackgroundTask(tabId: string, toolCallId: string): void {
+  const st = getTabState(tabId)
+  if (!st) return
+  const next = { ...st.backgroundTasks }
+  delete next[toolCallId]
+  patchTab(tabId, { backgroundTasks: next })
 }
 
 // ── Toast（顶部浮层，不进对话历史；如切换模型） ──

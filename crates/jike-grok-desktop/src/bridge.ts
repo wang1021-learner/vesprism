@@ -90,8 +90,12 @@ export const getSessionMessages = (sessionId: string) =>
     }>
   >('get_session_messages', { sessionId })
 
-export const loadSession = (tabId: string, sessionId: string, cwd: string) =>
-  invoke('load_session', { tabId, sessionId, cwd })
+export const loadSession = (
+  tabId: string,
+  sessionId: string,
+  cwd: string,
+  restoreCode?: boolean
+) => invoke('load_session', { tabId, sessionId, cwd, restoreCode })
 export const forkSession = (tabId: string, cwd: string, newSessionId?: string) =>
   invoke<string>('fork_session', { tabId, cwd, newSessionId })
 
@@ -118,6 +122,28 @@ export interface RewindResponse {
   prompt_text?: string | null
   error?: string | null
 }
+/** 运行中子 agent 快照（x.ai/subagent/list_running；camelCase 对齐后端 DTO） */
+export interface RunningSubagentInfo {
+  subagentId: string
+  parentSessionId: string
+  childSessionId: string
+  subagentType: string
+  description: string
+  startedAtEpochMs: number
+  durationMs: number
+  turnCount: number
+  toolCallCount: number
+  tokensUsed: number
+  contextWindowTokens: number
+  contextUsagePct: number
+  toolsUsed: string[]
+  errorCount: number
+}
+export const killTask = (tabId: string, taskId: string) =>
+  invoke<unknown>('kill_task', { tabId, taskId })
+export const listRunningSubagents = (tabId: string) =>
+  invoke<RunningSubagentInfo[]>('list_running_subagents', { tabId })
+
 export const getRewindPoints = (tabId: string) =>
   invoke<RewindPointInfo[]>('get_rewind_points', { tabId })
 export const executeRewind = (
@@ -362,6 +388,13 @@ export interface SessionEventPayload {
   reason?: string
   /** git_head_changed：官方 git HEAD 变化通知 */
   branch?: string | null
+  // ── 权限请求安全预检发现（x.ai/security_findings token 列表）──
+  security_findings?: string[]
+  // ── task_backgrounded：bash 命令转入后台 ──
+  task_id?: string
+  command?: string
+  output_file?: string
+  monitor_description?: string | null
   // ── 子 agent ──
   subagent_id?: string
   parent_session_id?: string

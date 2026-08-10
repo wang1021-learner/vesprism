@@ -65,6 +65,7 @@ import {
 } from '../lib/sessionOpen'
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
+import { reconcileRunningSubagents } from '../lib/reconcileRunningSubagents'
 import { BrandLogo, BrandWordmark } from './BrandLogo'
 
 /** FTS 搜索结果行（可带 snippet） */
@@ -577,6 +578,8 @@ const MAX_TABS = 12
 
       beginAttachRuntime(myTab)
       await loadSession(myTab, id, workCwd)
+      // 启动对账：恢复该会话仍在运行的子 agent（重启/重连场景，官方 x.ai/subagent/list_running）
+      void reconcileRunningSubagents(myTab)
       if (gen !== currentLoadGen(myTab)) return
       finishAttachRuntime(myTab)
       // chatId 固定为侧栏历史 id，便于再次点击时命中已开 Tab

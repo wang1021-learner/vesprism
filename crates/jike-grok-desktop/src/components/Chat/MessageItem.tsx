@@ -1,10 +1,11 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import type { ChatMessage, ToolCallData } from '../../types'
-import { $activeTabId, $permission, openRewind } from '../../store'
+import { $activeTabId, $backgroundTasks, $permission, openRewind, pushToast, removeBackgroundTask } from '../../store'
 import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { forkCurrentSession } from '../../lib/forkSession'
+import { killTask } from '../../bridge'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
 
@@ -773,6 +774,24 @@ const ToolLine = memo(function ToolLine({
     }
   }, [preview, tool.detail, tool.title])
 
+  // bash 后台任务（x.ai/task_backgrounded）：工具行显示徽标 + 终止入口
+  const bgTasks = useStore($backgroundTasks)
+  const bgTask = bgTasks[tool.toolCallId]
+  const [killing, setKilling] = useState(false)
+  const onKillBg = useCallback(async () => {
+    if (!bgTask || killing) return
+    setKilling(true)
+    try {
+      await killTask($activeTabId.get(), bgTask.taskId)
+      removeBackgroundTask($activeTabId.get(), tool.toolCallId)
+      pushToast('已终止后台任务', 'success')
+    } catch (e) {
+      pushToast(`终止失败：${String(e)}`, 'error')
+    } finally {
+      setKilling(false)
+    }
+  }, [bgTask, killing, tool.toolCallId])
+
   return (
     <div
       className={[
@@ -827,6 +846,24 @@ const ToolLine = memo(function ToolLine({
                 </span>
               ) : null}
             </button>
+            {bgTask ? (
+              <span
+                className="bg-task-badge"
+                title={bgTask.command || `任务 ${bgTask.taskId}`}
+              >
+                后台运行中
+                <button
+                  type="button"
+                  className="bg-task-kill"
+                  disabled={killing}
+                  onClick={() => void onKillBg()}
+                  title="终止后台任务"
+                  aria-label="终止后台任务"
+                >
+                  {killing ? '…' : '终止'}
+                </button>
+              </span>
+            ) : null}
           </div>
           {expanded && tool.todo?.todos?.length ? (
             <div className="scaffold-body tool-body tool-todo-body">

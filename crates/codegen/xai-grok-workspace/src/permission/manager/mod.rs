@@ -2243,6 +2243,13 @@ fn spawn_permission_manager_with_pin(
                             // not open one permission UI per unsafe chained segment
                             // (e.g. `curl … && sh` must not become two separate
                             // prompts for `curl …` then `sh`).
+                            // jike 桌面端：安全预检发现随权限请求 meta 下发（审批 UI 展示）
+                            prompter.set_security_findings(
+                                classification
+                                    .borrow()
+                                    .security_findings_tokens()
+                                    .unwrap_or_default(),
+                            );
                             let prompt_outcome = tokio::select! {
                                 outcome = prompter.request(&access, &tool_call_update, protected_edit) => outcome,
                                 _ = respond_to.closed() => PromptOutcome::Cancelled,
@@ -2307,6 +2314,13 @@ fn spawn_permission_manager_with_pin(
                         }
                         _ => {
                             // Non-bash access kinds keep the single-prompt flow.
+                            // jike 桌面端：安全预检发现随权限请求 meta 下发（审批 UI 展示）
+                            prompter.set_security_findings(
+                                classification
+                                    .borrow()
+                                    .security_findings_tokens()
+                                    .unwrap_or_default(),
+                            );
                             let prompt_outcome = tokio::select! {
                                 outcome = prompter.request(&access, &tool_call_update, protected_edit) => outcome,
                                 _ = respond_to.closed() => PromptOutcome::Cancelled,

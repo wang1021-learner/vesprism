@@ -304,3 +304,24 @@
   background: color-mix(in srgb, #dc2626 8%, transparent);
   color: #dc2626;
 }
+
+/* 安全预检发现条（官方 x.ai/security_findings token，审批条内） */
+.perm-findings {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.08);
+  color: #b45309;
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+.perm-findings-ico {
+  flex-shrink: 0;
+}
+.perm-findings-text {
+  flex: 1;
+}
