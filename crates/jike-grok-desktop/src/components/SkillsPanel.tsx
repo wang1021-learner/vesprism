@@ -13,6 +13,7 @@ import {
   pushToast,
 } from '../store'
 import { listSessionCommands } from '../bridge'
+import { zhCommandLabel, zhCommandPurpose } from '../lib/toolChinese'
 
 export type SkillRow = {
   name: string
@@ -283,6 +284,9 @@ export function SkillsPanel() {
                             {sk.displayName}
                           </span>
                           <code className="skills-card-slash">/{sk.name}</code>
+                          {zhCommandLabel(sk.name) ? (
+                            <span className="zh-label">{zhCommandLabel(sk.name)}</span>
+                          ) : null}
                           <span className={`skills-pill scope-${sk.scope}`}>
                             {SCOPE_LABEL[sk.scope] || sk.scope}
                           </span>
@@ -296,7 +300,7 @@ export function SkillsPanel() {
                         <p className="skills-card-purpose">
                           <span className="skills-card-purpose-label">用途</span>
                           <span className="skills-card-purpose-text">
-                            {sk.description}
+                            {zhCommandPurpose(sk.name) ?? sk.description}
                           </span>
                         </p>
                         <div className="skills-card-path" title={sk.path}>

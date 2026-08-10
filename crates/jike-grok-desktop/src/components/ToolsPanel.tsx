@@ -13,6 +13,7 @@ import {
   type ToolCategory,
   type ToolMeta,
 } from '../lib/toolCatalog'
+import { zhCommandLabel, zhCommandPurpose, zhToolLabel } from '../lib/toolChinese'
 
 type SlashCmd = { name: string; description: string }
 
@@ -220,6 +221,9 @@ export function ToolsPanel() {
                           <div className="tools-card-titles">
                             <span className="tools-card-label">{t.label}</span>
                             <code className="tools-card-name">{t.name}</code>
+                            {zhToolLabel(t.name) ? (
+                              <span className="zh-label">{zhToolLabel(t.name)}</span>
+                            ) : null}
                           </div>
                           <p className="tools-card-desc">{t.description}</p>
                           <div className="tools-card-meta">
@@ -259,9 +263,12 @@ export function ToolsPanel() {
                 <div className="tools-card-main">
                   <div className="tools-card-titles">
                     <code className="tools-card-name">/{c.name}</code>
+                    {zhCommandLabel(c.name) ? (
+                      <span className="zh-label">{zhCommandLabel(c.name)}</span>
+                    ) : null}
                   </div>
                   {c.description ? (
-                    <p className="tools-card-desc">{c.description}</p>
+                    <p className="tools-card-desc">{zhCommandPurpose(c.name) ?? c.description}</p>
                   ) : null}
                 </div>
                 <button

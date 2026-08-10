@@ -305,3 +305,18 @@
   background: #fffbeb;
   border-color: #fde68a;
 }
+
+/* ── 中文用途标注（工具 / 命令 / MCP 面板通用） ── */
+.zh-label {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-tertiary, #8a94a6);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 4px;
+  white-space: nowrap;
+  vertical-align: middle;
+}

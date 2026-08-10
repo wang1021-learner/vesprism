@@ -11,6 +11,7 @@ import {
   upsertMcpServer,
   type McpServerDto,
 } from '../bridge'
+import { zhServerLabel, zhToolLabel } from '../lib/toolChinese'
 
 type Row = {
   name: string
@@ -460,6 +461,9 @@ export function McpPanel() {
                       title={open ? '收起工具' : '展开工具'}
                     >
                       <span className="mcp-card-name">{row.displayName}</span>
+                      {zhServerLabel(row.name) ? (
+                        <span className="zh-label">{zhServerLabel(row.name)}</span>
+                      ) : null}
                       <span className="mcp-card-meta">
                         <span className={`mcp-pill transport-${row.transport}`}>
                           {row.transport}
@@ -525,6 +529,9 @@ export function McpPanel() {
                           className={`mcp-tool${t.enabled ? '' : ' is-off'}`}
                         >
                           <span className="mcp-tool-name">{t.label}</span>
+                          {zhToolLabel(t.name) ? (
+                            <span className="zh-label">{zhToolLabel(t.name)}</span>
+                          ) : null}
                           {t.description ? (
                             <span className="mcp-tool-desc">
                               {t.description}
