@@ -726,7 +726,8 @@ const ToolLine = memo(function ToolLine({
 }) {
   // 会话内不展示 diff（后续迁移到独立侧边栏），工具行只说明「正在修改文件」：
   // 默认折叠为一行摘要（Edit 文件 + 状态 + +N −M 徽标），点开看工具输出 preview。
-  const [expanded, setExpanded] = useState(false)
+  // todo_write 例外：任务清单默认展开（实时勾选进度是它的核心价值）。
+  const [expanded, setExpanded] = useState(() => Boolean(tool.todo?.todos?.length))
   const duration = formatDuration(tool.timing)
   // 终态以 tool.status 为准；勿因父级 streaming=true 把已完成工具继续转圈
   const failed = tool.status === 'failed'
@@ -803,6 +804,12 @@ const ToolLine = memo(function ToolLine({
                 {headline}
               </span>
               {!live && duration ? <span className="scaffold-meta">{duration}</span> : null}
+              {tool.todo?.todos?.length ? (
+                <span className="tool-todo-count">
+                  {tool.todo.todos.filter((t) => t.status === 'completed').length}/
+                  {tool.todo.todos.length}
+                </span>
+              ) : null}
               {showDiffStats && diffStats ? (
                 <span className="tool-diff-stats" aria-label={`新增 ${diffStats.added} 行，删除 ${diffStats.removed} 行`}>
                   {diffStats.added > 0 ? (
@@ -820,6 +827,29 @@ const ToolLine = memo(function ToolLine({
               ) : null}
             </button>
           </div>
+          {expanded && tool.todo?.todos?.length ? (
+            <div className="scaffold-body tool-body tool-todo-body">
+              <ul className="tool-todo-list">
+                {tool.todo.todos.map((t, i) => (
+                  <li
+                    key={`${t.content}-${i}`}
+                    className={`tool-todo-item is-${t.status || 'pending'}`}
+                  >
+                    <span className="tool-todo-check" aria-hidden>
+                      {t.status === 'completed'
+                        ? '☑'
+                        : t.status === 'in_progress'
+                          ? '◐'
+                          : t.status === 'cancelled'
+                            ? '✕'
+                            : '□'}
+                    </span>
+                    <span className="tool-todo-content">{t.content}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {expanded && hasBody ? (
             <div className="scaffold-body tool-body">
               {preview ? (

@@ -24,6 +24,13 @@ export type ToolCallData = {
   diffs?: ToolDiffData[]
   /** 前端计时（耗时展示） */
   timing?: { start: number; end?: number }
+  /** todo_write 快照（清单卡渲染） */
+  todo?: TodoSnapshotData | null
+}
+
+export interface TodoSnapshotData {
+  summary: string
+  todos: { content: string; status: string }[]
 }
 
 export type ToolCallUpdateData = {
@@ -34,6 +41,8 @@ export type ToolCallUpdateData = {
   detail?: string | null
   preview?: string | null
   diffs?: ToolDiffData[] | null
+  /** todo_write 快照（清单卡渲染） */
+  todo?: TodoSnapshotData | null
 }
 
 export interface ChatMessage {

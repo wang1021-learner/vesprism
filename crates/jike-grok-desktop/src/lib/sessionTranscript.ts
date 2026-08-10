@@ -559,6 +559,7 @@ function patchTool(
       detail: update.detail ?? '',
       preview: update.preview ?? update.output ?? '',
       diffs: normalizeDiffs(update.diffs),
+      todo: update.todo ?? undefined,
       timing: { start: Date.now() },
     })
   }
@@ -586,6 +587,7 @@ function patchTool(
     preview:
       (update.preview ?? update.output)?.trim() || prev?.preview || '',
     diffs: normalizeDiffs(update.diffs) ?? prev?.diffs,
+    ...(update.todo != null ? { todo: update.todo } : {}),
     timing,
   }
 

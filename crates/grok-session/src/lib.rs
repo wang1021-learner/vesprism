@@ -74,6 +74,20 @@ pub struct ToolCallInfo {
     pub diffs: Vec<ToolDiffInfo>,
 }
 
+/// todo_write 快照（从 raw_output 的 `TodosUpdated.todos` 解析，供前端清单卡渲染）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoSnapshotDto {
+    pub summary: String,
+    pub todos: Vec<TodoItemDto>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TodoItemDto {
+    pub content: String,
+    pub status: String,
+}
+
 /// 工具调用增量更新（仅包含本次有值的字段；`None` 表示不改）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +100,8 @@ pub struct ToolCallUpdateInfo {
     pub preview: Option<String>,
     /// 有 content 且含 Diff 时写入；无 diff 时为 `None`（不覆盖已有）
     pub diffs: Option<Vec<ToolDiffInfo>>,
+    /// todo_write 快照（raw_output 含 `TodosUpdated` 时解析；否则 `None`）
+    pub todo: Option<TodoSnapshotDto>,
 }
 
 /// 面向 GUI / REPL 的业务层事件。
@@ -983,6 +999,36 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
             Some(d)
         }
     });
+    // todo_write：raw_output 形如 {"TodosUpdated": {summary_for_prompt, todos, state}}
+    let todo = fields.raw_output.as_ref().and_then(|v| {
+        let ok = v.get("TodosUpdated");
+        let body = ok.or_else(|| v.get("todos_updated")).or_else(|| v.get("todosUpdated"));
+        let Some(body) = body else { return None };
+        let summary = body
+            .get("summary_for_prompt")
+            .or_else(|| body.get("summaryForPrompt"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let todos = body
+            .get("todos")
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| {
+                        let content = it.get("content")?.as_str()?.to_string();
+                        let status = it
+                            .get("status")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("pending")
+                            .to_string();
+                        Some(TodoItemDto { content, status })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(TodoSnapshotDto { summary, todos })
+    });
     ToolCallUpdateInfo {
         tool_call_id: tcu.tool_call_id.to_string(),
         kind,
@@ -991,6 +1037,7 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
         detail,
         preview,
         diffs,
+        todo,
     }
 }
 

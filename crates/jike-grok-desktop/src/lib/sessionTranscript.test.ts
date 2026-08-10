@@ -262,3 +262,58 @@ describe('回合归属 seal（中断后立刻发送的竞态）', () => {
     expect(next.every((m) => m.role !== 'assistant' || !m.isStreaming)).toBe(true)
   })
 })
+
+// ── todo_write 清单透传（patchTool 保留并实时更新） ──
+
+describe('todo_write 清单透传', () => {
+  it('tool_call_update 带 todo → toolCall.todo 写入', () => {
+    const msgs: ChatMessage[] = []
+    const next = applyTranscriptEvent(msgs, {
+      type: 'tool_call_update',
+      update: {
+        tool_call_id: 'tc-1',
+        kind: 'other',
+        status: 'in_progress',
+        title: 'todo_write',
+        todo: {
+          summary: '计划',
+          todos: [
+            { content: '第一步', status: 'pending' },
+            { content: '第二步', status: 'completed' },
+          ],
+        },
+      },
+    })
+    expect(next[0].toolCall?.todo?.todos).toHaveLength(2)
+  })
+
+  it('后续 update 实时更新勾选状态（pending → completed）', () => {
+    const base = applyTranscriptEvent([], {
+      type: 'tool_call_update',
+      update: {
+        tool_call_id: 'tc-1',
+        kind: 'other',
+        status: 'in_progress',
+        title: 'todo_write',
+        todo: {
+          summary: '',
+          todos: [{ content: '第一步', status: 'in_progress' }],
+        },
+      },
+    })
+    const next = applyTranscriptEvent(base, {
+      type: 'tool_call_update',
+      update: {
+        tool_call_id: 'tc-1',
+        kind: 'other',
+        status: 'completed',
+        todo: {
+          summary: '',
+          todos: [{ content: '第一步', status: 'completed' }],
+        },
+      },
+    })
+    expect(next[0].toolCall?.todo?.todos[0].status).toBe('completed')
+    expect(next[0].toolCall?.status).toBe('completed')
+  })
+})

@@ -7,7 +7,7 @@
   display: flex;
   flex-direction: column;
   background: var(--surface-elevated);
-  border-radius: var(--radius-sm) var(--radius-sm) var(--radius-xl) var(--radius-xl);
+  border-radius: 6px 6px 6px 6px;
   border: 1px solid var(--border-solid);
   box-shadow: var(--shadow-sm);
   position: relative;
@@ -206,8 +206,8 @@
 }
 
 .jump-to-bottom-btn:hover {
+  /* 保持与常态一致的阴影，不放大成「一圈光晕」 */
   background: var(--surface-hover);
-  box-shadow: var(--shadow-lg);
   transform: translateX(-50%) translateY(-1px);
 }
 
@@ -1217,4 +1217,49 @@
   background: var(--surface-hover);
   border-radius: 6px;
   padding: 4px 12px;
+}
+
+/* ── todo_write 任务清单卡 ── */
+.tool-todo-count {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary, #8a94a6);
+  font-variant-numeric: tabular-nums;
+}
+.tool-todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.tool-todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 4px;
+  font-size: 12.5px;
+  line-height: 20px;
+  color: var(--text-secondary);
+}
+.tool-todo-check {
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 20px;
+}
+.tool-todo-item.is-completed .tool-todo-check {
+  color: #10b981;
+}
+.tool-todo-item.is-in_progress .tool-todo-check {
+  color: #f59e0b;
+}
+.tool-todo-item.is-cancelled {
+  opacity: 0.5;
+}
+.tool-todo-item.is-completed .tool-todo-content {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.tool-todo-content {
+  word-break: break-word;
 }
