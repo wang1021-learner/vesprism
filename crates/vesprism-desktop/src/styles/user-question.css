@@ -1,0 +1,278 @@
+/* AI questionnaire — gray floating card above composer */
+
+.uq-dock {
+  flex: 0 0 auto;
+  width: min(calc(100% - 2rem), 42rem);
+  max-width: 42rem;
+  margin: 0 auto 0.5rem;
+  z-index: 45;
+  pointer-events: none;
+}
+
+@keyframes uq-card-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.uq-card {
+  pointer-events: auto;
+  padding: 0.625rem 0.875rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: color-mix(in srgb, var(--surface-elevated) 92%, #9a9a9a 4%);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text-primary);
+  animation: uq-card-slide-up 0.22s var(--ease-spring) forwards;
+}
+
+.uq-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.uq-badge {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
+  border: 1px solid var(--border-solid);
+}
+
+.uq-step {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.uq-close {
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.uq-close:hover {
+  background: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.uq-question {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-bottom: 0.5rem;
+  color: var(--text-primary);
+}
+
+.uq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.uq-option {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition:
+    border-color 100ms ease-out,
+    background 100ms ease-out,
+    box-shadow 100ms ease-out;
+}
+
+.uq-option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text-secondary) 35%, var(--border-solid));
+}
+
+.uq-option:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text-secondary) 45%, transparent);
+  outline-offset: 1px;
+}
+
+.uq-option.is-selected {
+  border-color: color-mix(in srgb, var(--text-secondary) 55%, var(--border-solid));
+  background: color-mix(in srgb, var(--text-tertiary) 10%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.uq-option-mark {
+  flex-shrink: 0;
+  width: 1rem;
+  margin-top: 0.1rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.uq-option.is-selected .uq-option-mark {
+  color: var(--text-primary);
+}
+
+.uq-option-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.uq-option-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.uq-option-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.2rem;
+  border-radius: 3px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted, var(--surface));
+  font-family: inherit;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+
+.uq-option-desc {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  line-height: 1.3;
+}
+
+.uq-option-preview {
+  margin: 0.25rem 0 0;
+  padding: 0.35rem 0.45rem;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface) 70%, #000 4%);
+  border: 1px solid var(--border-subtle, var(--border-solid));
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.6875rem;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+  max-height: 6rem;
+  overflow: auto;
+}
+
+.uq-other {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.55rem;
+}
+
+.uq-other-label {
+  font-size: 0.6875rem;
+  color: var(--text-tertiary);
+}
+
+.uq-other-input {
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.uq-other-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border-solid));
+}
+
+.uq-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.uq-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.uq-btn {
+  height: 1.5rem;
+  padding: 0 0.65rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border-solid);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.uq-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.uq-btn-ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.uq-btn-primary {
+  background: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  border-color: transparent;
+  color: var(--surface, #fff);
+  font-weight: 600;
+}
+
+.uq-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}

@@ -1,0 +1,53 @@
+/* App shell container */
+/* extracted from index.css lines 271-287 */
+
+/* App shell — flat light gray canvas, white panels */
+.app-container {
+  --sidebar-w: 260px;
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-canvas);
+  padding: 5px 10px 10px;
+  gap: 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+  position: relative;
+}
+
+/* 窗口控制已改为系统原生标题栏，自绘按钮与样式已删除 */
+
+.app-container:has(.sidebar-collapsed) {
+  --sidebar-w: 52px;
+}
+
+/* 全局自定义 Webkit 滚动条 */
+.scrollbar-dt::-webkit-scrollbar,
+.scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-dt::-webkit-scrollbar-track,
+.scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-dt::-webkit-scrollbar-thumb,
+.scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+}
+
+/* 鼠标进入滚动区时，滚动条微显 */
+.scrollbar-dt:hover::-webkit-scrollbar-thumb,
+.scrollbar-dt *:not(.scrollbar-overlay):hover::-webkit-scrollbar-thumb {
+  background-color: var(--text-muted, rgba(0, 0, 0, 0.15));
+}
+
+/* 鼠标悬停在滚动条本身时加深 */
+.scrollbar-dt::-webkit-scrollbar-thumb:hover,
+.scrollbar-dt *:not(.scrollbar-overlay)::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-tertiary, rgba(0, 0, 0, 0.3));
+}

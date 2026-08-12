@@ -89,6 +89,13 @@ members = [
     "third_party/ordered_hashmap",
     "crates/grok-session",
     "crates/grok-gui-poc",
+    "crates/vesprism-desktop/src-tauri",
+]
+
+# 旧目录残留：已改名 vesprism-desktop，勿再当作 workspace member
+# （文件夹可能被 node 占用删不掉；在此 exclude 避免 cargo metadata 报错）
+exclude = [
+    "crates/jike-grok-desktop",
     "crates/jike-grok-desktop/src-tauri",
 ]
 

@@ -1,0 +1,332 @@
+/* 工具面板 */
+
+.tools-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-canvas, #f5f5f5);
+}
+
+.tools-panel-inner {
+  width: min(100%, 48.75rem);
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2rem;
+}
+
+.tools-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.tools-panel-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.tools-panel-desc {
+  margin: 0;
+  max-width: 36rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.tools-panel-desc code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.7rem;
+  padding: 0.05em 0.28em;
+  border-radius: 3px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+}
+
+.tools-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.tools-panel-stats {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.tools-btn {
+  height: 1.75rem;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tools-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.tools-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tools-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-tertiary);
+}
+
+.tools-btn.ghost:hover:not(:disabled) {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  border-color: var(--border-solid);
+}
+
+.tools-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.65rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.tools-tabs {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted);
+  gap: 2px;
+}
+
+.tools-tab {
+  height: 1.65rem;
+  padding: 0 0.75rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tools-tab.is-active {
+  background: var(--surface-elevated, #fff);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.tools-search {
+  flex: 1;
+  min-width: 10rem;
+  height: 2rem;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.tools-search:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border-solid));
+}
+
+.tools-cat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.85rem;
+}
+
+.tools-cat-chip {
+  height: 1.4rem;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tools-cat-chip.is-active {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-secondary) 35%, var(--border-solid));
+  background: var(--surface-muted);
+}
+
+.tools-empty,
+.tools-error {
+  padding: 1.25rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.tools-error {
+  color: var(--danger, #b91c1c);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+}
+
+.tools-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.tools-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+.tools-group-count {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.tools-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tools-card {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  padding: 0.65rem 0.7rem 0.65rem 0.85rem;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--duration-fast) var(--ease-out-smooth),
+              box-shadow var(--duration-fast) var(--ease-out-smooth),
+              border-color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.tools-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong-solid);
+}
+
+.tools-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tools-card-titles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.55rem;
+}
+
+.tools-card-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tools-card-name {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
+.tools-card-desc {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.tools-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+
+.tools-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 1.1rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted);
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.tools-pill.readonly {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+
+.tools-pill.write {
+  color: #b45309;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+/* ── 中文用途标注（工具 / 命令 / MCP 面板通用） ── */
+.zh-label {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-tertiary, #8a94a6);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 4px;
+  white-space: nowrap;
+  vertical-align: middle;
+}

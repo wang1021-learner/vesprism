@@ -1,0 +1,158 @@
+/* Vesprism - Deep Titanium & Cyber Violet Tokens */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap');
+
+:root {
+  color-scheme: light;
+
+  /* Animation & Motion Tokens */
+  --ease-out-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 350ms;
+
+  /* Surfaces & Canvas: Titanium Frost (#EEF2F7) -> Pure White Glass */
+  --bg-canvas: #eef2f7;
+  --bg-canvas-mid: #e5ebf3;
+  --bg-canvas-glow: radial-gradient(ellipse at 30% 0%, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
+  --bg-canvas-glass: rgba(238, 242, 247, 0.88);
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-muted: #f8fafc;
+  --surface-hover: #f1f5f9;
+  --surface-glass: rgba(255, 255, 255, 0.92);
+
+  /* Typography & Ink Hierarchy: Slate Deep (#0F172A) */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --text-muted: #94a3b8;
+  --ink-deep: #0f172a;
+
+  /* Accent - Cyber Electric Violet (#6366F1) */
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-active: #4338ca;
+  --accent-soft: #eeeffe;
+  --accent-tint: #f5f5ff;
+  --accent-glow: rgba(99, 102, 241, 0.20);
+  --brand: #6366f1;
+  --brand-soft: #eeeffe;
+  --brand-border: #c7d2fe;
+
+  /* CTA - Cyber Clay Accent (#F97316) */
+  --cta: #f97316;
+  --cta-hover: #ea580c;
+  --cta-active: #c2410c;
+  --cta-edge: #ff8c38;
+
+  /* User Bubble Gradient */
+  --user-bubble-a: #f1f5f9;
+  --user-bubble-b: #f1f5f9;
+  --user-bubble-c: #f1f5f9;
+  --user-bubble-border: #cbd5e1;
+
+  /* Semantic Statuses */
+  --success: #10b981;
+  --success-soft: #ecfdf5;
+  --success-deep: #059669;
+  --warning: #f59e0b;
+  --warning-soft: #fffbeb;
+  --warning-deep: #b45309;
+  --danger: #ef4444;
+  --danger-soft: #fef2f2;
+  --danger-border: #fecaca;
+
+  /* Borders & Separation */
+  --border: rgba(15, 23, 42, 0.06);
+  --border-solid: #e2e8f0;
+  --border-strong-solid: #cbd5e1;
+
+  /* Shadows - Multi-layered Elevation */
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.04);
+  --shadow-glow: 0 0 24px var(--accent-glow);
+
+  /* Global Font System */
+  font-family: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont,
+    'SF Pro Text', system-ui, 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--text-primary);
+  background: var(--bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+/* Dark Theme System (Obsidian Void #0B0D13) */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-canvas: #0b0d13;
+  --bg-canvas-mid: #10121a;
+  --bg-canvas-glow: radial-gradient(ellipse at 50% 0%, rgba(99, 102, 241, 0.14) 0%, transparent 60%);
+  --bg-canvas-glass: rgba(11, 13, 19, 0.88);
+  --surface: #131622;
+  --surface-elevated: #1a1e2e;
+  --surface-muted: #161928;
+  --surface-hover: #22273b;
+  --surface-glass: rgba(19, 22, 34, 0.90);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-muted: #475569;
+  --ink-deep: #f8fafc;
+
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --accent-active: #4f46e5;
+  --accent-soft: rgba(99, 102, 241, 0.18);
+  --accent-tint: rgba(99, 102, 241, 0.10);
+  --accent-glow: rgba(129, 140, 248, 0.32);
+  --brand: #818cf8;
+  --brand-soft: rgba(99, 102, 241, 0.18);
+  --brand-border: #4338ca;
+
+  --cta: #f97316;
+  --cta-hover: #ff8c38;
+  --cta-active: #ea580c;
+
+  --user-bubble-a: #1a1e2e;
+  --user-bubble-b: #1a1e2e;
+  --user-bubble-c: #1a1e2e;
+  --user-bubble-border: #2e354a;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-solid: #262a3d;
+  --border-strong-solid: #3a405a;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 18px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.7);
+  --shadow-glow: 0 0 28px rgba(129, 140, 248, 0.38);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; overflow: hidden; }
+
+/* Global Tactile Focus Glow */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+  transition: box-shadow var(--duration-fast) var(--ease-out-smooth);
+}
+
+/* Accessibility: Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

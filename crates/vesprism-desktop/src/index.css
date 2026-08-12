@@ -1,0 +1,47 @@
+/* Vesprism — style entry
+ * Split by domain under ./styles/ (order matters for cascade).
+ * main.tsx imports only this file.
+ */
+
+@import './styles/tokens.css';
+@import './styles/browser-gate.css';
+@import './styles/layout.css';
+@import './styles/sidebar.css';
+@import './styles/chat.css';
+@import './styles/markdown.css';
+@import './styles/timeline.css';
+@import './styles/chat-empty.css';
+@import './styles/composer.css';
+@import './styles/modals.css';
+@import './styles/permission.css';
+@import './styles/user-question.css';
+@import './styles/mcp.css';
+@import './styles/tools.css';
+@import './styles/skills.css';
+@import './styles/workflows.css';
+@import './styles/settings.css';
+@import './styles/composer-extras.css';
+@import './styles/settings-fields.css';
+@import './styles/buttons.css';
+@import './styles/toast.css';
+@import './styles/error-boundary.css';
+@import './styles/right-panel.css';
+@import './styles/tabbar.css';
+@import './styles/rewind.css';
+
+/* JetBrains Mono — 内嵌代码字体（Apache-2.0），代码块/源码视图优先使用 */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/jetbrains-mono-bold.woff2') format('woff2');
+}
