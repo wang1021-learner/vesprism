@@ -13,7 +13,7 @@ import type { ChatMessage, PermissionRequest } from '../../types'
 import { $activeChatId, $sessionPhase } from '../../store'
 import { MessageItem } from './MessageItem'
 import { ChatTimeline } from './ChatTimeline'
-import { BrandLogo } from '../BrandLogo'
+
 
 /** 默认行间距（turn 级）；scaffold / user 另见 gapBefore */
 const ROW_GAP = 12
@@ -346,75 +346,9 @@ export const MessageList = memo(function MessageList({
   }
 
   if (messages.length === 0) {
-    const handleQuickPrompt = (promptText: string) => {
-      window.dispatchEvent(
-        new CustomEvent('jike:set-composer-input', { detail: { text: promptText } }),
-      )
-    }
-
     return (
       <div className="chat-viewport-wrapper" ref={wrapperRef}>
-        <div className="chat-viewport messages-empty">
-          <div className="empty-content empty-hero-container">
-            <div className="empty-brand-badge">
-              <BrandLogo size={40} />
-            </div>
-            <h2 className="empty-hero-title">Vesprism</h2>
-            <p className="empty-hero-subtitle">
-              AI 原生桌面开发工作台 · 智能理解本地项目与代码库
-            </p>
-
-            <div className="empty-starter-grid">
-              <button
-                type="button"
-                className="empty-starter-card"
-                onClick={() => handleQuickPrompt('请详细解析当前项目的架构、代码目录结构以及核心依赖库。')}
-              >
-                <div className="starter-card-icon">🔍</div>
-                <div className="starter-card-content">
-                  <div className="starter-card-title">解析项目架构</div>
-                  <div className="starter-card-desc">扫描代码目录、配置文件与核心依赖</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                className="empty-starter-card"
-                onClick={() => handleQuickPrompt('请检查 Git 工作树未提交的修改，生成 Diff 总结与风险建议。')}
-              >
-                <div className="starter-card-icon">⚡</div>
-                <div className="starter-card-content">
-                  <div className="starter-card-title">Git 变更分析</div>
-                  <div className="starter-card-desc">查看暂存区修改行并分析 Diff 影响</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                className="empty-starter-card"
-                onClick={() => handleQuickPrompt('列出当前系统支持的 Tool Calling 能力以及已集成的 MCP 服务节点。')}
-              >
-                <div className="starter-card-icon">🔌</div>
-                <div className="starter-card-content">
-                  <div className="starter-card-title">MCP 与工具检查</div>
-                  <div className="starter-card-desc">查看已连通的本地工具与 MCP 节点</div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                className="empty-starter-card"
-                onClick={() => handleQuickPrompt('运行项目单元测试套件，并在控制台中报告结果。')}
-              >
-                <div className="starter-card-icon">🧪</div>
-                <div className="starter-card-content">
-                  <div className="starter-card-title">运行测试与 Debug</div>
-                  <div className="starter-card-desc">触发本地单元测试与调试逻辑</div>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
+        <div className="chat-viewport messages-empty" />
       </div>
     )
   }

@@ -10,6 +10,7 @@ import {
 import type { ModelInfo, SessionPhase } from '../types'
 import { REASONING_LEVELS } from '../types'
 import { generateId } from '../lib/generateId'
+import { useComposerAssist } from './ComposerAssist'
 
 export interface ComposerHandle {
   focus: () => void
@@ -366,7 +367,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setPasteBlocks([])
   }
 
+  const assist = useComposerAssist(input, setInput, workspaceCwd)
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (assist.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (canSend && (input.trim() || pasteBlocks.length > 0)) handleSend()
@@ -504,12 +508,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ref={textareaRef}
           value={input}
           rows={1}
-          placeholder="输入消息…"
+          placeholder="输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件"
           disabled={isGenerating}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
         />
+        {assist.menu}
         <div className="composer-toolbar">
           <div className="toolbar-left">
             <span className="composer-hint">

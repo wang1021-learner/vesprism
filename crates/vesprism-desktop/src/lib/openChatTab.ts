@@ -9,6 +9,7 @@ import {
   createTab,
   findTabByUtilityKind,
   getTabState,
+  hasTab,
   looksAbsolutePath,
   patchActiveTab,
   patchTab,
@@ -55,9 +56,10 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
     return null
   }
 
+  let tabId = ''
   try {
     const prevId = $activeTabId.get()
-    const tabId = await openTab()
+    tabId = await openTab()
     const model = resolveNewTabModel(prevId || undefined)
     createTab(tabId, {
       modelId: model.modelId,
@@ -68,6 +70,8 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
     })
     switchTab(tabId)
     await startSession(tabId, cwd)
+    // 启动期间用户可能已关掉这个 tab，不要把错误写到当前活跃页
+    if (!hasTab(tabId)) return null
     if (model.modelId) {
       try {
         await setCurrentModel(tabId, model.modelId, model.reasoningEffort)
@@ -75,7 +79,8 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
         /* 模型应用失败不阻断新会话 */
       }
     }
-    patchActiveTab({
+    if (!hasTab(tabId)) return null
+    patchTab(tabId, {
       phase: 'ready',
       status: 'idle',
       modelId: model.modelId,
@@ -87,7 +92,9 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
     })
     return tabId
   } catch (e) {
-    patchActiveTab({ error: String(e) })
+    if (tabId && hasTab(tabId)) {
+      patchTab(tabId, { error: String(e) })
+    }
     return null
   }
 }

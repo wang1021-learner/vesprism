@@ -9,7 +9,7 @@ import {
 } from 'react'
 
 /**
- * 工具 diff 渲染（Cursor 风格，对齐官方 Hermes `components/chat/diff-lines.tsx`）：
+ * 工具 diff 渲染（Cursor 风格，对齐官方 `components/chat/diff-lines.tsx`）：
  * - oldText 每行 → 红色删除行；newText 每行 → 绿色新增行
  * - 行窗口虚拟化：固定行高 + 分块，滚动只渲染可见块（+ overscan），
  *   离屏行不挂 DOM —— 大 diff（整文件失败回滚）不再拖垮滚动，且不丢信息。

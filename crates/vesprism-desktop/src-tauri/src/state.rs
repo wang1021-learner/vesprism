@@ -38,6 +38,8 @@ pub enum ActorCommand {
     /// 启动会话。
     Start {
         cwd: String,
+        /// 若有值：cwd 是隔离 worktree，此项为用户原工作区
+        sandbox_origin: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 发送用户消息。
@@ -59,6 +61,7 @@ pub enum ActorCommand {
     /// 重启会话（销毁旧会话并以新 cwd 启动）。
     Restart {
         cwd: String,
+        sandbox_origin: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 恢复一个已有历史会话。
@@ -173,6 +176,10 @@ pub struct AppState {
     pub supervisor_tx: mpsc::UnboundedSender<SupervisorCommand>,
     /// 进程内覆盖的工作目录（通过设置页设置后写入，代替 unsafe 的环境变量）
     pub workspace_cwd_override: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+    /// 本 tab 强制走沙箱（/sandbox），不写盘
+    pub sandbox_tabs: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<TabId>>>,
+    /// tab -> 隔离 worktree 绑定
+    pub sandbox_binds: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<TabId, crate::sandbox::SandboxBind>>>,
 }
 
 /// 推给前端 `session-event` 监听器的 JSON 载荷。
@@ -295,6 +302,12 @@ pub enum FrontendEvent {
     TabRecovering { attempt: u32 },
     /// 连续 panic 超过重试上限，不再自动重建，需要用户手动操作重连。
     TabFailed { attempts: u32 },
+    /// 本会话在隔离 git worktree 中执行
+    SandboxActivated {
+        origin_cwd: String,
+        sandbox_cwd: String,
+    },
+    SandboxDeactivated,
 }
 
 /// 权限选项（可序列化）。
@@ -435,14 +448,37 @@ async fn handle_command(
     next_perm_id: &mut u64,
 ) {
     match cmd {
-        ActorCommand::Start { cwd, reply } => {
-            // 已有会话时按「新建」处理，避免前端报「会话已存在」
+        ActorCommand::Start {
+            cwd,
+            sandbox_origin,
+            reply,
+        } => {
             if session.is_some() {
-                begin_fresh_session(app, tab_id, session, status_rx, pending_permissions, cwd, reply, true)
-                    .await;
+                begin_fresh_session(
+                    app,
+                    tab_id,
+                    session,
+                    status_rx,
+                    pending_permissions,
+                    cwd,
+                    sandbox_origin,
+                    reply,
+                    true,
+                )
+                .await;
             } else {
-                begin_fresh_session(app, tab_id, session, status_rx, pending_permissions, cwd, reply, false)
-                    .await;
+                begin_fresh_session(
+                    app,
+                    tab_id,
+                    session,
+                    status_rx,
+                    pending_permissions,
+                    cwd,
+                    sandbox_origin,
+                    reply,
+                    false,
+                )
+                .await;
             }
         }
         ActorCommand::SendPrompt { text, prompt_id, reply } => {
@@ -751,9 +787,23 @@ async fn handle_command(
                 let _ = reply.send(Err(format!("未知问卷请求 id={request_id}")));
             }
         },
-        ActorCommand::Restart { cwd, reply } => {
-            begin_fresh_session(app, tab_id, session, status_rx, pending_permissions, cwd, reply, true)
-                .await;
+        ActorCommand::Restart {
+            cwd,
+            sandbox_origin,
+            reply,
+        } => {
+            begin_fresh_session(
+                app,
+                tab_id,
+                session,
+                status_rx,
+                pending_permissions,
+                cwd,
+                sandbox_origin,
+                reply,
+                true,
+            )
+            .await;
         }
         ActorCommand::LoadSession {
             session_id,
@@ -829,6 +879,7 @@ async fn handle_command(
                             status_rx,
                             pending_permissions,
                             cwd,
+                            None,
                             reply,
                             false,
                         )
@@ -847,6 +898,7 @@ async fn handle_command(
                             status_rx,
                             pending_permissions,
                             cwd,
+                            None,
                             reply,
                             false,
                         )
@@ -878,16 +930,18 @@ async fn begin_fresh_session(
     status_rx: &mut Option<tokio::sync::watch::Receiver<SessionStatus>>,
     pending_permissions: &mut HashMap<u64, oneshot::Sender<String>>,
     cwd: String,
+    sandbox_origin: Option<String>,
     reply: oneshot::Sender<Result<(), String>>,
     discard_blank_old: bool,
 ) {
+    let persist_cwd = sandbox_origin.as_deref().unwrap_or(cwd.as_str()).to_string();
     // 销毁旧会话：drop 关闭内存双工管道，底层 agent 任务应随之退出
     if let Some(old_session) = session.take() {
         let old_id = old_session.session_id();
         drop(old_session);
         if discard_blank_old {
             // 未说过话的会话不进历史；删除失败不阻断新建
-            let _ = grok_session::delete_session_if_blank(&old_id, &cwd).await;
+            let _ = grok_session::delete_session_if_blank(&old_id, &persist_cwd).await;
         }
     }
     *status_rx = None;
@@ -896,7 +950,7 @@ async fn begin_fresh_session(
 
     // 批量清掉历史上堆积的空「新对话」（仅在无占用会话时安全）
     if discard_blank_old {
-        let n = grok_session::purge_blank_sessions(&cwd).await;
+        let n = grok_session::purge_blank_sessions(&persist_cwd).await;
         if n > 0 {
             eprintln!("[vesprism] 已清理 {n} 个空会话");
         }
@@ -909,7 +963,7 @@ async fn begin_fresh_session(
             status: SessionStatus::Initializing,
         },
     );
-    match GrokSession::start(cwd).await {
+    match GrokSession::start(cwd.clone()).await {
         Ok(s) => {
             *status_rx = Some(s.subscribe_status());
             let sid = s.session_id();
@@ -922,6 +976,18 @@ async fn begin_fresh_session(
                 },
             );
             emit(app, tab_id, FrontendEvent::SessionIdChanged { session_id: sid });
+            if let Some(origin) = sandbox_origin.clone() {
+                emit(
+                    app,
+                    tab_id,
+                    FrontendEvent::SandboxActivated {
+                        origin_cwd: origin,
+                        sandbox_cwd: cwd.clone(),
+                    },
+                );
+            } else {
+                emit(app, tab_id, FrontendEvent::SandboxDeactivated);
+            }
             let _ = reply.send(Ok(()));
         }
         Err(e) => {

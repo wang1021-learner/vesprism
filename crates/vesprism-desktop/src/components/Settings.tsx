@@ -14,6 +14,8 @@ import {
   $settingsOpen,
   $workspaceCwd,
   $preferredWorkspaceCwd,
+  $securityPolicy,
+  $sessionPolicyOverride,
   patchActiveTab,
 } from '../store'
 import {
@@ -25,7 +27,11 @@ import {
   saveModelSettings,
   setCurrentModel,
   setWorkspaceCwd,
+  getSecurityPolicy,
+  setSecurityPolicy,
+  restartSession,
 } from '../bridge'
+import { policyFromDto, type ExecutionPolicy, type FileAccess, type InternetAccess } from '../lib/executionPolicy'
 import {
   emptyModelEntry,
   normalizeModelFromDisk,
@@ -72,6 +78,10 @@ export function SettingsModal() {
   const [headersDraft, setHeadersDraft] = useState<string | null>(null)
   /** 已配置密钥时，点「更新」才显示输入框 */
   const [forceKeyEdit, setForceKeyEdit] = useState(false)
+  const [execPolicy, setExecPolicy] = useState<ExecutionPolicy>('request-review')
+  const [internetAccess, setInternetAccess] = useState<InternetAccess>('ask')
+  const [fileAccess, setFileAccess] = useState<FileAccess>('workspace-only')
+  const [policyScope, setPolicyScope] = useState<'global' | 'workspace'>('global')
 
   const selectedModel = models.find((m) => m.id === selectedModelId)
   const isDraft = selectedModelId ? draftModelIds.includes(selectedModelId) : false
@@ -118,6 +128,15 @@ export function SettingsModal() {
             : (normalized[0]?.id ?? '')
         setDefaultId(pick)
         setSelectedModelId(pick)
+        try {
+          const pol = policyFromDto(await getSecurityPolicy(settingsCwd || $workspaceCwd.get()))
+          setExecPolicy(pol.executionPolicy)
+          setInternetAccess(pol.internetAccess)
+          setFileAccess(pol.fileAccess)
+          setPolicyScope(pol.scope)
+        } catch {
+          /* 默认审批模式 */
+        }
         setSettingsCwd($workspaceCwd.get())
         const entry = normalized.find((m) => m.id === pick)
         await refreshKeyStatus(entry ? resolveEnvKey(entry) : '')
@@ -282,6 +301,43 @@ export function SettingsModal() {
     }
   }
 
+  const saveSecurity = async () => {
+    setSavingSettings(true)
+    setToast(null)
+    try {
+      const cwd = (settingsCwd || $workspaceCwd.get()).trim()
+      const saved = policyFromDto(
+        await setSecurityPolicy({
+          execution_policy: execPolicy,
+          internet_access: internetAccess,
+          file_access: fileAccess,
+          scope: policyScope,
+          cwd,
+        }),
+      )
+      $securityPolicy.set(saved)
+      $sessionPolicyOverride.set(null)
+      setPolicyScope(saved.scope)
+      if (saved.executionPolicy === 'proceed-in-sandbox') {
+        const tab = $activeTabId.get()
+        if (tab && cwd) {
+          try {
+            await restartSession(tab, cwd)
+          } catch (e) {
+            setToast({ message: `策略已保存，但沙箱启动失败：${String(e)}`, type: 'error' })
+            return
+          }
+        }
+      }
+      setToast({ message: '安全策略已保存', type: 'success' })
+      setTimeout(() => setToast(null), 1200)
+    } catch (e) {
+      setToast({ message: String(e), type: 'error' })
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
   const handleSave = async () => {
     setToast(null)
     const res = await onSave()
@@ -348,6 +404,16 @@ export function SettingsModal() {
               </span>
               模型
             </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'security' ? ' active' : ''}`}
+              onClick={() => setTab('security')}
+            >
+              <span className="settings-nav-icon" aria-hidden>
+                ▣
+              </span>
+              安全
+            </button>
           </nav>
 
           <div className="settings-panel">
@@ -388,6 +454,80 @@ export function SettingsModal() {
                       当前会话已有对话内容时不可在此切换工作区。请新建对话后再改，或使用输入框上方的工作区选择器（空会话时可用）。
                     </p>
                   )}
+                </section>
+              </div>
+            )}
+
+            {tab === 'security' && (
+              <div className="settings-panel-inner">
+                <section className="settings-card">
+                  <h3 className="settings-card-title">工具执行策略</h3>
+                  <p className="settings-card-desc">
+                    降低审批疲劳：白名单（git status、cargo check、lint 等）自动放行；
+                    黑名单（rm -rf、format、管道下载执行等）自动拒绝。
+                    「仅工作区」会拦截指向仓库外的读/写路径。其余按下方强度处理。
+                  </p>
+                  <label className="settings-label" htmlFor="settings-exec-policy">
+                    授权强度
+                  </label>
+                  <select
+                    id="settings-exec-policy"
+                    className="settings-input"
+                    value={execPolicy}
+                    onChange={(e) => setExecPolicy(e.target.value as ExecutionPolicy)}
+                  >
+                    <option value="request-review">审批模式（默认）— 未知命令弹出确认</option>
+                    <option value="always-proceed">信任模式 — 除黑名单外全部自动放行</option>
+                    <option value="proceed-in-sandbox">沙箱模式 — 在隔离 git worktree 中执行</option>
+                  </select>
+                  <label className="settings-label" htmlFor="settings-net">
+                    联网
+                  </label>
+                  <select
+                    id="settings-net"
+                    className="settings-input"
+                    value={internetAccess}
+                    onChange={(e) => setInternetAccess(e.target.value as InternetAccess)}
+                  >
+                    <option value="ask">询问</option>
+                    <option value="allow">允许</option>
+                    <option value="deny">禁止（拦截 curl / wget 等）</option>
+                  </select>
+                  <label className="settings-label" htmlFor="settings-files">
+                    文件访问
+                  </label>
+                  <select
+                    id="settings-files"
+                    className="settings-input"
+                    value={fileAccess}
+                    onChange={(e) => setFileAccess(e.target.value as FileAccess)}
+                  >
+                    <option value="workspace-only">仅工作区</option>
+                    <option value="unrestricted">不限制</option>
+                  </select>
+                  <label className="settings-label" htmlFor="settings-policy-scope">
+                    生效范围
+                  </label>
+                  <select
+                    id="settings-policy-scope"
+                    className="settings-input"
+                    value={policyScope}
+                    onChange={(e) => setPolicyScope(e.target.value as 'global' | 'workspace')}
+                  >
+                    <option value="global">全局默认</option>
+                    <option value="workspace">仅当前工作区（{settingsCwd || $workspaceCwd.get() || '未选择'}）</option>
+                  </select>
+                  <p className="settings-hint">
+                    写入 `config.toml` 的 `[desktop]` 或 `[desktop.workspaces."…"]`。点下方保存即可生效。
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={savingSettings}
+                    onClick={() => void saveSecurity()}
+                  >
+                    保存安全策略
+                  </button>
                 </section>
               </div>
             )}
@@ -1095,7 +1235,7 @@ export function SettingsModal() {
             type="button"
             className="btn-primary"
             disabled={savingSettings}
-            onClick={() => void handleSave()}
+            onClick={() => void (tab === 'security' ? saveSecurity() : handleSave())}
           >
             {savingSettings ? '保存中…' : '保存'}
           </button>

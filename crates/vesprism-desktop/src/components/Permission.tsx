@@ -1,5 +1,5 @@
 /** 
- * 工具审批（参考 Hermes 的位置 + choice 语义）：
+ * 工具审批（内嵌位置 + choice 语义）：
  * - 主：内嵌在「发起审批的工具行」下方（positional：挂起时最后一个 in_progress 工具行）
  * - 兜底：输入框上方浮层，仅当内嵌条不可见时显示
  * - 主按钮：运行(once)；下拉：本次会话允许 / 总是允许（确认弹窗）/ 拒绝
@@ -75,7 +75,7 @@ const SECURITY_FINDING_LABELS: Record<string, string> = {
   special_exec_surface: '特殊执行面',
 }
 
-/** 主审批条：组合按钮 + 拒绝 + 命令 + always 确认弹窗（Hermes ApprovalBar） */
+/** 主审批条：组合按钮 + 拒绝 + 命令 + always 确认弹窗 */
 function ApprovalBar({
   request,
   surface,

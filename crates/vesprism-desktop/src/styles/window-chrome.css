@@ -1,0 +1,24 @@
+/* 系统标题栏下方的应用工具条（不再自绘窗口按钮 / 拖拽区） */
+.window-chrome {
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  flex-shrink: 0;
+  background: var(--surface-elevated);
+  border-bottom: 1px solid var(--border-solid);
+  user-select: none;
+  position: relative;
+  z-index: 20;
+}
+
+.window-chrome-spacer {
+  flex: 1 1 16px;
+  min-width: 8px;
+}
+
+.window-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 6px;
+}

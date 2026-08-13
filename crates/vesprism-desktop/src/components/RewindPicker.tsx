@@ -44,7 +44,7 @@ export function RewindPicker() {
   const open = useStore($rewindOpen)
   const tabId = useStore($rewindTabId)
   const [points, setPoints] = useState<RewindPointInfo[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [target, setTarget] = useState<RewindPointInfo | null>(null)
   const [mode, setMode] = useState<RewindMode>('all')
@@ -52,14 +52,35 @@ export function RewindPicker() {
   const [running, setRunning] = useState(false)
 
   useEffect(() => {
-    if (!open || !tabId) return
+    if (!open) {
+      setPoints([])
+      setTarget(null)
+      setError('')
+      setLoading(true)
+      return
+    }
+    if (!tabId) {
+      setLoading(false)
+      setError('没有可回滚的会话')
+      return
+    }
+    let cancelled = false
     setTarget(null)
     setError('')
     setLoading(true)
     getRewindPoints(tabId)
-      .then((pts) => setPoints(pts))
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setLoading(false))
+      .then((pts) => {
+        if (!cancelled) setPoints(Array.isArray(pts) ? pts : [])
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [open, tabId])
 
   if (!open) return null

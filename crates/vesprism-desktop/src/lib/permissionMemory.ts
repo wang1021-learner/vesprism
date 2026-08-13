@@ -1,5 +1,5 @@
 /**
- * 权限记忆（Hermes 的 once/session/always 语义）：
+ * 权限记忆（once/session/always 语义）：
  * - session：本次会话内同命令自动放行（内存，按 tab 分）
  * - always：同命令永久放行（localStorage）
  * 命中记忆时由 App 直接 respond，不弹审批条。

@@ -36,6 +36,7 @@ pub async fn open_tab(state: State<'_, AppState>) -> Result<String, String> {
 /// 关闭指定 tab（从共享表移除 sender，TabActor 优雅退出）。
 #[tauri::command]
 pub async fn close_tab(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    teardown_tab_sandbox(&tab_id, &state);
     let (reply_tx, reply_rx) = oneshot::channel();
     state
         .supervisor_tx
@@ -202,10 +203,114 @@ pub fn set_workspace_cwd(cwd: String, state: State<'_, AppState>) -> Result<Stri
     Ok(display_path)
 }
 
+fn tab_wants_sandbox(tab_id: &str, cwd: &str, state: &AppState) -> bool {
+    if state
+        .sandbox_tabs
+        .lock()
+        .map(|s| s.contains(tab_id))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    get_security_policy(Some(cwd.to_string()))
+        .map(|p| p.execution_policy == "proceed-in-sandbox")
+        .unwrap_or(false)
+}
+
+fn plan_session_cwd(
+    tab_id: &str,
+    origin: &str,
+    state: &AppState,
+) -> Result<(String, Option<String>), String> {
+    if !tab_wants_sandbox(tab_id, origin, state) {
+        teardown_tab_sandbox(tab_id, state);
+        return Ok((origin.to_string(), None));
+    }
+    let dest = crate::sandbox::prepare_sandbox_worktree(std::path::Path::new(origin), tab_id)?;
+    if let Ok(mut map) = state.sandbox_binds.lock() {
+        map.insert(
+            tab_id.to_string(),
+            crate::sandbox::SandboxBind {
+                origin: std::path::PathBuf::from(origin),
+                dest: dest.clone(),
+            },
+        );
+    }
+    Ok((dest.to_string_lossy().into_owned(), Some(origin.to_string())))
+}
+
+pub fn teardown_tab_sandbox(tab_id: &str, state: &AppState) {
+    let bind = state
+        .sandbox_binds
+        .lock()
+        .ok()
+        .and_then(|mut m| m.remove(tab_id));
+    if let Some(b) = bind {
+        let _ = crate::sandbox::teardown_sandbox_worktree(&b.origin, &b.dest);
+    }
+    if let Ok(mut tabs) = state.sandbox_tabs.lock() {
+        tabs.remove(tab_id);
+    }
+}
+
+/// 本 tab 强制沙箱（/sandbox）；下次 start/restart 会进隔离 worktree。
+#[tauri::command]
+pub fn enable_tab_sandbox(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .sandbox_tabs
+        .lock()
+        .map_err(|_| "sandbox_tabs 锁损坏".to_string())?
+        .insert(tab_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_sandbox_status(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::sandbox::SandboxInfoDto, String> {
+    let bind = state
+        .sandbox_binds
+        .lock()
+        .map_err(|_| "sandbox_binds 锁损坏".to_string())?
+        .get(&tab_id)
+        .cloned();
+    match bind {
+        Some(b) => crate::sandbox::sandbox_info(&b),
+        None => Ok(crate::sandbox::SandboxInfoDto {
+            active: false,
+            origin_cwd: String::new(),
+            sandbox_cwd: String::new(),
+            dirty_count: 0,
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn sync_sandbox_to_origin(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::sandbox::SandboxSyncDto, String> {
+    let bind = state
+        .sandbox_binds
+        .lock()
+        .map_err(|_| "sandbox_binds 锁损坏".to_string())?
+        .get(&tab_id)
+        .cloned()
+        .ok_or_else(|| "当前标签没有隔离沙箱".to_string())?;
+    crate::sandbox::sync_to_origin(&bind, &tab_id)
+}
+
 /// 在进程内为指定 `cwd` 启动 Grok agent 会话。
 #[tauri::command]
 pub async fn start_session(tab_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, &tab_id, |reply| ActorCommand::Start { cwd, reply }).await
+    let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
+    send_cmd(&state, &tab_id, |reply| ActorCommand::Start {
+        cwd: agent_cwd,
+        sandbox_origin,
+        reply,
+    })
+    .await
 }
 
 /// 发送用户消息；流式回复通过 `session-event` 推送。
@@ -236,7 +341,13 @@ pub async fn cancel_turn(tab_id: String, state: State<'_, AppState>) -> Result<(
 /// 销毁旧会话并以新 cwd 重建。
 #[tauri::command]
 pub async fn restart_session(tab_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, &tab_id, |reply| ActorCommand::Restart { cwd, reply }).await
+    let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
+    send_cmd(&state, &tab_id, |reply| ActorCommand::Restart {
+        cwd: agent_cwd,
+        sandbox_origin,
+        reply,
+    })
+    .await
 }
 
 /// 回答界面上的工具权限请求。
@@ -561,7 +672,7 @@ pub async fn list_workflows(
 }
 
 /// 桌面隔离目录（与 `GROK_HOME` / config.toml 同一位置）。
-fn desktop_home_dir() -> PathBuf {
+pub(crate) fn desktop_home_dir() -> PathBuf {
     if let Ok(home) = std::env::var("GROK_HOME") {
         let p = PathBuf::from(home);
         if !p.as_os_str().is_empty() {
@@ -731,6 +842,173 @@ pub fn save_env_key(key_name: String, value: String) -> Result<(), String> {
 /// 桌面隔离配置 `config.toml` 路径（`$GROK_HOME/config.toml`）。
 fn desktop_config_path() -> PathBuf {
     desktop_home_dir().join("config.toml")
+}
+
+fn norm_cwd_key(cwd: &str) -> String {
+    cwd.trim().replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+fn load_config_root() -> Result<toml::Value, String> {
+    let path = desktop_config_path();
+    if !path.exists() {
+        return Ok(toml::Value::Table(toml::map::Map::new()));
+    }
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("读取 config.toml 失败: {e}"))?;
+    toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))
+}
+
+fn write_config_root(root: &toml::Value) -> Result<(), String> {
+    let path = desktop_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let serialized =
+        toml::to_string_pretty(root).map_err(|e| format!("序列化 config.toml 失败: {e}"))?;
+    std::fs::write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))
+}
+
+fn policy_table_str(tbl: &toml::map::Map<String, toml::Value>, key: &str, default: &str) -> String {
+    tbl.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or(default)
+        .trim()
+        .to_string()
+}
+
+/// 工具执行策略（全局 + 按工作区覆盖）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SecurityPolicyDto {
+    pub execution_policy: String,
+    pub internet_access: String,
+    pub file_access: String,
+    pub scope: String,
+    pub cwd: String,
+}
+
+fn policy_from_table(
+    tbl: &toml::map::Map<String, toml::Value>,
+    scope: &str,
+    cwd: &str,
+) -> SecurityPolicyDto {
+    SecurityPolicyDto {
+        execution_policy: {
+            let v = policy_table_str(tbl, "execution_policy", "request-review");
+            match v.as_str() {
+                "always-proceed" | "proceed-in-sandbox" | "request-review" => v,
+                _ => "request-review".into(),
+            }
+        },
+        internet_access: {
+            let v = policy_table_str(tbl, "internet_access", "ask");
+            match v.as_str() {
+                "allow" | "deny" | "ask" => v,
+                _ => "ask".into(),
+            }
+        },
+        file_access: {
+            let v = policy_table_str(tbl, "file_access", "workspace-only");
+            match v.as_str() {
+                "unrestricted" | "workspace-only" => v,
+                _ => "workspace-only".into(),
+            }
+        },
+        scope: scope.into(),
+        cwd: cwd.into(),
+    }
+}
+
+fn default_security_policy(cwd: &str) -> SecurityPolicyDto {
+    SecurityPolicyDto {
+        execution_policy: "request-review".into(),
+        internet_access: "ask".into(),
+        file_access: "workspace-only".into(),
+        scope: "global".into(),
+        cwd: cwd.into(),
+    }
+}
+
+/// 读取生效策略：先工作区覆盖，再 `[desktop]` 全局，最后默认审批模式。
+#[tauri::command]
+pub fn get_security_policy(cwd: Option<String>) -> Result<SecurityPolicyDto, String> {
+    let raw_cwd = cwd.unwrap_or_default();
+    let key = norm_cwd_key(&raw_cwd);
+    let root = load_config_root()?;
+    let desktop = root.get("desktop").and_then(|v| v.as_table());
+    let global = desktop
+        .map(|d| policy_from_table(d, "global", &raw_cwd))
+        .unwrap_or_else(|| default_security_policy(&raw_cwd));
+    if key.is_empty() {
+        return Ok(global);
+    }
+    if let Some(ws) = desktop
+        .and_then(|d| d.get("workspaces"))
+        .and_then(|v| v.as_table())
+    {
+        for (k, v) in ws {
+            if norm_cwd_key(k) == key {
+                if let Some(tbl) = v.as_table() {
+                    return Ok(policy_from_table(tbl, "workspace", &raw_cwd));
+                }
+            }
+        }
+    }
+    Ok(global)
+}
+
+/// 写入策略。`scope=workspace` 时写到 `[desktop.workspaces."<cwd>"]`。
+#[tauri::command]
+pub fn set_security_policy(policy: SecurityPolicyDto) -> Result<SecurityPolicyDto, String> {
+    let mut root = load_config_root()?;
+    let root_tbl = root
+        .as_table_mut()
+        .ok_or_else(|| "config.toml 根节点必须是 table".to_string())?;
+    let desktop = root_tbl
+        .entry("desktop".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let desktop_tbl = desktop
+        .as_table_mut()
+        .ok_or_else(|| "[desktop] 必须是 table".to_string())?;
+
+    let write_fields = |tbl: &mut toml::map::Map<String, toml::Value>| {
+        tbl.insert(
+            "execution_policy".into(),
+            toml::Value::String(policy.execution_policy.clone()),
+        );
+        tbl.insert(
+            "internet_access".into(),
+            toml::Value::String(policy.internet_access.clone()),
+        );
+        tbl.insert(
+            "file_access".into(),
+            toml::Value::String(policy.file_access.clone()),
+        );
+    };
+
+    if policy.scope == "workspace" && !norm_cwd_key(&policy.cwd).is_empty() {
+        let key = norm_cwd_key(&policy.cwd);
+        let workspaces = desktop_tbl
+            .entry("workspaces".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let ws_tbl = workspaces
+            .as_table_mut()
+            .ok_or_else(|| "[desktop.workspaces] 必须是 table".to_string())?;
+        let entry = ws_tbl
+            .entry(key)
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+        let entry_tbl = entry
+            .as_table_mut()
+            .ok_or_else(|| "工作区策略必须是 table".to_string())?;
+        write_fields(entry_tbl);
+    } else {
+        write_fields(desktop_tbl);
+    }
+    write_config_root(&root)?;
+    get_security_policy(if policy.cwd.trim().is_empty() {
+        None
+    } else {
+        Some(policy.cwd.clone())
+    })
 }
 
 /// 配置中一条 `[model.<id>]` 的可编辑字段（对齐官方 ModelEntryConfig 用户可配子集）。
@@ -1794,31 +2072,71 @@ fn run_git(cwd: &std::path::Path, args: &[&str]) -> Result<std::process::Output,
 }
 
 #[tauri::command]
-pub fn file_working_diff(path: String, state: State<'_, AppState>) -> Result<FileWorkingDiffDto, String> {
+pub async fn file_working_diff(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<FileWorkingDiffDto, String> {
     let workspace_root = resolve_workspace_cwd(&state);
-    let canonical = ensure_within_workspace(&path, &workspace_root)?;
+    tokio::task::spawn_blocking(move || collect_file_working_diff(&path, &workspace_root))
+        .await
+        .map_err(|e| format!("file_working_diff 任务失败: {e}"))?
+}
+
+fn collect_file_working_diff(
+    path: &str,
+    workspace_root: &std::path::Path,
+) -> Result<FileWorkingDiffDto, String> {
+    let requested = std::path::Path::new(path);
+    let joined = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        workspace_root.join(requested)
+    };
+    let exists = joined.exists();
+    let canonical = if exists {
+        ensure_within_workspace(&joined.to_string_lossy(), workspace_root)?
+    } else {
+        // 已删除文件：不能 canonicalize，仍限制在工作区内
+        let root = workspace_root
+            .canonicalize()
+            .map_err(|e| format!("工作区路径无效: {e}"))?;
+        let candidate = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else {
+            root.join(requested)
+        };
+        if !candidate.starts_with(&root) {
+            return Err("拒绝访问：目标文件不在当前工作区范围内".into());
+        }
+        candidate
+    };
     let path_display = canonical.to_string_lossy().to_string();
 
     const MAX_BYTES: u64 = 2 * 1024 * 1024;
-    let new_text = if canonical.is_file() {
+    let new_text = if exists && canonical.is_file() {
         let meta = std::fs::metadata(&canonical)
             .map_err(|e| format!("读取文件信息失败: {e}"))?;
         if meta.len() > MAX_BYTES {
-            return Err(format!("文件过大（{} bytes），差异上限 {} bytes", meta.len(), MAX_BYTES));
+            return Err(format!(
+                "文件过大（{} bytes），差异上限 {} bytes",
+                meta.len(),
+                MAX_BYTES
+            ));
         }
         std::fs::read_to_string(&canonical).map_err(|e| format!("读取工作区文件失败: {e}"))?
-    } else {
+    } else if exists {
         return Ok(FileWorkingDiffDto {
             path: path_display,
             old_text: String::new(),
             new_text: String::new(),
             status: "missing".into(),
-            message: Some("文件不存在".into()),
+            message: Some("不是普通文件".into()),
         });
+    } else {
+        String::new()
     };
 
-    // 是否在 git 仓库内
-    let inside = run_git(&workspace_root, &["rev-parse", "--is-inside-work-tree"])?;
+    let inside = run_git(workspace_root, &["rev-parse", "--is-inside-work-tree"])?;
     if !inside.status.success()
         || !String::from_utf8_lossy(&inside.stdout)
             .trim()
@@ -1833,12 +2151,14 @@ pub fn file_working_diff(path: String, state: State<'_, AppState>) -> Result<Fil
         });
     }
 
-    // 相对仓库根的路径（git 用 /）
     let rel = canonical
-        .strip_prefix(&workspace_root)
+        .strip_prefix(
+            workspace_root
+                .canonicalize()
+                .unwrap_or_else(|_| workspace_root.to_path_buf()),
+        )
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| {
-            // 不在 workspace 根下时仍尝试 basename（少见）
             canonical
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -1849,21 +2169,25 @@ pub fn file_working_diff(path: String, state: State<'_, AppState>) -> Result<Fil
         return Err("无法解析相对路径".into());
     }
 
-    // HEAD 中是否有该路径
-    let show = run_git(&workspace_root, &["show", &format!("HEAD:{rel}")])?;
+    let show = run_git(workspace_root, &["show", &format!("HEAD:{rel}")])?;
     if !show.status.success() {
-        // 未跟踪 / 新文件
         return Ok(FileWorkingDiffDto {
             path: path_display,
             old_text: String::new(),
             new_text,
-            status: "untracked".into(),
-            message: Some("未纳入版本库（相对 HEAD 为新增文件）".into()),
+            status: if exists { "untracked" } else { "missing" }.into(),
+            message: Some(if exists {
+                "未纳入版本库（相对 HEAD 为新增文件）".into()
+            } else {
+                "文件不存在".into()
+            }),
         });
     }
 
     let old_text = String::from_utf8_lossy(&show.stdout).into_owned();
-    let status = if old_text == new_text {
+    let status = if !exists {
+        "deleted"
+    } else if old_text == new_text {
         "clean"
     } else {
         "modified"
@@ -1878,24 +2202,29 @@ pub fn file_working_diff(path: String, state: State<'_, AppState>) -> Result<Fil
     })
 }
 
-/// 工作区未提交改动总览（右栏「差异」不再绑定单文件，展示整个工作区）。
+fn skip_workspace_noise(rel: &str) -> bool {
+    rel.split(['/', '\\']).any(|seg| {
+        matches!(
+            seg,
+            "target" | "node_modules" | "dist" | ".git" | "cargo-target"
+        )
+    })
+}
+
+/// 工作区未提交改动总览：只返回路径+状态。全文 diff 点开后再走 file_working_diff。
 #[derive(serde::Serialize)]
 pub struct WorkspaceChangeDto {
     pub path: String,
     /// modified | untracked | deleted | renamed
     pub status: String,
-    pub old_text: String,
-    pub new_text: String,
 }
 
 const WORKSPACE_CHANGES_MAX: usize = 60;
 
-#[tauri::command]
-pub fn workspace_changes(state: State<'_, AppState>) -> Result<Vec<WorkspaceChangeDto>, String> {
-    let workspace_root = resolve_workspace_cwd(&state);
-
-    // 非 git 仓库直接报错（前端显示空态）
-    let inside = run_git(&workspace_root, &["rev-parse", "--is-inside-work-tree"])?;
+fn collect_workspace_change_metas(
+    workspace_root: &std::path::Path,
+) -> Result<Vec<WorkspaceChangeDto>, String> {
+    let inside = run_git(workspace_root, &["rev-parse", "--is-inside-work-tree"])?;
     if !inside.status.success()
         || !String::from_utf8_lossy(&inside.stdout)
             .trim()
@@ -1904,8 +2233,22 @@ pub fn workspace_changes(state: State<'_, AppState>) -> Result<Vec<WorkspaceChan
         return Err("当前工作区不是 git 仓库".into());
     }
 
-    // --porcelain -z：NUL 分隔，可靠解析文件名（含空格/中文）
-    let out = run_git(&workspace_root, &["status", "--porcelain", "-z"])?;
+    // 排除构建产物，避免 git 扫 target / node_modules 把 UI 卡住
+    let out = run_git(
+        workspace_root,
+        &[
+            "status",
+            "--porcelain",
+            "-z",
+            "--",
+            ".",
+            ":(exclude)target",
+            ":(exclude)node_modules",
+            ":(exclude)dist",
+            ":(exclude)**/target",
+            ":(exclude)**/node_modules",
+        ],
+    )?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
@@ -1925,7 +2268,6 @@ pub fn workspace_changes(state: State<'_, AppState>) -> Result<Vec<WorkspaceChan
         }
         let xy = &entry[0..2];
         let mut path_bytes = &entry[3..];
-        // renamed：`R  old new ` → 取新路径（下一段）
         if xy[0] == b'R' || xy[1] == b'R' {
             if idx + 1 < parts.len() {
                 path_bytes = parts[idx + 1];
@@ -1934,7 +2276,7 @@ pub fn workspace_changes(state: State<'_, AppState>) -> Result<Vec<WorkspaceChan
         }
         idx += 1;
         let rel = String::from_utf8_lossy(path_bytes).to_string();
-        if rel.is_empty() {
+        if rel.is_empty() || skip_workspace_noise(&rel) {
             continue;
         }
         let status = if xy == b"??" {
@@ -1946,38 +2288,22 @@ pub fn workspace_changes(state: State<'_, AppState>) -> Result<Vec<WorkspaceChan
         } else {
             "modified"
         };
-        // 只关心工作区 vs HEAD；跳过 index 暂存差异的额外处理（统一以 HEAD 为基准）
-        let full = workspace_root.join(&rel);
-        const MAX_BYTES: u64 = 2 * 1024 * 1024;
-        let new_text = if status == "deleted" {
-            String::new()
-        } else if full.is_file() {
-            match std::fs::metadata(&full) {
-                Ok(m) if m.len() <= MAX_BYTES => {
-                    std::fs::read_to_string(&full).unwrap_or_default()
-                }
-                _ => String::new(),
-            }
-        } else {
-            String::new()
-        };
-        let old_text = if status == "untracked" {
-            String::new()
-        } else {
-            let shown = run_git(&workspace_root, &["show", &format!("HEAD:{}", rel)]);
-            match shown {
-                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-                _ => String::new(),
-            }
-        };
         changes.push(WorkspaceChangeDto {
             path: rel,
             status: status.into(),
-            old_text,
-            new_text,
         });
     }
     Ok(changes)
+}
+
+#[tauri::command]
+pub async fn workspace_changes(
+    state: State<'_, AppState>,
+) -> Result<Vec<WorkspaceChangeDto>, String> {
+    let workspace_root = resolve_workspace_cwd(&state);
+    tokio::task::spawn_blocking(move || collect_workspace_change_metas(&workspace_root))
+        .await
+        .map_err(|e| format!("workspace_changes 任务失败: {e}"))?
 }
 
 

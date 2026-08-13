@@ -1,7 +1,8 @@
 /**
- * Vesprism 品牌标 — 官方暖色飞溅 / 鸟形 mark + 字标。
+ * Vesprism 品牌标 — 墨环 + 红针（透明底；浅色主题深墨 / 深色主题浅墨）。
  */
-import markSrc from '../assets/vesprism-mark.png'
+import markOnLight from '../assets/vesprism-mark.png'
+import markOnDark from '../assets/vesprism-mark-on-dark.png'
 
 interface BrandLogoProps {
   size?: number
@@ -17,18 +18,29 @@ export function BrandLogo({
   className = '',
   title = 'Vesprism',
 }: BrandLogoProps) {
-  const cls = ['brand-logo-mark', className].filter(Boolean).join(' ')
+  const wrapCls = ['brand-logo-mark-wrap', className].filter(Boolean).join(' ')
 
   return (
-    <img
-      className={cls}
-      src={markSrc}
-      width={size}
-      height={size}
-      alt={title}
-      draggable={false}
-      decoding="async"
-    />
+    <span className={wrapCls} style={{ width: size, height: size }} role="img" aria-label={title}>
+      <img
+        className="brand-logo-mark brand-logo-mark--on-light"
+        src={markOnLight}
+        width={size}
+        height={size}
+        alt=""
+        draggable={false}
+        decoding="async"
+      />
+      <img
+        className="brand-logo-mark brand-logo-mark--on-dark"
+        src={markOnDark}
+        width={size}
+        height={size}
+        alt=""
+        draggable={false}
+        decoding="async"
+      />
+    </span>
   )
 }
 

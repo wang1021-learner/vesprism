@@ -3,8 +3,8 @@
  * Enter 280ms ease-out · Exit 200ms (~70%) · shell width + panel transform/opacity
  */
 .right-panel-shell {
-  --rp-enter: 280ms;
-  --rp-exit: 200ms;
+  --rp-enter: 0ms;
+  --rp-exit: 0ms;
   --rp-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --rp-ease-exit: cubic-bezier(0.4, 0, 0.7, 1);
   display: flex;

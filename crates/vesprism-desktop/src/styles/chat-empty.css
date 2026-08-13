@@ -6,6 +6,7 @@
 }
 
 /* ── Hero Empty State (Agent Command Deck) ── */
+/* 不用 vertical center：justify-content:center 会抵消 margin，下移看不出变化 */
 .messages-empty {
   flex: 1 1 auto;
   min-height: 0;
@@ -13,8 +14,16 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  text-align: center;
-  padding: 36px 20px 24px;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.empty-workbench {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .empty-hero-container {
@@ -31,7 +40,7 @@
 @keyframes hero-fade-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -39,27 +48,25 @@
   }
 }
 
+/* 空态品牌：仅 mark，无圆角卡片底 */
 .empty-brand-badge {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  background: var(--surface-muted, #f8fafc);
-  border: 1px solid var(--border-solid, #e2e8f0);
   display: grid;
   place-items: center;
-  box-shadow: var(--shadow-sm, 0 1px 3px rgba(15, 23, 42, 0.06));
-  margin-bottom: 2px;
-  overflow: hidden;
-  transition: transform var(--duration-fast, 150ms) var(--ease-out-smooth, ease);
+  margin-top: 0;
+  margin-bottom: 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
-.empty-brand-badge:hover {
-  transform: scale(1.04);
+.empty-brand-badge .brand-logo-mark-wrap {
+  width: 96px !important;
+  height: 96px !important;
 }
 
 .empty-brand-badge .brand-logo-mark {
-  width: 40px !important;
-  height: 40px !important;
+  width: 96px !important;
+  height: 96px !important;
   object-fit: contain;
 }
 
@@ -106,9 +113,9 @@
 
 .empty-starter-card:hover {
   transform: translateY(-2px);
-  border-color: var(--accent, #6366f1);
-  box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
-  background: var(--surface-hover, rgba(99, 102, 241, 0.04));
+  border-color: var(--border-strong-solid);
+  box-shadow: var(--shadow-md);
+  background: var(--surface-hover);
 }
 
 .empty-starter-card:active {

@@ -7,14 +7,13 @@
    ═══════════════════════════════════════════════════ */
 
 .md-body {
-  /* 相对原 15px 再小 2px → 13px（用户要求会话 AI 字号整体调小） */
-  font-size: 13px;
-  line-height: 1.65;
-  /* 正文可断词；代码块 / 树状图不得继承 break-all */
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.62;
   overflow-wrap: break-word;
   word-break: normal;
   color: var(--text-primary);
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
 }
 
 /* 首尾与外层消息间距对齐，避免上下双重空隙 */
@@ -36,7 +35,7 @@
 }
 
 .md-body strong {
-  font-weight: 600;
+  font-weight: 650;
   color: var(--text-primary);
 }
 
@@ -78,7 +77,7 @@
 /* ── 行内代码 ── */
 .md-body :not(pre) > code {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 10.5px;
   background: color-mix(in srgb, var(--surface-muted) 92%, #000 3%);
   border: 1px solid color-mix(in srgb, var(--border-solid) 90%, transparent);
   border-radius: 4px;
@@ -110,7 +109,7 @@
   padding: 0;
   margin: 0;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 10.5px;
   line-height: 1.55;
   color: var(--text-primary);
   white-space: inherit;

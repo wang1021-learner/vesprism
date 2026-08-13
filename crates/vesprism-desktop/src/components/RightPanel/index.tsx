@@ -7,20 +7,19 @@ import {
   $rightPanelFile,
   $rightPanelFilePath,
   $rightPanelOutput,
-  $sidebarCollapsed,
-  $sidebarAutoCollapsed,
   $workspaceCwd,
   $gitHeadRevision,
+  $workspaceChangeCount,
+  $backgroundTasks,
+  $activeTabId,
+  removeBackgroundTask,
   type RightPanelTab,
 } from '../../store'
-import { listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
+import { fileWorkingDiff, killTask, listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
 import { DiffLines } from '../Chat/DiffLines'
 
 const MIN_W = 260
 const MAX_RATIO = 0.55
-/** 与 CSS --rp-enter / --rp-exit 对齐；出场约 70% 进场 */
-const OPEN_MS = 280
-const CLOSE_MS = 200
 
 // ── 拖拽手柄：按下时锁定基准宽度，避免位移重复累加 ──
 function ResizeHandle() {
@@ -62,8 +61,9 @@ function ResizeHandle() {
 // ── Tab 栏（中文） ──
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'files', label: '文件' },
+  { id: 'diff', label: '改动' },
   { id: 'output', label: '源码' },
-  { id: 'diff', label: '差异' },
+  { id: 'tasks', label: '任务' },
 ]
 
 function TabBar() {
@@ -212,16 +212,20 @@ const CHANGE_STATUS_BADGE: Record<string, string> = {
   renamed: 'diff-status-renamed',
 }
 
-/** 工作区改动总览：列出全部未提交文件，点开看该文件 diff（不再绑定打开的文件） */
+type FileDiffBody = { oldText: string; newText: string }
+
+/** 工作区改动总览：列表只拉路径；点开再取该文件 diff */
 function DiffView() {
   const cwd = useStore($workspaceCwd)
-  // git_head_changed 事件驱动自动刷新（分支切换 / 提交后）
   const gitRev = useStore($gitHeadRevision)
   const [changes, setChanges] = useState<WorkspaceChange[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [tick, setTick] = useState(0)
   const [openPath, setOpenPath] = useState('')
+  const [bodies, setBodies] = useState<Record<string, FileDiffBody>>({})
+  const [bodyError, setBodyError] = useState<Record<string, string>>({})
+  const [bodyLoading, setBodyLoading] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -229,7 +233,10 @@ function DiffView() {
     setError('')
     workspaceChanges()
       .then((res) => {
-        if (!cancelled) setChanges(res)
+        if (!cancelled) {
+          setChanges(res)
+          $workspaceChangeCount.set(res.length)
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -244,6 +251,27 @@ function DiffView() {
       cancelled = true
     }
   }, [cwd, tick, gitRev])
+
+  const togglePath = async (path: string) => {
+    if (openPath === path) {
+      setOpenPath('')
+      return
+    }
+    setOpenPath(path)
+    if (bodies[path] || bodyError[path]) return
+    setBodyLoading(path)
+    try {
+      const d = await fileWorkingDiff(path)
+      setBodies((prev) => ({
+        ...prev,
+        [path]: { oldText: d.old_text, newText: d.new_text },
+      }))
+    } catch (e) {
+      setBodyError((prev) => ({ ...prev, [path]: String(e) }))
+    } finally {
+      setBodyLoading((cur) => (cur === path ? '' : cur))
+    }
+  }
 
   return (
     <div className="right-panel-diff-wrap">
@@ -265,6 +293,8 @@ function DiffView() {
           onClick={() => {
             setTick((n) => n + 1)
             setOpenPath('')
+            setBodies({})
+            setBodyError({})
           }}
           disabled={loading}
           title="刷新改动"
@@ -273,7 +303,7 @@ function DiffView() {
           刷新
         </button>
       </div>
-      {loading && <div className="tree-loading">对比中...</div>}
+      {loading && <div className="tree-loading">加载改动列表...</div>}
       {error && <div className="tree-error">{error}</div>}
       {!loading && !error && changes.length === 0 && (
         <div className="right-panel-empty">与 HEAD 一致，无未提交改动</div>
@@ -282,14 +312,16 @@ function DiffView() {
         <ul className="workspace-changes">
           {changes.map((ch) => {
             const open = openPath === ch.path
-            const hasBody = ch.old_text.length > 0 || ch.new_text.length > 0
+            const body = bodies[ch.path]
+            const err = bodyError[ch.path]
+            const waiting = bodyLoading === ch.path
             return (
               <li key={ch.path} className={`workspace-change${open ? ' is-open' : ''}`}>
                 <button
                   type="button"
                   className="workspace-change-head"
-                  onClick={() => setOpenPath(open ? '' : ch.path)}
-                  title={hasBody ? (open ? '收起' : '展开 diff') : '无内容可展示'}
+                  onClick={() => void togglePath(ch.path)}
+                  title={open ? '收起' : '展开 diff'}
                 >
                   <span className={`diff-status-badge ${CHANGE_STATUS_BADGE[ch.status] ?? 'diff-status-modified'}`}>
                     {CHANGE_STATUS_LABEL[ch.status] ?? ch.status}
@@ -297,15 +329,15 @@ function DiffView() {
                   <span className="workspace-change-path" title={ch.path}>
                     {ch.path}
                   </span>
-                  {hasBody && (
-                    <span className={`scaffold-caret${open ? ' is-open' : ''}`} aria-hidden>
-                      ›
-                    </span>
-                  )}
+                  <span className={`scaffold-caret${open ? ' is-open' : ''}`} aria-hidden>
+                    ›
+                  </span>
                 </button>
-                {open && hasBody && (
+                {open && waiting && <div className="tree-loading">对比中...</div>}
+                {open && err && <div className="tree-error">{err}</div>}
+                {open && body && (
                   <div className="right-panel-diff-body">
-                    <DiffLines oldText={ch.old_text} newText={ch.new_text} />
+                    <DiffLines oldText={body.oldText} newText={body.newText} />
                   </div>
                 )}
               </li>
@@ -317,10 +349,44 @@ function DiffView() {
   )
 }
 
+function TasksView() {
+  const tasks = useStore($backgroundTasks)
+  const tabId = useStore($activeTabId)
+  const entries = Object.entries(tasks)
+  if (entries.length === 0) {
+    return <div className="right-panel-empty">没有运行中的后台任务</div>
+  }
+  return (
+    <ul className="workspace-changes">
+      {entries.map(([toolCallId, t]) => (
+        <li key={toolCallId} className="workspace-change">
+          <div className="workspace-change-head" style={{ cursor: 'default' }}>
+            <span className="workspace-change-path" title={t.command}>
+              {t.description || t.command || t.taskId}
+            </span>
+            <button
+              type="button"
+              className="diff-refresh-btn"
+              onClick={() => {
+                void killTask(tabId, t.taskId)
+                  .then(() => removeBackgroundTask(tabId, toolCallId))
+                  .catch((e) => console.warn(e))
+              }}
+            >
+              停止
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function PanelBody() {
   const tab = useStore($rightPanelTab)
   if (tab === 'files') return <FileTree />
   if (tab === 'diff') return <DiffView />
+  if (tab === 'tasks') return <TasksView />
   return <OutputView />
 }
 
@@ -328,53 +394,14 @@ function PanelBody() {
 export function RightPanel() {
   const open = useStore($rightPanelOpen)
   const width = useStore($rightPanelWidth)
-  const [mounted, setMounted] = useState(open)
-  const [entered, setEntered] = useState(open)
-  const [animating, setAnimating] = useState(false)
 
-  useEffect(() => {
-    if (open) {
-      if (!$sidebarCollapsed.get()) {
-        $sidebarCollapsed.set(true)
-        $sidebarAutoCollapsed.set(true)
-      }
-      setMounted(true)
-      setAnimating(true)
-      const id = requestAnimationFrame(() => {
-        requestAnimationFrame(() => setEntered(true))
-      })
-      const t = window.setTimeout(() => setAnimating(false), OPEN_MS)
-      return () => {
-        cancelAnimationFrame(id)
-        window.clearTimeout(t)
-      }
-    }
-    if ($sidebarAutoCollapsed.get()) {
-      $sidebarCollapsed.set(false)
-      $sidebarAutoCollapsed.set(false)
-    }
-    setAnimating(true)
-    setEntered(false)
-    const t = window.setTimeout(() => {
-      setMounted(false)
-      setAnimating(false)
-    }, CLOSE_MS)
-    return () => window.clearTimeout(t)
-  }, [open])
-
-  if (!mounted) return null
+  if (!open) return null
 
   return (
     <div
-      className={[
-        'right-panel-shell',
-        entered ? 'is-open' : 'is-closing',
-        animating ? 'is-animating' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
+      className="right-panel-shell is-open"
       style={{
-        width: entered ? width : 0,
+        width,
         ['--rp-width' as string]: `${width}px`,
       }}
     >

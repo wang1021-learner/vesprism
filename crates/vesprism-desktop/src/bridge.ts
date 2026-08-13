@@ -25,6 +25,36 @@ export const restartTab = (tabId: string) => invoke('restart_tab', { tabId })
 export const workspaceCwd = () => invoke<string>('workspace_cwd')
 export const setWorkspaceCwd = (cwd: string) => invoke<string>('set_workspace_cwd', { cwd })
 
+export type SecurityPolicyDto = {
+  execution_policy: string
+  internet_access: string
+  file_access: string
+  scope: string
+  cwd: string
+}
+
+export const getSecurityPolicy = (cwd?: string) =>
+  invoke<SecurityPolicyDto>('get_security_policy', { cwd: cwd || null })
+
+export const setSecurityPolicy = (policy: SecurityPolicyDto) =>
+  invoke<SecurityPolicyDto>('set_security_policy', { policy })
+
+export const enableTabSandbox = (tabId: string) =>
+  invoke('enable_tab_sandbox', { tabId })
+
+export type SandboxStatusDto = {
+  active: boolean
+  origin_cwd: string
+  sandbox_cwd: string
+  dirty_count: number
+}
+
+export const getSandboxStatus = (tabId: string) =>
+  invoke<SandboxStatusDto>('get_sandbox_status', { tabId })
+
+export const syncSandboxToOrigin = (tabId: string) =>
+  invoke<{ files: number; message: string }>('sync_sandbox_to_origin', { tabId })
+
 // ── 会话 ──
 export const startSession = (tabId: string, cwd: string) => invoke('start_session', { tabId, cwd })
 export const sendPrompt = (tabId: string, text: string, promptId?: string) =>
@@ -330,8 +360,6 @@ export const fileWorkingDiff = (path: string) =>
 export interface WorkspaceChange {
   path: string
   status: 'modified' | 'untracked' | 'deleted' | 'renamed' | string
-  old_text: string
-  new_text: string
 }
 
 export const workspaceChanges = () =>
@@ -346,6 +374,8 @@ export interface SessionEventPayload {
   stop_reason?: string
   message?: string
   debug?: string
+  origin_cwd?: string
+  sandbox_cwd?: string
   /** ToolCallInfo camelCase */
   tool?: {
     toolCallId?: string

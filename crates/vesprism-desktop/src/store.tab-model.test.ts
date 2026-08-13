@@ -17,9 +17,11 @@ import {
   findNormalChatTab,
   findTabByUtilityKind,
   getTabState,
+  isBlankNewChat,
   looksAbsolutePath,
   patchTab,
   removeTab,
+  resetTabToNewChat,
   resetTabsForTests,
   resolveNewTabModel,
   resolveWorkspaceCwd,
@@ -149,6 +151,15 @@ describe('Tab 模型分片', () => {
     expect(r.reasoningEffort).toBe('high') // 来自 modelB.reasoning_effort
   })
 
+  it('switchTab 点当前 tab 是空操作', () => {
+    createTab('tab-1', { modelId: 'model-a', reasoningEffort: 'low' })
+    switchTab('tab-1')
+    patchTab('tab-1', { chatId: 'chat-1' })
+    switchTab('tab-1')
+    expect($activeTabId.get()).toBe('tab-1')
+    expect(getTabState('tab-1')?.chatId).toBe('chat-1')
+  })
+
   it('removeTab 清理 map；关活跃 tab 时清空模型投影', () => {
     createTab('tab-1', { modelId: 'model-a', reasoningEffort: 'medium' })
     switchTab('tab-1')
@@ -159,6 +170,44 @@ describe('Tab 模型分片', () => {
     expect($tabs.get()).toHaveLength(0)
     expect($activeTabId.get()).toBe('')
     expect($defaultModelId.get()).toBe('')
+  })
+
+  it('isBlankNewChat：有 sessionId 仍算空白新对话；有消息/历史/草稿不算', () => {
+    createTab('blank', { sessionId: 'sess-engine', chatId: '', messages: [] })
+    expect(isBlankNewChat(getTabState('blank')!)).toBe(true)
+
+    createTab('draft', { composerInput: 'hello' })
+    expect(isBlankNewChat(getTabState('draft')!)).toBe(false)
+
+    createTab('hist', { chatId: 'chat-1' })
+    expect(isBlankNewChat(getTabState('hist')!)).toBe(false)
+
+    createTab('util', { utilityKind: 'tools' })
+    expect(isBlankNewChat(getTabState('util')!)).toBe(false)
+  })
+
+  it('resetTabToNewChat 清空内容并保留模型', () => {
+    createTab('tab-1', {
+      modelId: 'model-b',
+      reasoningEffort: 'high',
+      chatId: 'chat-1',
+      sessionId: 'sess-1',
+      chatTitle: '旧标题',
+      messages: [{ id: 'm1', role: 'user', text: 'hi' } as never],
+      cwd: 'D:\\old',
+    })
+    switchTab('tab-1')
+    resetTabToNewChat('tab-1', 'D:\\repo')
+    const st = getTabState('tab-1')!
+    expect(st.messages).toEqual([])
+    expect(st.chatId).toBe('')
+    expect(st.sessionId).toBe('')
+    expect(st.chatTitle).toBe('')
+    expect(st.modelId).toBe('model-b')
+    expect(st.reasoningEffort).toBe('high')
+    expect(st.cwd).toBe('D:\\repo')
+    expect(st.phase).toBe('restarting')
+    expect($tabs.get()[0].title).toBe('')
   })
 })
 

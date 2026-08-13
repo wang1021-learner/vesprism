@@ -108,6 +108,22 @@
   color: var(--text-primary);
 }
 
+.workflows-running {
+  margin-bottom: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.workflows-running ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-secondary);
+}
+
 .workflows-banner {
   margin-bottom: 0.65rem;
   padding: 0.45rem 0.75rem;

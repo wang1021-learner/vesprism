@@ -805,7 +805,7 @@ fn format_permission_description(tc: &agent_client_protocol::ToolCallUpdate) -> 
         }
     };
 
-    // 前端 Hermes 风格审批条只依赖：类型 + 命令/目标。
+    // 前端内嵌审批条只依赖：类型 + 命令/目标。
     // 不要再塞「工具：Execute `整段命令`」——与 detail 重复，UI 会糊成一墙。
     let mut lines = vec![format!("类型：{kind_label}")];
     if let Some(t) = title {

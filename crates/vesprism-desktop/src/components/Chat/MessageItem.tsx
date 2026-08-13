@@ -918,7 +918,7 @@ const ToolLine = memo(function ToolLine({
   )
 })
 
-/** 子 agent 任务提示（父派发的完整 instruction）不渲染为用户气泡 — 对齐 Hermes 安静 scaffold */
+/** 子 agent 任务提示（父派发的完整 instruction）不渲染为用户气泡 — 对齐安静 scaffold */
 function isSubagentTaskPrompt(text: string): boolean {
   const t = (text || "").trim()
   if (!t) return false
@@ -937,39 +937,51 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
 
   return (
     <div className="message-row user-row">
-      <div className="bubble bubble-user">
-        <pre className="bubble-text">{displayText}</pre>
-        {isLong ? (
+      <div className="user-stack">
+        <div className="bubble bubble-user">
+          <pre className="bubble-text">{displayText}</pre>
+          {isLong ? (
+            <button
+              type="button"
+              className="bubble-expand-toggle"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded
+                ? '收起'
+                : `展开全部（${text.length.toLocaleString()} 字符）`}
+            </button>
+          ) : null}
+        </div>
+        <div className="bubble-actions">
           <button
             type="button"
-            className="bubble-expand-toggle"
-            onClick={() => setExpanded((v) => !v)}
+            className="bubble-fork-btn"
+            title="派生新会话（复制当前会话到新标签继续）"
+            aria-label="派生新会话"
+            onClick={() => void forkCurrentSession()}
           >
-            {expanded
-              ? '收起'
-              : `展开全部（${text.length.toLocaleString()} 字符）`}
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+              <circle cx="6" cy="6" r="2.2" />
+              <circle cx="6" cy="18" r="2.2" />
+              <circle cx="18" cy="12" r="2.2" />
+              <path d="M6 8.2v7.6M8.2 6.8 16 11.2" />
+            </svg>
+            派生
           </button>
-        ) : null}
-      </div>
-      <div className="bubble-actions">
-        <button
-          type="button"
-          className="bubble-fork-btn"
-          title="派生新会话（复制当前会话到新标签继续）"
-          aria-label="派生新会话"
-          onClick={() => void forkCurrentSession()}
-        >
-          派生
-        </button>
-        <button
-          type="button"
-          className="bubble-rewind-btn"
-          title="回滚会话（撤销到此提问之前，可恢复文件快照）"
-          aria-label="回滚会话"
-          onClick={() => openRewind($activeTabId.get())}
-        >
-          回滚
-        </button>
+          <button
+            type="button"
+            className="bubble-rewind-btn"
+            title="回滚会话（撤销到此提问之前，可恢复文件快照）"
+            aria-label="回滚会话"
+            onClick={() => openRewind($activeTabId.get())}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M8 7H5V4" />
+              <path d="M5.6 16.5A8 8 0 1 0 7.2 7.4L5 9.2" />
+            </svg>
+            回滚
+          </button>
+        </div>
       </div>
     </div>
   )

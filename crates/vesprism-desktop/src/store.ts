@@ -19,6 +19,8 @@ import type {
   UserQuestionRequest,
 } from './types'
 import { upsertSubagentMessage } from './lib/subagentMessage'
+import type { SecurityPolicy } from './lib/executionPolicy'
+import { DEFAULT_SECURITY_POLICY } from './lib/executionPolicy'
 
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
@@ -69,6 +71,10 @@ export interface TabState {
    * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
    */
   utilityKind: UtilityKind | null
+  /** 隔离 worktree 绝对路径；空=未沙箱 */
+  sandboxCwd: string
+  /** 沙箱对应的主工作区 */
+  sandboxOrigin: string
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
@@ -92,6 +98,8 @@ export function emptyTabState(): TabState {
     reasoningEffort: 'medium',
     utilityKind: null,
     backgroundTasks: {},
+    sandboxCwd: '',
+    sandboxOrigin: '',
   }
 }
 
@@ -286,6 +294,8 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('reasoningEffort' in patch) $reasoningEffort.set(patch.reasoningEffort!)
   if ('utilityKind' in patch) $utilityKind.set(patch.utilityKind ?? null)
   if ('backgroundTasks' in patch) $backgroundTasks.set(patch.backgroundTasks!)
+  if ('sandboxCwd' in patch) $sandboxCwd.set(patch.sandboxCwd ?? '')
+  if ('sandboxOrigin' in patch) $sandboxOrigin.set(patch.sandboxOrigin ?? '')
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -309,6 +319,8 @@ function projectTab(id: string): void {
     reasoningEffort: s.reasoningEffort,
     utilityKind: s.utilityKind,
     backgroundTasks: s.backgroundTasks,
+    sandboxCwd: s.sandboxCwd,
+    sandboxOrigin: s.sandboxOrigin,
   })
 }
 
@@ -330,6 +342,8 @@ function resetProjection(): void {
     modelId: '',
     reasoningEffort: 'medium',
     utilityKind: null,
+    sandboxCwd: '',
+    sandboxOrigin: '',
   })
 }
 
@@ -346,8 +360,7 @@ export function patchTab(id: string, patch: Partial<TabState>): void {
   // 无条件 $tabs.set 会让 TabBar/Sidebar 等订阅者每帧重渲染；脏检查只在真正变化时通知。
   const activity = deriveTabActivity(next)
   const failed = next.phase === 'failed'
-  const title =
-    'chatTitle' in patch && patch.chatTitle ? patch.chatTitle! : cur.chatTitle
+  const title = 'chatTitle' in patch ? (patch.chatTitle ?? '') : cur.chatTitle
   const list = $tabs.get()
   const current = list.find((t) => t.id === id)
   if (
@@ -387,10 +400,44 @@ function isRecyclableBlank(st: TabState): boolean {
   return true
 }
 
+/**
+ * 用户视角的空白「新对话」：无历史、无消息、非专用面板。
+ * 引擎 sessionId 可已存在（bootstrap / startSession 之后仍显示「新对话」）。
+ */
+export function isBlankNewChat(st: TabState): boolean {
+  if (st.utilityKind) return false
+  if (st.chatId) return false
+  if (st.messages.length > 0) return false
+  if (st.composerInput.trim()) return false
+  return true
+}
+
+/** 把已有 tab 原地清成空白新对话（保留模型；cwd 可覆盖） */
+export function resetTabToNewChat(id: string, cwd?: string): void {
+  const workCwd = (cwd ?? getTabState(id)?.cwd ?? '').trim()
+  patchTab(id, {
+    messages: [],
+    composerInput: '',
+    permission: null,
+    userQuestion: null,
+    subagents: [],
+    backgroundTasks: {},
+    error: '',
+    chatId: '',
+    sessionId: '',
+    chatTitle: '',
+    phase: 'restarting',
+    status: 'initializing',
+    utilityKind: null,
+    ...(workCwd ? { cwd: workCwd } : {}),
+  })
+}
+
 /** 切换活跃 tab：先切 id 再投影（事件在两者之间到达时按新 id 路由，投影幂等） */
 export function switchTab(id: string): void {
   if (!tabStates.has(id)) return
   const prev = $activeTabId.get()
+  if (prev === id) return
   $activeTabId.set(id)
   projectTab(id)
   // 切走时自动回收空白 tab（保留至少 1 个；生成中/加载中/有任务的一律不回收）
@@ -494,6 +541,14 @@ export const $workspaceOptions = atom<string[]>([])
  */
 export const $preferredWorkspaceCwd = atom('')
 
+/** 当前生效的工具执行策略（全局或工作区覆盖） */
+export const $securityPolicy = atom<SecurityPolicy>(DEFAULT_SECURITY_POLICY)
+/** 本会话临时覆盖（/sandbox）；空则用 $securityPolicy */
+export const $sessionPolicyOverride = atom<SecurityPolicy['executionPolicy'] | null>(null)
+/** 当前活跃会话的隔离 worktree；空=未沙箱 */
+export const $sandboxCwd = atom('')
+export const $sandboxOrigin = atom('')
+
 // ── UI ──
 export const $sidebarCollapsed = atom(false)
 export const $sidebarAutoCollapsed = atom(false)
@@ -517,9 +572,11 @@ export const $composerInput = atom('') // TabState.composerInput 投影
 export const $utilityKind = atom<UtilityKind | null>(null)
 
 // ── 右侧栏 ──
-export type RightPanelTab = 'files' | 'output' | 'diff'
+export type RightPanelTab = 'files' | 'output' | 'diff' | 'tasks'
 export const $rightPanelOpen = atom(false)
 export const $rightPanelTab = atom<RightPanelTab>('files')
+/** 工作区未提交改动数，供顶栏入口角标 */
+export const $workspaceChangeCount = atom(0)
 export const $rightPanelWidth = atom(320)
 export const $rightPanelOutput = atom('')
 /** 源码视图当前显示的文件名（文件树打开时设置） */

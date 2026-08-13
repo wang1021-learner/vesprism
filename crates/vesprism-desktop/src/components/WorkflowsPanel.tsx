@@ -11,7 +11,12 @@ import {
   patchActiveTab,
   pushToast,
 } from '../store'
-import { listSessionCommands, listWorkflows } from '../bridge'
+import {
+  listRunningSubagents,
+  listSessionCommands,
+  listWorkflows,
+  type RunningSubagentInfo,
+} from '../bridge'
 import {
   parseWorkflowListings,
   parseWorkflowsFromCommands,
@@ -27,6 +32,7 @@ export function WorkflowsPanel() {
   const [query, setQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState<string | 'all'>('all')
   const [viaFallback, setViaFallback] = useState(false)
+  const [running, setRunning] = useState<RunningSubagentInfo[]>([])
 
   const load = useCallback(async () => {
     if (!tabId) return
@@ -66,6 +72,26 @@ export function WorkflowsPanel() {
     if (!tabId) return
     void load()
   }, [tabId, load])
+
+  useEffect(() => {
+    if (!tabId) return
+    let stop = false
+    const tick = () => {
+      listRunningSubagents(tabId)
+        .then((rows) => {
+          if (!stop) setRunning(Array.isArray(rows) ? rows : [])
+        })
+        .catch(() => {
+          if (!stop) setRunning([])
+        })
+    }
+    tick()
+    const id = window.setInterval(tick, 3000)
+    return () => {
+      stop = true
+      window.clearInterval(id)
+    }
+  }, [tabId])
 
   const sourcesPresent = useMemo(() => {
     const s = new Set(rows.map((r) => r.source))
@@ -140,6 +166,20 @@ export function WorkflowsPanel() {
             </button>
           </div>
         </header>
+
+        {running.length > 0 && (
+          <div className="workflows-running" role="status">
+            {running.length} 个子任务正在运行
+            <ul>
+              {running.slice(0, 4).map((r) => (
+                <li key={r.subagentId || r.childSessionId}>
+                  {r.description || r.subagentType || '子任务'}
+                  {r.durationMs ? ` · ${Math.round(r.durationMs / 1000)}s` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {viaFallback && (
           <div className="workflows-banner">

@@ -66,7 +66,7 @@ import {
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
 import { reconcileRunningSubagents } from '../lib/reconcileRunningSubagents'
-import { BrandWordmark } from './BrandLogo'
+
 
 /** FTS 搜索结果行（可带 snippet） */
 type SearchHit = ChatSummary & { snippet?: string }
@@ -169,59 +169,52 @@ function SearchIcon() {
   )
 }
 
-/** 技能 — 书签/文档 */
+const iconProps = {
+  width: 15,
+  height: 15,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.7,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+  'aria-hidden': true as const,
+}
+
 function SkillIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <path
-        d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"
-        strokeLinejoin="round"
-      />
+    <svg {...iconProps}>
+      <path d="M7 6.5h10M7 12h10M7 17.5h7" />
     </svg>
   )
 }
 
-/** 工具 — 扳手 */
 function ToolIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <path
-        d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg {...iconProps}>
+      <path d="M14.2 6.2 8 12.4l3.6 3.6 6.2-6.2a2.6 2.6 0 0 0-3.6-3.6Z" />
+      <path d="M9.2 14.8 6 18" />
     </svg>
   )
 }
 
-/** MCP — 插头/连接 */
 function McpIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <path
-        d="M12 2v6M8 4v4M16 4v4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M7 10h10v3a5 5 0 0 1-5 5h0a5 5 0 0 1-5-5v-3Z"
-        strokeLinejoin="round"
-      />
-      <path d="M12 18v4" strokeLinecap="round" />
+    <svg {...iconProps}>
+      <circle cx="8" cy="12" r="2.4" />
+      <circle cx="16" cy="12" r="2.4" />
+      <path d="M10.4 12h3.2" />
     </svg>
   )
 }
 
-/** 自动化任务 — 流程/循环 */
 function WorkflowIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <path d="M4 6h6v4H4zM14 6h6v4h-6zM9 14h6v4H9z" strokeLinejoin="round" />
-      <path d="M7 10v2h10v-2M12 10v4" strokeLinecap="round" strokeLinejoin="round" />
+    <svg {...iconProps}>
+      <circle cx="7" cy="8" r="2" />
+      <circle cx="17" cy="12" r="2" />
+      <circle cx="7" cy="16" r="2" />
+      <path d="M9 8h4.5a3.5 3.5 0 0 1 3.5 3.5M9 16h4.5A3.5 3.5 0 0 0 17 12.5" />
     </svg>
   )
 }
@@ -826,7 +819,6 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
    */
   const PEEK_HOVER_OPEN_MS = 320
   const PEEK_LEAVE_GRACE_MS = 160
-  const PEEK_EXIT_MS = 200
 
   /** 悬停在下方热区：打开 peek */
   const handlePeekZoneEnter = () => {
@@ -850,10 +842,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       if (peekState === 'closed') return
     }
     peekTimerRef.current = window.setTimeout(() => {
-      setPeekState('leaving')
-      peekTimerRef.current = window.setTimeout(() => {
-        setPeekState('closed')
-      }, PEEK_EXIT_MS)
+      setPeekState('closed')
     }, PEEK_LEAVE_GRACE_MS)
   }
 
@@ -932,19 +921,17 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   ]
 
   const renderUtilityGrid = () => (
-    <nav className="sidebar-utility-grid" aria-label="能力入口">
+    <nav className="sidebar-compose-nav" aria-label="能力入口">
       {utilityEntries.map(({ kind, label, Icon }) => (
         <button
           key={kind}
           type="button"
-          className="sidebar-utility-item"
+          className="sidebar-compose-link"
           title={kind === 'workflows' ? '自动化任务' : label}
           onClick={() => void onOpenUtilityTab(kind)}
         >
-          <span className="sidebar-utility-icon">
-            <Icon />
-          </span>
-          <span className="sidebar-utility-label">{label}</span>
+          <Icon />
+          <span>{kind === 'workflows' ? '自动化任务' : label}</span>
         </button>
       ))}
     </nav>
@@ -1010,13 +997,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   /** 展开态 / peek 共用：顶栏 → 新建 → 能力格 → 会话 → 设置 */
   const renderExpandedPanel = () => (
     <>
-      <div className="sidebar-header" data-tauri-drag-region="true">
-        <BrandWordmark size={26} />
-        <div className="sidebar-actions" data-tauri-drag-region="false">
+      <div className="sidebar-header">
+        <div className="sidebar-actions">
           <button
             type="button"
             className="sidebar-icon-btn"
-            data-tauri-drag-region="false"
             title="搜索会话 (⌘K)"
             onClick={openSearch}
           >
@@ -1025,7 +1010,6 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
           <button
             type="button"
             className="sidebar-icon-btn"
-            data-tauri-drag-region="false"
             title={collapsed ? '关闭预览' : '收起边栏'}
             onClick={onHeaderCollapseClick}
           >
@@ -1034,12 +1018,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         </div>
       </div>
 
-      <div className="sidebar-top">
-        <button type="button" className="btn-new-chat" onClick={() => void onNewChat()}>
-          <span className="plus-icon" aria-hidden>
-            <PlusIcon />
-          </span>
-          <span>新建会话</span>
+      <div className="sidebar-compose">
+        <button type="button" className="sidebar-compose-new" onClick={() => void onNewChat()}>
+          <PlusIcon />
+          <span>新对话</span>
         </button>
         {renderUtilityGrid()}
       </div>

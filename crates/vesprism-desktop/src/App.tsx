@@ -1,8 +1,9 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
+import { SandboxBanner } from './components/SandboxBanner'
 import { MessageList } from './components/Chat/MessageList'
-import { TabBar } from './components/TabBar'
+import { WindowChrome } from './components/WindowChrome'
 import { CommandPalette } from './components/CommandPalette'
 import {
   ErrorBoundary,
@@ -25,7 +26,7 @@ import {
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
-  $preferredWorkspaceCwd,
+  $preferredWorkspaceCwd, $securityPolicy,
   createTab, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast,
 } from './store'
@@ -36,11 +37,23 @@ import { WorkflowsPanel } from './components/WorkflowsPanel'
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, openTab, sendPrompt, setCurrentModel,
-  startSession, workspaceCwd,
+  startSession, workspaceCwd, getSecurityPolicy,
 } from './bridge'
 import { generateId } from './lib/generateId'
 import { removeUserMessageByPromptId } from './lib/sessionTranscript'
 import { handleSessionEvent } from './lib/sessionEvents'
+import { policyFromDto } from './lib/executionPolicy'
+
+/** 独立订阅，避免顶栏切 Tab 时整棵 DesktopApp（侧栏+消息区）跟着重绘 */
+function WindowTitleSync() {
+  const activeId = useStore($activeTabId)
+  const tabs = useStore($tabs)
+  useEffect(() => {
+    const t = tabs.find((tab) => tab.id === activeId)
+    syncWindowTitle(t?.title || '')
+  }, [activeId, tabs])
+  return null
+}
 
 export default function App() {
   // 浏览器直接打开 Vite 地址时没有 Tauri IPC，整页拦截并提示正确启动方式
@@ -70,36 +83,31 @@ function DesktopApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // 窗口系统标题跟随活跃 Tab 标题（任务栏 / Alt-Tab）
-  const winActiveId = useStore($activeTabId)
-  const winTabs = useStore($tabs)
-  useEffect(() => {
-    const t = winTabs.find((t) => t.id === winActiveId)
-    syncWindowTitle(t?.title || '')
-  }, [winActiveId, winTabs])
-
   return (
     <div className="app-container">
+      <WindowTitleSync />
+      <WindowChrome />
       <ToastHost />
       <CommandPalette />
       <RewindPicker />
-      <ErrorBoundary name="侧栏">
-        <AppSidebar />
-      </ErrorBoundary>
-      <ErrorBoundary
-        name="主界面"
-        fallback={(error, reset) => (
-          <MainViewportErrorFallback error={error} onReset={reset} />
-        )}
-      >
-        <div className="main-viewport">
-          <TabBar />
-          <AppError />
-          <AppMainBody />
-          <SettingsModal />
-        </div>
-      </ErrorBoundary>
-      <RightPanel />
+      <div className="app-body">
+        <ErrorBoundary name="侧栏">
+          <AppSidebar />
+        </ErrorBoundary>
+        <ErrorBoundary
+          name="主界面"
+          fallback={(error, reset) => (
+            <MainViewportErrorFallback error={error} onReset={reset} />
+          )}
+        >
+          <div className="main-viewport">
+            <AppError />
+            <AppMainBody />
+            <SettingsModal />
+          </div>
+        </ErrorBoundary>
+        <RightPanel />
+      </div>
     </div>
   )
 }
@@ -176,6 +184,11 @@ async function bootstrap() {
     $settingsDefaultModelId.set(configDefault)
     // 主工作区：侧栏置顶/展开用；与「打开历史会话后的 Tab cwd」解耦
     if (cwd) $preferredWorkspaceCwd.set(cwd)
+    try {
+      $securityPolicy.set(policyFromDto(await getSecurityPolicy(cwd)))
+    } catch {
+      /* 策略缺省为审批模式 */
+    }
     const chats = await listSessions(cwd, 80)
     $chats.set(chats.map(c => ({ id: c.id, title: c.title, cwd: c.cwd, updatedAt: c.updated_at })))
     const wsSet = new Set(chats.map(c => c.cwd))
@@ -220,7 +233,18 @@ function AppSidebar() {
 function AppError() {
   const err = useStore($error)
   if (!err) return null
-  return <div className="banner error">{err}</div>
+  return (
+    <div className="app-error-bar" role="alert">
+      <span className="app-error-text">{err}</span>
+      <button
+        type="button"
+        className="app-error-dismiss"
+        onClick={() => patchActiveTab({ error: '' })}
+      >
+        关闭
+      </button>
+    </div>
+  )
 }
 
 /** 普通对话 vs MCP / 工具等专用面板 */
@@ -250,6 +274,7 @@ function AppMainBody() {
       </ErrorBoundary>
       <AppUserQuestion />
       <AppPermission />
+      <SandboxBanner />
       <AppComposer />
     </>
   )
@@ -379,6 +404,11 @@ function AppComposer() {
       $preferredWorkspaceCwd.set(applied)
       patchActiveTab({ cwd: applied, phase: 'restarting' })
       $workspaceOptions.set([...new Set([...$workspaceOptions.get(), applied])])
+      try {
+        $securityPolicy.set(policyFromDto(await getSecurityPolicy(applied)))
+      } catch {
+        /* 沿用当前策略 */
+      }
       await restartSession($activeTabId.get(), applied)
       patchActiveTab({ phase: 'ready', status: 'idle' })
     } catch (e) {

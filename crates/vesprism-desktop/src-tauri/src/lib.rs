@@ -1,4 +1,5 @@
 mod commands;
+mod sandbox;
 mod session_index;
 mod state;
 
@@ -94,6 +95,8 @@ pub fn run() {
                 tabs,
                 supervisor_tx,
                 workspace_cwd_override: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                sandbox_tabs: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                sandbox_binds: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             });
 
             // 索引启动兜底：一次性全量重建，之后由 TurnEnded 增量 upsert 维护，list_sessions 不再反应式重建。
@@ -112,6 +115,11 @@ pub fn run() {
             commands::restart_tab,
             commands::workspace_cwd,
             commands::set_workspace_cwd,
+            commands::get_security_policy,
+            commands::set_security_policy,
+            commands::enable_tab_sandbox,
+            commands::get_sandbox_status,
+            commands::sync_sandbox_to_origin,
             commands::start_session,
             commands::send_prompt,
             commands::cancel_turn,

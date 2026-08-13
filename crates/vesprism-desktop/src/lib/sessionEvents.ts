@@ -8,6 +8,8 @@ import {
   $models,
   $settingsDefaultModelId,
   $workspaceCwd,
+  $securityPolicy,
+  $sessionPolicyOverride,
   findTabBySessionId,
   getTabState,
   hasTab,
@@ -27,7 +29,9 @@ import {
   isSessionAllowed,
   permissionSignature,
   pickAllowStrict,
+  pickDeny,
 } from './permissionMemory'
+import { evaluatePermission } from './executionPolicy'
 
 export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) {
   // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
@@ -74,9 +78,41 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           summary: parsed.summary,
           securityFindings: ev.security_findings ?? [],
         }
-        // 记忆命中（本次会话/总是允许）→ 自动放行，不弹审批条。
-        // 用严格版 pickAllow：找不到明确「允许」选项（如只有拒绝项）就不自动放行
         const sig = permissionSignature(req)
+        const base = $securityPolicy.get()
+        const override = $sessionPolicyOverride.get()
+        const policy = override ? { ...base, executionPolicy: override } : base
+        const cwd =
+          getTabState(tabId)?.cwd || $workspaceCwd.get() || policy.cwd
+        const decision = evaluatePermission(
+          { command: req.command, kindLabel: req.kindLabel },
+          { ...policy, cwd },
+        )
+        if (decision.action === 'deny') {
+          const deny = pickDeny(req.options)
+          if (deny) {
+            void respondPermission(tabId, Number(ev.request_id), deny.id).catch((e) => {
+              console.warn('[perm] 策略自动拒绝失败:', e)
+              patchTab(tabId, { permission: req })
+            })
+            pushToast(decision.reason, 'error')
+            patchTab(tabId, { permission: null })
+            break
+          }
+        }
+        if (decision.action === 'allow' || decision.action === 'sandbox') {
+          const allow = pickAllowStrict(req.options)
+          if (allow) {
+            void respondPermission(tabId, Number(ev.request_id), allow.id).catch((e) => {
+              console.warn('[perm] 策略自动放行失败:', e)
+              patchTab(tabId, { permission: req })
+            })
+            pushToast(decision.reason, decision.action === 'sandbox' ? 'info' : 'success')
+            patchTab(tabId, { permission: null })
+            break
+          }
+        }
+        // 记忆命中（本次会话/总是允许）→ 自动放行，不弹审批条。
         const sessionHit = isSessionAllowed(tabId, sig)
         const alwaysHit = isAlwaysAllowed(sig)
         if (sessionHit || alwaysHit) {
@@ -247,6 +283,15 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     case 'tab_failed':
       console.warn(`[tab] ${ev.tab_id} 连续崩溃 ${ev.attempts ?? '?'} 次，标记 Failed，等待手动重启`)
       patchTab(tabId, { phase: 'failed' })
+      break
+    case 'sandbox_activated':
+      patchTab(tabId, {
+        sandboxCwd: ev.sandbox_cwd || '',
+        sandboxOrigin: ev.origin_cwd || '',
+      })
+      break
+    case 'sandbox_deactivated':
+      patchTab(tabId, { sandboxCwd: '', sandboxOrigin: '' })
       break
     case 'session_id_changed':
       // 只更新引擎 sessionId；chatId 保留侧栏历史 id，避免 findTabBySessionId 对不上、重复开 Tab
