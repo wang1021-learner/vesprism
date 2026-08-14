@@ -1654,6 +1654,8 @@ impl GrokSession {
         let params = xai_grok_shell::extensions::task::KillTaskRequest {
             session_id: self.session_id.to_string(),
             task_id: task_id.to_string(),
+            // Desktop `[×]` is a single-task UI kill, not session teardown.
+            source: xai_grok_shell::extensions::task::TaskKillSource::ClientUi,
         };
         let raw = serde_json::value::to_raw_value(&params)
             .map_err(|e| anyhow::anyhow!("序列化 kill_task 参数失败: {e}"))?;
