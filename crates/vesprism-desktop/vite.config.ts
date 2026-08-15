@@ -30,7 +30,8 @@ export default defineConfig({
               test: /node_modules[\\/](mermaid|cytoscape|dagre|khroma|elkjs|d3|d3-[^\\/]+|@mermaid-js)[\\/]/
             },
             { name: 'shiki', test: /node_modules[\\/](shiki|@shikijs|react-shiki|@streamdown[\\/]code|oniguruma-to-es|oniguruma-parser|regex(-[^\\/]+)?)[\\/]/ },
-            { name: 'katex', test: /node_modules[\\/]katex[\\/]/ }
+            { name: 'katex', test: /node_modules[\\/]katex[\\/]/ },
+            { name: 'xyflow', test: /node_modules[\\/]@xyflow[\\/]/ }
           ]
         }
       }
