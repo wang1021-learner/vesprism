@@ -737,9 +737,18 @@ pub(super) fn available_commands(
         .meta(Some(meta_map))
     }));
     commands.extend(catalog.workflows.iter().map(|workflow| {
+        // jike: 把 .flow.yaml 契约透出到 commands/list，桌面/旧客户端可忽略未知键
         let meta = serde_json::json!({
             "workflowSource": workflow.source,
             "workflowPath": workflow.path,
+            "workflowId": workflow.id,
+            "version": workflow.version,
+            "mountable": workflow.mountable,
+            "inputSchema": workflow.input_schema,
+            "outputSchema": workflow.output_schema,
+            "dependencies": workflow.dependencies,
+            "missingDependencies": workflow.missing_dependencies,
+            "contractError": workflow.contract_error,
         })
         .as_object()
         .cloned();

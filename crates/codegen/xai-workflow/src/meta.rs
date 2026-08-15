@@ -148,6 +148,11 @@ fn validate_len(field: &str, value: &str, max: usize) -> Result<(), MetaError> {
     Ok(())
 }
 
+/// Shared with `.flow.yaml` ids / `flows:` 挂载名。
+pub fn is_valid_workflow_name(name: &str) -> bool {
+    valid_workflow_name(name)
+}
+
 fn valid_workflow_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     !bytes.is_empty()

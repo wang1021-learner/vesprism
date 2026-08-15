@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod flow_contract;
 pub mod host;
 pub mod journal;
 pub mod meta;
@@ -37,7 +38,12 @@ pub(crate) fn with_rhai_hint(msg: String) -> String {
 pub use engine::{WorkflowRunParams, run_workflow};
 pub use host::{AgentOpts, AgentResult, BudgetState, HostError, WorkflowHostRequest};
 pub use journal::{Journal, JournalEntry, JournalError};
-pub use meta::{MetaError, PhaseMeta, WorkflowMeta, extract_meta};
+pub use flow_contract::{
+    FlowContract, FlowContractError, load_flow_contract, parse_flow_contract, sidecar_path,
+};
+pub use meta::{
+    MetaError, PhaseMeta, WorkflowMeta, extract_meta, is_valid_workflow_name,
+};
 pub use run::{PauseKind, WorkflowOutcome};
 pub use validate::{
     ValidationError, ValidationReport, validate_script, validate_script_with_agent_budget,

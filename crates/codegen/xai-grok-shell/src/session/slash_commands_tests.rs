@@ -1688,6 +1688,14 @@ fn listing(name: &str) -> crate::session::workflow::registry::WorkflowListing {
         when_to_use: None,
         source: "project",
         path: Some(format!(".grok/workflows/{name}.rhai")),
+        id: None,
+        version: None,
+        input_schema: None,
+        output_schema: None,
+        dependencies: Vec::new(),
+        mountable: false,
+        contract_error: None,
+        missing_dependencies: Vec::new(),
     }
 }
 

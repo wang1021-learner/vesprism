@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
@@ -74,6 +74,10 @@ struct RegistryEntry {
     source: WorkflowSource,
     source_label: &'static str,
     path: Option<PathBuf>,
+    // jike: sidecar 契约；无/非法都不踢出 list，只影响 mountable
+    contract: Option<xai_workflow::FlowContract>,
+    contract_error: Option<String>,
+    missing_dependencies: Vec<String>,
 }
 
 fn builtin_meta_cache() -> &'static [(WorkflowMeta, &'static BuiltinWorkflow)] {
@@ -104,6 +108,9 @@ fn cached_builtin_entries() -> Vec<RegistryEntry> {
             source: WorkflowSource::Builtin,
             source_label: "builtin",
             path: None,
+            contract: None,
+            contract_error: None,
+            missing_dependencies: Vec::new(),
         })
         .collect()
 }
@@ -131,6 +138,8 @@ impl WorkflowRegistry {
             merge_scope(&mut entries, scoped);
         }
 
+        annotate_missing_dependencies(&mut entries);
+
         Self {
             entries,
             duplicate_names,
@@ -156,19 +165,31 @@ impl WorkflowRegistry {
     }
 
     pub(crate) fn list(&self) -> Vec<WorkflowListing> {
-        self.entries
-            .iter()
-            .map(|entry| WorkflowListing {
-                name: entry.meta.name.clone(),
-                description: entry.meta.description.clone(),
-                when_to_use: entry.meta.when_to_use.clone(),
-                source: entry.source_label,
-                path: entry
-                    .path
-                    .as_ref()
-                    .map(|path| path.to_string_lossy().into_owned()),
-            })
-            .collect()
+        self.entries.iter().map(listing_from_entry).collect()
+    }
+
+    /// 可挂载契约。裸 rhai / 非法 sidecar / 缺依赖一律 Err，供 PR-2 `flows:` 消费。
+    pub(crate) fn mountable_contract(
+        &self,
+        id: &str,
+    ) -> Result<&xai_workflow::FlowContract, MountContractError> {
+        let entry = self.resolve_entry(id).map_err(|e| MountContractError::Resolve(e.to_string()))?;
+        if let Some(err) = &entry.contract_error {
+            return Err(MountContractError::InvalidContract(err.clone()));
+        }
+        let Some(contract) = entry.contract.as_ref() else {
+            return Err(MountContractError::NotMountable {
+                id: id.to_string(),
+                reason: "bare rhai has no .flow.yaml contract".into(),
+            });
+        };
+        if !entry.missing_dependencies.is_empty() {
+            return Err(MountContractError::MissingDependencies {
+                id: id.to_string(),
+                missing: entry.missing_dependencies.clone(),
+            });
+        }
+        Ok(contract)
     }
 }
 
@@ -235,12 +256,16 @@ fn scan_directory(dir: &Path, source_label: &'static str) -> Vec<RegistryEntry> 
         .filter_map(|path| {
             let script = read_trusted_source(&path).ok()?;
             let meta = parse_workflow(&script, Some(&path)).ok()?;
+            let (contract, contract_error) = load_sidecar_for(&path, &meta.name);
             Some(RegistryEntry {
                 meta,
                 script,
                 source: WorkflowSource::File(path.clone()),
                 source_label,
                 path: Some(path),
+                contract,
+                contract_error,
+                missing_dependencies: Vec::new(),
             })
         })
         .collect()
@@ -605,6 +630,105 @@ pub(crate) struct WorkflowListing {
     pub source: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    // jike: .flow.yaml 契约投影；无 sidecar 时 id/version/schema 为空且 mountable=false
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+    pub mountable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_error: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_dependencies: Vec<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum MountContractError {
+    #[error("{0}")]
+    Resolve(String),
+    #[error("flow '{id}' is not mountable: {reason}")]
+    NotMountable { id: String, reason: String },
+    #[error("flow contract is invalid: {0}")]
+    InvalidContract(String),
+    #[error("flow '{id}' is missing dependencies: {}", .missing.join(", "))]
+    MissingDependencies { id: String, missing: Vec<String> },
+}
+
+fn listing_from_entry(entry: &RegistryEntry) -> WorkflowListing {
+    let mountable = entry.contract.is_some()
+        && entry.contract_error.is_none()
+        && entry.missing_dependencies.is_empty();
+    let display_description = entry
+        .contract
+        .as_ref()
+        .map(|c| c.description.clone())
+        .unwrap_or_else(|| entry.meta.description.clone());
+    WorkflowListing {
+        name: entry.meta.name.clone(),
+        description: display_description,
+        when_to_use: entry.meta.when_to_use.clone(),
+        source: entry.source_label,
+        path: entry
+            .path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        id: entry.contract.as_ref().map(|c| c.id.clone()),
+        version: entry.contract.as_ref().map(|c| c.version.clone()),
+        input_schema: entry.contract.as_ref().map(|c| c.input_schema.clone()),
+        output_schema: entry.contract.as_ref().map(|c| c.output_schema.clone()),
+        dependencies: entry
+            .contract
+            .as_ref()
+            .map(|c| c.dependencies.clone())
+            .unwrap_or_default(),
+        mountable,
+        contract_error: entry.contract_error.clone(),
+        missing_dependencies: entry.missing_dependencies.clone(),
+    }
+}
+
+fn load_sidecar_for(
+    rhai_path: &Path,
+    expected_id: &str,
+) -> (Option<xai_workflow::FlowContract>, Option<String>) {
+    match xai_workflow::load_flow_contract(rhai_path, expected_id) {
+        Ok(None) => (None, None),
+        Ok(Some(contract)) => {
+            if let Err(e) =
+                super::schema_contract::compile_contract_schema(&contract.input_schema)
+            {
+                return (None, Some(format!("input_schema: {e}")));
+            }
+            if let Err(e) =
+                super::schema_contract::compile_contract_schema(&contract.output_schema)
+            {
+                return (None, Some(format!("output_schema: {e}")));
+            }
+            (Some(contract), None)
+        }
+        Err(e) => (None, Some(e.to_string())),
+    }
+}
+
+fn annotate_missing_dependencies(entries: &mut [RegistryEntry]) {
+    let known: HashSet<String> = entries.iter().map(|e| e.meta.name.clone()).collect();
+    for entry in entries.iter_mut() {
+        let Some(contract) = entry.contract.as_ref() else {
+            continue;
+        };
+        entry.missing_dependencies = contract
+            .dependencies
+            .iter()
+            .filter(|dep| !known.contains(*dep))
+            .cloned()
+            .collect();
+    }
 }
 
 pub(crate) fn list_workflows(session_cwd: Option<&Path>) -> Vec<WorkflowListing> {
@@ -625,6 +749,34 @@ mod tests {
 
     fn script(name: &str) -> String {
         format!("let meta = #{{ name: \"{name}\", description: \"d\" }};\ncomplete(\"ok\");")
+    }
+
+    fn test_entry(
+        name: &str,
+        source_label: &'static str,
+        source: WorkflowSource,
+        path: Option<PathBuf>,
+    ) -> RegistryEntry {
+        RegistryEntry {
+            meta: extract_meta(&script(name)).unwrap(),
+            script: script(name),
+            source,
+            source_label,
+            path,
+            contract: None,
+            contract_error: None,
+            missing_dependencies: Vec::new(),
+        }
+    }
+
+    fn write_contract(dir: &Path, id: &str, extra: &str) {
+        std::fs::write(
+            dir.join(format!("{id}.flow.yaml")),
+            format!(
+                "id: {id}\nname: {id}\ndescription: agent-facing {id}\nversion: \"2\"\ninput_schema:\n  type: object\noutput_schema:\n  type: object\n{extra}"
+            ),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -719,22 +871,15 @@ mod tests {
 
     #[test]
     fn lower_scope_duplicates_are_omitted_from_list_and_resolve() {
-        let mut entries = vec![RegistryEntry {
-            meta: extract_meta(&script("same")).unwrap(),
-            script: script("same"),
-            source: WorkflowSource::Builtin,
-            source_label: "builtin",
-            path: None,
-        }];
+        let mut entries = vec![test_entry("same", "builtin", WorkflowSource::Builtin, None)];
         merge_scope(
             &mut entries,
-            vec![RegistryEntry {
-                meta: extract_meta(&script("same")).unwrap(),
-                script: script("same"),
-                source: WorkflowSource::File(PathBuf::from("project/same.rhai")),
-                source_label: "project",
-                path: Some(PathBuf::from("project/same.rhai")),
-            }],
+            vec![test_entry(
+                "same",
+                "project",
+                WorkflowSource::File(PathBuf::from("project/same.rhai")),
+                Some(PathBuf::from("project/same.rhai")),
+            )],
         );
         let registry = WorkflowRegistry {
             entries,
@@ -751,20 +896,18 @@ mod tests {
     #[test]
     fn duplicate_same_scope_names_are_rejected() {
         let mut entries = vec![
-            RegistryEntry {
-                meta: extract_meta(&script("dup")).unwrap(),
-                script: script("dup"),
-                source: WorkflowSource::File(PathBuf::from("a/dup.rhai")),
-                source_label: "project",
-                path: Some(PathBuf::from("a/dup.rhai")),
-            },
-            RegistryEntry {
-                meta: extract_meta(&script("dup")).unwrap(),
-                script: script("dup"),
-                source: WorkflowSource::File(PathBuf::from("b/dup.rhai")),
-                source_label: "project",
-                path: Some(PathBuf::from("b/dup.rhai")),
-            },
+            test_entry(
+                "dup",
+                "project",
+                WorkflowSource::File(PathBuf::from("a/dup.rhai")),
+                Some(PathBuf::from("a/dup.rhai")),
+            ),
+            test_entry(
+                "dup",
+                "project",
+                WorkflowSource::File(PathBuf::from("b/dup.rhai")),
+                Some(PathBuf::from("b/dup.rhai")),
+            ),
         ];
         let mut duplicate_names = BTreeMap::new();
         reject_same_scope_duplicates(&mut entries, "project", &mut duplicate_names);
@@ -869,5 +1012,135 @@ mod tests {
             Err(ResolveError::UntrustedPath { .. })
         ));
         assert!(!attacker.join("safe.rhai").exists());
+    }
+
+    #[test]
+    fn sidecar_contract_lists_all_fields_and_is_mountable() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        crate::agent::folder_trust::record_for_test(dir.path(), true);
+        let wf = dir.path().join(".grok/workflows");
+        std::fs::create_dir_all(&wf).unwrap();
+        std::fs::write(wf.join("refund.rhai"), script("refund")).unwrap();
+        write_contract(&wf, "refund", "");
+
+        let registry = WorkflowRegistry::scan(Some(dir.path()));
+        let listing = registry
+            .list()
+            .into_iter()
+            .find(|l| l.name == "refund")
+            .expect("refund listed");
+        assert_eq!(listing.id.as_deref(), Some("refund"));
+        assert_eq!(listing.version.as_deref(), Some("2"));
+        assert_eq!(listing.description, "agent-facing refund");
+        assert_eq!(listing.input_schema.as_ref().unwrap()["type"], "object");
+        assert_eq!(listing.output_schema.as_ref().unwrap()["type"], "object");
+        assert!(listing.mountable);
+        assert!(listing.contract_error.is_none());
+        assert!(listing.missing_dependencies.is_empty());
+        assert_eq!(
+            registry.mountable_contract("refund").unwrap().id,
+            "refund"
+        );
+    }
+
+    #[test]
+    fn bare_rhai_lists_but_is_not_mountable() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        crate::agent::folder_trust::record_for_test(dir.path(), true);
+        let wf = dir.path().join(".grok/workflows");
+        std::fs::create_dir_all(&wf).unwrap();
+        std::fs::write(wf.join("bare.rhai"), script("bare")).unwrap();
+
+        let registry = WorkflowRegistry::scan(Some(dir.path()));
+        let listing = registry
+            .list()
+            .into_iter()
+            .find(|l| l.name == "bare")
+            .expect("bare listed");
+        assert!(listing.id.is_none());
+        assert!(listing.version.is_none());
+        assert!(!listing.mountable);
+        assert!(matches!(
+            registry.mountable_contract("bare"),
+            Err(MountContractError::NotMountable { .. })
+        ));
+        assert!(registry.resolve_by_name("bare").is_ok());
+    }
+
+    #[test]
+    fn invalid_sidecar_stays_listed_but_not_mountable() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        crate::agent::folder_trust::record_for_test(dir.path(), true);
+        let wf = dir.path().join(".grok/workflows");
+        std::fs::create_dir_all(&wf).unwrap();
+        std::fs::write(wf.join("bad.rhai"), script("bad")).unwrap();
+        std::fs::write(
+            wf.join("bad.flow.yaml"),
+            "id: bad\nname: bad\ndescription: \"\"\nversion: \"1\"\ninput_schema: {type: object}\noutput_schema: {type: object}\n",
+        )
+        .unwrap();
+
+        let registry = WorkflowRegistry::scan(Some(dir.path()));
+        let listing = registry
+            .list()
+            .into_iter()
+            .find(|l| l.name == "bad")
+            .expect("bad listed");
+        assert!(!listing.mountable);
+        assert!(listing.contract_error.as_ref().unwrap().contains("description"));
+        assert!(matches!(
+            registry.mountable_contract("bad"),
+            Err(MountContractError::InvalidContract(_))
+        ));
+    }
+
+    #[test]
+    fn missing_dependency_is_marked_and_not_mountable() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        crate::agent::folder_trust::record_for_test(dir.path(), true);
+        let wf = dir.path().join(".grok/workflows");
+        std::fs::create_dir_all(&wf).unwrap();
+        std::fs::write(wf.join("parent.rhai"), script("parent")).unwrap();
+        write_contract(&wf, "parent", "dependencies:\n  - missing-child\n");
+
+        let registry = WorkflowRegistry::scan(Some(dir.path()));
+        let listing = registry
+            .list()
+            .into_iter()
+            .find(|l| l.name == "parent")
+            .unwrap();
+        assert_eq!(listing.missing_dependencies, vec!["missing-child"]);
+        assert!(!listing.mountable);
+        assert!(matches!(
+            registry.mountable_contract("parent"),
+            Err(MountContractError::MissingDependencies { .. })
+        ));
+    }
+
+    #[test]
+    fn present_dependency_keeps_parent_mountable() {
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+        crate::agent::folder_trust::record_for_test(dir.path(), true);
+        let wf = dir.path().join(".grok/workflows");
+        std::fs::create_dir_all(&wf).unwrap();
+        std::fs::write(wf.join("child.rhai"), script("child")).unwrap();
+        std::fs::write(wf.join("parent.rhai"), script("parent")).unwrap();
+        write_contract(&wf, "child", "");
+        write_contract(&wf, "parent", "dependencies:\n  - child\n");
+
+        let registry = WorkflowRegistry::scan(Some(dir.path()));
+        let parent = registry
+            .list()
+            .into_iter()
+            .find(|l| l.name == "parent")
+            .unwrap();
+        assert!(parent.missing_dependencies.is_empty());
+        assert!(parent.mountable);
+        assert!(registry.mountable_contract("parent").is_ok());
     }
 }

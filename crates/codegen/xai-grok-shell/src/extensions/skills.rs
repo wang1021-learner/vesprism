@@ -414,6 +414,7 @@ pub async fn handle(
             super::to_ext_response(Ok(SkillsListResponse { skills }))
         }
 
+        // jike: list 项现含 id/version/schemas/mountable（.flow.yaml）；裸 rhai 字段空
         "x.ai/workflows/list" => {
             let req: WorkflowsListRequest = serde_json::from_str(args.params.get())?;
             let Some(handle) = agent.session_handle_waiting_for_load(&req.session_id).await else {
