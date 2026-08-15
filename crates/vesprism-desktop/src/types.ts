@@ -66,6 +66,26 @@ export interface PermissionOption {
   kind?: string // allow | deny | other
 }
 
+/** 客户端终端运行态（ACP 终端能力；key=terminalId） */
+export interface TerminalRuntime {
+  terminalId: string
+  /** 启动命令（terminal_opened 携带） */
+  command: string
+  /** 累计输出（卡片只留末尾 64KB） */
+  text: string
+  truncated: boolean
+  exitCode?: number | null
+  signal?: string | null
+  /** 已被 kill（超时/中断），不是命令自己非零退出 */
+  killed?: boolean
+  /** 已退出 */
+  exited: boolean
+  /** 打开时间，用于只留最近 5 张 */
+  openedAt: number
+  /** 跑完默认折起；运行中强制展开 */
+  expanded: boolean
+}
+
 export interface PermissionRequest {
   id: string
   /** 原始 description（调试 / 兜底） */

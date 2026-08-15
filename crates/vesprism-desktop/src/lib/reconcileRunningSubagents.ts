@@ -3,7 +3,7 @@
  * （官方 x.ai/subagent/list_running），恢复到父 tab 的子任务行。
  * 场景：桌面端重启 / 会话重新加载时引擎侧子 agent 仍在跑。
  */
-import { upsertSubagent } from '../store'
+import { trackSubagentRunning, upsertSubagent } from '../store'
 import { listRunningSubagents } from '../bridge'
 
 export async function reconcileRunningSubagents(tabId: string): Promise<void> {
@@ -26,6 +26,8 @@ export async function reconcileRunningSubagents(tabId: string): Promise<void> {
         toolsUsed: s.toolsUsed,
         errorCount: s.errorCount,
       })
+      // 侧栏运行数徽标聚合（幂等）。
+      trackSubagentRunning(s.subagentId, s.parentSessionId)
     }
   } catch {
     /* 引擎不支持 / 会话未就绪时静默，不打扰打开历史流程 */

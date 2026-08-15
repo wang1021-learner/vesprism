@@ -63,8 +63,8 @@ describe('权限审批事件链路', () => {
     const st = getTabState('tab-1')
     const sig = permissionSignature(st!.permission!)
     addSessionAllowed('tab-1', sig)
-    // 换一条命令
-    handleSessionEvent(permEvent(2, '类型：读取文件\n目标：\nsrc/App.tsx'))
+    // 换一条命令（非只读/非安全 git：安全只读命令按设计自动放行，不走记忆路径）
+    handleSessionEvent(permEvent(2, '类型：运行终端命令\n命令：\nnpm run deploy'))
     expect(respondPermission).not.toHaveBeenCalled()
     expect(getTabState('tab-1')?.permission).not.toBeNull()
   })

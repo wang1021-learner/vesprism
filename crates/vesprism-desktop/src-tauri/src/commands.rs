@@ -671,6 +671,78 @@ pub async fn list_workflows(
         .map_err(|_| "会话线程无响应".to_string())?
 }
 
+async fn session_cmd_json(
+    tab_id: &str,
+    state: &State<'_, AppState>,
+    make: impl FnOnce(oneshot::Sender<Result<serde_json::Value, String>>) -> ActorCommand,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(make(reply_tx))
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
+}
+
+#[tauri::command]
+pub async fn list_skills(
+    tab_id: String,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::ListSkills { cwd, reply })
+        .await
+}
+
+#[tauri::command]
+pub async fn add_skill(
+    tab_id: String,
+    path: String,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::AddSkill { path, cwd, reply })
+        .await
+}
+
+#[tauri::command]
+pub async fn remove_skill(
+    tab_id: String,
+    path: String,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::RemoveSkill {
+        path,
+        cwd,
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn toggle_skill(
+    tab_id: String,
+    name: String,
+    enabled: bool,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::ToggleSkill {
+        name,
+        enabled,
+        cwd,
+        reply,
+    })
+    .await
+}
+
 /// 桌面隔离目录（与 `GROK_HOME` / config.toml 同一位置）。
 pub(crate) fn desktop_home_dir() -> PathBuf {
     if let Ok(home) = std::env::var("GROK_HOME") {
@@ -1087,6 +1159,40 @@ pub struct ModelEntryDto {
 
 fn default_true() -> bool {
     true
+}
+
+/// Official DeepSeek host or a `deepseek-*` model id. Other vendors must not
+/// inherit DeepSeek-only effort menus.
+fn looks_like_deepseek(model: &str, base_url: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    let url = base_url.trim().to_ascii_lowercase();
+    model.starts_with("deepseek-") || url.contains("api.deepseek.com")
+}
+
+fn reasoning_efforts_for(model: &str, base_url: &str) -> &'static [&'static str] {
+    if looks_like_deepseek(model, base_url) {
+        // Official Chat Completions: low / high / max (medium/xhigh map to high).
+        &["low", "high", "max"]
+    } else {
+        &[
+            "none", "minimal", "low", "medium", "high", "xhigh", "max",
+        ]
+    }
+}
+
+/// DeepSeek's documented default is `high`. Values that are not in its
+/// official set are remapped so the saved default stays on the written menu.
+fn default_reasoning_effort_for(model: &str, base_url: &str, normalized: &str) -> String {
+    if looks_like_deepseek(model, base_url) {
+        match normalized {
+            "low" | "high" | "max" => normalized.to_string(),
+            _ => "high".to_string(),
+        }
+    } else if normalized.is_empty() {
+        "medium".to_string()
+    } else {
+        normalized.to_string()
+    }
 }
 
 fn normalize_reasoning_effort(s: &str) -> Result<String, String> {
@@ -1540,25 +1646,17 @@ fn upsert_model_entry(
         entry_tbl.insert("supports_reasoning_effort".into(), toml::Value::Boolean(true));
         let effort = normalize_reasoning_effort(&entry.reasoning_effort)
             .unwrap_or_default();
-        let effort = if effort.is_empty() {
-            "medium".to_string()
-        } else {
-            effort
-        };
+        let effort = default_reasoning_effort_for(&entry.model, &entry.base_url, &effort);
         entry_tbl.insert(
             "reasoning_effort".into(),
-            toml::Value::String(effort.clone()),
+            toml::Value::String(effort),
         );
-        // 标准档位菜单（官方支持 bare 字符串数组）；xhigh/max 是官方
-        // ReasoningEffort 枚举里两个不同的变体，均需列出。
-        let efforts = vec![
-            "none", "minimal", "low", "medium", "high", "xhigh", "max",
-        ]
-        .into_iter()
-        .map(|s| toml::Value::String(s.into()))
-        .collect();
+        // 通用模型写满七档；DeepSeek 官方只认 low/high/max，避免把 none/minimal 写进菜单。
+        let efforts = reasoning_efforts_for(&entry.model, &entry.base_url)
+            .iter()
+            .map(|s| toml::Value::String((*s).into()))
+            .collect();
         entry_tbl.insert("reasoning_efforts".into(), toml::Value::Array(efforts));
-        let _ = effort;
     } else {
         entry_tbl.remove("supports_reasoning_effort");
         entry_tbl.remove("reasoning_effort");
@@ -2002,6 +2100,100 @@ pub async fn set_current_model(
     .await
 }
 
+// ── 组装单（半插件化 P0）──
+
+/// 解析并校验前端传来的组装单 JSON（严格模式：未知字段/坏规则报错）。
+fn parse_composition_json(value: serde_json::Value, source: &str) -> Result<grok_session::composition::Composition, String> {
+    let mut value = value;
+    // 旧草稿可能带已删除的 workflows.auto_run。
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("workflows");
+    }
+    let composition: grok_session::composition::Composition =
+        serde_json::from_value(value).map_err(|e| format!("解析组装单失败（{source}）: {e}"))?;
+    composition
+        .validate()
+        .map_err(|e| format!("组装单校验失败（{source}）: {e:#}"))?;
+    Ok(composition)
+}
+
+/// 应用组装单到指定 tab：权限策略 + 工具停用 + 模型全部热更新；
+/// `session_id` 有值时把覆盖持久化到 thread_compositions 表（重启后仍可读）。
+#[tauri::command]
+pub async fn apply_composition(
+    tab_id: String,
+    session_id: Option<String>,
+    composition: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let composition = parse_composition_json(composition, "apply_composition")?;
+    crate::flows::register_flows(&composition.flows)?;
+    if let Some(sid) = session_id.as_deref().filter(|s| !s.is_empty()) {
+        let json = serde_json::to_string(&composition)
+            .map_err(|e| format!("序列化组装单失败: {e}"))?;
+        crate::session_index::set_thread_composition(sid, &json)?;
+    }
+    send_cmd(&state, &tab_id, |reply| ActorCommand::ApplyComposition {
+        composition,
+        reply,
+    })
+    .await
+}
+
+/// 读取指定会话当前生效的组装单（会话覆盖优先，其次工作区 `.grok/agent.yml`，
+/// 最后内置默认）。返回 camelCase JSON 供面板编辑。
+#[tauri::command]
+pub async fn get_composition(
+    session_id: Option<String>,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let _ = &state;
+    let overlay = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(sid) => crate::session_index::get_thread_composition(sid)?
+            .map(|json| {
+                let mut v: serde_json::Value = serde_json::from_str(&json)?;
+                if let Some(obj) = v.as_object_mut() {
+                    obj.remove("workflows");
+                }
+                serde_json::from_value(v)
+            })
+            .transpose()
+            .map_err(|e| format!("解析会话组装单失败: {e}"))?,
+        None => None,
+    };
+    let composition = match overlay {
+        Some(c) => c,
+        None => {
+            let workspace = grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
+                .map_err(|e| format!("{e:#}"))?;
+            workspace.unwrap_or_default()
+        }
+    };
+    serde_json::to_value(&composition).map_err(|e| format!("序列化组装单失败: {e}"))
+}
+
+/// 保存用户级组装单到 `$GROK_HOME/compositions/<name>.yml`（YAML）。
+#[tauri::command]
+pub async fn save_composition(name: String, yaml: String, state: State<'_, AppState>) -> Result<(), String> {
+    let _ = &state;
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err(format!("组装单名无效: {name:?}"));
+    }
+    // 先解析校验再落盘（fail loud，避免坏文件覆盖好文件）。
+    let composition = grok_session::composition::parse_composition(&yaml, &format!("save_composition:{name}"))
+        .map_err(|e| format!("解析组装单失败: {e:#}"))?;
+    composition
+        .validate()
+        .map_err(|e| format!("组装单校验失败: {e:#}"))?;
+    let dir = desktop_home_dir().join("compositions");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建组装单目录失败: {e}"))?;
+    let path = dir.join(format!("{name}.yml"));
+    std::fs::write(&path, yaml.as_bytes()).map_err(|e| format!("写入组装单失败: {e}"))?;
+    Ok(())
+}
+
 // ── 文件树 ──
 
 #[derive(serde::Serialize)]
@@ -2071,11 +2263,57 @@ fn run_git(cwd: &std::path::Path, args: &[&str]) -> Result<std::process::Output,
         .map_err(|e| format!("执行 git 失败: {e}"))
 }
 
+fn tab_sender(
+    state: &AppState,
+    tab_id: &str,
+) -> Option<tokio::sync::mpsc::UnboundedSender<ActorCommand>> {
+    state.tabs.lock().ok()?.get(tab_id).cloned()
+}
+
 #[tauri::command]
 pub async fn file_working_diff(
     path: String,
+    tab_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<FileWorkingDiffDto, String> {
+    if let Some(tab_id) = tab_id.filter(|s| !s.is_empty()) {
+        if let Some(tx) = tab_sender(&state, &tab_id) {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if tx
+                .send(ActorCommand::GitFileDiff {
+                    path: path.clone(),
+                    reply: reply_tx,
+                })
+                .is_ok()
+            {
+                if let Ok(Ok(v)) = reply_rx.await {
+                    return Ok(FileWorkingDiffDto {
+                        path: v
+                            .get("path")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or(&path)
+                            .to_string(),
+                        old_text: v
+                            .get("old_text")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        new_text: v
+                            .get("new_text")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        status: v
+                            .get("status")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("modified")
+                            .to_string(),
+                        message: None,
+                    });
+                }
+            }
+        }
+    }
     let workspace_root = resolve_workspace_cwd(&state);
     tokio::task::spawn_blocking(move || collect_file_working_diff(&path, &workspace_root))
         .await
@@ -2298,8 +2536,38 @@ fn collect_workspace_change_metas(
 
 #[tauri::command]
 pub async fn workspace_changes(
+    tab_id: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<WorkspaceChangeDto>, String> {
+    if let Some(tab_id) = tab_id.filter(|s| !s.is_empty()) {
+        if let Some(tx) = tab_sender(&state, &tab_id) {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if tx
+                .send(ActorCommand::GitWorkspaceChanges { reply: reply_tx })
+                .is_ok()
+            {
+                if let Ok(Ok(rows)) = reply_rx.await {
+                    return Ok(rows
+                        .into_iter()
+                        .filter_map(|v| {
+                            let path = v.get("path")?.as_str()?.to_string();
+                            if path.is_empty() {
+                                return None;
+                            }
+                            Some(WorkspaceChangeDto {
+                                path,
+                                status: v
+                                    .get("status")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("modified")
+                                    .to_string(),
+                            })
+                        })
+                        .collect());
+                }
+            }
+        }
+    }
     let workspace_root = resolve_workspace_cwd(&state);
     tokio::task::spawn_blocking(move || collect_workspace_change_metas(&workspace_root))
         .await
@@ -2351,4 +2619,60 @@ pub async fn execute_rewind(
     reply_rx
         .await
         .map_err(|_| "会话线程无响应".to_string())?
+}
+
+#[cfg(test)]
+mod deepseek_preset_tests {
+    use super::{
+        default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for,
+    };
+
+    #[test]
+    fn detects_official_host_and_model_prefix() {
+        assert!(looks_like_deepseek(
+            "deepseek-v4-flash",
+            "https://api.example.com/v1"
+        ));
+        assert!(looks_like_deepseek(
+            "custom-slug",
+            "https://api.deepseek.com"
+        ));
+        assert!(!looks_like_deepseek(
+            "claude-sonnet-4-6",
+            "https://api.anthropic.com"
+        ));
+        assert!(!looks_like_deepseek("grok-4.5", "https://api.x.ai/v1"));
+    }
+
+    #[test]
+    fn deepseek_effort_menu_is_official_trio() {
+        assert_eq!(
+            reasoning_efforts_for("deepseek-v4-pro", "https://api.deepseek.com"),
+            &["low", "high", "max"]
+        );
+        assert_eq!(
+            reasoning_efforts_for("grok-4.5", "https://api.x.ai/v1").len(),
+            7
+        );
+    }
+
+    #[test]
+    fn deepseek_default_effort_stays_on_menu() {
+        assert_eq!(
+            default_reasoning_effort_for("deepseek-v4-flash", "https://api.deepseek.com", "medium"),
+            "high"
+        );
+        assert_eq!(
+            default_reasoning_effort_for("deepseek-v4-flash", "https://api.deepseek.com", "low"),
+            "low"
+        );
+        assert_eq!(
+            default_reasoning_effort_for("grok-4.5", "https://api.x.ai/v1", ""),
+            "medium"
+        );
+        assert_eq!(
+            default_reasoning_effort_for("grok-4.5", "https://api.x.ai/v1", "xhigh"),
+            "xhigh"
+        );
+    }
 }

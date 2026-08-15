@@ -20,6 +20,7 @@
 @import './styles/tools.css';
 @import './styles/skills.css';
 @import './styles/workflows.css';
+@import './styles/flow-canvas.css';
 @import './styles/settings.css';
 @import './styles/composer-extras.css';
 @import './styles/settings-fields.css';
@@ -28,6 +29,7 @@
 @import './styles/error-boundary.css';
 @import './styles/right-panel.css';
 @import './styles/tabbar.css';
+@import './styles/composition.css';
 @import './styles/rewind.css';
 
 /* JetBrains Mono — 内嵌代码字体（Apache-2.0），代码块/源码视图优先使用 */

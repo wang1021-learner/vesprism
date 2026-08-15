@@ -85,6 +85,11 @@ pub enum ActorCommand {
         reasoning_effort: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 应用组装单（半插件化 P0）：权限策略 + 工具停用 + 模型，全部热更新。
+    ApplyComposition {
+        composition: grok_session::composition::Composition,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// 从磁盘热重载模型列表（不重启会话）。
     ReloadModels {
         reply: oneshot::Sender<Result<(), String>>,
@@ -163,6 +168,33 @@ pub enum ActorCommand {
     },
     /// 列出自动化工作流（x.ai/workflows/list）
     ListWorkflows {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    GitWorkspaceChanges {
+        reply: oneshot::Sender<Result<Vec<serde_json::Value>, String>>,
+    },
+    GitFileDiff {
+        path: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    ListSkills {
+        cwd: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    AddSkill {
+        path: String,
+        cwd: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    RemoveSkill {
+        path: String,
+        cwd: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    ToggleSkill {
+        name: String,
+        enabled: bool,
+        cwd: String,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
 }
@@ -290,6 +322,36 @@ pub enum FrontendEvent {
         tool_call_id: String,
         mode: String,
         questions: Vec<UserQuestionItem>,
+    },
+    /// Goal 编排进度（官方 GoalUpdated 投影）。
+    GoalUpdated {
+        goal: grok_session::GoalInfoDto,
+    },
+    /// 工作流运行进度（官方 WorkflowUpdated 投影）。
+    WorkflowUpdated {
+        workflow: grok_session::WorkflowInfoDto,
+    },
+    /// 客户端终端流式输出（ACP 终端能力）。
+    TerminalUpdate {
+        terminal_id: String,
+        text: String,
+        truncated: bool,
+    },
+    /// 客户端终端进程退出。
+    TerminalExited {
+        terminal_id: String,
+        exit_code: Option<u32>,
+        signal: Option<String>,
+        killed: bool,
+    },
+    /// 客户端终端已创建（携带启动命令）。
+    TerminalOpened {
+        terminal_id: String,
+        command: String,
+    },
+    /// 引擎释放终端，前端应移除卡片。
+    TerminalReleased {
+        terminal_id: String,
     },
     /// 会话状态变更。
     StatusChanged { status: SessionStatus },
@@ -530,6 +592,20 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::ApplyComposition { composition, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.apply_composition(&composition).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("应用组装单失败: {e}")));
+                }
+            }
+        }
         ActorCommand::ReloadModels { reply } => {
             let Some(s) = session.as_ref() else {
                 // 无会话时无需 reload；配置已在磁盘，下次 start 会读到
@@ -755,6 +831,95 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::GitWorkspaceChanges { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.git_workspace_changes().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("git/status 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::GitFileDiff { path, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.git_file_diff(&path).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("git/diffs 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ListSkills { cwd, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.list_skills(&cwd).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("skills/list 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::AddSkill { path, cwd, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.add_skill(&path, &cwd).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("skills/add 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::RemoveSkill { path, cwd, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.remove_skill(&path, &cwd).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("skills/remove 失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::ToggleSkill {
+            name,
+            enabled,
+            cwd,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.toggle_skill(&name, enabled, &cwd).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("skills/toggle 失败: {e}")));
+                }
+            }
+        }
         ActorCommand::RespondPermission {
             request_id,
             option_id,
@@ -821,7 +986,7 @@ async fn handle_command(
             pending_permissions.clear();
 
             emit(app, tab_id, FrontendEvent::StatusChanged { status: SessionStatus::Initializing });
-            match GrokSession::resume(session_id, cwd, restore_code).await {
+            match GrokSession::resume(session_id, cwd.clone(), restore_code).await {
                 Ok(mut s) => {
                     *status_rx = Some(s.subscribe_status());
                     let sid = s.session_id();
@@ -837,6 +1002,7 @@ async fn handle_command(
                         true, /* skip_transcript */
                     )
                     .await;
+                    replay_composition_on_session(&s, &sid, &cwd).await;
                     *session = Some(s);
                     emit(app, tab_id, FrontendEvent::StatusChanged { status: SessionStatus::Idle });
                     emit(app, tab_id, FrontendEvent::SessionIdChanged { session_id: sid.clone() });
@@ -963,10 +1129,16 @@ async fn begin_fresh_session(
             status: SessionStatus::Initializing,
         },
     );
-    match GrokSession::start(cwd.clone()).await {
+    let seed_flows = grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
+        .ok()
+        .flatten()
+        .map(|c| c.flows)
+        .filter(|ids| !ids.is_empty());
+    match GrokSession::start_with_flows(cwd.clone(), seed_flows.unwrap_or_default()).await {
         Ok(s) => {
             *status_rx = Some(s.subscribe_status());
             let sid = s.session_id();
+            replay_composition_on_session(&s, &sid, &cwd).await;
             *session = Some(s);
             emit(
                 app,
@@ -1008,6 +1180,34 @@ async fn begin_fresh_session(
             );
             let _ = reply.send(Err(e.to_string()));
         }
+    }
+}
+
+/// attach / 开 Tab / 崩溃重放：回放 sqlite 会话覆盖，否则工作区 `.grok/agent.yml`。
+async fn replay_composition_on_session(s: &GrokSession, session_id: &str, cwd: &str) {
+    let overlay = crate::session_index::get_thread_composition(session_id)
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|mut v| {
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("workflows");
+            }
+            serde_json::from_value::<grok_session::composition::Composition>(v).ok()
+        });
+    let composition = match overlay {
+        Some(c) => c,
+        None => match grok_session::composition::load_workspace_composition(std::path::Path::new(cwd))
+        {
+            Ok(Some(c)) => c,
+            _ => return,
+        },
+    };
+    if let Err(e) = crate::flows::register_flows(&composition.flows) {
+        eprintln!("[vesprism] 注册组装单流程失败: {e}");
+    }
+    if let Err(e) = s.apply_composition(&composition).await {
+        eprintln!("[vesprism] 回放组装单失败: {e}");
     }
 }
 
@@ -1312,6 +1512,64 @@ fn forward_event(
                     mode,
                     questions,
                 },
+            );
+        }
+        SessionEvent::GoalUpdated(goal) => {
+            emit(app, tab_id, FrontendEvent::GoalUpdated { goal });
+        }
+        SessionEvent::WorkflowUpdated(workflow) => {
+            emit(app, tab_id, FrontendEvent::WorkflowUpdated { workflow });
+        }
+        SessionEvent::TerminalUpdate {
+            terminal_id,
+            text,
+            truncated,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::TerminalUpdate {
+                    terminal_id,
+                    text,
+                    truncated,
+                },
+            );
+        }
+        SessionEvent::TerminalExited {
+            terminal_id,
+            exit_code,
+            signal,
+            killed,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::TerminalExited {
+                    terminal_id,
+                    exit_code,
+                    signal,
+                    killed,
+                },
+            );
+        }
+        SessionEvent::TerminalOpened {
+            terminal_id,
+            command,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::TerminalOpened {
+                    terminal_id,
+                    command,
+                },
+            );
+        }
+        SessionEvent::TerminalReleased { terminal_id } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::TerminalReleased { terminal_id },
             );
         }
     }

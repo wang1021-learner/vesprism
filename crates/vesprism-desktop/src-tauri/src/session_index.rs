@@ -39,6 +39,11 @@ fn open_db() -> Result<Connection, String> {
            num_messages INTEGER NOT NULL DEFAULT 0,
            transcript_path TEXT NOT NULL DEFAULT ''
          );
+         -- 组装单会话覆盖：独立于 threads 表，rebuild_from_summaries 不会清掉。
+         CREATE TABLE IF NOT EXISTS thread_compositions (
+           id TEXT PRIMARY KEY,
+           composition TEXT NOT NULL DEFAULT ''
+         );
          CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at_ms DESC);
          CREATE INDEX IF NOT EXISTS idx_threads_cwd ON threads(cwd);",
     )
@@ -189,6 +194,33 @@ pub fn rename_thread(session_id: &str, title: &str) -> Result<(), String> {
         conn.execute(
             "UPDATE threads SET title = ?1 WHERE id = ?2",
             params![title, session_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+/// 读取会话的组装单覆盖（JSON 文本；无记录返回 `Ok(None)`）。
+pub fn get_thread_composition(session_id: &str) -> Result<Option<String>, String> {
+    with_db(|conn| {
+        let mut stmt = conn
+            .prepare("SELECT composition FROM thread_compositions WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        let mut rows = stmt.query(params![session_id]).map_err(|e| e.to_string())?;
+        match rows.next().map_err(|e| e.to_string())? {
+            Some(row) => row.get::<_, String>(0).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
+        }
+    })
+}
+
+/// 写入会话的组装单覆盖（UPSERT）。
+pub fn set_thread_composition(session_id: &str, composition: &str) -> Result<(), String> {
+    with_db(|conn| {
+        conn.execute(
+            "INSERT INTO thread_compositions (id, composition) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET composition = excluded.composition",
+            params![session_id, composition],
         )
         .map_err(|e| e.to_string())?;
         Ok(())

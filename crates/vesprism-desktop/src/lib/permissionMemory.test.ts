@@ -11,6 +11,7 @@ import {
   isSessionAllowed,
   permissionSignature,
   pickAllowStrict,
+  isReadOnlyPermission,
 } from './permissionMemory'
 import { parsePermissionDescription } from '../types'
 import type { PermissionRequest } from '../types'
@@ -130,5 +131,15 @@ describe('选项识别', () => {
     const denyOnly = [{ id: 'd', name: '拒绝', kind: 'deny' }]
     expect(isAllowOption(denyOnly[0])).toBe(false)
     expect(pickAllowStrict(denyOnly)).toBeUndefined()
+  })
+})
+
+describe('只读权限', () => {
+  it('读取/搜索/网络请求视为只读', () => {
+    expect(isReadOnlyPermission({ kindLabel: '读取文件' })).toBe(true)
+    expect(isReadOnlyPermission({ kindLabel: '搜索' })).toBe(true)
+    expect(isReadOnlyPermission({ kindLabel: '网络请求' })).toBe(true)
+    expect(isReadOnlyPermission({ kindLabel: '运行终端命令' })).toBe(false)
+    expect(isReadOnlyPermission({ kindLabel: '编辑文件' })).toBe(false)
   })
 })

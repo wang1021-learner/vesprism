@@ -18,6 +18,7 @@ import {
   $engineStatus,
   $models,
   $reasoningEffort,
+  $runningByParent,
   $settingsOpen,
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
@@ -215,6 +216,16 @@ function WorkflowIcon() {
       <circle cx="17" cy="12" r="2" />
       <circle cx="7" cy="16" r="2" />
       <path d="M9 8h4.5a3.5 3.5 0 0 1 3.5 3.5M9 16h4.5A3.5 3.5 0 0 0 17 12.5" />
+    </svg>
+  )
+}
+
+function FlowCanvasIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="4.5" y="5.5" width="6" height="5" rx="1" />
+      <rect x="13.5" y="13.5" width="6" height="5" rx="1" />
+      <path d="M10.5 8h3.2a2 2 0 0 1 2 2v3.5" />
     </svg>
   )
 }
@@ -896,9 +907,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     $settingsOpen.set(true)
   }
 
-  /** 侧栏「技能 / 工具 / MCP / 自动化任务」：各开一个带标题的专用 Tab */
+  /** 侧栏「技能 / 工具 / MCP / 自动化任务 / 流程画布」：各开一个带标题的专用 Tab */
   const onOpenUtilityTab = useCallback(
-    async (kind: 'skills' | 'tools' | 'mcp' | 'workflows') => {
+    async (kind: 'skills' | 'tools' | 'mcp' | 'workflows' | 'flow-canvas') => {
       const title =
         kind === 'skills'
           ? '技能'
@@ -906,7 +917,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             ? '工具'
             : kind === 'mcp'
               ? 'MCP'
-              : '自动化任务'
+              : kind === 'flow-canvas'
+                ? '流程画布'
+                : '自动化任务'
       setMenuOpenChatId(null)
       await openChatTab({ title, utilityKind: kind })
     },
@@ -918,6 +931,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     { kind: 'tools' as const, label: '工具', Icon: ToolIcon },
     { kind: 'mcp' as const, label: 'MCP', Icon: McpIcon },
     { kind: 'workflows' as const, label: '任务', Icon: WorkflowIcon },
+    { kind: 'flow-canvas' as const, label: '流程画布', Icon: FlowCanvasIcon },
   ]
 
   const renderUtilityGrid = () => (
@@ -927,11 +941,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
           key={kind}
           type="button"
           className="sidebar-compose-link"
-          title={kind === 'workflows' ? '自动化任务' : label}
+          title={kind === 'workflows' ? '自动化任务' : kind === 'flow-canvas' ? '流程画布' : label}
           onClick={() => void onOpenUtilityTab(kind)}
         >
           <Icon />
-          <span>{kind === 'workflows' ? '自动化任务' : label}</span>
+          <span>{kind === 'workflows' ? '自动化任务' : kind === 'flow-canvas' ? '流程画布' : label}</span>
         </button>
       ))}
     </nav>
@@ -1122,6 +1136,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
               onClick={() => void onOpenUtilityTab('workflows')}
             >
               <WorkflowIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title="流程画布"
+              onClick={() => void onOpenUtilityTab('flow-canvas')}
+            >
+              <FlowCanvasIcon />
             </button>
             <div className="sidebar-spacer" />
             <button
@@ -1360,12 +1382,19 @@ function ChatRow({
   onRename: () => void
   onDelete: () => void
 }) {
+  const runningByParent = useStore($runningByParent)
+  const runningCount = runningByParent[chat.id] ?? 0
   return (
     <div className={`recent-item-container${isActive ? ' active' : ''}`}>
       <button type="button" className="recent-item" onClick={onSelect}>
         <span className="recent-title" title={chat.title}>
           {chat.title}
         </span>
+        {runningCount > 0 && (
+          <span className="recent-running-badge" title={`${runningCount} 个子代理运行中`}>
+            {runningCount} 运行
+          </span>
+        )}
       </button>
       <button
         type="button"

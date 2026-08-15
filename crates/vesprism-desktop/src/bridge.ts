@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { ModelInfo } from './types'
+import type { CompositionData, GoalInfoDto, WorkflowInfoDto } from './lib/composition'
 
 /** 是否运行在 Tauri 桌面壳内（而非普通浏览器） */
 export function isTauriRuntime(): boolean {
@@ -297,6 +298,34 @@ export const listWorkflows = (tabId: string) =>
     tabId,
   })
 
+// ── 流程画布（草稿 + 流程包）──
+export type FlowSavePayload = {
+  id: string
+  name: string
+  description?: string
+  version?: string
+  input_schema?: unknown
+  output_schema?: unknown
+  nodes?: unknown
+  edges?: unknown
+  publish?: boolean
+  stage?: boolean
+  rhai?: string | null
+  prompts?: string | null
+}
+
+export const saveFlow = (payload: FlowSavePayload) => invoke<import('./lib/flow').FlowRecord>('save_flow', { payload })
+export const listFlows = () => invoke<import('./lib/flow').FlowListItem[]>('list_flows')
+export const getFlow = (id: string) => invoke<import('./lib/flow').FlowRecord>('get_flow', { id })
+export const deleteFlow = (id: string) => invoke('delete_flow', { id })
+export const exportFlow = (id: string, destPath: string) =>
+  invoke<string>('export_flow', { id, destPath })
+export const importFlow = (zipPath: string, conflictMode?: string | null) =>
+  invoke<import('./lib/flow').ImportFlowResult>('import_flow', {
+    zipPath,
+    conflictMode: conflictMode ?? null,
+  })
+
 /** 与官方 McpServerEntry 对齐的前端 DTO（字段宽松） */
 export type McpServerDto = {
   name: string
@@ -354,16 +383,77 @@ export type FileWorkingDiff = {
   message?: string | null
 }
 
-export const fileWorkingDiff = (path: string) =>
-  invoke<FileWorkingDiff>('file_working_diff', { path })
+export const fileWorkingDiff = (path: string, tabId?: string) =>
+  invoke<FileWorkingDiff>('file_working_diff', { path, tabId })
 
 export interface WorkspaceChange {
   path: string
   status: 'modified' | 'untracked' | 'deleted' | 'renamed' | string
 }
 
-export const workspaceChanges = () =>
-  invoke<WorkspaceChange[]>('workspace_changes')
+export const workspaceChanges = (tabId?: string) =>
+  invoke<WorkspaceChange[]>('workspace_changes', { tabId })
+
+export type SkillInfoDto = {
+  name: string
+  displayName?: string | null
+  display_name?: string | null
+  description?: string
+  whenToUse?: string | null
+  when_to_use?: string | null
+  shortDescription?: string | null
+  short_description?: string | null
+  argumentHint?: string | null
+  argument_hint?: string | null
+  path: string
+  scope?: string
+  pluginName?: string | null
+  plugin_name?: string | null
+  enabled?: boolean
+}
+
+export const listSkills = (tabId: string, cwd: string) =>
+  invoke<{ skills?: SkillInfoDto[] }>('list_skills', { tabId, cwd })
+
+export const addSkill = (tabId: string, path: string, cwd: string) =>
+  invoke<{ message?: string; skills?: SkillInfoDto[] }>('add_skill', {
+    tabId,
+    path,
+    cwd,
+  })
+
+export const removeSkill = (tabId: string, path: string, cwd: string) =>
+  invoke<{ message?: string; skills?: SkillInfoDto[] }>('remove_skill', {
+    tabId,
+    path,
+    cwd,
+  })
+
+export const toggleSkill = (
+  tabId: string,
+  name: string,
+  enabled: boolean,
+  cwd: string,
+) =>
+  invoke<{ skills?: SkillInfoDto[] }>('toggle_skill', {
+    tabId,
+    name,
+    enabled,
+    cwd,
+  })
+
+// ── 组装单（半插件化 P0）──
+export const applyComposition = (
+  tabId: string,
+  sessionId: string | null,
+  composition: CompositionData,
+) => invoke('apply_composition', { tabId, sessionId, composition })
+
+export const getComposition = (sessionId: string | null, cwd: string) =>
+  invoke<CompositionData>('get_composition', { sessionId, cwd })
+
+export const saveComposition = (name: string, yaml: string) =>
+  invoke('save_composition', { name, yaml })
 
 // ── 流式事件（与后端 FrontendEvent snake_case tag 对齐）──
 export interface SessionEventPayload {
@@ -450,6 +540,15 @@ export interface SessionEventPayload {
     options: Array<{ label: string; description?: string; preview?: string | null }>
     multiSelect?: boolean | null
   }>
+  // ── Goal / 工作流进度（后端 camelCase DTO）──
+  goal?: GoalInfoDto
+  workflow?: WorkflowInfoDto
+  // ── 客户端终端（ACP 终端能力）──
+  terminal_id?: string
+  exit_code?: number | null
+  signal?: string | null
+  truncated?: boolean
+  killed?: boolean
 }
 
 let _unlisten: UnlistenFn | null = null

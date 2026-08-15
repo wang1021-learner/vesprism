@@ -1,4 +1,5 @@
 mod commands;
+mod flows;
 mod sandbox;
 mod session_index;
 mod state;
@@ -133,6 +134,10 @@ pub fn run() {
             commands::delete_mcp_server,
             commands::list_session_commands,
             commands::list_workflows,
+            commands::list_skills,
+            commands::add_skill,
+            commands::remove_skill,
+            commands::toggle_skill,
             commands::restart_session,
             commands::get_env_status,
             commands::save_env_key,
@@ -147,6 +152,15 @@ pub fn run() {
             commands::delete_session,
             commands::rename_session,
             commands::set_current_model,
+            commands::apply_composition,
+            commands::get_composition,
+            commands::save_composition,
+            flows::save_flow,
+            flows::list_flows,
+            flows::get_flow,
+            flows::delete_flow,
+            flows::export_flow,
+            flows::import_flow,
             commands::read_file_for_preview,
             commands::save_artifact_file,
             commands::list_dir,

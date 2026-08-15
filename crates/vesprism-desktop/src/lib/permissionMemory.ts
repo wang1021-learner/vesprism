@@ -48,6 +48,12 @@ export function pickAllow(options: PermissionOption[]): PermissionOption | undef
   return options.find(isAllowOption) || options[0]
 }
 
+/** 官方只读工具分类：读/搜/思考/拉取，无工作区副作用。 */
+export function isReadOnlyPermission(p: Pick<PermissionRequest, 'kindLabel'>): boolean {
+  const k = (p.kindLabel || '').trim()
+  return k === '读取文件' || k === '搜索' || k === '网络请求'
+}
+
 /** 严格版：只认明确「允许」选项；找不到返回 undefined（UI 用宽松版兜底按钮） */
 export function pickAllowStrict(
   options: PermissionOption[],

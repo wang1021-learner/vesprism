@@ -112,6 +112,20 @@
   margin-bottom: 0.65rem;
 }
 
+.skills-add-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.skills-add-row .skills-search {
+  flex: 1;
+}
+
+.skills-card.is-disabled {
+  opacity: 0.62;
+}
+
 .skills-search {
   width: 100%;
   height: 2rem;

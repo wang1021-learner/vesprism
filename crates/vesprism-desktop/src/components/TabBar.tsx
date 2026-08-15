@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useState } from 'react'
 import {
   $activeTabId,
+  $compositionOpen,
   $rightPanelOpen,
   $tabs,
   getTabState,
@@ -131,6 +132,27 @@ export function RightPanelToggle() {
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
         <rect x="3" y="3" width="18" height="18" rx="2.5" />
         <path d="M15 3v18" strokeLinecap="round" />
+      </svg>
+    </button>
+  )
+}
+
+/** 会话组装单入口（半插件化 P0）。 */
+export function CompositionToggle() {
+  const open = useStore($compositionOpen)
+  return (
+    <button
+      type="button"
+      className={`tabbar-panel-btn${open ? ' is-active' : ''}`}
+      title={open ? '关闭组装面板' : '打开组装面板'}
+      aria-pressed={open}
+      onClick={() => $compositionOpen.set(!open)}
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
+        <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+        <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" />
+        <path d="M6.6 12h3.8M13.8 12h3.6" strokeLinecap="round" />
       </svg>
     </button>
   )

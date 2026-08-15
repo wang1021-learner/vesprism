@@ -228,6 +228,13 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('workflows')).toBe('tab-wf')
     expect(findTabByUtilityKind('skills')).toBe('tab-skill')
     expect(findTabByUtilityKind('mcp')).toBeUndefined()
+    expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
+  })
+
+  it('findTabByUtilityKind 可复用 flow-canvas 专用 Tab', () => {
+    createTab('tab-flow', { utilityKind: 'flow-canvas', chatTitle: '流程画布' })
+    expect(findTabByUtilityKind('flow-canvas')).toBe('tab-flow')
+    expect(findTabByUtilityKind('workflows')).toBeUndefined()
   })
 
   it('looksAbsolutePath / resolveWorkspaceCwd 兜底空投影', () => {

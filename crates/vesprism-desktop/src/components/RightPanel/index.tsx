@@ -218,6 +218,7 @@ type FileDiffBody = { oldText: string; newText: string }
 function DiffView() {
   const cwd = useStore($workspaceCwd)
   const gitRev = useStore($gitHeadRevision)
+  const tabId = useStore($activeTabId)
   const [changes, setChanges] = useState<WorkspaceChange[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -231,7 +232,7 @@ function DiffView() {
     let cancelled = false
     setLoading(true)
     setError('')
-    workspaceChanges()
+    workspaceChanges(tabId)
       .then((res) => {
         if (!cancelled) {
           setChanges(res)
@@ -250,7 +251,7 @@ function DiffView() {
     return () => {
       cancelled = true
     }
-  }, [cwd, tick, gitRev])
+  }, [cwd, tick, gitRev, tabId])
 
   const togglePath = async (path: string) => {
     if (openPath === path) {
@@ -261,7 +262,7 @@ function DiffView() {
     if (bodies[path] || bodyError[path]) return
     setBodyLoading(path)
     try {
-      const d = await fileWorkingDiff(path)
+      const d = await fileWorkingDiff(path, tabId)
       setBodies((prev) => ({
         ...prev,
         [path]: { oldText: d.old_text, newText: d.new_text },

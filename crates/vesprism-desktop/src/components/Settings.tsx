@@ -665,7 +665,7 @@ export function SettingsModal() {
                             type="text"
                             className="settings-input"
                             value={selectedModel.model}
-                            placeholder="deepseek-chat / claude-sonnet-4-6 / llama3.1:8b"
+                            placeholder="deepseek-v4-flash / claude-sonnet-4-6 / llama3.1:8b"
                             onChange={(e) =>
                               updateSelectedModel({
                                 model: e.target.value,
@@ -674,7 +674,8 @@ export function SettingsModal() {
                             }
                           />
                           <p className="settings-hint">
-                            即发往 API 的 model id，同时作为列表与下拉中的显示名称。
+                            即发往 API 的 model id。DeepSeek 官方现为
+                            deepseek-v4-flash / deepseek-v4-pro（deepseek-chat 已下线）。
                           </p>
                         </div>
 
@@ -684,13 +685,14 @@ export function SettingsModal() {
                             type="text"
                             className="settings-input"
                             value={selectedModel.base_url}
-                            placeholder="https://api.example.com/v1"
+                            placeholder="https://api.deepseek.com"
                             onChange={(e) =>
                               updateSelectedModel({ base_url: e.target.value })
                             }
                           />
                           <p className="settings-hint">
-                            OpenAI 兼容接口通常需以 /v1 结尾。
+                            DeepSeek 官方为 https://api.deepseek.com（不要加 /v1）。多数其它
+                            OpenAI 兼容接口才以 /v1 结尾。
                           </p>
                         </div>
 
@@ -758,6 +760,7 @@ export function SettingsModal() {
                               />
                               <span className="settings-unit">K tokens</span>
                             </div>
+                            <p className="settings-hint">DeepSeek V4 填 1000（1M）。其它模型按厂商文档。</p>
                           </div>
                           <div className="settings-field">
                             <label className="settings-label">描述（可选）</label>

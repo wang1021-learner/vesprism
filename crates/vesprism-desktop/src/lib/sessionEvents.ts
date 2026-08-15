@@ -15,6 +15,8 @@ import {
   hasTab,
   patchTab,
   pushToast,
+  trackSubagentRunning,
+  untrackSubagentRunning,
   upsertSubagent,
   bumpGitHeadRevision,
   setBackgroundTask,
@@ -29,9 +31,11 @@ import {
   isSessionAllowed,
   permissionSignature,
   pickAllowStrict,
+  isReadOnlyPermission,
   pickDeny,
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
+import { keepTail, pruneTerminals } from './terminalCards'
 
 export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) {
   // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
@@ -112,6 +116,17 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
             break
           }
         }
+        if (isReadOnlyPermission(req)) {
+          const allow = pickAllowStrict(req.options)
+          if (allow) {
+            void respondPermission(tabId, Number(ev.request_id), allow.id).catch((e) => {
+              console.warn('[perm] 只读工具自动放行失败:', e)
+              patchTab(tabId, { permission: req })
+            })
+            patchTab(tabId, { permission: null })
+            break
+          }
+        }
         // 记忆命中（本次会话/总是允许）→ 自动放行，不弹审批条。
         const sessionHit = isSessionAllowed(tabId, sig)
         const alwaysHit = isAlwaysAllowed(sig)
@@ -170,6 +185,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           model: ev.model,
           status: 'running',
         })
+        trackSubagentRunning(ev.subagent_id, ev.parent_session_id || '')
         // 官方语义：不自动开 Tab；会话流内嵌子任务行，用户点「打开」才 attach（viewer）
       }
       break
@@ -217,6 +233,11 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           tokensUsed: ev.tokens_used,
           output: ev.output,
         })
+        // finished 事件不带父会话 id：用 tab 内已存条目兜底。
+        const parentFallback =
+          getTabState(tabId)?.subagents.find((s) => s.subagentId === ev.subagent_id)
+            ?.parentSessionId ?? ''
+        untrackSubagentRunning(ev.subagent_id, parentFallback)
         // 结束后再刷一次；磁盘若还没有 assistant，用 output 兜底写入子 Tab
         const doneSid = (ev.child_session_id || '').trim()
         if (doneSid) {
@@ -303,6 +324,103 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         })
       }
       break
+    case 'goal_updated': {
+      if (ev.goal) {
+        // status=cleared 表示官方要求清空目标态。
+        patchTab(tabId, { goal: ev.goal.status === 'cleared' ? null : ev.goal })
+      }
+      break
+    }
+    case 'workflow_updated': {
+      if (ev.workflow?.runId) {
+        const prev = getTabState(tabId)?.workflows ?? {}
+        patchTab(tabId, {
+          workflows: { ...prev, [ev.workflow.runId]: ev.workflow },
+        })
+      }
+      break
+    }
+    case 'terminal_opened': {
+      if (ev.terminal_id) {
+        const prev = getTabState(tabId)?.terminals ?? {}
+        patchTab(tabId, {
+          terminals: pruneTerminals({
+            ...prev,
+            [ev.terminal_id]: {
+              terminalId: ev.terminal_id,
+              command: ev.command ?? '',
+              text: '',
+              truncated: false,
+              exited: false,
+              killed: false,
+              openedAt: Date.now(),
+              expanded: true,
+            },
+          }),
+        })
+      }
+      break
+    }
+    case 'terminal_update': {
+      if (ev.terminal_id) {
+        const prev = getTabState(tabId)?.terminals ?? {}
+        const cur = prev[ev.terminal_id]
+        if (!cur) break
+        const kept = keepTail(ev.text ?? cur.text)
+        patchTab(tabId, {
+          terminals: {
+            ...prev,
+            [ev.terminal_id]: {
+              ...cur,
+              text: kept.text,
+              truncated: cur.truncated || Boolean(ev.truncated) || kept.truncated,
+            },
+          },
+        })
+      }
+      break
+    }
+    case 'terminal_released': {
+      // 跑完不删卡，只把仍在跑、却被 release 的标成已终止。
+      if (ev.terminal_id) {
+        const prev = getTabState(tabId)?.terminals ?? {}
+        const cur = prev[ev.terminal_id]
+        if (!cur || cur.exited) break
+        patchTab(tabId, {
+          terminals: {
+            ...prev,
+            [ev.terminal_id]: {
+              ...cur,
+              exited: true,
+              killed: true,
+              expanded: false,
+            },
+          },
+        })
+      }
+      break
+    }
+    case 'terminal_exited': {
+      if (ev.terminal_id) {
+        const prev = getTabState(tabId)?.terminals ?? {}
+        const cur = prev[ev.terminal_id]
+        if (!cur) break
+        patchTab(tabId, {
+          terminals: {
+            ...prev,
+            [ev.terminal_id]: {
+              ...cur,
+              exited: true,
+              killed: Boolean(ev.killed) || Boolean(cur.killed),
+              exitCode: ev.exit_code ?? null,
+              signal: ev.signal ?? null,
+              expanded: false,
+            },
+          },
+        })
+      }
+      break
+    }
     case 'other':
       break
     default:

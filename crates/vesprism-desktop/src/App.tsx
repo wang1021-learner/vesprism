@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { SandboxBanner } from './components/SandboxBanner'
 import { MessageList } from './components/Chat/MessageList'
@@ -18,6 +18,11 @@ import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
 import { ToastHost } from './components/Toast'
 import { RewindPicker } from './components/RewindPicker'
+import { CompositionPanel } from './components/CompositionPanel'
+import { GoalStrip } from './components/GoalStrip'
+import { WorkflowProgressList } from './components/WorkflowProgressList'
+import { TerminalList } from './components/TerminalList'
+import { SubagentCatalog } from './components/SubagentCatalog'
 import { syncWindowTitle } from './lib/windowTitle'
 import {
   $activeTabId, $tabs,
@@ -34,6 +39,8 @@ import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
+
+const FlowCanvas = lazy(() => import('./components/FlowCanvas'))
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, openTab, sendPrompt, setCurrentModel,
@@ -104,6 +111,7 @@ function DesktopApp() {
             <AppError />
             <AppMainBody />
             <SettingsModal />
+            <CompositionPanel />
           </div>
         </ErrorBoundary>
         <RightPanel />
@@ -262,6 +270,13 @@ function AppMainBody() {
   if (kind === 'workflows') {
     return <WorkflowsPanel />
   }
+  if (kind === 'flow-canvas') {
+    return (
+      <Suspense fallback={<div className="flow-canvas-loading">加载流程画布…</div>}>
+        <FlowCanvas />
+      </Suspense>
+    )
+  }
   return (
     <>
       <ErrorBoundary
@@ -270,6 +285,10 @@ function AppMainBody() {
           <MessagesErrorFallback error={error} onReset={reset} />
         )}
       >
+        <SubagentCatalog />
+        <GoalStrip />
+        <WorkflowProgressList />
+        <TerminalList />
         <AppMessages />
       </ErrorBoundary>
       <AppUserQuestion />

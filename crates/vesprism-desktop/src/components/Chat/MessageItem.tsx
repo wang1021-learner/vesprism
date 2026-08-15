@@ -622,12 +622,16 @@ const ThoughtLine = memo(function ThoughtLine({
   )
 })
 
-function toolHeadline(tool: ToolCallData): string {
+function toolHeadline(tool: ToolCallData, live = false): string {
   // 子任务：title 已是完整「子任务 · 名 · 状态」
   if (tool.kind === 'subagent') {
     return tool.title?.trim() || '子任务'
   }
   const detail = tool.detail?.trim() || ''
+  const preview = tool.preview?.trim() || ''
+  if (live && !detail && !preview) {
+    return '正在生成参数…'
+  }
   const short =
     detail.length > 72 ? `${detail.slice(0, 70)}…` : detail
   const label = short || tool.title?.trim() || 'tool'
@@ -743,7 +747,7 @@ const ToolLine = memo(function ToolLine({
   const preview = tool.preview?.trim() || ''
   // 会话内不展示 diff：可展开内容只有工具输出 preview
   const hasBody = preview.length > 0
-  const headline = toolHeadline(tool)
+  const headline = toolHeadline(tool, live)
   const tone: ActivityTone = failed ? 'tool-failed' : 'tool'
   const iconKind = useMemo(
     () => toolIconKind(tool),

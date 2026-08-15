@@ -23,8 +23,8 @@ import {
 import { beginAttachRuntime, finishAttachRuntime } from '../lib/sessionOpen'
 
 const MODE_OPTIONS: { value: RewindMode; label: string; hint: string }[] = [
+  { value: 'conversation_only', label: '仅对话', hint: '只回滚对话，工作区文件不动（官方默认）' },
   { value: 'all', label: '全部回滚', hint: '对话与文件快照一起恢复' },
-  { value: 'conversation_only', label: '仅对话', hint: '只回滚对话，代码不动' },
   { value: 'files_only', label: '仅文件', hint: '只恢复文件，对话保留' },
 ]
 
@@ -47,15 +47,19 @@ export function RewindPicker() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [target, setTarget] = useState<RewindPointInfo | null>(null)
-  const [mode, setMode] = useState<RewindMode>('all')
+  const [mode, setMode] = useState<RewindMode>('conversation_only')
   const [force, setForce] = useState(false)
+  const [confirmFiles, setConfirmFiles] = useState(false)
   const [running, setRunning] = useState(false)
+  const touchesFiles = mode === 'all' || mode === 'files_only'
 
   useEffect(() => {
     if (!open) {
       setPoints([])
       setTarget(null)
       setError('')
+      setConfirmFiles(false)
+      setMode('conversation_only')
       setLoading(true)
       return
     }
@@ -149,7 +153,8 @@ export function RewindPicker() {
           </button>
         </div>
         <p className="rewind-desc">
-          回滚到某条提问之前的状态（对话与文件快照），不是 git 回滚。
+          回滚到某条提问之前。默认只截断对话（官方 1.0.1 起），改工作区文件需另行确认。不是 git
+          revert。
         </p>
 
         {loading && <div className="rewind-loading">加载历史点...</div>}
@@ -198,12 +203,25 @@ export function RewindPicker() {
                       type="button"
                       className={`rewind-mode-btn${mode === m.value ? ' is-active' : ''}`}
                       title={m.hint}
-                      onClick={() => setMode(m.value)}
+                      onClick={() => {
+                        setMode(m.value)
+                        if (m.value === 'conversation_only') setConfirmFiles(false)
+                      }}
                     >
                       {m.label}
                     </button>
                   ))}
                 </div>
+                {touchesFiles ? (
+                  <label className="rewind-force">
+                    <input
+                      type="checkbox"
+                      checked={confirmFiles}
+                      onChange={(e) => setConfirmFiles(e.target.checked)}
+                    />
+                    确认会改工作区文件（与官方 /rewind 二次确认一致）
+                  </label>
+                ) : null}
                 <label className="rewind-force">
                   <input
                     type="checkbox"
@@ -223,7 +241,7 @@ export function RewindPicker() {
                   <button
                     type="button"
                     className="rewind-run"
-                    disabled={running}
+                    disabled={running || (touchesFiles && !confirmFiles)}
                     onClick={() => void doRewind(target)}
                   >
                     {running ? '回滚中...' : '执行回滚'}

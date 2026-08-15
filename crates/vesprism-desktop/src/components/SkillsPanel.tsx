@@ -12,7 +12,14 @@ import {
   patchActiveTab,
   pushToast,
 } from '../store'
-import { listSessionCommands } from '../bridge'
+import {
+  addSkill,
+  listSessionCommands,
+  listSkills,
+  removeSkill,
+  toggleSkill,
+  type SkillInfoDto,
+} from '../bridge'
 import { zhCommandLabel, zhCommandPurpose } from '../lib/toolChinese'
 
 export type SkillRow = {
@@ -23,6 +30,7 @@ export type SkillRow = {
   path: string
   plugin?: string
   argumentHint?: string
+  enabled: boolean
 }
 
 const SCOPE_LABEL: Record<string, string> = {
@@ -92,6 +100,7 @@ function parseSkills(
       path,
       plugin: meta.plugin ? String(meta.plugin) : undefined,
       argumentHint: argumentHint || undefined,
+      enabled: true,
     })
   }
   out.sort((a, b) => {
@@ -99,6 +108,35 @@ function parseSkills(
     if (sa !== 0) return sa
     return a.name.localeCompare(b.name)
   })
+  return out
+}
+
+function parseOfficialSkills(raw: SkillInfoDto[]): SkillRow[] {
+  const out: SkillRow[] = []
+  for (const s of raw) {
+    const name = String(s.name || '').replace(/^\//, '').trim()
+    if (!name) continue
+    const displayName = String(s.displayName ?? s.display_name ?? name)
+    const description = String(
+      s.description ||
+        s.shortDescription ||
+        s.short_description ||
+        s.whenToUse ||
+        s.when_to_use ||
+        '',
+    ).trim()
+    out.push({
+      name,
+      displayName,
+      description:
+        description || `技能「${displayName}」—— 在对话中输入 /${name} 可调用`,
+      scope: String(s.scope || 'user').toLowerCase(),
+      path: String(s.path || ''),
+      plugin: s.pluginName || s.plugin_name || undefined,
+      argumentHint: s.argumentHint || s.argument_hint || undefined,
+      enabled: s.enabled !== false,
+    })
+  }
   return out
 }
 
@@ -116,18 +154,35 @@ export function SkillsPanel() {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [scopeFilter, setScopeFilter] = useState<string | 'all'>('all')
+  const [addPath, setAddPath] = useState('')
+  const [busyName, setBusyName] = useState('')
+
+  const applyOfficial = (raw: SkillInfoDto[] | undefined) => {
+    if (!raw?.length) return false
+    setSkills(parseOfficialSkills(raw))
+    return true
+  }
 
   const load = useCallback(async () => {
     if (!tabId) return
     setLoading(true)
     setError('')
     try {
+      const official = await listSkills(tabId, cwd || '.')
+      const list = Array.isArray(official?.skills) ? official.skills : []
+      if (applyOfficial(list)) return
       const resp = await listSessionCommands(tabId, cwd || undefined)
       const cmds = Array.isArray(resp?.commands) ? resp.commands : []
       setSkills(parseSkills(cmds))
     } catch (e) {
-      setError(String(e))
-      setSkills([])
+      try {
+        const resp = await listSessionCommands(tabId, cwd || undefined)
+        const cmds = Array.isArray(resp?.commands) ? resp.commands : []
+        setSkills(parseSkills(cmds))
+      } catch {
+        setError(String(e))
+        setSkills([])
+      }
     } finally {
       setLoading(false)
     }
@@ -189,6 +244,50 @@ export function SkillsPanel() {
     pushToast(`已填入 /${name}，可补充参数后发送`, 'success')
   }
 
+  const onToggle = async (sk: SkillRow) => {
+    if (!tabId || busyName) return
+    setBusyName(sk.name)
+    try {
+      const resp = await toggleSkill(tabId, sk.name, !sk.enabled, cwd || '.')
+      if (!applyOfficial(resp?.skills)) await load()
+      pushToast(sk.enabled ? `已停用 /${sk.name}` : `已启用 /${sk.name}`, 'success')
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyName('')
+    }
+  }
+
+  const onAdd = async () => {
+    const path = addPath.trim()
+    if (!tabId || !path) return
+    setBusyName('__add__')
+    try {
+      const resp = await addSkill(tabId, path, cwd || '.')
+      if (!applyOfficial(resp?.skills)) await load()
+      setAddPath('')
+      pushToast(resp?.message || `已添加 ${path}`, 'success')
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyName('')
+    }
+  }
+
+  const onRemove = async (sk: SkillRow) => {
+    if (!tabId || !sk.path || busyName) return
+    setBusyName(sk.name)
+    try {
+      const resp = await removeSkill(tabId, sk.path, cwd || '.')
+      if (!applyOfficial(resp?.skills)) await load()
+      pushToast(resp?.message || `已移除 ${sk.path}`, 'success')
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyName('')
+    }
+  }
+
   return (
     <div className="skills-panel" role="region" aria-label="技能">
       <div className="skills-panel-inner">
@@ -196,8 +295,8 @@ export function SkillsPanel() {
           <div className="skills-panel-titles">
             <h2 className="skills-panel-title">技能</h2>
             <p className="skills-panel-desc">
-              可复用的提示包。每条下方的<strong>用途</strong>说明该技能做什么；
-              对话中输入 <code>/技能名</code> 即可调用。
+              可复用的提示包。启用/停用走官方 <code>x.ai/skills/toggle</code>；
+              添加路径写入配置后重新发现。
             </p>
           </div>
           <div className="skills-panel-actions">
@@ -221,6 +320,26 @@ export function SkillsPanel() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索名称 / 用途…"
           />
+        </div>
+        <div className="skills-add-row">
+          <input
+            className="skills-search"
+            type="text"
+            value={addPath}
+            onChange={(e) => setAddPath(e.target.value)}
+            placeholder="添加技能路径，如 .grok/skills/foo 或 ~/.grok/skills/foo"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void onAdd()
+            }}
+          />
+          <button
+            type="button"
+            className="skills-btn primary"
+            disabled={!addPath.trim() || busyName === '__add__' || !tabId}
+            onClick={() => void onAdd()}
+          >
+            添加
+          </button>
         </div>
 
         {scopesPresent.length > 0 ? (
@@ -276,7 +395,7 @@ export function SkillsPanel() {
                   {items.map((sk) => (
                     <li
                       key={`${sk.scope}:${sk.path}:${sk.name}`}
-                      className="skills-card"
+                      className={`skills-card${sk.enabled ? '' : ' is-disabled'}`}
                     >
                       <div className="skills-card-main">
                         <div className="skills-card-titles">
@@ -313,6 +432,24 @@ export function SkillsPanel() {
                         ) : null}
                       </div>
                       <div className="skills-card-ops">
+                        <button
+                          type="button"
+                          className="skills-btn ghost"
+                          disabled={busyName === sk.name}
+                          onClick={() => void onToggle(sk)}
+                        >
+                          {sk.enabled ? '停用' : '启用'}
+                        </button>
+                        {sk.scope === 'user' ? (
+                          <button
+                            type="button"
+                            className="skills-btn ghost"
+                            disabled={busyName === sk.name || !sk.path}
+                            onClick={() => void onRemove(sk)}
+                          >
+                            移除
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="skills-btn ghost"

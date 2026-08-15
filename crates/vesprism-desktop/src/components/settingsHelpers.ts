@@ -6,7 +6,7 @@ export const API_BACKENDS: { value: ApiBackend; label: string; hint: string }[] 
   {
     value: 'chat_completions',
     label: 'Chat Completions',
-    hint: 'OpenAI 兼容 /v1/chat/completions（DeepSeek、Ollama、多数厂商）',
+    hint: 'OpenAI 兼容 chat/completions（DeepSeek 官方不带 /v1；Ollama 等多数带 /v1）',
   },
   {
     value: 'responses',

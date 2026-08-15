@@ -16,11 +16,13 @@ import type {
   SessionPhase,
   SessionStatus,
   SubagentRuntime,
+  TerminalRuntime,
   UserQuestionRequest,
 } from './types'
 import { upsertSubagentMessage } from './lib/subagentMessage'
 import type { SecurityPolicy } from './lib/executionPolicy'
 import { DEFAULT_SECURITY_POLICY } from './lib/executionPolicy'
+import type { GoalInfoDto, WorkflowInfoDto } from './lib/composition'
 
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
@@ -67,7 +69,7 @@ export interface TabState {
   /** bash 后台任务（key=toolCallId → 任务信息；活跃 tab 投影到 $backgroundTasks） */
   backgroundTasks: Record<string, BackgroundTaskInfo>
   /**
-   * 专用面板 Tab：mcp / skills / tools / workflows；null=普通对话。
+   * 专用面板 Tab：mcp / skills / tools / workflows / flow-canvas；null=普通对话。
    * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
    */
   utilityKind: UtilityKind | null
@@ -75,10 +77,16 @@ export interface TabState {
   sandboxCwd: string
   /** 沙箱对应的主工作区 */
   sandboxOrigin: string
+  /** Goal 编排进度（官方 GoalUpdated；status=cleared 时置 null） */
+  goal: GoalInfoDto | null
+  /** 工作流运行进度（key=runId，最新覆盖） */
+  workflows: Record<string, WorkflowInfoDto>
+  /** 客户端终端运行态（key=terminalId；ACP 终端能力） */
+  terminals: Record<string, TerminalRuntime>
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
-export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows'
+export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows' | 'flow-canvas'
 
 export function emptyTabState(): TabState {
   return {
@@ -100,6 +108,9 @@ export function emptyTabState(): TabState {
     backgroundTasks: {},
     sandboxCwd: '',
     sandboxOrigin: '',
+    goal: null,
+    workflows: {},
+    terminals: {},
   }
 }
 
@@ -148,7 +159,7 @@ export function getTabState(id: string): TabState | undefined {
   return tabStates.get(id)
 }
 
-/** 查找已打开的专用面板 Tab（技能 / 工具 / MCP / 自动化任务 各只应有一个） */
+/** 查找已打开的专用面板 Tab（技能 / 工具 / MCP / 自动化任务 / 流程画布 各只应有一个） */
 export function findTabByUtilityKind(kind: UtilityKind): string | undefined {
   for (const [id, st] of tabStates) {
     if (st.utilityKind === kind) return id
@@ -296,6 +307,9 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('backgroundTasks' in patch) $backgroundTasks.set(patch.backgroundTasks!)
   if ('sandboxCwd' in patch) $sandboxCwd.set(patch.sandboxCwd ?? '')
   if ('sandboxOrigin' in patch) $sandboxOrigin.set(patch.sandboxOrigin ?? '')
+  if ('goal' in patch) $goalInfo.set(patch.goal ?? null)
+  if ('workflows' in patch) $workflows.set(patch.workflows ?? {})
+  if ('terminals' in patch) $terminals.set(patch.terminals ?? {})
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -321,6 +335,9 @@ function projectTab(id: string): void {
     backgroundTasks: s.backgroundTasks,
     sandboxCwd: s.sandboxCwd,
     sandboxOrigin: s.sandboxOrigin,
+    goal: s.goal,
+    workflows: s.workflows,
+    terminals: s.terminals,
   })
 }
 
@@ -344,6 +361,9 @@ function resetProjection(): void {
     utilityKind: null,
     sandboxCwd: '',
     sandboxOrigin: '',
+    goal: null,
+    workflows: {},
+    terminals: {},
   })
 }
 
@@ -578,8 +598,7 @@ export const $rightPanelTab = atom<RightPanelTab>('files')
 /** 工作区未提交改动数，供顶栏入口角标 */
 export const $workspaceChangeCount = atom(0)
 export const $rightPanelWidth = atom(320)
-export const $rightPanelOutput = atom('')
-/** 源码视图当前显示的文件名（文件树打开时设置） */
+export const $rightPanelOutput = atom('')/** 源码视图当前显示的文件名（文件树打开时设置） */
 export const $rightPanelFile = atom('')
 /** 源码 / 差异绑定的绝对路径 */
 export const $rightPanelFilePath = atom('')
@@ -590,6 +609,53 @@ export function bumpGitHeadRevision() {
 }
 
 // ── Rewind（会话历史回滚）弹层 ──
+/** Goal 编排进度（活跃 tab 投影） */
+export const $goalInfo = atom<GoalInfoDto | null>(null)
+/** 工作流运行进度（活跃 tab 投影；key=runId） */
+export const $workflows = atom<Record<string, WorkflowInfoDto>>({})
+/** 客户端终端运行态（活跃 tab 投影；key=terminalId） */
+export const $terminals = atom<Record<string, TerminalRuntime>>({})
+/** 组装单面板开关 */
+export const $compositionOpen = atom(false)
+/** 子代理目录面板开关（会话区头部入口） */
+export const $subagentCatalogOpen = atom(false)
+
+// ── 运行中子代理聚合（侧栏徽标；DSH workspace rows 语义）──
+
+/** parentSessionId → 运行中子代理数（跨 tab 聚合，仅供徽标展示） */
+export const $runningByParent = atom<Record<string, number>>({})
+
+/** 已计入的子代理 id → 父会话 id（spawn/finished 事件与启动对账共用，避免重复计数） */
+const trackedRunningSubagents = new Map<string, string>()
+
+/** 标记一个子代理开始运行（幂等）；返回是否首次计入。 */
+export function trackSubagentRunning(subagentId: string, parentSessionId: string): boolean {
+  if (!subagentId || !parentSessionId) return false
+  if (trackedRunningSubagents.has(subagentId)) return false
+  trackedRunningSubagents.set(subagentId, parentSessionId)
+  const map = $runningByParent.get()
+  $runningByParent.set({ ...map, [parentSessionId]: (map[parentSessionId] ?? 0) + 1 })
+  return true
+}
+
+/**
+ * 标记一个子代理结束运行（幂等）；返回是否实际移除了计数。
+ * `parentFallback`：finished 事件不带父会话 id，用 tab 内已存条目兜底。
+ */
+export function untrackSubagentRunning(
+  subagentId: string,
+  parentFallback: string,
+): boolean {
+  if (!subagentId) return false
+  const parent = trackedRunningSubagents.get(subagentId) ?? parentFallback
+  if (!trackedRunningSubagents.delete(subagentId)) return false
+  const map = $runningByParent.get()
+  const cur = map[parent] ?? 0
+  const next = Math.max(0, cur - 1)
+  $runningByParent.set({ ...map, [parent]: next })
+  return true
+}
+
 export const $rewindOpen = atom(false)
 export const $rewindTabId = atom('')
 export function openRewind(tabId: string) {

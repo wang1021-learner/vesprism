@@ -30,4 +30,6 @@ toml = { workspace = true }
 rusqlite = { version = "0.37", features = ["bundled"] }
 xai-grok-shell = { workspace = true }
 chrono = { workspace = true }
+zip = { workspace = true }
+serde_yaml = { workspace = true }
 

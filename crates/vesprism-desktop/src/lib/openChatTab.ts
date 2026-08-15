@@ -1,7 +1,7 @@
 /**
- * 打开会话 Tab（Tab 栏「+」与侧栏「技能 / 工具 / MCP / 自动化任务」共用）
+ * 打开会话 Tab（Tab 栏「+」与侧栏「技能 / 工具 / MCP / 自动化任务 / 流程画布」共用）
  *
- * 专用面板（skills / tools / mcp / workflows）：已存在则 **切换**，不再重复新建。
+ * 专用面板（skills / tools / mcp / workflows / flow-canvas）：已存在则 **切换**，不再重复新建。
  * 创建时必须写入绝对 cwd，避免切换面板后 $workspaceCwd 变空导致 start/restart 失败。
  */
 import {
@@ -21,9 +21,9 @@ import {
 import { openTab, setCurrentModel, startSession } from '../bridge'
 
 export type OpenChatTabOpts = {
-  /** Tab 标题（技能 / 工具 / MCP / 自动化任务 / 空=新对话） */
+  /** Tab 标题（技能 / 工具 / MCP / 自动化任务 / 流程画布 / 空=新对话） */
   title?: string
-  /** 专用面板：mcp / tools / skills / workflows；普通对话省略 */
+  /** 专用面板：mcp / tools / skills / workflows / flow-canvas；普通对话省略 */
   utilityKind?: UtilityKind | null
 }
 
