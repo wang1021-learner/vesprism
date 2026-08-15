@@ -15,4 +15,6 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+shlex = { workspace = true }
 tracing = { workspace = true }

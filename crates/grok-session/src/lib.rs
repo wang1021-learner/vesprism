@@ -10,12 +10,19 @@
 mod display_messages;
 pub use display_messages::{load_display_messages, load_display_messages_from_session_dir, DisplayMessage};
 
+pub mod composition;
+pub mod policy;
+mod terminal;
+
 use agent_client_protocol::{
-    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ExtNotification,
-    ExtRequest, ExtResponse, InitializeRequest, LoadSessionRequest, ModelId, NewSessionRequest,
-    PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
+    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection,
+    CreateTerminalRequest, CreateTerminalResponse, ExtNotification, ExtRequest, ExtResponse,
+    InitializeRequest, KillTerminalRequest, KillTerminalResponse, LoadSessionRequest, ModelId,
+    NewSessionRequest, PromptRequest, ProtocolVersion, ReleaseTerminalRequest,
+    ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
-    SessionUpdate, SetSessionModelRequest,
+    SessionUpdate, SetSessionModelRequest, TerminalOutputRequest, TerminalOutputResponse,
+    WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use futures::FutureExt;
 use std::sync::Arc;
@@ -25,7 +32,7 @@ use tokio::sync::watch;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xai_grok_shell::agent::app::spawn_agent_local;
 use xai_grok_shell::agent::config::Config as AgentConfig;
-use xai_grok_shell::extensions::notification::RetryState;
+use xai_grok_shell::extensions::notification::{GoalClassifierVerdict, RetryState};
 pub use xai_grok_shell::session::{RewindConflictInfo, RewindMode, RewindPointInfo, RewindResponse};
 
 /// 会话摘要（来自官方持久化层，直接复用不重新定义）。
@@ -122,6 +129,107 @@ pub struct RunningSubagentInfo {
     pub context_usage_pct: u8,
     pub tools_used: Vec<String>,
     pub error_count: u32,
+}
+
+/// Goal 编排进度（官方 `SessionUpdate::GoalUpdated` 投影；camelCase 对齐官方线格式）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoalInfoDto {
+    pub goal_id: String,
+    pub objective: String,
+    /// active / user_paused / back_off_paused / no_progress_paused /
+    /// infra_paused / blocked / budget_limited / complete / cleared
+    pub status: String,
+    /// idle / planning / executing
+    pub phase: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<i64>,
+    pub tokens_used: i64,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_subagent_role: Option<String>,
+    pub total_worker_rounds: u32,
+    pub total_verify_rounds: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_turn_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_tool_call_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pause_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classifier_runs_attempted: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classifier_max_runs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_classifier_verdict: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifying_completion: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub planning: Option<bool>,
+}
+
+/// 工作流相位（官方 `WorkflowPhaseInfo` 投影）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowPhaseDto {
+    pub title: String,
+    pub state: String,
+}
+
+/// 工作流内 agent（官方 `WorkflowAgentInfo` 投影）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowAgentDto {
+    pub agent_id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub state: String,
+    pub tokens_used: u64,
+    pub duration_ms: u64,
+}
+
+/// 工作流运行进度（官方 `SessionUpdate::WorkflowUpdated` 投影）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowInfoDto {
+    pub run_id: String,
+    pub revision: u64,
+    pub name: String,
+    pub objective: String,
+    pub status: String,
+    pub foreground: bool,
+    pub phases: Vec<WorkflowPhaseDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_budget: Option<u64>,
+    pub agents_used: u64,
+    pub agents_reserved: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents_remaining: Option<u64>,
+    pub agent_usage_incomplete: bool,
+    pub elapsed_ms: u64,
+    pub active_agents: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_agent_label: Option<String>,
+    pub agents: Vec<WorkflowAgentDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pause_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
 }
 
 /// 面向 GUI / REPL 的业务层事件。
@@ -247,6 +355,34 @@ pub enum SessionEvent {
         mode: String,
         questions: Vec<UserQuestionItem>,
         respond: oneshot::Sender<String>,
+    },
+    /// Goal 编排进度（官方 `x.ai/session_notification` → `GoalUpdated`）。
+    GoalUpdated(GoalInfoDto),
+    /// 工作流运行进度（官方 `x.ai/session_notification` → `WorkflowUpdated`）。
+    WorkflowUpdated(WorkflowInfoDto),
+    /// 客户端终端流式输出（官方 ACP 终端能力；桌面自跑命令的实时输出）。
+    TerminalUpdate {
+        terminal_id: String,
+        text: String,
+        /// 本次追加是否触发了头部截断。
+        truncated: bool,
+    },
+    /// 客户端终端进程已退出。
+    TerminalExited {
+        terminal_id: String,
+        exit_code: Option<u32>,
+        signal: Option<String>,
+        /// 被 `terminal/kill`（超时/中断）掐掉，不是命令自己非零退出。
+        killed: bool,
+    },
+    /// 客户端终端已创建（携带启动命令，供 UI 卡片标题）。
+    TerminalOpened {
+        terminal_id: String,
+        command: String,
+    },
+    /// 引擎 `terminal/release`：卡片应移除。
+    TerminalReleased {
+        terminal_id: String,
     },
 }
 
@@ -376,6 +512,40 @@ impl std::fmt::Debug for SessionEvent {
                 mode,
                 questions.len()
             ),
+            Self::GoalUpdated(g) => write!(
+                f,
+                "GoalUpdated {{ id: {:?}, status: {:?}, phase: {:?} }}",
+                g.goal_id, g.status, g.phase
+            ),
+            Self::WorkflowUpdated(w) => write!(
+                f,
+                "WorkflowUpdated {{ run_id: {:?}, name: {:?}, status: {:?} }}",
+                w.run_id, w.name, w.status
+            ),
+            Self::TerminalUpdate { terminal_id, .. } => {
+                write!(f, "TerminalUpdate {{ id: {:?} }}", terminal_id)
+            }
+            Self::TerminalExited {
+                terminal_id,
+                exit_code,
+                killed,
+                ..
+            } => write!(
+                f,
+                "TerminalExited {{ id: {:?}, exit: {:?}, killed: {} }}",
+                terminal_id, exit_code, killed
+            ),
+            Self::TerminalOpened {
+                terminal_id,
+                command,
+            } => write!(
+                f,
+                "TerminalOpened {{ id: {:?}, command: {:?} }}",
+                terminal_id, command
+            ),
+            Self::TerminalReleased { terminal_id } => {
+                write!(f, "TerminalReleased {{ id: {:?} }}", terminal_id)
+            }
         }
     }
 }
@@ -386,6 +556,10 @@ struct GuiClient {
     /// 本客户端的会话 id（initialize/new_session 或 load_session 后写入）：
     /// 用于过滤子会话（workflow）推来的更新
     session_id: std::sync::Arc<std::sync::Mutex<Option<SessionId>>>,
+    /// 组装单权限策略（apply_composition 时设置；None = 无规则，全部走审批条）。
+    policy: std::sync::Arc<std::sync::RwLock<Option<crate::policy::PolicyEngine>>>,
+    /// 客户端终端注册表（官方 ACP 终端反向请求；!Send，Rc/RefCell）。
+    terminals: terminal::TerminalRegistry,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -394,21 +568,68 @@ impl Client for GuiClient {
         &self,
         args: RequestPermissionRequest,
     ) -> agent_client_protocol::Result<RequestPermissionResponse> {
+        let category = args
+            .tool_call
+            .fields
+            .kind
+            .map(tool_kind_str)
+            .unwrap_or_else(|| "other".to_string());
+        let detail = match args.tool_call.fields.kind {
+            Some(k) => tool_detail(
+                k,
+                &args.tool_call.fields.raw_input,
+                args.tool_call.fields.title.as_deref().unwrap_or(""),
+            ),
+            None => String::new(),
+        };
+        let policy = self.policy.read().unwrap_or_else(|e| e.into_inner());
+
+        // 锁定顺序：deny 规则 → 子会话/只读自动放行 → 其余规则 → 审批条。
+        if let Some(engine) = policy.as_ref() {
+            if engine.has_deny(&category, &detail) {
+                if let Some(opt) = pick_reject_once(&args.options) {
+                    return Ok(auto_allow(opt));
+                }
+            }
+        }
+
         // 子会话（workflow 子 agent）的工具权限：自动选 AllowOnce（运行一次），
         // 不打扰父会话用户。官方 pager 对后台 turn 同样走 auto-approve。
         let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
         if own_id.as_ref().is_some_and(|id| *id != args.session_id) {
-            let allow_once = args
-                .options
-                .iter()
-                .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::AllowOnce)
-                .or_else(|| args.options.first());
-            if let Some(opt) = allow_once {
-                return Ok(RequestPermissionResponse::new(
-                    RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-                        opt.option_id.clone(),
-                    )),
-                ));
+            if let Some(opt) = pick_allow_once(&args.options) {
+                return Ok(auto_allow(opt));
+            }
+        }
+
+        // 官方工具 taxonomy：Read/Search/Think/Fetch 默认只读，无工作区副作用。
+        // 对齐 pager 对只读工具的自动放行，避免 read_file / grep 每次打断。
+        if is_read_only_acp_kind(args.tool_call.fields.kind) {
+            if let Some(opt) = pick_allow_once(&args.options) {
+                return Ok(auto_allow(opt));
+            }
+        }
+
+        if let Some(engine) = policy.as_ref() {
+            match engine.evaluate_non_deny(&category, &detail) {
+                crate::policy::PolicyDecision::Respond(crate::policy::Policy::Deny) => {
+                    if let Some(opt) = pick_reject_once(&args.options) {
+                        return Ok(auto_allow(opt));
+                    }
+                }
+                crate::policy::PolicyDecision::Respond(crate::policy::Policy::AllowOnce) => {
+                    if let Some(opt) = pick_allow_once(&args.options) {
+                        return Ok(auto_allow(opt));
+                    }
+                }
+                crate::policy::PolicyDecision::Respond(crate::policy::Policy::AllowAlways) => {
+                    if let Some(opt) = pick_allow_always(&args.options) {
+                        return Ok(auto_allow(opt));
+                    }
+                }
+                // 引擎不会产生 Ask 决策（Ask 映射为 ForwardToUi）；防御性兜底走审批条。
+                crate::policy::PolicyDecision::Respond(crate::policy::Policy::Ask) => {}
+                crate::policy::PolicyDecision::ForwardToUi => {}
             }
         }
 
@@ -469,6 +690,77 @@ impl Client for GuiClient {
                 agent_client_protocol::PermissionOptionId::new(chosen_id),
             )),
         ))
+    }
+
+    async fn create_terminal(
+        &self,
+        args: CreateTerminalRequest,
+    ) -> agent_client_protocol::Result<CreateTerminalResponse> {
+        // 子会话终端仍执行（引擎 pull 需要），但不投影到父会话命令输出区。
+        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+        let emit_ui = own_id.as_ref().is_none_or(|id| *id == args.session_id);
+        let terminal_id = terminal::spawn_terminal(
+            &self.terminals,
+            &args.session_id,
+            args.command,
+            args.args,
+            args.env,
+            args.cwd,
+            args.output_byte_limit,
+            emit_ui.then(|| self.event_tx.clone()),
+        )
+        .await
+        .map_err(|e| agent_client_protocol::Error::internal_error().data(e))?;
+        Ok(CreateTerminalResponse::new(terminal_id))
+    }
+
+    async fn terminal_output(
+        &self,
+        args: TerminalOutputRequest,
+    ) -> agent_client_protocol::Result<TerminalOutputResponse> {
+        let Some((output, truncated, exit_status)) =
+            terminal::read_terminal_output(&self.terminals, &args.terminal_id.to_string())
+        else {
+            return Err(agent_client_protocol::Error::method_not_found());
+        };
+        let mut resp = TerminalOutputResponse::new(output, truncated);
+        if let Some(exit) = exit_status {
+            resp = resp.exit_status(exit);
+        }
+        Ok(resp)
+    }
+
+    async fn wait_for_terminal_exit(
+        &self,
+        args: WaitForTerminalExitRequest,
+    ) -> agent_client_protocol::Result<WaitForTerminalExitResponse> {
+        let Some(exit) = terminal::wait_terminal_exit(&self.terminals, &args.terminal_id.to_string()).await
+        else {
+            return Err(agent_client_protocol::Error::method_not_found());
+        };
+        Ok(WaitForTerminalExitResponse::new(exit))
+    }
+
+    async fn kill_terminal(
+        &self,
+        args: KillTerminalRequest,
+    ) -> agent_client_protocol::Result<KillTerminalResponse> {
+        terminal::kill_terminal(&self.terminals, &args.terminal_id.to_string());
+        Ok(KillTerminalResponse::new())
+    }
+
+    async fn release_terminal(
+        &self,
+        args: ReleaseTerminalRequest,
+    ) -> agent_client_protocol::Result<ReleaseTerminalResponse> {
+        let tid = args.terminal_id.to_string();
+        if terminal::release_terminal(&self.terminals, &tid) {
+            let _ = self
+                .event_tx
+                .send(SessionEvent::TerminalReleased { terminal_id: tid })
+                .await;
+        }
+        Ok(ReleaseTerminalResponse::new())
     }
 
     async fn session_notification(
@@ -665,6 +957,132 @@ impl Client for GuiClient {
                             monitor_description,
                             description,
                         })
+                        .await;
+                }
+                // Goal 编排进度（官方 GoalUpdated；此前落入 other 被丢弃）。
+                xai_grok_shell::extensions::notification::SessionUpdate::GoalUpdated {
+                    goal_id,
+                    objective,
+                    status,
+                    phase,
+                    token_budget,
+                    tokens_used,
+                    elapsed_ms,
+                    current_subagent_role,
+                    total_worker_rounds,
+                    total_verify_rounds,
+                    live_turn_count,
+                    live_tool_call_count,
+                    last_event,
+                    last_event_detail,
+                    pause_message,
+                    classifier_runs_attempted,
+                    classifier_max_runs,
+                    last_classifier_verdict,
+                    verifying_completion,
+                    planning,
+                    ..
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::GoalUpdated(GoalInfoDto {
+                            goal_id,
+                            objective,
+                            status,
+                            phase,
+                            token_budget,
+                            tokens_used,
+                            elapsed_ms,
+                            current_subagent_role,
+                            total_worker_rounds,
+                            total_verify_rounds,
+                            live_turn_count,
+                            live_tool_call_count,
+                            last_event,
+                            last_event_detail,
+                            pause_message,
+                            classifier_runs_attempted,
+                            classifier_max_runs,
+                            last_classifier_verdict: last_classifier_verdict.map(|v| {
+                                match v {
+                                    GoalClassifierVerdict::Achieved => "achieved",
+                                    GoalClassifierVerdict::NotAchieved => "not_achieved",
+                                }
+                                .to_string()
+                            }),
+                            verifying_completion,
+                            planning,
+                        }))
+                        .await;
+                }
+                // 工作流运行进度（官方 WorkflowUpdated）。
+                xai_grok_shell::extensions::notification::SessionUpdate::WorkflowUpdated {
+                    run_id,
+                    revision,
+                    name,
+                    objective,
+                    status,
+                    foreground,
+                    phases,
+                    current_phase,
+                    agent_budget,
+                    agents_used,
+                    agents_reserved,
+                    agents_remaining,
+                    agent_usage_incomplete,
+                    elapsed_ms,
+                    active_agents,
+                    current_agent_label,
+                    agents,
+                    last_event,
+                    last_event_detail,
+                    last_event_timestamp,
+                    pause_message,
+                    result_summary,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::WorkflowUpdated(WorkflowInfoDto {
+                            run_id,
+                            revision,
+                            name,
+                            objective,
+                            status,
+                            foreground,
+                            phases: phases
+                                .into_iter()
+                                .map(|p| WorkflowPhaseDto {
+                                    title: p.title,
+                                    state: p.state,
+                                })
+                                .collect(),
+                            current_phase,
+                            agent_budget,
+                            agents_used,
+                            agents_reserved,
+                            agents_remaining,
+                            agent_usage_incomplete,
+                            elapsed_ms,
+                            active_agents,
+                            current_agent_label,
+                            agents: agents
+                                .into_iter()
+                                .map(|a| WorkflowAgentDto {
+                                    agent_id: a.agent_id,
+                                    label: a.label,
+                                    phase: a.phase,
+                                    model: a.model,
+                                    state: a.state,
+                                    tokens_used: a.tokens_used,
+                                    duration_ms: a.duration_ms,
+                                })
+                                .collect(),
+                            last_event,
+                            last_event_detail,
+                            last_event_timestamp,
+                            pause_message,
+                            result_summary,
+                        }))
                         .await;
                 }
                 other => {
@@ -899,6 +1317,97 @@ fn format_diff_preview_snippet(
         lines.push("+…".to_string());
     }
     lines.join("\n")
+}
+
+fn pick_allow_once(
+    options: &[agent_client_protocol::PermissionOption],
+) -> Option<&agent_client_protocol::PermissionOption> {
+    options
+        .iter()
+        .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::AllowOnce)
+        .or_else(|| options.first())
+}
+
+fn pick_allow_always(
+    options: &[agent_client_protocol::PermissionOption],
+) -> Option<&agent_client_protocol::PermissionOption> {
+    options
+        .iter()
+        .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::AllowAlways)
+}
+
+fn pick_reject_once(
+    options: &[agent_client_protocol::PermissionOption],
+) -> Option<&agent_client_protocol::PermissionOption> {
+    options
+        .iter()
+        .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::RejectOnce)
+}
+
+fn auto_allow(
+    opt: &agent_client_protocol::PermissionOption,
+) -> agent_client_protocol::RequestPermissionResponse {
+    use agent_client_protocol::{
+        RequestPermissionOutcome, RequestPermissionResponse, SelectedPermissionOutcome,
+    };
+    RequestPermissionResponse::new(RequestPermissionOutcome::Selected(
+        SelectedPermissionOutcome::new(opt.option_id.clone()),
+    ))
+}
+
+fn is_read_only_acp_kind(kind: Option<agent_client_protocol::ToolKind>) -> bool {
+    use agent_client_protocol::ToolKind;
+    matches!(
+        kind,
+        Some(ToolKind::Read | ToolKind::Search | ToolKind::Think | ToolKind::Fetch)
+    )
+}
+
+fn unwrap_ext_json(value: serde_json::Value) -> serde_json::Value {
+    value
+        .get("result")
+        .cloned()
+        .or_else(|| value.get("data").cloned())
+        .unwrap_or(value)
+}
+
+fn git_change_status(change_type: &str) -> &'static str {
+    match change_type.to_ascii_lowercase().as_str() {
+        "untracked" | "create" => "untracked",
+        "delete" => "deleted",
+        "rename" => "renamed",
+        _ => "modified",
+    }
+}
+
+fn collect_git_changes(payload: &serde_json::Value) -> Vec<serde_json::Value> {
+    let data = payload.get("data").unwrap_or(payload);
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for key in ["unstaged", "staged"] {
+        let Some(arr) = data.get(key).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for item in arr {
+            let path = item
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if path.is_empty() || !seen.insert(path.clone()) {
+                continue;
+            }
+            let ty = item
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("edit");
+            out.push(serde_json::json!({
+                "path": path,
+                "status": git_change_status(ty),
+            }));
+        }
+    }
+    out
 }
 
 fn tool_kind_str(kind: agent_client_protocol::ToolKind) -> String {
@@ -1162,7 +1671,7 @@ fn desktop_initialize_request() -> InitializeRequest {
         }),
     );
     InitializeRequest::new(ProtocolVersion::LATEST)
-        .client_capabilities(ClientCapabilities::default())
+        .client_capabilities(ClientCapabilities::default().terminal(true))
         .meta(Some(meta))
 }
 
@@ -1213,6 +1722,13 @@ pub struct GrokSession {
     event_tx: mpsc::Sender<SessionEvent>,
     /// 状态广播：只关心最新值，支持多路订阅。
     status_tx: watch::Sender<SessionStatus>,
+    /// 组装单权限策略（与 GuiClient 共享；apply_composition 时热更新）。
+    policy: std::sync::Arc<std::sync::RwLock<Option<crate::policy::PolicyEngine>>>,
+    /// 组装单工具覆盖（官方 `toolOverrides`，含 P3-1 `disabled`）：
+    /// 随每次 send_prompt 以 set-update 语义下发，会话级粘性生效。
+    tool_overrides: std::sync::Arc<std::sync::RwLock<Option<serde_json::Value>>>,
+    /// 最近一次 set_model 的 id（仅 label 热更新时复用）。
+    last_model_id: std::sync::Arc<std::sync::RwLock<Option<String>>>,
 }
 
 impl GrokSession {
@@ -1221,10 +1737,72 @@ impl GrokSession {
         self.session_id.to_string()
     }
 
+    /// 设置/清除本会话的权限策略（组装单 apply 时调用；热更新，无需重启会话）。
+    pub fn set_policy(&self, engine: Option<crate::policy::PolicyEngine>) {
+        let mut guard = self.policy.write().unwrap_or_else(|e| e.into_inner());
+        *guard = engine;
+    }
+
+    /// 设置/清除本会话的工具覆盖（官方 `toolOverrides` 线格式，camelCase）。
+    /// 从下一次 send_prompt 起生效（官方每轮 patch 语义，粘性保持）。
+    /// `None` = 不再下发（初始状态，不动官方默认）；
+    /// 显式清除请传 `{"disabled": null}`（三态 null = 清空粘性覆盖）。
+    pub fn set_tool_overrides(&self, value: Option<serde_json::Value>) {
+        let mut guard = self
+            .tool_overrides
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = value;
+    }
+
+    /// 按会话设置官方权限模式（`x.ai/yolo_mode_changed`）。
+    pub async fn set_permission_mode(
+        &self,
+        mode: crate::policy::PermissionMode,
+    ) -> anyhow::Result<()> {
+        use crate::policy::PermissionMode;
+        let params = match mode {
+            PermissionMode::Yolo => serde_json::json!({
+                "yolo_mode": true,
+                "auto_mode": false,
+                "permission_mode": "always-approve",
+            }),
+            PermissionMode::Auto => serde_json::json!({
+                "yolo_mode": false,
+                "auto_mode": true,
+                "permission_mode": "auto",
+            }),
+            PermissionMode::Ask => serde_json::json!({
+                "yolo_mode": false,
+                "auto_mode": false,
+                "permission_mode": "ask",
+            }),
+        };
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化权限模式失败: {e}"))?;
+        self.connection
+            .ext_notification(ExtNotification::new("x.ai/yolo_mode_changed", raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("设置权限模式失败: {e:?}"))?;
+        Ok(())
+    }
+
     /// 启动 agent，完成 `initialize` + `session/new`，返回可用会话。
     ///
     /// 必须在 `LocalSet` 中调用。
     pub async fn start(cwd: impl Into<String>) -> anyhow::Result<Self> {
+        Self::start_inner(cwd.into(), None).await
+    }
+
+    /// 同 [`Self::start`]，并把 `flows` 写入 `session/new` 的 `_meta["x.ai/flows"]`。
+    pub async fn start_with_flows(
+        cwd: impl Into<String>,
+        flows: impl Into<Vec<String>>,
+    ) -> anyhow::Result<Self> {
+        Self::start_inner(cwd.into(), Some(flows.into())).await
+    }
+
+    async fn start_inner(cwd: String, flows: Option<Vec<String>>) -> anyhow::Result<Self> {
         // 从环境变量与配置目录加载合并后的有效配置。
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
@@ -1258,9 +1836,12 @@ impl GrokSession {
         // 历史回放可能瞬时灌入大量 session/update；256 易反压卡住 load_session
         let (event_tx, event_rx) = mpsc::channel(4096);
         let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let policy = std::sync::Arc::new(std::sync::RwLock::new(None));
         let client = GuiClient {
             event_tx: event_tx.clone(),
             session_id: client_session_id.clone(),
+            policy: policy.clone(),
+            terminals: terminal::new_registry(),
         };
 
         let (connection, io_task) =
@@ -1280,9 +1861,17 @@ impl GrokSession {
 
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
 
-        let session_response = connection
-            .new_session(NewSessionRequest::new(cwd.into()))
-            .await?;
+        let mut new_req = NewSessionRequest::new(cwd);
+        if let Some(flows) = flows.filter(|ids| !ids.is_empty()) {
+            // jike: session/new `_meta["x.ai/flows"]` → 引擎挂载 flow__<id>
+            let mut m = agent_client_protocol::Meta::new();
+            m.insert(
+                "x.ai/flows".into(),
+                serde_json::Value::Array(flows.into_iter().map(serde_json::Value::String).collect()),
+            );
+            new_req = new_req.meta(Some(m));
+        }
+        let session_response = connection.new_session(new_req).await?;
         *client_session_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(session_response.session_id.clone());
 
         let _ = status_tx.send(SessionStatus::Idle);
@@ -1293,6 +1882,9 @@ impl GrokSession {
             event_rx,
             event_tx,
             status_tx,
+            policy,
+            tool_overrides: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
         })
     }
 
@@ -1333,9 +1925,12 @@ impl GrokSession {
         // 先转换参数（impl Into<SessionId> 无法 clone）
         let session_id: SessionId = session_id.into();
         let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(Some(session_id.clone())));
+        let policy = std::sync::Arc::new(std::sync::RwLock::new(None));
         let client = GuiClient {
             event_tx: event_tx.clone(),
             session_id: client_session_id,
+            policy: policy.clone(),
+            terminals: terminal::new_registry(),
         };
         let (connection, io_task) =
             ClientSideConnection::new(client, compat_gui_write, compat_gui_read, |fut| {
@@ -1368,6 +1963,9 @@ impl GrokSession {
             event_rx,
             event_tx,
             status_tx,
+            policy,
+            tool_overrides: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
         })
     }
 
@@ -1382,6 +1980,12 @@ impl GrokSession {
         let connection = Arc::clone(&self.connection);
         let event_tx = self.event_tx.clone();
         let status_tx = self.status_tx.clone();
+        // 组装单工具覆盖：随本轮的 meta 以 set-update 下发（官方每轮 patch 语义）。
+        let tool_overrides = self
+            .tool_overrides
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         // 立刻切到 Generating，方便界面显示加载态并禁用输入。
         let _ = status_tx.send(SessionStatus::Generating);
@@ -1396,6 +2000,9 @@ impl GrokSession {
                             "promptId".to_string(),
                             serde_json::Value::String(pid_for_task.clone()),
                         );
+                        if let Some(overrides) = tool_overrides {
+                            m.insert("toolOverrides".to_string(), overrides);
+                        }
                         m
                     }),
                 )
@@ -1441,19 +2048,123 @@ impl GrokSession {
         model_id: impl Into<String>,
         reasoning_effort: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.set_model_with_label(model_id, reasoning_effort, None)
+            .await
+    }
+
+    /// 切模型，并可同时写入 `_meta.systemPromptLabel`（模型不变时也会重渲人设）。
+    pub async fn set_model_with_label(
+        &self,
+        model_id: impl Into<String>,
+        reasoning_effort: Option<&str>,
+        system_prompt_label: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let model_id = model_id.into();
         let mut req = SetSessionModelRequest::new(
             self.session_id.clone(),
-            ModelId::new(model_id.into()),
+            ModelId::new(model_id.clone()),
         );
+        let mut meta = serde_json::Map::new();
         if let Some(effort) = reasoning_effort.map(str::trim).filter(|s| !s.is_empty()) {
-            let mut meta = serde_json::Map::new();
             meta.insert(
                 "reasoningEffort".into(),
                 serde_json::Value::String(effort.to_ascii_lowercase()),
             );
+        }
+        if let Some(label) = system_prompt_label.map(str::trim).filter(|s| !s.is_empty()) {
+            meta.insert(
+                "systemPromptLabel".into(),
+                serde_json::Value::String(label.to_string()),
+            );
+        }
+        if !meta.is_empty() {
             req = req.meta(meta);
         }
         self.connection.set_session_model(req).await?;
+        *self
+            .last_model_id
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(model_id);
+        Ok(())
+    }
+
+    /// 应用已解析的组装单（已接线通道）。
+    pub async fn apply_composition(
+        &self,
+        composition: &crate::composition::Composition,
+    ) -> anyhow::Result<()> {
+        use crate::composition::canonicalize_tool_name;
+        use crate::policy::PolicyEngine;
+
+        let engine = if composition.permissions.rules.is_empty() {
+            None
+        } else {
+            Some(PolicyEngine::new(
+                composition.permissions.mode,
+                composition.permissions.rules.clone(),
+            ))
+        };
+        self.set_policy(engine);
+
+        let disabled: Vec<String> = composition
+            .tools
+            .disable
+            .iter()
+            .map(|n| canonicalize_tool_name(n))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if disabled.is_empty() {
+            self.set_tool_overrides(Some(serde_json::json!({ "disabled": null })));
+        } else {
+            self.set_tool_overrides(Some(serde_json::json!({ "disabled": disabled })));
+        }
+
+        self.set_permission_mode(composition.permissions.mode)
+            .await?;
+
+        let label = composition.persona.label.as_deref();
+        if let Some(model) = composition.model.name.as_deref() {
+            self.set_model_with_label(
+                model,
+                composition.model.reasoning_effort.as_deref(),
+                label,
+            )
+            .await?;
+        } else if label.is_some() {
+            let current = self
+                .last_model_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(model) = current {
+                self.set_model_with_label(
+                    model,
+                    composition.model.reasoning_effort.as_deref(),
+                    label,
+                )
+                .await?;
+            }
+        }
+
+        self.update_flows(&composition.flows).await?;
+
+        Ok(())
+    }
+
+    /// 热更新本会话挂载的流程（官方 `x.ai/session/update_flows`）。
+    /// 空列表卸掉全部 `flow__` 工具。
+    pub async fn update_flows(&self, flows: &[String]) -> anyhow::Result<()> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "flows": flows,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 update_flows 参数失败: {e}"))?;
+        self.connection
+            .ext_method(ExtRequest::new(
+                "x.ai/session/update_flows",
+                params.into(),
+            ))
+            .await
+            .map_err(|e| anyhow::anyhow!("update_flows 失败: {e:?}"))?;
         Ok(())
     }
 
@@ -1847,6 +2558,143 @@ impl GrokSession {
         } else {
             Ok(value)
         }
+    }
+
+    /// 工作区未提交改动（官方 `x.ai/git/status`）。
+    pub async fn git_workspace_changes(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "includeUntracked": true,
+            "includeStats": false,
+            "ignoreSubmodules": true,
+            "includePatches": false,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 git/status 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/git/status", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("git/status 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 git/status 失败: {e}"))?;
+        Ok(collect_git_changes(&unwrap_ext_json(value)))
+    }
+
+    /// 单文件工作区 vs HEAD（官方 `x.ai/git/diffs`）。
+    pub async fn git_file_diff(&self, path: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "paths": [path],
+            "from": "HEAD",
+            "to": "working",
+            "includePatch": true,
+            "includeContent": true,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 git/diffs 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/git/diffs", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("git/diffs 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 git/diffs 失败: {e}"))?;
+        let payload = unwrap_ext_json(value);
+        let files = payload
+            .get("files")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let file = files
+            .into_iter()
+            .find(|f| f.get("path").and_then(|p| p.as_str()) == Some(path))
+            .or_else(|| {
+                payload
+                    .get("files")
+                    .and_then(|v| v.as_array())
+                    .and_then(|a| a.first().cloned())
+            });
+        let Some(file) = file else {
+            return Ok(serde_json::json!({
+                "path": path,
+                "old_text": "",
+                "new_text": "",
+                "status": "clean",
+            }));
+        };
+        let ty = file.get("type").and_then(|v| v.as_str()).unwrap_or("edit");
+        Ok(serde_json::json!({
+            "path": path,
+            "old_text": file.get("oldText").and_then(|v| v.as_str()).unwrap_or(""),
+            "new_text": file.get("newText").and_then(|v| v.as_str()).unwrap_or(""),
+            "status": git_change_status(ty),
+        }))
+    }
+
+    pub async fn list_skills(&self, cwd: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({ "cwd": cwd }))
+            .map_err(|e| anyhow::anyhow!("序列化 skills/list 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/skills/list", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("skills/list 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 skills/list 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
+    }
+
+    pub async fn add_skill(&self, path: &str, cwd: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "path": path,
+            "cwd": cwd,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 skills/add 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/skills/add", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("skills/add 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 skills/add 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
+    }
+
+    pub async fn remove_skill(&self, path: &str, cwd: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "path": path,
+            "cwd": cwd,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 skills/remove 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/skills/remove", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("skills/remove 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 skills/remove 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
+    }
+
+    pub async fn toggle_skill(
+        &self,
+        name: &str,
+        enabled: bool,
+        cwd: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "name": name,
+            "enabled": enabled,
+            "cwd": cwd,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 skills/toggle 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/skills/toggle", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("skills/toggle 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 skills/toggle 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
     }
 
     /// 订阅会话状态变化（如「正在生成中」指示器）。
