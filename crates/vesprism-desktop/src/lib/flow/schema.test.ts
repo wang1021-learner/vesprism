@@ -13,6 +13,52 @@ describe('validateFlowGraph', () => {
     }
   })
 
+  it('拒绝非 branch 多出边、branch 不是恰好 2 出边、start-end 无连线', () => {
+    const extraOut = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'a', type: 'agent', params: {} },
+        { id: 'b', type: 'agent', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'a' },
+        { from: 'a', to: 'b' },
+        { from: 'a', to: 'e' },
+      ],
+    }
+    const branch3 = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'br', type: 'branch', params: {} },
+        { id: 'x', type: 'agent', params: {} },
+        { id: 'y', type: 'agent', params: {} },
+        { id: 'z', type: 'agent', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'br' },
+        { from: 'br', to: 'x', label: 'success' },
+        { from: 'br', to: 'y', label: 'failure' },
+        { from: 'br', to: 'z' },
+        { from: 'x', to: 'e' },
+        { from: 'y', to: 'e' },
+        { from: 'z', to: 'e' },
+      ],
+    }
+    const disconnected = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [],
+    }
+    for (const item of [extraOut, branch3, disconnected]) {
+      const r = validateFlowGraph(item)
+      expect(r.ok, JSON.stringify(item)).toBe(false)
+    }
+  })
+
   it('拒绝缺 start / 缺 end / 非法 type / 悬空边 / 无出边 branch', () => {
     const bad: unknown[] = [
       null,

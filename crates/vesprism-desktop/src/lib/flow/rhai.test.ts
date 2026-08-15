@@ -16,7 +16,7 @@ describe('compileToRhai', () => {
     expect(listReachable(createDemoDraft()).sort()).toEqual(['agent-1', 'end-1', 'start-1'])
   })
 
-  it('branch 生成 if / else，flow 节点写入依赖调用说明', () => {
+  it('branch 生成 if / else；未内联的 flow 节点拒绝编译', () => {
     const draft: FlowDraft = {
       id: 'with-branch',
       name: '分支示例',
@@ -27,7 +27,7 @@ describe('compileToRhai', () => {
       nodes: [
         { id: 's', type: 'start', params: { label: '起点' } },
         { id: 'b', type: 'branch', params: { condition: 'success' } },
-        { id: 'ok', type: 'flow', params: { flowId: 'other-flow' } },
+        { id: 'ok', type: 'agent', params: { label: '成功', prompt: '处理成功' } },
         { id: 'ng', type: 'tool', params: { command: 'echo fail' } },
         { id: 'e', type: 'end', params: {} },
       ],
@@ -42,8 +42,29 @@ describe('compileToRhai', () => {
     const rhai = compileToRhai(draft)
     expect(rhai).toContain('if (')
     expect(rhai).toContain('} else {')
-    expect(rhai).toContain('invoke other-flow')
+    expect(rhai).toContain('处理成功')
     expect(rhai).toContain('capability_mode: "execute"')
+    expect(rhai).not.toContain('invoke')
+    expect(() =>
+      compileToRhai({
+        ...draft,
+        nodes: draft.nodes.map((n) =>
+          n.id === 'ok' ? { ...n, type: 'flow', params: { flowId: 'other-flow' } } : n,
+        ),
+      }),
+    ).toThrow(/未内联/)
+  })
+
+  it('preset 解析进 AgentOpts，不写进提示词', () => {
+    const d = createDemoDraft()
+    ;(d.nodes[1].params as { presetId?: string }).presetId = 'coding'
+    expect(() => compileToRhai(d)).toThrow(/组装单「coding」不存在/)
+    const rhai = compileToRhai(d, {
+      presets: { coding: { model: 'grok-4', agentType: 'explore' } },
+    })
+    expect(rhai).toContain('model: "grok-4"')
+    expect(rhai).toContain('agent_type: "explore"')
+    expect(rhai).not.toContain('你按组装单')
   })
 
   it('草稿含绝对路径时被检测', () => {

@@ -24,11 +24,13 @@ export interface StartParams {
 
 export interface AgentParams {
   label?: string
-  /** 组装单 preset id，可空 */
+  /** 组装单 id；发布时解析成 AgentOpts.model / agent_type，不写进提示词 */
   presetId?: string
   role?: string
-  /** 空 = 继承会话模型 */
+  /** 空 = 用 preset 的模型，再空 = 继承会话 */
   model?: string
+  /** 官方 AgentOpts.agent_type；空 = 用 preset，再空 = general-purpose */
+  agentType?: string
   prompt?: string
 }
 
@@ -106,6 +108,7 @@ export interface FlowYamlMeta {
   input_schema: JsonSchema
   output_schema: JsonSchema
   version: string
+  /** 官方 sidecar 仍带此字段；v1 发布内联后恒为空，不是运行时依赖。 */
   dependencies: string[]
 }
 

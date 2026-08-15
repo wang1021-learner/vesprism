@@ -27,8 +27,8 @@ function subtitleOf(data: FlowRfData): string {
       return fields?.length ? fields.map((f) => f.name).join(', ') : '输入'
     }
     case 'agent': {
-      const p = data as { role?: string; presetId?: string; model?: string }
-      return p.presetId || p.role || p.model || '继承会话模型'
+      const p = data as { role?: string; presetId?: string; model?: string; agentType?: string }
+      return p.model || p.agentType || p.presetId || p.role || '继承会话模型'
     }
     case 'tool': {
       const p = data as { command?: string; toolName?: string }

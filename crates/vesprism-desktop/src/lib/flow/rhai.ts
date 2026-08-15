@@ -1,8 +1,13 @@
 /**
  * 画布 JSON → 官方 Rhai 工作流。v1 线性 + 分支；不生成循环/并行节点。
  */
-import { collectDependencies, nodeLabel } from './graph'
+import { graphJsonFromDraft, nodeLabel } from './graph'
+import { validateFlowGraph } from './schema'
 import type { FlowDraft, FlowGraphEdge, FlowGraphNode } from './types'
+
+/** 发布时把组装单 preset 收成官方 AgentOpts 能认的字段。 */
+export type PresetResolve = { model?: string; agentType?: string }
+export type CompileOpts = { presets?: Record<string, PresetResolve> }
 
 function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')
@@ -26,9 +31,8 @@ function incoming(edges: FlowGraphEdge[], id: string): FlowGraphEdge[] {
 }
 
 function agentPrompt(n: FlowGraphNode): string {
-  const p = n.params as { role?: string; prompt?: string; presetId?: string }
+  const p = n.params as { role?: string; prompt?: string }
   const parts: string[] = []
-  if (p.presetId) parts.push(`你按组装单「${p.presetId}」行事。`)
   if (p.role) parts.push(p.role)
   if (p.prompt) parts.push(p.prompt)
   if (parts.length === 0) parts.push('根据上一步输出完成本节点任务，给出简洁结果。')
@@ -36,14 +40,42 @@ function agentPrompt(n: FlowGraphNode): string {
   return parts.join('\n')
 }
 
-function emitAgentCall(n: FlowGraphNode, prevVar: string, lines: string[]): string {
+function resolveAgentOpts(
+  n: FlowGraphNode,
+  presets: Record<string, PresetResolve>,
+): { model?: string; agentType?: string } {
+  const p = n.params as { presetId?: string; model?: string; agentType?: string }
+  const presetId = p.presetId?.trim()
+  let model = p.model?.trim()
+  let agentType = p.agentType?.trim()
+  if (presetId) {
+    const resolved = presets[presetId]
+    if (!resolved) {
+      throw new Error(`组装单「${presetId}」不存在，无法编译节点 ${n.id}`)
+    }
+    if (!model) model = resolved.model?.trim()
+    if (!agentType) agentType = resolved.agentType?.trim()
+  }
+  return {
+    model: model || undefined,
+    agentType: agentType || undefined,
+  }
+}
+
+function emitAgentCall(
+  n: FlowGraphNode,
+  prevVar: string,
+  lines: string[],
+  presets: Record<string, PresetResolve>,
+): string {
   const v = ident(n.id)
-  const p = n.params as { model?: string }
+  const resolved = resolveAgentOpts(n, presets)
   const prompt = agentPrompt(n)
   lines.push(`phase("${esc(phaseTitle(n))}");`)
   lines.push(`log("node ${esc(n.id)}");`)
   const opts: string[] = [`label: "${esc(n.id)}"`]
-  if (p.model && p.model.trim()) opts.push(`model: "${esc(p.model.trim())}"`)
+  if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
+  if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
   lines.push(`let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ ${opts.join(', ')} });`)
   lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "agent failed" }); }`)
   return v
@@ -66,27 +98,11 @@ function emitToolCall(n: FlowGraphNode, prevVar: string, lines: string[]): strin
   return v
 }
 
-function emitFlowCall(n: FlowGraphNode, prevVar: string, lines: string[]): string {
-  const v = ident(n.id)
-  const p = n.params as { flowId?: string; input?: Record<string, unknown> }
-  const flowId = (p.flowId || '').trim() || 'unknown-flow'
-  const extra = esc(JSON.stringify(p.input ?? {}))
-  const prompt =
-    `调用已发布流程 \`${flowId}\`。使用 workflow 工具或斜杠命令 /${flowId}。` +
-    `附加参数：${extra}。把上一步输出一并传入：`
-  lines.push(`phase("${esc(phaseTitle(n))}");`)
-  lines.push(`log("node ${esc(n.id)} invoke ${esc(flowId)}");`)
-  lines.push(
-    `let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ label: "${esc(n.id)}", capability_mode: "all" });`,
-  )
-  lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "flow failed" }); }`)
-  return v
-}
-
 function emitNode(
   n: FlowGraphNode,
   prevVar: string,
   lines: string[],
+  presets: Record<string, PresetResolve>,
 ): string {
   switch (n.type) {
     case 'start':
@@ -94,11 +110,11 @@ function emitNode(
     case 'end':
       return prevVar
     case 'agent':
-      return emitAgentCall(n, prevVar, lines)
+      return emitAgentCall(n, prevVar, lines, presets)
     case 'tool':
       return emitToolCall(n, prevVar, lines)
     case 'flow':
-      return emitFlowCall(n, prevVar, lines)
+      throw new Error(`节点 ${n.id} 仍是 flow，发布/试跑前必须内联`)
     case 'branch':
       return prevVar
   }
@@ -111,6 +127,7 @@ function walk(
   edges: FlowGraphEdge[],
   lines: string[],
   visiting: Set<string>,
+  presets: Record<string, PresetResolve>,
 ): string {
   if (visiting.has(currentId)) {
     lines.push(`log("skip cycle at ${esc(currentId)}");`)
@@ -140,26 +157,34 @@ function walk(
     lines.push(`log("node ${esc(node.id)} branch");`)
     lines.push(`if (${cond}) {`)
     let last = prevVar
-    if (yes) last = walk(yes.to, prevVar, nodes, edges, lines, visiting)
+    if (yes) last = walk(yes.to, prevVar, nodes, edges, lines, visiting, presets)
     if (no) {
       lines.push(`} else {`)
-      last = walk(no.to, prevVar, nodes, edges, lines, visiting)
+      last = walk(no.to, prevVar, nodes, edges, lines, visiting, presets)
     }
     lines.push(`}`)
     visiting.delete(currentId)
     return last
   }
 
-  const produced = emitNode(node, prevVar, lines)
-  let last = produced
-  for (const e of outs) {
-    last = walk(e.to, produced, nodes, edges, lines, visiting)
+  if (outs.length !== 1) {
+    throw new Error(`节点 ${node.id} 必须恰好 1 条出边（v1 不并行）`)
   }
+  const produced = emitNode(node, prevVar, lines, presets)
+  const last = walk(outs[0].to, produced, nodes, edges, lines, visiting, presets)
   visiting.delete(currentId)
   return last
 }
 
-export function compileToRhai(draft: FlowDraft): string {
+export function compileToRhai(draft: FlowDraft, opts: CompileOpts = {}): string {
+  const checked = validateFlowGraph(graphJsonFromDraft(draft))
+  if (!checked.ok) {
+    throw new Error('流程图不合法：非分支节点只能有 1 条出边，分支必须恰好 2 条')
+  }
+  if (draft.nodes.some((n) => n.type === 'flow')) {
+    throw new Error('仍有未内联的 flow 节点，不能编译')
+  }
+  const presets = opts.presets ?? {}
   const nodes = new Map(draft.nodes.map((n) => [n.id, n]))
   const starts = draft.nodes.filter((n) => n.type === 'start')
   const start = starts[0]
@@ -185,7 +210,7 @@ export function compileToRhai(draft: FlowDraft): string {
   lines.push('')
 
   const last = start
-    ? walk(start.id, 'input', nodes, draft.edges, lines, new Set())
+    ? walk(start.id, 'input', nodes, draft.edges, lines, new Set(), presets)
     : 'input'
 
   lines.push('')
@@ -208,9 +233,7 @@ export function collectPromptsMarkdown(draft: FlowDraft): string {
   return blocks.join('\n')
 }
 
-export function compileRhaiWithDepsNote(draft: FlowDraft): { rhai: string; dependencies: string[] } {
-  return { rhai: compileToRhai(draft), dependencies: collectDependencies(draft.nodes) }
-}
+
 
 /** 供测试：导出图中引用的节点是否都被 walk 到（无 start 则空脚本仍合法）。 */
 export function listReachable(draft: FlowDraft): string[] {

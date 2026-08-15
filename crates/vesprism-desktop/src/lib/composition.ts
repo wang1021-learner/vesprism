@@ -31,6 +31,8 @@ export interface CompositionData {
   plugins: { dirs: string[] }
   /** 挂到该会话的已发布流程 id（引擎 `_meta["x.ai/flows"]` → `flow__<id>`） */
   flows: string[]
+  /** 流程节点引用该组装单时写入官方 AgentOpts.agent_type */
+  agent_type?: string | null
 }
 
 export function emptyComposition(): CompositionData {
@@ -45,6 +47,7 @@ export function emptyComposition(): CompositionData {
     mcp: { servers: [], disabled_tools: {} },
     plugins: { dirs: [] },
     flows: [],
+    agent_type: null,
   }
 }
 
@@ -177,6 +180,9 @@ export function compositionToYaml(c: CompositionData): string {
   if ((c.flows ?? []).length > 0) {
     lines.push('flows:')
     for (const id of c.flows) lines.push(`  - ${JSON.stringify(id)}`)
+  }
+  if (c.agent_type?.trim()) {
+    lines.push(`agent_type: ${JSON.stringify(c.agent_type.trim())}`)
   }
   return lines.join('\n') + '\n'
 }

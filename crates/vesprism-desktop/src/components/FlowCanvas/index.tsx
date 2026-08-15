@@ -25,6 +25,7 @@ import {
   exportFlow,
   getFlow,
   importFlow,
+  listCompositions,
   listFlows,
   saveFlow,
   sendPrompt,
@@ -34,11 +35,11 @@ import {
   NODE_LIBRARY,
   buildGeneratePrompt,
   bumpVersion,
-  collectDependencies,
   collectPromptsMarkdown,
   compileInlinedRhai,
   compileToRhai,
   createDemoDraft,
+  graphJsonFromDraft,
   createNodeId,
   defaultParams,
   draftFromGraph,
@@ -47,6 +48,7 @@ import {
   isValidFlowId,
   layoutGraph,
   parseGeneratedGraph,
+  validateFlowGraph,
   slugifyFlowId,
   subgraphFrom,
   summarizeInputSchema,
@@ -208,6 +210,10 @@ function FlowCanvasInner() {
     async (d: FlowDraft, extra?: { publish?: boolean; stage?: boolean; rhai?: string }) => {
       let rhai = extra?.rhai
       if (!rhai && (extra?.publish || extra?.stage)) {
+        const graph = validateFlowGraph(graphJsonFromDraft(d))
+        if (!graph.ok) {
+          throw new Error('流程图不合法：非分支只能有 1 条出边，分支必须恰好 2 条')
+        }
         const catalog: Record<string, { nodes: FlowDraft['nodes']; edges: FlowDraft['edges'] }> = {}
         for (const it of list) {
           if (it.id === d.id) continue
@@ -223,11 +229,20 @@ function FlowCanvasInner() {
             /* 列表项可能已删 */
           }
         }
-        const compiled = compileInlinedRhai(d, catalog, compileToRhai)
+        const presets: Record<string, { model?: string; agentType?: string }> = {}
+        try {
+          for (const p of await listCompositions()) {
+            presets[p.id] = {
+              model: p.model || undefined,
+              agentType: p.agentType || undefined,
+            }
+          }
+        } catch {
+          /* 非桌面壳时按无 preset 处理，缺 id 会在编译时报 */
+        }
+        const compiled = compileInlinedRhai(d, catalog, (next) => compileToRhai(next, { presets }))
         if (!compiled.ok) throw new Error(compiled.error)
         rhai = compiled.rhai
-      } else if (!rhai) {
-        rhai = compileToRhai(d)
       }
       const saved = await saveFlow({
         id: d.id,
@@ -338,12 +353,11 @@ function FlowCanvasInner() {
       pushToast('输入/输出 Schema 不是合法 JSON', 'error')
       return
     }
-    const missing = collectDependencies(current.nodes)
     try {
       await persist({ ...current, description: pubDesc.trim(), version: pubVersion }, { publish: true })
       setDraft((d) => ({ ...d, description: pubDesc.trim(), version: pubVersion, published: true, dirty: false }))
       setPublishOpen(false)
-      pushToast(missing.length ? `已发布（依赖：${missing.join(', ')}）` : '已发布', 'success')
+      pushToast('已发布', 'success')
     } catch (e) {
       pushToast(String(e), 'error')
     }
@@ -354,6 +368,18 @@ function FlowCanvasInner() {
     if (fromNodeId) {
       const sub = subgraphFrom(current.nodes, current.edges, fromNodeId)
       current = { ...current, id: `${current.id}-rerun`, nodes: sub.nodes, edges: sub.edges }
+      if (!current.nodes.some((n) => n.type === 'start')) {
+        current.nodes = [{ id: 'start-rerun', type: 'start', params: { label: '起点' } }, ...current.nodes]
+        current.edges = [{ from: 'start-rerun', to: fromNodeId }, ...current.edges]
+      }
+      if (!current.nodes.some((n) => n.type === 'end')) {
+        const hasOut = new Set(current.edges.map((e) => e.from))
+        const leaves = current.nodes.filter((n) => n.type !== 'end' && !hasOut.has(n.id))
+        current.nodes = [...current.nodes, { id: 'end-rerun', type: 'end', params: {} }]
+        for (const leaf of leaves) {
+          current.edges.push({ from: leaf.id, to: 'end-rerun' })
+        }
+      }
     }
     if (!isValidFlowId(current.id) && !fromNodeId) {
       pushToast('流程 id 不合法，请先在发布弹窗确认 id', 'error')
@@ -376,20 +402,7 @@ function FlowCanvasInner() {
     setReplayOpen(true)
     setDockOpen(true)
     try {
-      const rhai = compileToRhai(current)
-      await persist(fromNodeId ? draft : current, { stage: true, rhai: fromNodeId ? rhai : undefined })
-      if (fromNodeId) {
-        await saveFlow({
-          id: current.id,
-          name: current.name,
-          description: current.description || current.name,
-          version: current.version,
-          nodes: current.nodes,
-          edges: current.edges,
-          stage: true,
-          rhai,
-        })
-      }
+      await persist(current, { stage: true })
       const arg = Object.keys(input as object).length ? ` ${JSON.stringify(input)}` : ''
       await sendPrompt(tabId, `/${fromNodeId ? current.id : draft.id}${arg}`)
       setRunSteps((prev) => prev.map((s) => (s.type === 'start' ? { ...s, status: 'running', startedAt: Date.now() } : s)))
@@ -597,10 +610,17 @@ function FlowCanvasInner() {
       {selected.data.nodeType === 'agent' && (
         <>
           <label className="flow-field">
-            <span>组装单 preset id</span>
+            <span>组装单 preset id（发布时解析成 model / agent_type）</span>
             <input
               value={String((selected.data as { presetId?: string }).presetId ?? '')}
               onChange={(e) => patchSelected({ presetId: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <label className="flow-field">
+            <span>agent_type（空=preset 或 general-purpose）</span>
+            <input
+              value={String((selected.data as { agentType?: string }).agentType ?? '')}
+              onChange={(e) => patchSelected({ agentType: e.target.value } as Partial<FlowRfData>)}
             />
           </label>
           <label className="flow-field">

@@ -155,6 +155,7 @@ pub fn run() {
             commands::apply_composition,
             commands::get_composition,
             commands::save_composition,
+            commands::list_compositions,
             flows::save_flow,
             flows::list_flows,
             flows::get_flow,

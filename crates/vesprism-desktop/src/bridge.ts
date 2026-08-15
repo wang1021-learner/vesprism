@@ -455,6 +455,14 @@ export const getComposition = (sessionId: string | null, cwd: string) =>
 export const saveComposition = (name: string, yaml: string) =>
   invoke('save_composition', { name, yaml })
 
+export type CompositionPresetDto = {
+  id: string
+  model?: string | null
+  agentType?: string | null
+}
+
+export const listCompositions = () => invoke<CompositionPresetDto[]>('list_compositions')
+
 // ── 流式事件（与后端 FrontendEvent snake_case tag 对齐）──
 export interface SessionEventPayload {
   type: string

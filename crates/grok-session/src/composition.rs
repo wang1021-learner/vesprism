@@ -85,7 +85,7 @@ pub struct PermissionsConfig {
     pub rules: Vec<PermissionRule>,
 }
 
-/// 官方内置工具函数名（`disabled` 精确匹配这些，或下表别名）。
+/// 官方内置工具函数名（`disabled` 精确匹配这些）。
 const OFFICIAL_TOOL_NAMES: &[&str] = &[
     "run_terminal_command",
     "web_search",
@@ -104,17 +104,7 @@ const OFFICIAL_TOOL_NAMES: &[&str] = &[
     "workflow",
 ];
 
-/// 组装单短名 → 官方函数名。
-const TOOL_NAME_ALIASES: &[(&str, &str)] = &[
-    ("bash", "run_terminal_command"),
-    ("shell", "run_terminal_command"),
-    ("search", "web_search"),
-    ("edit", "search_replace"),
-    ("read", "read_file"),
-    ("fetch", "web_fetch"),
-];
-
-/// 把停用名单里的名字收成官方函数名。未知名 fail loud。
+/// 只认官方函数名。别名（bash/search/…）会让模型工具表对不上，直接拒。
 pub fn canonicalize_tool_name(raw: &str) -> Result<String> {
     let name = raw.trim();
     if name.is_empty() {
@@ -123,13 +113,8 @@ pub fn canonicalize_tool_name(raw: &str) -> Result<String> {
     if OFFICIAL_TOOL_NAMES.contains(&name) {
         return Ok(name.to_string());
     }
-    for (alias, official) in TOOL_NAME_ALIASES {
-        if *alias == name {
-            return Ok((*official).to_string());
-        }
-    }
     anyhow::bail!(
-        "未知工具名 {name:?}。请用官方函数名（如 run_terminal_command / web_search）或别名 bash/search/edit/read/fetch"
+        "未知工具名 {name:?}。请用官方函数名（如 run_terminal_command / web_search）"
     )
 }
 
@@ -184,6 +169,8 @@ pub struct Composition {
     /// 挂到该会话的已发布流程 id。装配层经 `_meta["x.ai/flows"]` seed
     /// 或 `x.ai/session/update_flows` 挂载为 `flow__<id>`。
     pub flows: Vec<String>,
+    /// 流程节点引用该组装单时写入官方 `AgentOpts.agent_type`。
+    pub agent_type: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +292,9 @@ pub fn merge_composition(base: &Composition, overlay: &Composition) -> Compositi
     if !overlay.flows.is_empty() {
         merged.flows = overlay.flows.clone();
     }
+    if overlay.agent_type.is_some() {
+        merged.agent_type = overlay.agent_type.clone();
+    }
     merged
 }
 
@@ -398,7 +388,7 @@ model:
   name: deepseek-chat
   reasoning_effort: medium
 tools:
-  disable: [search]
+  disable: [web_search]
   overrides:
     web_search:
       allowed_domains: ["docs.rs"]
@@ -430,7 +420,7 @@ flows:
         assert_eq!(parsed.persona.sections, vec!["回复使用中文"]);
         assert_eq!(parsed.model.name.as_deref(), Some("deepseek-chat"));
         assert_eq!(parsed.model.reasoning_effort.as_deref(), Some("medium"));
-        assert_eq!(parsed.tools.disable, vec!["search"]);
+        assert_eq!(parsed.tools.disable, vec!["web_search"]);
         assert!(parsed.tools.overrides.is_some());
         assert_eq!(parsed.skills.scopes, vec!["local", "repo"]);
         assert_eq!(parsed.permissions.mode, PermissionMode::Ask);
@@ -566,21 +556,19 @@ flows:
     }
 
     #[test]
-    fn disable_aliases_and_rejects_unknown() {
-        assert_eq!(
-            canonicalize_tool_name("bash").unwrap(),
-            "run_terminal_command"
-        );
-        assert_eq!(canonicalize_tool_name("search").unwrap(), "web_search");
+    fn disable_official_names_only() {
         assert_eq!(
             canonicalize_tool_name("run_terminal_command").unwrap(),
             "run_terminal_command"
         );
+        assert_eq!(canonicalize_tool_name("web_search").unwrap(), "web_search");
+        assert!(canonicalize_tool_name("bash").is_err());
+        assert!(canonicalize_tool_name("search").is_err());
         assert!(canonicalize_tool_name("nonesuch").is_err());
-        let parsed = parse_composition("tools:\n  disable: [nonesuch]\n", "t").unwrap();
+        let parsed = parse_composition("tools:\n  disable: [bash]\n", "t").unwrap();
         let err = format!("{:#}", parsed.validate().unwrap_err());
         assert!(
-            err.contains("未知工具名") || err.contains("nonesuch"),
+            err.contains("未知工具名") || err.contains("bash"),
             "err: {err}"
         );
     }

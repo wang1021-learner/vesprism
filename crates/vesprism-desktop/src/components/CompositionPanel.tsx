@@ -211,11 +211,11 @@ function SectionBody({
     case 'tools':
       return (
         <label className="comp-field">
-          <span className="comp-label">停用工具（官方函数名或别名 bash/search/edit/read/fetch）</span>
+          <span className="comp-label">停用工具（官方函数名，如 run_terminal_command / web_search）</span>
           <input
             className="comp-input"
             value={draft.tools.disable.join(', ')}
-            placeholder="如：bash, web_search"
+            placeholder="如：run_terminal_command, web_search"
             onChange={(e) => patch({ tools: { ...draft.tools, disable: splitList(e.target.value) } })}
           />
         </label>

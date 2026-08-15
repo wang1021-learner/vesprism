@@ -42,10 +42,21 @@ export function extractJsonObject(text: string): unknown | null {
   }
 }
 
+function expectedOutDegree(type: FlowNodeType): { min: number; max: number } {
+  switch (type) {
+    case 'end':
+      return { min: 0, max: 0 }
+    case 'branch':
+      return { min: 2, max: 2 }
+    default:
+      return { min: 1, max: 1 }
+  }
+}
+
 /**
- * 严格校验 AI / 导入 graph。
+ * 严格校验 AI / 导入 / 发布 graph。
  * 约束：nodes/edges 形状、type 六选一、连线端点存在、至少各一个 start/end、
- * 每个 branch 至少一条出边。
+ * 非 branch 恰好 1 条出边（end 为 0）、branch 恰好 2 条出边。v1 不并行。
  */
 export function validateFlowGraph(input: unknown): SchemaResult {
   if (!isRecord(input)) {
@@ -91,7 +102,9 @@ export function validateFlowGraph(input: unknown): SchemaResult {
   }
 
   for (const n of nodes) {
-    if (n.type === 'branch' && (outCount.get(n.id) ?? 0) < 1) {
+    const { min, max } = expectedOutDegree(n.type)
+    const count = outCount.get(n.id) ?? 0
+    if (count < min || count > max) {
       return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
     }
   }

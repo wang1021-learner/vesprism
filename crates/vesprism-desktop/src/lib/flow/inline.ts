@@ -158,5 +158,9 @@ export function compileInlinedRhai(
 ): { ok: true; rhai: string } | InlineErr {
   const inlined = inlineFlowNodes(draft, catalog)
   if (!inlined.ok) return inlined
-  return { ok: true, rhai: compile(inlined.draft) }
+  try {
+    return { ok: true, rhai: compile(inlined.draft) }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }

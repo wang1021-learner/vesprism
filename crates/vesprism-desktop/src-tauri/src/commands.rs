@@ -2194,6 +2194,54 @@ pub async fn save_composition(name: String, yaml: String, state: State<'_, AppSt
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompositionPresetDto {
+    pub id: String,
+    pub model: Option<String>,
+    pub agent_type: Option<String>,
+}
+
+/// 用户级组装单列表，供画布把 presetId 解析成 model / agent_type。
+#[tauri::command]
+pub fn list_compositions() -> Result<Vec<CompositionPresetDto>, String> {
+    let dir = desktop_home_dir().join("compositions");
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let rd = std::fs::read_dir(&dir).map_err(|e| format!("读取组装单目录失败: {e}"))?;
+    let mut out = Vec::new();
+    for ent in rd.flatten() {
+        let path = ent.path();
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        if ext != "yml" && ext != "yaml" {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .trim();
+        if stem.is_empty() {
+            continue;
+        }
+        let Ok(yaml) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(c) = grok_session::composition::parse_composition(&yaml, stem) else {
+            continue;
+        };
+        let id = c.id.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| stem.to_string());
+        out.push(CompositionPresetDto {
+            id,
+            model: c.model.name,
+            agent_type: c.agent_type.filter(|s| !s.trim().is_empty()),
+        });
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(out)
+}
+
 // ── 文件树 ──
 
 #[derive(serde::Serialize)]

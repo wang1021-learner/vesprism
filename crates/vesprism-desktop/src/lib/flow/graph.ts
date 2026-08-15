@@ -34,7 +34,7 @@ export function defaultParams(type: FlowNodeType): FlowGraphNode['params'] {
     case 'start':
       return { label: '起点', fields: [{ name: 'input', type: 'string', required: true }] }
     case 'agent':
-      return { label: 'Agent', role: '', presetId: '', model: '', prompt: '' }
+      return { label: 'Agent', role: '', presetId: '', model: '', agentType: '', prompt: '' }
     case 'tool':
       return { label: '工具', toolName: '', command: '', args: {} }
     case 'flow':
