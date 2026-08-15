@@ -363,6 +363,7 @@ pub(crate) mod turn_completion;
 pub mod unified_list;
 pub(crate) mod user_message;
 pub(crate) mod wire_tags;
+pub(crate) mod flow_mount;
 pub(crate) mod workflow;
 pub mod worktree;
 pub mod worktree_pool;

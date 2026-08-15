@@ -485,6 +485,12 @@ pub enum FinishReason {
     ToolCalls,
     ContentFilter,
     FunctionCall,
+    /// DeepSeek (and some compat forks): request interrupted for lack of
+    /// inference capacity. Mapped to `StopReason::Length` downstream.
+    InsufficientSystemResource,
+    /// Unknown provider-specific reason. Must not fail stream deserialize.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -546,6 +552,31 @@ pub struct Usage {
     /// normalize `0` to "unreported" (see `stream/chat_completions.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_in_usd_ticks: Option<i64>,
+    /// jike: DeepSeek Chat Completions reports cache hits at the usage top
+    /// level. OpenAI-shaped backends leave this absent; prefer
+    /// `prompt_tokens_details.cached_tokens` when that is non-zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_hit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_miss_tokens: Option<u32>,
+}
+
+impl Usage {
+    /// Cache-hit subset of `prompt_tokens`.
+    ///
+    /// OpenAI / xAI: `prompt_tokens_details.cached_tokens`.
+    /// DeepSeek: `prompt_cache_hit_tokens` when the nested field is missing or 0.
+    pub fn cached_prompt_tokens(&self) -> u32 {
+        let from_details = self
+            .prompt_tokens_details
+            .as_ref()
+            .map_or(0, |d| d.cached_tokens);
+        if from_details > 0 {
+            from_details
+        } else {
+            self.prompt_cache_hit_tokens.unwrap_or(0)
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -1234,6 +1265,50 @@ mod tests {
             assert_eq!(back, v, "round-trip {v:?}");
         }
         assert!(serde_json::from_str::<ReasoningEffort>("\"BOGUS\"").is_err());
+    }
+
+    #[test]
+    fn finish_reason_accepts_deepseek_and_unknown_values() {
+        let resource: FinishReason =
+            serde_json::from_str("\"insufficient_system_resource\"").unwrap();
+        assert_eq!(resource, FinishReason::InsufficientSystemResource);
+        let unknown: FinishReason = serde_json::from_str("\"some_future_reason\"").unwrap();
+        assert_eq!(unknown, FinishReason::Other);
+        assert_eq!(
+            serde_json::from_str::<FinishReason>("\"stop\"").unwrap(),
+            FinishReason::Stop
+        );
+    }
+
+    #[test]
+    fn usage_cached_prompt_tokens_falls_back_to_deepseek_top_level() {
+        let only_top: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110,
+            "prompt_cache_hit_tokens": 80,
+            "prompt_cache_miss_tokens": 20
+        }))
+        .unwrap();
+        assert_eq!(only_top.cached_prompt_tokens(), 80);
+
+        let nested_wins: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110,
+            "prompt_tokens_details": { "cached_tokens": 70 },
+            "prompt_cache_hit_tokens": 80
+        }))
+        .unwrap();
+        assert_eq!(nested_wins.cached_prompt_tokens(), 70);
+
+        let neither: Usage = serde_json::from_value(json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110
+        }))
+        .unwrap();
+        assert_eq!(neither.cached_prompt_tokens(), 0);
     }
 
     #[test]

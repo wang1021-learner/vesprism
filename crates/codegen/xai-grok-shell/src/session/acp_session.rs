@@ -701,6 +701,10 @@ pub(crate) struct SessionActor {
     pub(crate) supports_backend_search: std::cell::Cell<bool>,
     /// Per-turn override, set at promotion. Not persisted; a reload reverts to the definition seed.
     pub(crate) tool_overrides: std::cell::RefCell<Option<xai_grok_sampling_types::ToolOverrides>>,
+    // jike: 会话挂载的流程 id（_meta["x.ai/flows"]）；子代理从 resolved 继承
+    pub(crate) mounted_flows: std::cell::RefCell<Vec<String>>,
+    pub(crate) resolved_mounted_flows: std::sync::Arc<arc_swap::ArcSwap<Vec<String>>>,
+    pub(crate) inflight_flows: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Configured cutoff a subagent inherits, read off the `SessionHandle` without an actor round-trip.
     pub(crate) resolved_tool_overrides:
         std::sync::Arc<arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>>,

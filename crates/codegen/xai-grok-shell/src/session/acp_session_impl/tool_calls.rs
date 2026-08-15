@@ -523,6 +523,10 @@ impl SessionActor {
         let workspace_ops = self.workspace_ops.clone();
         let pending_interjections = self.pending_interjections.clone();
         let session_id: Arc<str> = Arc::from(&*self.session_info.id.0);
+        let flow_cwd = self.session_info.cwd.as_str().to_owned();
+        let flow_manager = self.workflow_manager.clone();
+        let flow_mounted = self.mounted_flows.borrow().clone();
+        let flow_inflight = self.inflight_flows.clone();
         let dispatch_futures: Vec<_> = approved
             .iter()
             .enumerate()
@@ -539,6 +543,10 @@ impl SessionActor {
                 let lock = lock_path_for_args(&prepared.parsed_args)
                     .and_then(|fp| file_locks.get(fp).cloned());
                 let tools_execute_span = tracing::Span::current();
+                let flow_cwd = flow_cwd.clone();
+                let flow_manager = flow_manager.clone();
+                let flow_mounted = flow_mounted.clone();
+                let flow_inflight = flow_inflight.clone();
                 async move {
                     let exec_start = std::time::Instant::now();
                     let tool_span = tool_execution_span(
@@ -554,12 +562,29 @@ impl SessionActor {
                         let workspace_ops = workspace_ops.clone();
                         let session_id = session_id.clone();
                         let lock = lock.clone();
+                        let flow_cwd = flow_cwd.clone();
+                        let flow_manager = flow_manager.clone();
+                        let flow_mounted = flow_mounted.clone();
+                        let flow_inflight = flow_inflight.clone();
                         async move {
                             let _guard = if let Some(ref l) = lock {
                                 Some(l.lock().await)
                             } else {
                                 None
                             };
+                            if let Some(id) =
+                                crate::session::flow_mount::flow_id_from_tool_name(&prepared.tool_name)
+                            {
+                                return crate::session::flow_mount::run_flow_tool(
+                                    &flow_cwd,
+                                    flow_manager,
+                                    &flow_mounted,
+                                    flow_inflight,
+                                    id,
+                                    prepared.parsed_args.clone(),
+                                )
+                                .await;
+                            }
                             dispatch_tool(&workspace_ops, &prepared, &session_id).await
                         }
                     };

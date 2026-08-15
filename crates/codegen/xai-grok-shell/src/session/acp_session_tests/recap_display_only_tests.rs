@@ -1132,6 +1132,7 @@ async fn recap_hosted_tools_reflect_the_active_per_turn_override() {
                     ),
                 }),
                 web_search: None,
+                disabled: Vec::new(),
             });
 
             let server = MockInferenceServer::start().await.unwrap();

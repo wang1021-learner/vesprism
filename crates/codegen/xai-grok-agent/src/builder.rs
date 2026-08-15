@@ -2526,6 +2526,7 @@ mod tests {
             Some(xai_grok_sampling_types::ToolOverrides {
                 x_search: Some(x_search.clone()),
                 web_search: None,
+                disabled: Vec::new(),
             }),
         )
         .await;

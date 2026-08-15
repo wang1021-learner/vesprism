@@ -740,8 +740,9 @@ impl StopReason {
 impl From<FinishReason> for StopReason {
     fn from(fr: FinishReason) -> Self {
         match fr {
-            FinishReason::Stop => StopReason::Stop,
-            FinishReason::Length => StopReason::Length,
+            FinishReason::Stop | FinishReason::Other => StopReason::Stop,
+            // Interrupted generation — closer to a length cut than a natural stop.
+            FinishReason::Length | FinishReason::InsufficientSystemResource => StopReason::Length,
             FinishReason::ToolCalls | FinishReason::FunctionCall => StopReason::ToolCalls,
             FinishReason::ContentFilter => StopReason::ContentFilter,
         }
@@ -758,7 +759,8 @@ pub struct TokenUsage {
     pub total_tokens: u32,
     pub reasoning_tokens: u32,
     /// Prompt tokens served from cache (the cache-hit subset of `prompt_tokens`).
-    /// OpenAI: `prompt_tokens_details.cached_tokens`. Messages: `cache_read_input_tokens`.
+    /// OpenAI: `prompt_tokens_details.cached_tokens`. DeepSeek Chat Completions:
+    /// `prompt_cache_hit_tokens`. Messages: `cache_read_input_tokens`.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
     /// Prompt tokens written to cache this call (Messages `cache_creation_input_tokens`,
@@ -779,10 +781,6 @@ impl TokenUsage {
 
 impl From<Usage> for TokenUsage {
     fn from(u: Usage) -> Self {
-        let cached_prompt_tokens = u
-            .prompt_tokens_details
-            .as_ref()
-            .map_or(0, |d| d.cached_tokens);
         Self {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
@@ -791,7 +789,7 @@ impl From<Usage> for TokenUsage {
                 .completion_tokens_details
                 .as_ref()
                 .map_or(0, |d| d.reasoning_tokens),
-            cached_prompt_tokens,
+            cached_prompt_tokens: u.cached_prompt_tokens(),
             cache_creation_prompt_tokens: 0,
         }
     }
@@ -2516,6 +2514,7 @@ mod tests {
         let base = ToolOverridesUpdate {
             x_search: Some(Some(x.clone())),
             web_search: None,
+            disabled: None,
         }
         .apply(None);
         assert_eq!(
@@ -2527,6 +2526,7 @@ mod tests {
         let merged = ToolOverridesUpdate {
             x_search: None,
             web_search: Some(Some(w.clone())),
+            disabled: None,
         }
         .apply(base.clone());
         assert_eq!(merged.as_ref().and_then(|o| o.x_search.clone()), Some(x));
@@ -2537,6 +2537,7 @@ mod tests {
         let cleared = ToolOverridesUpdate {
             x_search: Some(None),
             web_search: None,
+            disabled: None,
         }
         .apply(base);
         assert!(cleared.is_none());
@@ -3920,6 +3921,46 @@ mod tests {
             StopReason::from(FinishReason::ContentFilter),
             StopReason::ContentFilter
         );
+        assert_eq!(
+            StopReason::from(FinishReason::InsufficientSystemResource),
+            StopReason::Length
+        );
+        assert_eq!(StopReason::from(FinishReason::Other), StopReason::Stop);
+    }
+
+    #[test]
+    fn token_usage_from_deepseek_top_level_cache_hit() {
+        let usage = Usage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+            prompt_cache_hit_tokens: Some(1000),
+            prompt_cache_miss_tokens: Some(200),
+        };
+        let tu = TokenUsage::from(usage);
+        assert_eq!(tu.cached_prompt_tokens, 1000);
+        assert_eq!(tu.prompt_tokens, 1200);
+    }
+
+    #[test]
+    fn token_usage_prefers_nested_cached_tokens_when_nonzero() {
+        let usage = Usage {
+            prompt_tokens: 1200,
+            completion_tokens: 80,
+            total_tokens: 1280,
+            prompt_tokens_details: Some(crate::PromptTokensDetails {
+                cached_tokens: 900,
+                audio_tokens: 0,
+            }),
+            completion_tokens_details: None,
+            cost_in_usd_ticks: None,
+            prompt_cache_hit_tokens: Some(1000),
+            prompt_cache_miss_tokens: Some(200),
+        };
+        assert_eq!(TokenUsage::from(usage).cached_prompt_tokens, 900);
     }
 
     // ============================================================================

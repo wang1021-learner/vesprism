@@ -1465,6 +1465,8 @@ pub(crate) async fn spawn_session_actor(
     let resolved_tool_overrides: std::sync::Arc<
         arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>,
     > = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
+    let resolved_mounted_flows: std::sync::Arc<arc_swap::ArcSwap<Vec<String>>> =
+        std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new()));
     let session = Arc::new_cyclic(|weak: &std::sync::Weak<SessionActor>| SessionActor {
         session_info: session_info.clone(),
         auth_method_id,
@@ -1492,6 +1494,9 @@ pub(crate) async fn spawn_session_actor(
         telemetry_enabled,
         supports_backend_search: std::cell::Cell::new(sampling_config.supports_backend_search),
         tool_overrides: std::cell::RefCell::new(None),
+        mounted_flows: std::cell::RefCell::new(Vec::new()),
+        resolved_mounted_flows: resolved_mounted_flows.clone(),
+        inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         resolved_tool_overrides: resolved_tool_overrides.clone(),
         compactions_remaining: std::cell::Cell::new(sampling_config.compactions_remaining),
         compaction_at_tokens: std::cell::Cell::new(sampling_config.compaction_at_tokens),
@@ -2019,6 +2024,7 @@ pub(crate) async fn spawn_session_actor(
             info: session_info,
             max_turns,
             resolved_tool_overrides,
+            resolved_mounted_flows,
             hunk_tracker_handle,
             chat_state_handle: chat_state_handle_for_handle,
             signals_handle,

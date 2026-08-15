@@ -1175,6 +1175,7 @@ pub(crate) async fn run_shell_child(
         worktree_path: worktree_path.as_deref(),
         task_prompt_text: &task_prompt_text,
         inherited_tool_overrides: ctx.inherited_tool_overrides.clone(),
+        inherited_flows: ctx.inherited_flows.clone(),
         gcs_bucket_url: ctx.gcs_bucket_url.as_deref(),
         gcs_upload_method: ctx.gcs_upload_method.as_ref(),
         cancel_token: cancel_token.clone(),

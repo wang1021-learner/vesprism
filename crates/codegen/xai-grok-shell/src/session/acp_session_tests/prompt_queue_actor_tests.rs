@@ -205,6 +205,7 @@ fn x_search_cutoff_update() -> xai_grok_sampling_types::ToolOverridesUpdate {
             ),
         })),
         web_search: None,
+        disabled: None,
     }
 }
 
@@ -2427,10 +2428,12 @@ async fn tool_overrides_update_applies_at_promotion_never_at_enqueue() {
             let set_update = || xai_grok_sampling_types::ToolOverridesUpdate {
                 x_search: Some(Some(options.clone())),
                 web_search: None,
+                disabled: None,
             };
             let expected = xai_grok_sampling_types::ToolOverrides {
                 x_search: Some(options.clone()),
                 web_search: None,
+                disabled: Vec::new(),
             };
 
             let (mut item, prompt_rx) = user_item_with_rx("p1", "alice");
@@ -2495,6 +2498,7 @@ async fn tool_overrides_update_applies_at_promotion_never_at_enqueue() {
             actor.apply_tool_overrides_update(Some(xai_grok_sampling_types::ToolOverridesUpdate {
                 x_search: Some(None),
                 web_search: None,
+                disabled: None,
             }));
             assert_eq!(
                 *actor.tool_overrides.borrow(),
@@ -2540,6 +2544,7 @@ async fn effective_tool_overrides_echoes_and_gates_on_backend_search() {
             let expected = xai_grok_sampling_types::ToolOverrides {
                 x_search: Some(options.clone()),
                 web_search: None,
+                disabled: Vec::new(),
             };
             *actor.tool_overrides.borrow_mut() = Some(expected.clone());
 
@@ -2651,6 +2656,7 @@ async fn per_turn_tool_overrides_win_over_the_config_web_search_policy() {
             actor.apply_tool_overrides_update(Some(xai_grok_sampling_types::ToolOverridesUpdate {
                 x_search: None,
                 web_search: Some(Some(per_turn.clone())),
+                disabled: None,
             }));
 
             assert_eq!(
@@ -2665,6 +2671,7 @@ async fn per_turn_tool_overrides_win_over_the_config_web_search_policy() {
                 Some(xai_grok_sampling_types::ToolOverrides {
                     x_search: None,
                     web_search: Some(per_turn),
+                    disabled: Vec::new(),
                 }),
                 "and the echo attests exactly what the wire carried"
             );
@@ -2673,6 +2680,7 @@ async fn per_turn_tool_overrides_win_over_the_config_web_search_policy() {
             actor.apply_tool_overrides_update(Some(xai_grok_sampling_types::ToolOverridesUpdate {
                 x_search: None,
                 web_search: Some(None),
+                disabled: None,
             }));
             assert_eq!(
                 actor.effective_hosted_tools(),
@@ -2713,6 +2721,7 @@ async fn agent_rebuild_republishes_the_configured_cutoff() {
                     ),
                 }),
                 web_search: None,
+                disabled: Vec::new(),
             };
             let mut seeded = xai_grok_agent::AgentDefinition::default_grok_build();
             seeded.tool_overrides = Some(seed.clone());
@@ -2765,6 +2774,7 @@ async fn set_tool_overrides_publishes_the_inheritance_cell_before_any_turn() {
                     ),
                 }),
                 web_search: None,
+                disabled: Vec::new(),
             };
             actor.set_tool_overrides(cutoff.clone());
             assert_eq!(

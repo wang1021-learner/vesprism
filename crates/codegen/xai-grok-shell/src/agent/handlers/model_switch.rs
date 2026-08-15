@@ -22,6 +22,13 @@ pub(crate) async fn apply(
     );
     tracing::debug!("session_session_model::mvp_agent: {:?}", &args);
     let effort_override = parse_reasoning_effort_meta(args.meta.as_ref());
+    // jike: 组装单 persona.label —— 同模型也可重渲 system_prompt_label。
+    let label_override = args.meta.as_ref().and_then(|m| {
+        m.get("systemPromptLabel")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+    });
     let acp::SetSessionModelRequest {
         session_id,
         model_id,
@@ -208,11 +215,13 @@ pub(crate) async fn apply(
             model.map(|e| &e.info),
         );
         // Mid-session A→B: resolve B's identity so self-intro updates with model switch.
-        let label = crate::util::config::resolve_system_prompt_label(
-            &cfg,
-            model_id.0.as_ref(),
-            model.map(|e| &e.info),
-        );
+        let label = label_override.clone().unwrap_or_else(|| {
+            crate::util::config::resolve_system_prompt_label(
+                &cfg,
+                model_id.0.as_ref(),
+                model.map(|e| &e.info),
+            )
+        });
         (threshold, Some(label))
     };
     let (tx, rx) = oneshot::channel();
@@ -220,7 +229,8 @@ pub(crate) async fn apply(
         sampling_config: model_sampling,
         use_concise,
         apply_prompt_override,
-        skip_prompt_rewrite: did_rebuild || model_unchanged,
+        // jike: 有 systemPromptLabel 时即使模型未变也要重渲人设。
+        skip_prompt_rewrite: did_rebuild || (model_unchanged && label_override.is_none()),
         auto_compact_threshold_percent: new_threshold,
         system_prompt_label,
         responds_to: tx,

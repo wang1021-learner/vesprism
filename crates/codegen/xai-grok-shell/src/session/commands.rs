@@ -224,6 +224,11 @@ pub enum SessionCommand {
     SetToolOverrides {
         overrides: xai_grok_sampling_types::ToolOverrides,
     },
+    /// jike: 热更新挂载流程（session/new seed 或 x.ai/session/update_flows / 子代理继承）
+    SetMountedFlows {
+        flows: Vec<String>,
+        respond_to: Option<oneshot::Sender<Result<(), String>>>,
+    },
     Prompt {
         prompt_id: String,
         prompt_blocks: Vec<acp::ContentBlock>,

@@ -522,6 +522,7 @@ mod tests {
             d.tool_overrides = Some(ToolOverrides {
                 x_search: None,
                 web_search: Some(frontmatter.clone()),
+                disabled: Vec::new(),
             });
             d
         };

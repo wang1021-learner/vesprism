@@ -7,6 +7,7 @@
 //! - `x.ai/session/rename`                  rename a session locally + remote
 //! - `x.ai/session/delete`                  delete a session locally + remote
 //! - `x.ai/session/update_mcp_servers`      mid-session MCP server swap
+//! - `x.ai/session/update_flows`            mid-session mounted-flow swap
 //! - `x.ai/session/add_local_workspace`     mid-session local workspace add-only (chat)
 //! - `x.ai/session/fork`                    fork a session into a new one
 //! - `x.ai/internal/reload_all_mcp_servers` config hot-reload, all sessions
@@ -46,6 +47,7 @@ pub(crate) async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResul
         "x.ai/session/rename" => handle_session_rename(agent, args).await,
         "x.ai/session/delete" => handle_session_delete(agent, args).await,
         "x.ai/session/update_mcp_servers" => handle_update_mcp_servers(agent, args).await,
+        "x.ai/session/update_flows" => handle_update_flows(agent, args).await,
         #[cfg(feature = "local-workspace")]
         "x.ai/session/add_local_workspace" => handle_add_local_workspace(agent, args).await,
         "x.ai/session/fork" => handle_session_fork(agent, args).await,
@@ -498,6 +500,37 @@ async fn soft_delete_chat_conversation(agent: &MvpAgent, conversation_id: &str) 
     tracing::info!(session_id = %conversation_id, "Chat conversation soft-deleted");
 
     to_raw_response(&serde_json::json!({ "success": true }))
+}
+
+// jike: 中途热更新挂载流程（组装单 apply）
+async fn handle_update_flows(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Params {
+        session_id: acp::SessionId,
+        #[serde(default)]
+        flows: Vec<String>,
+    }
+    let params: Params = parse_params(args)?;
+    let handle = agent
+        .resident_handle(&params.session_id)
+        .ok_or_else(|| acp::Error::invalid_params().data("unknown session id"))?;
+    let flows = params.flows;
+    let cwd = std::path::Path::new(&handle.info.cwd);
+    crate::session::flow_mount::resolve_mountable_ids(cwd, &flows)
+        .map_err(|e| acp::Error::invalid_params().data(e.to_string()))?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    handle
+        .cmd_tx
+        .send(SessionCommand::SetMountedFlows {
+            flows,
+            respond_to: Some(tx),
+        })
+        .map_err(|_| acp::Error::internal_error().data("session actor gone"))?;
+    rx.await
+        .map_err(|_| acp::Error::internal_error().data("session actor dropped reply"))?
+        .map_err(|e| acp::Error::invalid_params().data(e))?;
+    to_raw_response(&serde_json::json!({ "ok": true }))
 }
 
 // session/update_mcp_servers

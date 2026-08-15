@@ -67,6 +67,8 @@ pub struct SessionHandle {
     /// Configured cutoff a subagent inherits, published by the session actor. `None` when unset.
     pub resolved_tool_overrides:
         std::sync::Arc<arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>>,
+    /// jike: 父会话挂载的流程 id，子代理 spawn 时继承。
+    pub resolved_mounted_flows: std::sync::Arc<arc_swap::ArcSwap<Vec<String>>>,
     /// Handle to the hunk tracker for this session
     pub hunk_tracker_handle: HunkTrackerHandle,
     /// Actor-based chat state handle — lets callers inspect final conversation state.

@@ -514,6 +514,12 @@ pub(super) async fn run_session(
                         SessionCommand::SetToolOverrides { overrides } => {
                             session.set_tool_overrides(overrides);
                         }
+                        SessionCommand::SetMountedFlows { flows, respond_to } => {
+                            let result = session.set_mounted_flows(flows);
+                            if let Some(tx) = respond_to {
+                                let _ = tx.send(result);
+                            }
+                        }
                         SessionCommand::Prompt { prompt_id, prompt_blocks, prompt_mode, artifact_upload_ctx, client_identifier, screen_mode, verbatim, traceparent, json_schema, send_now, admission, tool_overrides_update, respond_to, persist_ack, parsed_prompt_tx } => {
                             let origin = super::PromptOrigin::from_prompt_id(&prompt_id);
                             let (actor_admitted, task_wake_fallback) = match admission {

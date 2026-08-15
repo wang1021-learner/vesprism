@@ -127,6 +127,8 @@ pub(crate) struct SubagentSpawnContext {
     pub parent_session_id: String,
     /// The parent's cutoff at spawn, applied to the child's first turn. `None` if unset.
     pub inherited_tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
+    /// jike: 父会话挂载的流程，子代理同样能看到 flow__ 工具。
+    pub inherited_flows: Vec<String>,
     pub yolo_mode: bool,
     pub subagent_event_tx: mpsc::UnboundedSender<SubagentEvent>,
     pub parent_depth: u32,

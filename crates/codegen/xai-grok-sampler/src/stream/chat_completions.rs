@@ -670,6 +670,8 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: None,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
         });
 
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
@@ -710,6 +712,8 @@ mod tests {
                 prompt_tokens_details: None,
                 completion_tokens_details: None,
                 cost_in_usd_ticks: wire,
+                prompt_cache_hit_tokens: None,
+                prompt_cache_miss_tokens: None,
             });
             let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
                 Ok(text_chunk("ok")),
@@ -743,6 +747,8 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(99),
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
         });
         let mut second = make_chunk(vec![ChatChunkDelta::default()]);
         second.usage = Some(Usage {
@@ -752,6 +758,8 @@ mod tests {
             prompt_tokens_details: None,
             completion_tokens_details: None,
             cost_in_usd_ticks: Some(0),
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
         });
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
             Ok(text_chunk("ok")),

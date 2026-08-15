@@ -246,6 +246,19 @@ impl MvpAgent {
                 arguments.meta.as_ref(),
             )
             .await?;
+        // jike: 引用不存在/不可挂载的流程 id → session/new 即报错
+        {
+            let meta_value = arguments
+                .meta
+                .as_ref()
+                .and_then(|m| serde_json::to_value(m).ok());
+            if let Some(ids) = crate::session::flow_mount::parse_flows_meta(meta_value.as_ref())
+                .map_err(|e| acp::Error::invalid_params().data(e.to_string()))?
+            {
+                crate::session::flow_mount::resolve_mountable_ids(cwd.as_path(), &ids)
+                    .map_err(|e| acp::Error::invalid_params().data(e.to_string()))?;
+            }
+        }
         let client_session_id = arguments
             .meta
             .as_ref()
@@ -497,6 +510,34 @@ impl MvpAgent {
             self.shutdown_gateway_bridge(&session_id);
         }
         spawn_res?;
+        // jike: session/new `_meta["x.ai/flows"]` — 非法/缺失 id 在 spawn 前已拒；此处下发到 actor
+        {
+            let meta_value = arguments
+                .meta
+                .as_ref()
+                .and_then(|m| serde_json::to_value(m).ok());
+            match crate::session::flow_mount::parse_flows_meta(meta_value.as_ref()) {
+                Ok(Some(ids)) => {
+                    crate::session::flow_mount::resolve_mountable_ids(cwd.as_path(), &ids)
+                        .map_err(|e| acp::Error::invalid_params().data(e.to_string()))?;
+                    if let Some(handle) = self.session_handle_waiting_for_load(&session_id).await {
+                        let (tx, rx) = tokio::sync::oneshot::channel();
+                        let _ = handle.cmd_tx.send(crate::session::SessionCommand::SetMountedFlows {
+                            flows: ids,
+                            respond_to: Some(tx),
+                        });
+                        match rx.await {
+                            Ok(Err(e)) => {
+                                return Err(acp::Error::invalid_params().data(e));
+                            }
+                            Ok(Ok(())) | Err(_) => {}
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => return Err(acp::Error::invalid_params().data(e.to_string())),
+            }
+        }
         tracing::debug!(session_id = %session_id.0, "new_session: spawn_session_actor");
         #[cfg(feature = "local-workspace")]
         if local_workspace_intent_present(arguments.meta.as_ref()) {

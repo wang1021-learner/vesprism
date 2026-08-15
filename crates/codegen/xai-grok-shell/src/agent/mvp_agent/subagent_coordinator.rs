@@ -403,6 +403,10 @@ impl MvpAgent {
         let inherited_tool_overrides = parent_handle
             .as_ref()
             .and_then(|ps| ps.resolved_tool_overrides.load_full().map(|o| (*o).clone()));
+        let inherited_flows = parent_handle
+            .as_ref()
+            .map(|ps| (*ps.resolved_mounted_flows.load_full()).clone())
+            .unwrap_or_default();
         Some(crate::agent::subagent::SubagentSpawnContext {
             lsp: parent_lsp,
             process_scope: parent_process_scope,
@@ -422,6 +426,7 @@ impl MvpAgent {
             parent_cwd: parent_cwd.clone(),
             parent_session_id: parent_session_id.to_string(),
             inherited_tool_overrides,
+            inherited_flows,
             yolo_mode,
             subagent_event_tx: self.subagent_event_tx.clone(),
             parent_depth,

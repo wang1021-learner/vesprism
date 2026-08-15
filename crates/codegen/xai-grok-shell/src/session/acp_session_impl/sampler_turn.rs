@@ -138,11 +138,19 @@ impl SessionActor {
     /// a verbatim-fork child's tool prefix can never silently drift from what the
     /// parent turn actually sends. `defs` is the already-resolved tool list
     /// (`prepare_tool_definitions_*`); this applies only the `web_search` drop
-    /// under backend search and the `ToolSpec::from` mapping.
+    /// under backend search, the `ToolSpec::from` mapping, and the
+    /// // jike: 会话级 `toolOverrides.disabled` 通用工具停用（桌面端组装单扩展）。
     pub(crate) fn turn_base_tool_specs(&self, defs: &[ToolDefinition]) -> Vec<ToolSpec> {
         let backend_search_active = self.backend_search_active();
+        // jike: 有效停用集 = 每轮 patch 优先、否则 seed（与 resolve_configured_cutoff 同规则）。
+        let disabled = resolve_configured_cutoff(
+            self.agent.borrow().definition().tool_overrides.clone(),
+            self.tool_overrides.borrow().as_ref(),
+        )
+        .disabled;
         defs.iter()
             .filter(|td| !backend_search_active || td.function.name != "web_search")
+            .filter(|td| !disabled.contains(&td.function.name))
             .cloned()
             .map(ToolSpec::from)
             .collect()
@@ -191,6 +199,35 @@ impl SessionActor {
         *self.tool_overrides.borrow_mut() = Some(overrides);
         self.emit_resolved_tool_overrides();
     }
+
+    /// jike: 校验并挂载 flows。空列表卸掉全部。
+    pub(crate) fn set_mounted_flows(&self, flows: Vec<String>) -> Result<(), String> {
+        let cwd = std::path::Path::new(self.session_info.cwd.as_str());
+        crate::session::flow_mount::resolve_mountable_ids(cwd, &flows).map_err(|e| e.to_string())?;
+        *self.mounted_flows.borrow_mut() = flows.clone();
+        self.resolved_mounted_flows.store(std::sync::Arc::new(flows));
+        Ok(())
+    }
+
+    pub(crate) fn inject_mounted_flow_tools(
+        &self,
+        defs: &mut Vec<xai_grok_tools::types::definition::ToolDefinition>,
+    ) {
+        let cwd = std::path::Path::new(self.session_info.cwd.as_str());
+        let ids = self.mounted_flows.borrow().clone();
+        let Ok(contracts) = crate::session::flow_mount::resolve_mountable_ids(cwd, &ids) else {
+            return;
+        };
+        let existing: Vec<String> = defs.iter().map(|d| d.function.name.clone()).collect();
+        for contract in contracts {
+            if crate::session::flow_mount::assert_no_tool_collision(&contract.id, &existing).is_err()
+            {
+                tracing::warn!(id = %contract.id, "skipping flow tool due to name collision");
+                continue;
+            }
+            defs.push(crate::session::flow_mount::flow_tool_definition(&contract));
+        }
+    }
     /// Fold a per-turn update at promotion: an object sets, `null` clears to the seed, absent leaves.
     pub(crate) fn apply_tool_overrides_update(
         &self,
@@ -213,7 +250,8 @@ impl SessionActor {
     }
     pub(super) async fn prepare_tool_definitions_inner(&self) -> Vec<ToolDefinition> {
         let bridge = self.agent.borrow().tool_bridge().clone();
-        let defs = bridge.tool_definitions_builtins_only().await;
+        let mut defs = bridge.tool_definitions_builtins_only().await;
+        self.inject_mounted_flow_tools(&mut defs);
         let plan_active = self.plan_mode.lock().is_active();
         filter_cursor_tools_by_plan_mode(defs, plan_active)
     }
@@ -1450,12 +1488,25 @@ fn resolve_configured_cutoff(
     let ToolOverrides {
         x_search: seed_x,
         web_search: seed_w,
+        // jike: 停用集随 cutoff 一起继承（子 agent 继承父会话的工具停用）。
+        disabled: seed_disabled,
     } = seed.unwrap_or_default();
-    let (over_x, over_w) =
-        base.map_or((None, None), |b| (b.x_search.clone(), b.web_search.clone()));
+    let (over_x, over_w, over_disabled) = base.map_or((None, None, Vec::new()), |b| {
+        (
+            b.x_search.clone(),
+            b.web_search.clone(),
+            b.disabled.clone(),
+        )
+    });
     ToolOverrides {
         x_search: prefer_non_empty(over_x, seed_x, XSearchOptions::is_empty),
         web_search: prefer_non_empty(over_w, seed_w, WebSearchOptions::is_empty),
+        // jike: 非空 patch 覆盖，否则回落到 seed（停用集无"合并"语义，整体替换）。
+        disabled: if over_disabled.is_empty() {
+            seed_disabled
+        } else {
+            over_disabled
+        },
     }
 }
 #[cfg(test)]
@@ -1491,6 +1542,7 @@ mod configured_cutoff_tests {
         let seed = ToolOverrides {
             x_search: Some(x_cut("2020-01-01")),
             web_search: None,
+            disabled: Vec::new(),
         };
         assert_eq!(
             super::resolve_configured_cutoff(Some(seed.clone()), None),
@@ -1505,6 +1557,7 @@ mod configured_cutoff_tests {
                 allowed_domains: Some(vec!["x.com".into()]),
                 excluded_domains: None,
             }),
+            disabled: Vec::new(),
         };
         let base = ToolOverrides {
             x_search: Some(x_cut("2019-06-01")),
@@ -1512,6 +1565,7 @@ mod configured_cutoff_tests {
                 allowed_domains: Some(vec![]),
                 excluded_domains: None,
             }),
+            disabled: Vec::new(),
         };
         let got = super::resolve_configured_cutoff(Some(seed.clone()), Some(&base));
         assert_eq!(got.x_search, Some(x_cut("2019-06-01")));
@@ -1532,6 +1586,7 @@ mod configured_cutoff_tests {
                 Some(ToolOverrides {
                     x_search: Some(x_cut("2020-01-01")),
                     web_search: None,
+                    disabled: Vec::new(),
                 }),
                 None,
             ),
@@ -1539,10 +1594,12 @@ mod configured_cutoff_tests {
                 Some(ToolOverrides {
                     x_search: Some(x_cut("2020-01-01")),
                     web_search: Some(web.clone()),
+                    disabled: Vec::new(),
                 }),
                 Some(ToolOverrides {
                     x_search: Some(x_cut("2019-06-01")),
                     web_search: None,
+                    disabled: Vec::new(),
                 }),
             ),
             (
@@ -1550,6 +1607,7 @@ mod configured_cutoff_tests {
                 Some(ToolOverrides {
                     x_search: Some(x_cut("2018-01-01")),
                     web_search: Some(web.clone()),
+                    disabled: Vec::new(),
                 }),
             ),
         ];
@@ -1563,5 +1621,47 @@ mod configured_cutoff_tests {
             let inherited = super::resolve_configured_cutoff(seed.clone(), base.as_ref());
             assert_eq!(wire_echo, inherited, "seed={seed:?} base={base:?}");
         }
+    }
+    // jike: 停用集随 cutoff 一起继承（子 agent 继承父会话工具停用）。
+    #[test]
+    fn disabled_inherits_with_the_cutoff() {
+        let seed = ToolOverrides {
+            x_search: None,
+            web_search: None,
+            disabled: vec!["bash".into()],
+        };
+        let base = ToolOverrides {
+            x_search: None,
+            web_search: None,
+            disabled: vec!["bash".into(), "search".into()],
+        };
+        // 非空 base 整体替换 seed。
+        assert_eq!(
+            super::resolve_configured_cutoff(Some(seed.clone()), Some(&base)).disabled,
+            base.disabled
+        );
+        // 空 base 回落到 seed。
+        assert_eq!(
+            super::resolve_configured_cutoff(Some(seed.clone()), None).disabled,
+            seed.disabled
+        );
+        let empty = ToolOverrides::default();
+        assert_eq!(
+            super::resolve_configured_cutoff(Some(seed.clone()), Some(&empty)).disabled,
+            seed.disabled
+        );
+    }
+
+    // jike: 过滤按官方函数名精确匹配；别名在 grok-session 装配前展开。
+    #[test]
+    fn disabled_drops_official_function_names() {
+        let disabled = ["run_terminal_command", "web_search"];
+        let names = ["run_terminal_command", "web_search", "read_file", "search_replace"];
+        let kept: Vec<&str> = names
+            .into_iter()
+            .filter(|n| !disabled.contains(n))
+            .collect();
+        assert_eq!(kept, vec!["read_file", "search_replace"]);
+        assert!(!disabled.contains(&"bash"));
     }
 }

@@ -133,6 +133,7 @@ fn tool_overrides_land_as_camelcase_meta_key() {
             ),
         }),
         web_search: None,
+        disabled: Vec::new(),
     };
     let meta = build_prompt_response_meta(PromptResponseMetaArgs {
         tool_overrides: Some(overrides),

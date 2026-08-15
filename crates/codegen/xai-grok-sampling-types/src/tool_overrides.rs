@@ -290,6 +290,12 @@ pub struct ToolOverrides {
     pub x_search: Option<XSearchOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<WebSearchOptions>,
+    /// // jike: 桌面端会话级组装扩展 —— 按工具名停用的通用工具（除两个搜索工具外，
+    /// // 官方原本只支持会话级配置搜索工具）。会话级 seed + 每轮可 patch；
+    /// // 生效点在 shell 的客户端工具规格组装（`turn_base_tool_specs` 过滤）。
+    /// // 官方合并冲突落点：本 struct / `ToolOverridesUpdate` / sampler_turn。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
 }
 
 impl ToolOverrides {
@@ -301,9 +307,11 @@ impl ToolOverrides {
         let ToolOverrides {
             x_search,
             web_search,
+            disabled,
         } = self;
         x_search.as_ref().is_none_or(XSearchOptions::is_empty)
             && web_search.as_ref().is_none_or(WebSearchOptions::is_empty)
+            && disabled.is_empty()
     }
 }
 
@@ -321,6 +329,9 @@ pub struct ToolOverridesUpdate {
     pub x_search: ClearableField<XSearchOptions>,
     #[serde(default, deserialize_with = "crate::serde_helpers::double_option")]
     pub web_search: ClearableField<WebSearchOptions>,
+    /// // jike: 见 `ToolOverrides::disabled`。
+    #[serde(default, deserialize_with = "crate::serde_helpers::double_option")]
+    pub disabled: ClearableField<Vec<String>>,
 }
 
 impl ToolOverridesUpdate {
@@ -333,11 +344,15 @@ impl ToolOverridesUpdate {
         let ToolOverridesUpdate {
             x_search,
             web_search,
+            disabled,
         } = self;
         let base = base.unwrap_or_default();
         let next = ToolOverrides {
             x_search: merge_field(x_search, base.x_search, XSearchOptions::is_empty),
             web_search: merge_field(web_search, base.web_search, WebSearchOptions::is_empty),
+            // `disabled` 是 Vec（空=缺席）：三态折叠后回落到空向量。
+            disabled: merge_field(disabled, Some(base.disabled), Vec::is_empty)
+                .unwrap_or_default(),
         };
         (!next.is_empty()).then_some(next)
     }
@@ -479,5 +494,40 @@ mod web_search_options_tests {
                 "filters": { "excluded_domains": ["reddit.com"] }
             })
         );
+    }
+}
+
+// jike: 桌面端组装层扩展 `disabled` 的线格式与三态合并语义。
+#[cfg(test)]
+mod disabled_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn disabled_round_trips_and_counts_as_non_empty() {
+        let parsed =
+            ToolOverrides::parse(&json!({"disabled": ["bash", "search"]})).unwrap();
+        assert_eq!(parsed.disabled, vec!["bash".to_string(), "search".to_string()]);
+        assert!(!parsed.is_empty());
+        assert!(ToolOverrides::parse(&json!({"disabled": []})).unwrap().is_empty());
+    }
+
+    #[test]
+    fn disabled_update_sets_and_clears_tristate() {
+        let base = ToolOverrides::parse(&json!({"disabled": ["bash", "search"]})).unwrap();
+
+        // set: 整体替换。
+        let set = ToolOverridesUpdate::parse(&json!({"disabled": ["bash"]})).unwrap();
+        let merged = set.apply(Some(base)).unwrap();
+        assert_eq!(merged.disabled, vec!["bash".to_string()]);
+
+        // clear: null 清除；清空最后一个字段后整体为空。
+        let clear = ToolOverridesUpdate::parse(&json!({"disabled": null})).unwrap();
+        assert!(clear.apply(Some(merged)).is_none());
+    }
+
+    #[test]
+    fn unknown_field_still_rejected() {
+        assert!(ToolOverrides::parse(&json!({"disabeld": ["x"]})).is_err());
     }
 }

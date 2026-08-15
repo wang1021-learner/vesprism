@@ -168,6 +168,7 @@ async fn subagent_spawn_context_inherits_parent_configured_cutoff() {
             ),
         }),
         web_search: None,
+        disabled: Vec::new(),
     };
 
     let sid = acp::SessionId::new("parent-cutoff");
@@ -190,6 +191,31 @@ async fn subagent_spawn_context_inherits_parent_configured_cutoff() {
     assert!(
         ctx_none.inherited_tool_overrides.is_none(),
         "an unbounded parent must not hand a subagent a cutoff"
+    );
+}
+
+#[tokio::test]
+async fn subagent_spawn_context_inherits_parent_mounted_flows() {
+    let agent = build_minimal_agent_for_tests();
+    let sid = acp::SessionId::new("parent-flows");
+    let handle = make_test_handle("test-model", false, None);
+    handle
+        .resolved_mounted_flows
+        .store(std::sync::Arc::new(vec!["refund".into(), "notify-user".into()]));
+    agent.insert_resident(&sid, handle);
+    let ctx = agent.build_subagent_spawn_context(sid.0.as_ref());
+    assert_eq!(
+        ctx.inherited_flows,
+        vec!["refund".to_string(), "notify-user".to_string()],
+        "subagent context must inherit the parent's mounted flow ids"
+    );
+
+    let sid_none = acp::SessionId::new("parent-no-flows");
+    agent.insert_resident(&sid_none, make_test_handle("test-model", false, None));
+    let ctx_none = agent.build_subagent_spawn_context(sid_none.0.as_ref());
+    assert!(
+        ctx_none.inherited_flows.is_empty(),
+        "a parent with no mounted flows must hand the child an empty list"
     );
 }
 

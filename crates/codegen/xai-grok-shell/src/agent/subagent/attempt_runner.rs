@@ -9,6 +9,8 @@ pub(super) struct OneTurnAttemptInput<'a> {
     pub worktree_path: Option<&'a Path>,
     pub task_prompt_text: &'a str,
     pub inherited_tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
+    /// jike: 父会话挂载的流程 id，在首轮 Prompt 前写入子会话。
+    pub inherited_flows: Vec<String>,
     pub gcs_bucket_url: Option<&'a str>,
     pub gcs_upload_method: Option<&'a crate::session::repo_changes::UploadMethod>,
     pub cancel_token: CancellationToken,
@@ -45,6 +47,14 @@ pub(super) async fn run_one_turn_attempt(
             .child_handle
             .cmd_tx
             .send(SessionCommand::SetToolOverrides { overrides });
+    }
+    // SetMountedFlows 先于 Prompt 入队，actor 串行处理，子会话首轮就能看见 flow__。
+    {
+        let (tx, _rx) = oneshot::channel();
+        let _ = input.child_handle.cmd_tx.send(SessionCommand::SetMountedFlows {
+            flows: std::mem::take(&mut input.inherited_flows),
+            respond_to: Some(tx),
+        });
     }
     let (prompt_tx, prompt_rx) = oneshot::channel::<SubagentPromptTurnResult>();
     let child_prompt_id = uuid::Uuid::now_v7().to_string();
