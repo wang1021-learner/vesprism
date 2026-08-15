@@ -328,6 +328,25 @@
   white-space: nowrap;
   color: var(--text-secondary);
   font-weight: 550;
+  max-width: 140px;
+}
+
+.output-file-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.output-copy-btn {
+  margin-left: auto;
+  transition: all 0.15s ease;
+}
+
+.output-copy-btn.is-copied {
+  color: var(--success, #10b981);
+  border-color: var(--success, #10b981);
+  background: color-mix(in srgb, var(--success, #10b981) 10%, transparent);
 }
 
 .right-panel-output {
@@ -470,7 +489,7 @@
 }
 
 .right-panel-diff-body {
-  flex: 1;
+  max-height: 24rem;
   min-height: 0;
   min-width: 0;
   overflow: auto;
@@ -481,6 +500,9 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong, #c5c9d1) transparent;
   padding: 10px 12px 14px;
+  border-radius: 6px;
+  margin: 4px 8px 8px;
+  border: 1px solid var(--border-solid);
 }
 
 .right-panel-diff-body .diff-lines {
@@ -534,10 +556,46 @@
   font-size: 12px;
 }
 
-.workspace-change.is-open .workspace-change-head {
-  background: color-mix(in srgb, currentColor 6%, transparent);
-}
-
 .workspace-change .right-panel-diff-body {
   padding: 0 4px 6px;
+}
+
+/* ── 后台任务列表（对齐全局 design tokens） ── */
+.task-item-head {
+  cursor: default !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-item-head:hover {
+  background: transparent !important;
+}
+
+.task-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+.task-status-dot.is-live {
+  box-shadow: 0 0 0 2px var(--success-soft);
+}
+
+.task-item-command {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 12px;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-kill-btn {
+  margin-left: auto;
+  flex-shrink: 0;
 }

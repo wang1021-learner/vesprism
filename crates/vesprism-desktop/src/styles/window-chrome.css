@@ -1,11 +1,13 @@
-/* 系统标题栏下方的应用工具条（不再自绘窗口按钮 / 拖拽区） */
+/* 顶部标签工具条（位于主视口上方，左侧栏独立通顶） */
 .window-chrome {
   display: flex;
   align-items: stretch;
   height: 36px;
   flex-shrink: 0;
   background: var(--surface-elevated);
-  border-bottom: 1px solid var(--border-solid);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-solid);
+  box-shadow: var(--shadow-sm);
   user-select: none;
   position: relative;
   z-index: 20;
@@ -21,4 +23,5 @@
   align-items: center;
   flex-shrink: 0;
   padding: 0 6px;
+  overflow: visible;
 }

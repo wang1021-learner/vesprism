@@ -8,6 +8,7 @@ import {
   $models,
   $settingsDefaultModelId,
   $workspaceCwd,
+
   $securityPolicy,
   $sessionPolicyOverride,
   findTabBySessionId,
@@ -35,7 +36,7 @@ import {
   pickDeny,
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
-import { keepTail, pruneTerminals } from './terminalCards'
+import { keepTail } from './terminalCards'
 
 export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) {
   // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
@@ -342,9 +343,12 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     }
     case 'terminal_opened': {
       if (ev.terminal_id) {
+        const ownSid = (getTabState(tabId)?.sessionId || '').trim()
+        const evSid = (ev.session_id || '').trim()
+        if (ownSid && evSid && ownSid !== evSid) break
         const prev = getTabState(tabId)?.terminals ?? {}
         patchTab(tabId, {
-          terminals: pruneTerminals({
+          terminals: {
             ...prev,
             [ev.terminal_id]: {
               terminalId: ev.terminal_id,
@@ -356,7 +360,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
               openedAt: Date.now(),
               expanded: true,
             },
-          }),
+          },
         })
       }
       break

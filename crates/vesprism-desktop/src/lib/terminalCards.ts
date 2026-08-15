@@ -1,9 +1,5 @@
-import type { TerminalRuntime } from '../types'
-
 /** 卡片只留末尾这么多字节（砍头）。 */
 export const CARD_TAIL_BYTES = 64 * 1024
-/** 顶部只留最近几张；更早的完整输出在对话流工具卡里。 */
-export const MAX_TERMINAL_CARDS = 5
 
 /** 砍掉最旧输出，只留最后 `maxBytes`（UTF-8 字节，不切开码点）。 */
 export function keepTail(text: string, maxBytes = CARD_TAIL_BYTES): { text: string; truncated: boolean } {
@@ -45,22 +41,4 @@ export function terminalStatusLabel(t: {
   }
 }
 
-/** 只留最近 `max` 张（按 openedAt）。 */
-export function pruneTerminals(
-  map: Record<string, TerminalRuntime>,
-  max = MAX_TERMINAL_CARDS,
-): Record<string, TerminalRuntime> {
-  const items = Object.values(map)
-  if (items.length <= max) return map
-  const keep = new Set(
-    [...items]
-      .sort((a, b) => a.openedAt - b.openedAt)
-      .slice(-max)
-      .map((t) => t.terminalId),
-  )
-  const next: Record<string, TerminalRuntime> = {}
-  for (const id of Object.keys(map)) {
-    if (keep.has(id)) next[id] = map[id]
-  }
-  return next
-}
+

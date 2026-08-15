@@ -243,7 +243,7 @@
 /* ── Header（与 TabBar 40px 对齐） ── */
 .sidebar-header {
   height: 36px;
-  padding: 0 8px;
+  padding: 0 10px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -255,11 +255,11 @@
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
-  height: 38px;
+  height: 100%;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--text-primary);
   user-select: none;
 }

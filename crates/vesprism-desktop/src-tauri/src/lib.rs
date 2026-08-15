@@ -1,5 +1,6 @@
 mod commands;
 mod flows;
+mod pty;
 mod sandbox;
 mod session_index;
 mod state;
@@ -98,6 +99,7 @@ pub fn run() {
                 workspace_cwd_override: std::sync::Arc::new(std::sync::Mutex::new(None)),
                 sandbox_tabs: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
                 sandbox_binds: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                pty: std::sync::Arc::new(crate::pty::PtyManager::new()),
             });
 
             // 索引启动兜底：一次性全量重建，之后由 TurnEnded 增量 upsert 维护，list_sessions 不再反应式重建。
@@ -173,6 +175,11 @@ pub fn run() {
             commands::fork_session,
             commands::kill_task,
             commands::list_running_subagents,
+            commands::start_pty,
+            commands::pty_write,
+            commands::pty_resize,
+            commands::pty_detach,
+            commands::stop_pty,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

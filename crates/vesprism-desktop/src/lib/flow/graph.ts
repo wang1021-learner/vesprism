@@ -73,8 +73,8 @@ export function createDemoDraft(): FlowDraft {
         position: { x: 360, y: 160 },
         params: {
           label: '摘要',
-          role: '把输入整理成一段简洁摘要',
-          prompt: '请将用户输入整理成不超过 80 字的中文摘要，只输出摘要。',
+          role: '需求与代码分析专家',
+          prompt: '请分析输入的开发需求或代码，整理出清晰的技术摘要与核心要点。',
         },
       },
       {

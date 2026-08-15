@@ -20,6 +20,14 @@ export function isTauriRuntime(): boolean {
 // ── Tab 生命周期 ──
 export const openTab = () => invoke<string>('open_tab')
 export const closeTab = (tabId: string) => invoke('close_tab', { tabId })
+export const startPty = (tabId: string, cwd: string, cols: number, rows: number) =>
+  invoke('start_pty', { tabId, cwd, cols, rows })
+export const ptyWrite = (tabId: string, data: string) =>
+  invoke('pty_write', { tabId, data })
+export const ptyResize = (tabId: string, cols: number, rows: number) =>
+  invoke('pty_resize', { tabId, cols, rows })
+export const ptyDetach = (tabId: string) => invoke('pty_detach', { tabId })
+export const stopPty = (tabId: string) => invoke('stop_pty', { tabId })
 export const restartTab = (tabId: string) => invoke('restart_tab', { tabId })
 
 // ── 工作区 ──

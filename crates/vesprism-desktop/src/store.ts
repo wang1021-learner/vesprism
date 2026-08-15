@@ -273,6 +273,8 @@ export function resetTabsForTests(): void {
   tabStates.clear()
   $tabs.set([])
   $activeTabId.set('')
+  $ptyAlive.set({})
+  $ptyEpoch.set({})
   resetProjection()
 }
 
@@ -592,7 +594,7 @@ export const $composerInput = atom('') // TabState.composerInput 投影
 export const $utilityKind = atom<UtilityKind | null>(null)
 
 // ── 右侧栏 ──
-export type RightPanelTab = 'files' | 'output' | 'diff' | 'tasks'
+export type RightPanelTab = 'files' | 'output' | 'diff'
 export const $rightPanelOpen = atom(false)
 export const $rightPanelTab = atom<RightPanelTab>('files')
 /** 工作区未提交改动数，供顶栏入口角标 */
@@ -615,9 +617,40 @@ export const $goalInfo = atom<GoalInfoDto | null>(null)
 export const $workflows = atom<Record<string, WorkflowInfoDto>>({})
 /** 客户端终端运行态（活跃 tab 投影；key=terminalId） */
 export const $terminals = atom<Record<string, TerminalRuntime>>({})
+/** 会话区内嵌侧栏：同一时间只开一块。 */
+export type SessionDockKind = 'subagents' | 'terminal' | 'bgTasks'
+export const $sessionDockKind = atom<SessionDockKind | null>(null)
+export const $sessionDockWidth = atom(320)
+export function toggleSessionDock(kind: SessionDockKind): void {
+  $sessionDockKind.set($sessionDockKind.get() === kind ? null : kind)
+}
+
+/** 该 Tab 的交互式 PTY 是否还活着（切 Tab 不杀，仅 UI detach） */
+export const $ptyAlive = atom<Record<string, boolean>>({})
+export function markPtyAlive(tabId: string, alive: boolean): void {
+  if (!tabId) return
+  const prev = $ptyAlive.get()
+  if (!alive) {
+    if (!(tabId in prev)) return
+    const next = { ...prev }
+    delete next[tabId]
+    $ptyAlive.set(next)
+    return
+  }
+  if (prev[tabId]) return
+  $ptyAlive.set({ ...prev, [tabId]: true })
+}
+
+/** 关 Tab / 杀进程后 +1，逼 TerminalPane 重挂（同一 tabId+cwd 也会换新壳） */
+export const $ptyEpoch = atom<Record<string, number>>({})
+export function bumpPtyEpoch(tabId: string): void {
+  if (!tabId) return
+  const prev = $ptyEpoch.get()
+  $ptyEpoch.set({ ...prev, [tabId]: (prev[tabId] ?? 0) + 1 })
+}
 /** 组装单面板开关 */
 export const $compositionOpen = atom(false)
-/** 子代理目录面板开关（会话区头部入口） */
+/** 子代理目录弹出层开关（会话 header 按钮） */
 export const $subagentCatalogOpen = atom(false)
 
 // ── 运行中子代理聚合（侧栏徽标；DSH workspace rows 语义）──

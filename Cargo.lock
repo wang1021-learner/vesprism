@@ -13384,6 +13384,7 @@ dependencies = [
  "dotenvy",
  "grok-session",
  "log",
+ "portable-pty",
  "rusqlite",
  "serde",
  "serde_json",
@@ -13394,6 +13395,7 @@ dependencies = [
  "tauri-plugin-log",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
+ "windows 0.61.3",
  "xai-grok-shell",
  "zip",
 ]

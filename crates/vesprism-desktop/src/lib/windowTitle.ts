@@ -11,7 +11,7 @@ export function syncWindowTitle(title?: string): void {
   if (next === lastTitle) return
   lastTitle = next
   try {
-    void appWindow().setTitle(next)
+    void appWindow().setTitle(next).catch(() => {})
   } catch {
     /* 浏览器预览等非 Tauri 环境 */
   }

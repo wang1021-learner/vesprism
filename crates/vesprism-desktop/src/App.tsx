@@ -20,9 +20,7 @@ import { ToastHost } from './components/Toast'
 import { RewindPicker } from './components/RewindPicker'
 import { CompositionPanel } from './components/CompositionPanel'
 import { GoalStrip } from './components/GoalStrip'
-import { WorkflowProgressList } from './components/WorkflowProgressList'
-import { TerminalList } from './components/TerminalList'
-import { SubagentCatalog } from './components/SubagentCatalog'
+import { SessionTermDock } from './components/SessionTermDock'
 import { syncWindowTitle } from './lib/windowTitle'
 import {
   $activeTabId, $tabs,
@@ -93,7 +91,6 @@ function DesktopApp() {
   return (
     <div className="app-container">
       <WindowTitleSync />
-      <WindowChrome />
       <ToastHost />
       <CommandPalette />
       <RewindPicker />
@@ -101,19 +98,22 @@ function DesktopApp() {
         <ErrorBoundary name="侧栏">
           <AppSidebar />
         </ErrorBoundary>
-        <ErrorBoundary
-          name="主界面"
-          fallback={(error, reset) => (
-            <MainViewportErrorFallback error={error} onReset={reset} />
-          )}
-        >
-          <div className="main-viewport">
-            <AppError />
-            <AppMainBody />
-            <SettingsModal />
-            <CompositionPanel />
-          </div>
-        </ErrorBoundary>
+        <div className="app-main-area">
+          <WindowChrome />
+          <ErrorBoundary
+            name="主界面"
+            fallback={(error, reset) => (
+              <MainViewportErrorFallback error={error} onReset={reset} />
+            )}
+          >
+            <div className="main-viewport">
+              <AppError />
+              <AppMainBody />
+              <SettingsModal />
+              <CompositionPanel />
+            </div>
+          </ErrorBoundary>
+        </div>
         <RightPanel />
       </div>
     </div>
@@ -278,24 +278,24 @@ function AppMainBody() {
     )
   }
   return (
-    <>
-      <ErrorBoundary
-        name="消息区"
-        fallback={(error, reset) => (
-          <MessagesErrorFallback error={error} onReset={reset} />
-        )}
-      >
-        <SubagentCatalog />
-        <GoalStrip />
-        <WorkflowProgressList />
-        <TerminalList />
-        <AppMessages />
-      </ErrorBoundary>
-      <AppUserQuestion />
-      <AppPermission />
-      <SandboxBanner />
-      <AppComposer />
-    </>
+    <div className="session-workspace">
+      <div className="session-chat">
+        <ErrorBoundary
+          name="消息区"
+          fallback={(error, reset) => (
+            <MessagesErrorFallback error={error} onReset={reset} />
+          )}
+        >
+          <GoalStrip />
+          <AppMessages />
+        </ErrorBoundary>
+        <AppUserQuestion />
+        <AppPermission />
+        <SandboxBanner />
+        <AppComposer />
+      </div>
+      <SessionTermDock />
+    </div>
   )
 }
 

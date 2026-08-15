@@ -32,4 +32,8 @@ xai-grok-shell = { workspace = true }
 chrono = { workspace = true }
 zip = { workspace = true }
 serde_yaml = { workspace = true }
+portable-pty = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
 

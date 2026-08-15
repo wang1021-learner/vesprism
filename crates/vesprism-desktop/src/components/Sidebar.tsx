@@ -1,6 +1,6 @@
 /**
  * 侧栏 — Cursor / Claude 式工作台导航：
- * 顶栏品牌 · 主操作「新建」· 2×2 能力入口 · 工作区折叠会话列表 · 底栏设置
+ * 顶栏操作 · 主操作「新建」· 能力入口 · 工作区折叠会话列表 · 底栏设置
  */
 import { useStore } from '@nanostores/react'
 import {

@@ -88,8 +88,20 @@ function ApprovalBar({
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmAlways, setConfirmAlways] = useState(false)
   const runRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const mac = useMemo(() => isMacPlatform(), [])
   const sig = useMemo(() => permissionSignature(request), [request])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [menuOpen])
 
   const allow = useMemo(() => pickAllow(request.options), [request.options])
   const deny = useMemo(() => pickDeny(request.options), [request.options])
@@ -170,7 +182,7 @@ function ApprovalBar({
   return (
     <>
       <div className={'perm-bar perm-bar-' + surface}>
-        <div className="perm-bar-actions">
+        <div className="perm-bar-actions" ref={menuRef}>
           {allow ? (
             <div className="perm-run-split">
               <button

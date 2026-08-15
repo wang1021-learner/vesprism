@@ -132,6 +132,7 @@ pub async fn spawn_terminal(
             .send(SessionEvent::TerminalOpened {
                 terminal_id: terminal_id.clone(),
                 command: command.clone(),
+                session_id: session_id.to_string(),
             })
             .await;
     }

@@ -185,8 +185,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* 右侧留白给中部刻度簇，内容不贴边 */
-  padding: 16px 20px 4px 0;
+  padding: 16px 0 4px;
   display: flex;
   flex-direction: column;
   /* 隐藏系统滚动条；滚轮/触控板仍可滚 */
@@ -211,10 +210,10 @@
   transition: opacity 0.08s ease-out;
 }
 
-/* 消息栏 90% / max 48.75rem；行间距由虚拟列表 padding 控制 */
+/* 消息栏单一事实源对齐；行间距由虚拟列表 padding 控制 */
 .messages-container {
-  max-width: 48.75rem;
-  width: 90%;
+  width: var(--chat-column-width, 90%);
+  max-width: var(--chat-column-max-width, 48.75rem);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -260,7 +259,7 @@
   position: absolute;
   bottom: 16px;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(8px) scale(0.92);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -274,13 +273,25 @@
   cursor: pointer;
   box-shadow: var(--shadow-md);
   z-index: 20;
-  transition: background 0.12s, box-shadow 0.12s, transform 0.12s;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s cubic-bezier(0.2, 0.9, 0.3, 1),
+    background 0.12s,
+    box-shadow 0.12s;
 }
 
-.jump-to-bottom-btn:hover {
+.jump-to-bottom-btn.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+.jump-to-bottom-btn.is-visible:hover {
   background: var(--accent-soft);
   color: var(--accent);
-  transform: translateX(-50%) translateY(-1px);
+  transform: translateX(-50%) translateY(-2px) scale(1.04);
 }
 
 .jump-to-bottom-icon {
@@ -374,9 +385,9 @@
   border-radius: 14px;
   padding: 8px 14px;
   max-width: 100%;
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 500;
-  line-height: 1.5;
+  line-height: 1.55;
   box-shadow: none;
 }
 
@@ -518,7 +529,7 @@
 
 .assistant-content {
   width: 100%;
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 500;
   line-height: 1.62;
   color: var(--text-primary);
@@ -527,9 +538,9 @@
 /* ──── 会话 scaffold：思考 / 工具（安静灰字，无通高绿轨） ──── */
 .messages-container,
 .messages-container-virtual {
-  --conversation-text-size: 0.75rem;
-  --conversation-tool-size: 0.6875rem;
-  --conversation-line: 1.125rem;
+  --conversation-text-size: 0.8125rem;
+  --conversation-tool-size: 0.75rem;
+  --conversation-line: 1.25rem;
   --conversation-scaffold-text: color-mix(in srgb, var(--text-primary) 58%, transparent);
   --conversation-scaffold-meta: color-mix(in srgb, var(--text-primary) 40%, transparent);
 }
@@ -797,7 +808,7 @@
 
 .scaffold-section-label {
   margin: 0;
-  font-size: 0.65rem;
+  font-size: 0.6875rem;
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -808,9 +819,9 @@
 .tool-output-pre {
   margin: 0;
   padding: 0.2rem 0;
-  max-height: 5.5rem;
+  max-height: 12rem;
   overflow: auto;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   line-height: 1.55;
   color: var(--text-secondary);
   white-space: pre-wrap;

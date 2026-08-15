@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   $rightPanelOpen,
   $rightPanelTab,
@@ -10,12 +10,10 @@ import {
   $workspaceCwd,
   $gitHeadRevision,
   $workspaceChangeCount,
-  $backgroundTasks,
   $activeTabId,
-  removeBackgroundTask,
   type RightPanelTab,
 } from '../../store'
-import { fileWorkingDiff, killTask, listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
+import { fileWorkingDiff, listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
 import { DiffLines } from '../Chat/DiffLines'
 
 const MIN_W = 260
@@ -61,9 +59,8 @@ function ResizeHandle() {
 // ── Tab 栏（中文） ──
 const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'files', label: '文件' },
-  { id: 'diff', label: '改动' },
   { id: 'output', label: '源码' },
-  { id: 'tasks', label: '任务' },
+  { id: 'diff', label: '改动' },
 ]
 
 function TabBar() {
@@ -183,6 +180,49 @@ function FileTree() {
 function OutputView() {
   const text = useStore($rightPanelOutput)
   const fileName = useStore($rightPanelFile)
+  const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => {
+    setCopied(false)
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = undefined
+    }
+  }, [text])
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
+  const lineCount = useMemo(() => {
+    if (!text) return 0
+    let count = 1
+    for (let i = 0; i < text.length; i++) {
+      if (text.charCodeAt(i) === 10) count++
+    }
+    return count
+  }, [text])
+
+  const sizeStr = useMemo(() => {
+    if (!text) return ''
+    return `${text.length.toLocaleString()} 字符`
+  }, [text])
+
+  const onCopy = useCallback(async () => {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* ignore */
+    }
+  }, [text])
+
   if (!text) return <div className="right-panel-empty">点击文件查看内容</div>
   return (
     <div className="right-panel-output-wrap">
@@ -191,7 +231,19 @@ function OutputView() {
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <path d="M14 2v6h6" />
         </svg>
-        <span className="output-file-name">{fileName}</span>
+        <span className="output-file-name" title={fileName}>{fileName}</span>
+        <span className="output-file-meta">
+          {lineCount} 行 · {sizeStr}
+        </span>
+        <button
+          type="button"
+          className={`diff-refresh-btn output-copy-btn${copied ? ' is-copied' : ''}`}
+          onClick={onCopy}
+          title="复制全部代码"
+          aria-label="复制全部代码"
+        >
+          {copied ? '已复制 ✓' : '复制'}
+        </button>
       </div>
       <pre className="right-panel-output">{text}</pre>
     </div>
@@ -350,44 +402,10 @@ function DiffView() {
   )
 }
 
-function TasksView() {
-  const tasks = useStore($backgroundTasks)
-  const tabId = useStore($activeTabId)
-  const entries = Object.entries(tasks)
-  if (entries.length === 0) {
-    return <div className="right-panel-empty">没有运行中的后台任务</div>
-  }
-  return (
-    <ul className="workspace-changes">
-      {entries.map(([toolCallId, t]) => (
-        <li key={toolCallId} className="workspace-change">
-          <div className="workspace-change-head" style={{ cursor: 'default' }}>
-            <span className="workspace-change-path" title={t.command}>
-              {t.description || t.command || t.taskId}
-            </span>
-            <button
-              type="button"
-              className="diff-refresh-btn"
-              onClick={() => {
-                void killTask(tabId, t.taskId)
-                  .then(() => removeBackgroundTask(tabId, toolCallId))
-                  .catch((e) => console.warn(e))
-              }}
-            >
-              停止
-            </button>
-          </div>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
 function PanelBody() {
   const tab = useStore($rightPanelTab)
   if (tab === 'files') return <FileTree />
   if (tab === 'diff') return <DiffView />
-  if (tab === 'tasks') return <TasksView />
   return <OutputView />
 }
 

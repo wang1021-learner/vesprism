@@ -5,8 +5,8 @@
 
 .perm-dock {
   flex: 0 0 auto;
-  width: min(calc(100% - 2rem), 42rem);
-  max-width: 42rem;
+  width: min(var(--chat-column-width, 90%), var(--chat-column-max-width, 48.75rem));
+  max-width: var(--chat-column-max-width, 48.75rem);
   margin: 0 auto 0.5rem;
   z-index: 40;
   pointer-events: none;
@@ -286,6 +286,8 @@
 
 .perm-dialog-cmd {
   margin-top: 0.625rem;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 .perm-dialog-actions {

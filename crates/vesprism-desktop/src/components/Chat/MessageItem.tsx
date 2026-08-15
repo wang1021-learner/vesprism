@@ -306,6 +306,27 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
   )
 }
 
+/** 工具/子任务输出显示上限：避免超大单体文本节点阻塞排版引擎；复制按钮仍保留完整输出 */
+const MAX_PREVIEW_CHARS = 20000
+
+/** 解析结构化输出，提取真实文本或格式化 JSON，还原换行 */
+function formatToolPreview(raw: string): string {
+  if (!raw) return ''
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const obj = JSON.parse(trimmed)
+      if (typeof obj.output === 'string') {
+        return obj.output
+      }
+      return JSON.stringify(obj, null, 2)
+    } catch {
+      /* not valid JSON */
+    }
+  }
+  return raw
+}
+
 /** 子任务行：对话内 scaffold（须在 MessageItem 前声明） */
 function SubagentToolLine({
   tool,
@@ -316,6 +337,15 @@ function SubagentToolLine({
 }) {
   const [expanded, setExpanded] = useState(false)
   const [opening, setOpening] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
   const failed = tool.status === 'failed'
   const finished =
     tool.status === 'completed' || tool.status === 'failed'
@@ -324,10 +354,23 @@ function SubagentToolLine({
     (tool.status === 'pending' ||
       tool.status === 'in_progress' ||
       streaming)
-  const preview = tool.preview?.trim() || ''
+  const rawPreview = tool.preview?.trim() || ''
+  const formattedPreview = useMemo(() => formatToolPreview(rawPreview), [rawPreview])
   const childSid = tool.detail?.trim() || ''
   const duration = formatDuration(tool.timing)
   const headline = toolHeadline(tool)
+
+  const onCopy = useCallback(async () => {
+    if (!formattedPreview) return
+    try {
+      await navigator.clipboard.writeText(formattedPreview)
+      setCopied(true)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* ignore */
+    }
+  }, [formattedPreview])
 
   const onOpen = useCallback(async () => {
     if (!childSid || opening) return
@@ -342,13 +385,13 @@ function SubagentToolLine({
       })
       if (id) {
         await refreshSubagentTabMessages(childSid, {
-          outputFallback: preview,
+          outputFallback: formattedPreview,
         })
       }
     } finally {
       setOpening(false)
     }
-  }, [childSid, opening, tool.title, preview])
+  }, [childSid, opening, tool.title, formattedPreview])
 
   return (
     <div
@@ -376,9 +419,9 @@ function SubagentToolLine({
             <button
               type="button"
               className={`scaffold-toggle${failed ? ' is-error' : ''}${live ? ' is-live' : ''}`}
-              onClick={() => (preview ? setExpanded((v) => !v) : void onOpen())}
+              onClick={() => (formattedPreview ? setExpanded((v) => !v) : void onOpen())}
               aria-expanded={expanded}
-              title={preview ? (expanded ? '收起结果' : '展开结果') : '打开子任务'}
+              title={formattedPreview ? (expanded ? '收起结果' : '展开结果') : '打开子任务'}
             >
               <span className="scaffold-label" title={headline}>
                 {headline}
@@ -386,7 +429,7 @@ function SubagentToolLine({
               {!live && duration ? (
                 <span className="scaffold-meta">{duration}</span>
               ) : null}
-              {preview ? (
+              {formattedPreview ? (
                 <span className={`scaffold-caret${expanded ? ' is-open' : ''}`} aria-hidden>
                   ›
                 </span>
@@ -407,9 +450,22 @@ function SubagentToolLine({
               </button>
             ) : null}
           </div>
-          {expanded && preview ? (
+          {expanded && formattedPreview ? (
             <div className="scaffold-body tool-body">
-              <pre className="scaffold-pre tool-output-pre">{preview}</pre>
+              <button
+                type="button"
+                className={`tool-copy-btn${copied ? ' is-copied' : ''}`}
+                onClick={onCopy}
+                title="复制输出"
+              >
+                {copied ? '✓' : '⧉'}
+              </button>
+              <div className="scaffold-section-label">output</div>
+              <pre className="scaffold-pre tool-output-pre">
+                {formattedPreview.length > MAX_PREVIEW_CHARS
+                  ? `${formattedPreview.slice(0, MAX_PREVIEW_CHARS)}\n…输出过长，已截断显示（复制可获取完整输出）`
+                  : formattedPreview}
+              </pre>
             </div>
           ) : null}
         </div>
@@ -720,9 +776,6 @@ const AskUserToolLine = memo(function AskUserToolLine({
 })
 
 /** 工具行：小字灰标签 + 展开壳；成功无勾 */
-/** 工具输出显示上限：失败时的超长错误输出（stack trace）只渲染前缀，
- *  避免超大文本节点拖慢滚动；复制按钮仍取完整 preview */
-const MAX_PREVIEW_CHARS = 20000
 const ToolLine = memo(function ToolLine({
   tool,
   streaming,
@@ -744,9 +797,10 @@ const ToolLine = memo(function ToolLine({
     (tool.status === 'pending' ||
       tool.status === 'in_progress' ||
       streaming)
-  const preview = tool.preview?.trim() || ''
+  const rawPreview = tool.preview?.trim() || ''
+  const formattedPreview = useMemo(() => formatToolPreview(rawPreview), [rawPreview])
   // 会话内不展示 diff：可展开内容只有工具输出 preview
-  const hasBody = preview.length > 0
+  const hasBody = formattedPreview.length > 0
   const headline = toolHeadline(tool, live)
   const tone: ActivityTone = failed ? 'tool-failed' : 'tool'
   const iconKind = useMemo(
@@ -768,15 +822,24 @@ const ToolLine = memo(function ToolLine({
   const showDiffStats = !live && diffStats !== null && (diffStats.added > 0 || diffStats.removed > 0)
 
   const [copied, setCopied] = useState(false)
+  const copyTimerRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
   const onCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(preview || tool.detail || tool.title)
+      await navigator.clipboard.writeText(formattedPreview || tool.detail || tool.title)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1200)
     } catch {
       /* clipboard 不可用时静默 */
     }
-  }, [preview, tool.detail, tool.title])
+  }, [formattedPreview, tool.detail, tool.title])
 
   // bash 后台任务（x.ai/task_backgrounded）：工具行显示徽标 + 终止入口
   const bgTasks = useStore($backgroundTasks)
@@ -894,7 +957,7 @@ const ToolLine = memo(function ToolLine({
           ) : null}
           {expanded && hasBody ? (
             <div className="scaffold-body tool-body">
-              {preview ? (
+              {formattedPreview ? (
                 <button
                   type="button"
                   className={`tool-copy-btn${copied ? ' is-copied' : ''}`}
@@ -904,13 +967,13 @@ const ToolLine = memo(function ToolLine({
                   {copied ? '✓' : '⧉'}
                 </button>
               ) : null}
-              {preview ? (
+              {formattedPreview ? (
                 <>
                   <div className="scaffold-section-label">output</div>
                   <pre className="scaffold-pre tool-output-pre">
-                    {preview.length > MAX_PREVIEW_CHARS
-                      ? `${preview.slice(0, MAX_PREVIEW_CHARS)}\n…输出过长，已截断显示（复制可获取完整输出）`
-                      : preview}
+                    {formattedPreview.length > MAX_PREVIEW_CHARS
+                      ? `${formattedPreview.slice(0, MAX_PREVIEW_CHARS)}\n…输出过长，已截断显示（复制可获取完整输出）`
+                      : formattedPreview}
                   </pre>
                 </>
               ) : null}

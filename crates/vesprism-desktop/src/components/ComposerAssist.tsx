@@ -119,6 +119,9 @@ export function useComposerAssist(
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229) {
+      return false
+    }
     if (!mode || items.length === 0) return false
     if (e.key === 'ArrowDown') {
       e.preventDefault()

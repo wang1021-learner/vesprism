@@ -1,11 +1,14 @@
-/* 流程画布 — 复用 tokens，不引入新色系 */
+/* ══════════════════════════════════════════════════════════════════
+   流程画布 (Flow Canvas) — 现代纯色沉浸式 AI 工作流 Studio UI
+   ══════════════════════════════════════════════════════════════════ */
 
 .flow-canvas-loading {
   flex: 1;
   display: grid;
   place-items: center;
-  color: var(--text-tertiary);
+  color: var(--text-tertiary, #9ca3af);
   font-size: 13px;
+  font-weight: 500;
 }
 
 .flow-canvas {
@@ -13,18 +16,24 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-canvas);
-  color: var(--text-primary);
+  background: var(--bg-canvas, #f8f9fa);
+  color: var(--text-primary, #111827);
+  position: relative;
+  overflow: hidden;
 }
 
+/* ──── 1. 顶部工具栏 (Header & Toolbar) ──── */
 .flow-toolbar {
-  flex: 0 0 auto;
+  flex: 0 0 46px;
+  height: 46px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-elevated, #ffffff);
+  z-index: 10;
 }
 
 .flow-toolbar-name {
@@ -35,142 +44,307 @@
   flex: 1;
 }
 
-.flow-toolbar-name input {
-  min-width: 0;
-  max-width: 220px;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  font: inherit;
-  font-weight: 600;
-  color: var(--text-primary);
+.flow-title-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-muted, #f3f4f6);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 8px;
+  padding: 2px 8px;
+  transition: background 0.15s ease;
 }
 
-.flow-toolbar-name input:hover,
-.flow-toolbar-name input:focus {
-  border-color: var(--border-solid);
-  background: var(--surface-muted);
+.flow-title-wrapper:focus-within {
+  background: var(--surface-elevated, #ffffff);
+}
+
+.flow-title-icon {
+  font-size: 12px;
+  color: var(--text-secondary, #4b5563);
+}
+
+.flow-title-input {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary, #111827);
   outline: none;
+  min-width: 120px;
+  max-width: 220px;
+  padding: 0;
 }
 
 .flow-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
-  color: var(--warning-deep);
-  background: var(--warning-soft);
-  padding: 1px 7px;
+  font-weight: 550;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 2px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.flow-dirty-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+.flow-clean {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary, #9ca3af);
+  background: var(--surface-muted, #f3f4f6);
+  padding: 2px 8px;
   border-radius: 999px;
   flex-shrink: 0;
 }
 
 .flow-ver {
   font-size: 11px;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--text-secondary, #4b5563);
+  background: var(--surface-muted, #f3f4f6);
+  padding: 2px 7px;
+  border-radius: 6px;
   flex-shrink: 0;
+}
+
+.flow-select-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.flow-select {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-muted, #f8f9fa);
+  color: var(--text-secondary, #4b5563);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.flow-select:hover {
+  background: var(--surface-hover, #f3f4f6);
+  color: var(--text-primary, #111827);
 }
 
 .flow-toolbar-actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.flow-action-group {
+  display: flex;
+  align-items: center;
   gap: 6px;
-  justify-content: flex-end;
+}
+
+.flow-action-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-solid, #e5e7eb);
+  margin: 0 2px;
 }
 
 .flow-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-solid);
-  background: var(--surface-elevated);
-  color: var(--text-secondary);
-  font: inherit;
+  border-radius: 7px;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-elevated, #ffffff);
+  color: var(--text-secondary, #4b5563);
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+  user-select: none;
+  outline: none;
+  transition: all 0.15s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .flow-btn:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text-primary);
+  background: var(--surface-hover, #f3f4f6);
+  border-color: var(--border-strong-solid, #cbd5e1);
+  color: var(--text-primary, #111827);
 }
 
 .flow-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
+/* 纯色按钮（无渐变色） */
 .flow-btn.primary {
-  background: var(--cta);
-  border-color: var(--cta);
-  color: #fff;
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+  font-weight: 550;
 }
 
 .flow-btn.primary:hover:not(:disabled) {
-  background: var(--cta-hover);
+  background: #1f2937;
+  border-color: #1f2937;
+  color: #ffffff;
+}
+
+.flow-btn.publish-btn {
+  background: var(--surface-elevated, #ffffff);
+  border-color: var(--border-solid, #e5e7eb);
+  color: var(--text-primary, #111827);
+  font-weight: 550;
+}
+
+.flow-btn.publish-btn:hover:not(:disabled) {
+  background: var(--surface-hover, #f3f4f6);
+  border-color: var(--border-strong-solid, #cbd5e1);
+}
+
+.flow-btn.danger {
+  color: var(--text-secondary, #64748b);
 }
 
 .flow-btn.danger:hover:not(:disabled) {
-  background: var(--danger-soft);
-  color: var(--danger-deep);
-  border-color: var(--danger-border);
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #ef4444;
 }
 
+.flow-btn.dock-btn.is-active {
+  background: var(--surface-hover, #f3f4f6);
+  border-color: var(--border-strong-solid, #cbd5e1);
+  color: var(--text-primary, #111827);
+  font-weight: 550;
+}
+
+/* ──── 2. 画布主工作区 (Flow Body & Layout) ──── */
 .flow-body {
   flex: 1;
   min-height: 0;
   display: flex;
+  position: relative;
+  overflow: hidden;
 }
 
+/* ──── 3. 左侧节点库 (Node Palette) ──── */
 .flow-palette {
-  flex: 0 0 132px;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  padding: 10px 8px;
+  flex: 0 0 160px;
+  border-right: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-elevated, #ffffff);
+  padding: 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  overflow: auto;
+  gap: 10px;
+  overflow-y: auto;
+  user-select: none;
+  z-index: 5;
+}
+
+.flow-palette-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px 4px;
 }
 
 .flow-palette-title {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  padding: 0 4px 4px;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-primary, #111827);
+  letter-spacing: 0.02em;
+}
+
+.flow-palette-sub {
+  font-size: 10.5px;
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.flow-palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .flow-palette-item {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 1px;
+  gap: 3px;
   width: 100%;
-  padding: 7px 8px;
-  border: 1px dashed var(--border-solid);
-  border-radius: 8px;
-  background: var(--surface-muted);
+  padding: 8px 10px;
+  border: 1px solid var(--border-solid, #f1f3f5);
+  border-radius: 9px;
+  background: var(--surface-muted, #f8f9fa);
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: grab;
+  outline: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.flow-palette-item:active {
+  cursor: grabbing;
 }
 
 .flow-palette-item:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-strong-solid);
+  background: var(--surface-elevated, #ffffff);
+  border-color: var(--border-strong-solid, #cbd5e1);
 }
 
-.flow-palette-item strong {
-  font-size: 12px;
-  font-weight: 600;
+.flow-palette-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
 }
 
-.flow-palette-item span {
+.flow-palette-item-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
   font-size: 10px;
-  color: var(--text-tertiary);
+  font-weight: 700;
+  color: var(--text-secondary, #4b5563);
+  background: var(--surface-muted, #f1f3f5);
+  flex-shrink: 0;
 }
 
+.flow-palette-item-label {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-primary, #1f2937);
+}
+
+.flow-palette-item-hint {
+  font-size: 10.5px;
+  color: var(--text-secondary, #6b7280);
+  line-height: 1.35;
+  padding-left: 2px;
+}
+
+/* ──── 4. 画布视口舞台 (Flow Stage & Canvas) ──── */
 .flow-stage {
   flex: 1;
   min-width: 0;
@@ -178,176 +352,460 @@
   display: flex;
   flex-direction: column;
   position: relative;
+  background: var(--bg-canvas, #f8f9fa);
 }
 
 .flow-stage-canvas {
   flex: 1;
   min-height: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .flow-canvas .react-flow {
-  background: var(--bg-canvas);
+  background: var(--bg-canvas, #f8f9fa);
 }
 
 .flow-canvas .react-flow__minimap {
-  background: var(--surface);
-  border: 1px solid var(--border-solid);
-  border-radius: 8px;
+  background: var(--surface-elevated, #ffffff) !important;
+  border: 1px solid var(--border-solid, #e5e7eb) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05) !important;
   overflow: hidden;
 }
 
 .flow-canvas .react-flow__controls {
-  border: 1px solid var(--border-solid);
-  border-radius: 8px;
+  border: 1px solid var(--border-solid, #e5e7eb) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05) !important;
+  background: var(--surface-elevated, #ffffff) !important;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
 }
 
 .flow-canvas .react-flow__controls-button {
-  background: var(--surface);
-  border-bottom-color: var(--border-solid);
-  fill: var(--text-secondary);
+  background: var(--surface-elevated, #ffffff) !important;
+  border-bottom: 1px solid var(--border-solid, #f1f3f5) !important;
+  fill: var(--text-secondary, #4b5563) !important;
+  outline: none !important;
 }
 
-.flow-inspector {
-  position: absolute;
-  left: 12px;
-  bottom: 64px;
-  z-index: 5;
-  width: min(280px, calc(100% - 24px));
-  max-height: 46%;
-  overflow: auto;
-  padding: 10px 12px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-solid);
-  border-radius: 10px;
-  box-shadow: var(--shadow-md);
+.flow-canvas .react-flow__controls-button:hover {
+  background: var(--surface-hover, #f3f4f6) !important;
+  fill: var(--text-primary, #111827) !important;
 }
 
-.flow-inspector h3 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 650;
+/* ──── 5. 流程节点卡片 (Flow Nodes Clean Card) ──── */
+.flow-node {
+  min-width: 168px;
+  max-width: 230px;
+  padding: 0;
+  background: var(--surface-elevated, #ffffff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  overflow: visible;
+  user-select: none;
+  outline: none !important;
 }
 
-.flow-field {
+/* 点击选中态：纯净微阴影，无突兀外发光边框线圈 */
+.flow-node.is-selected {
+  border-color: var(--border-strong-solid, #9ca3af);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.flow-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 6px;
+  background: var(--surface-muted, #f8f9fa);
+  border-bottom: 1px solid var(--border-solid, #f1f3f5);
+  border-radius: 11px 11px 0 0;
+}
+
+.flow-node-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary, #4b5563);
+  background: var(--surface-muted, #f1f3f5);
+  flex-shrink: 0;
+}
+
+.flow-node-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #4b5563);
+  letter-spacing: 0.02em;
+}
+
+.flow-node-body {
+  padding: 8px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-bottom: 8px;
+  background: var(--surface-elevated, #ffffff);
+  border-radius: 0 0 11px 11px;
 }
 
-.flow-field span {
+.flow-node-title {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-primary, #111827);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-sub {
   font-size: 11px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
 }
 
-.flow-field input,
-.flow-field textarea,
-.flow-field select {
-  width: 100%;
-  border: 1px solid var(--border-solid);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  padding: 5px 7px;
+/* 节点把手 (Handles) */
+.flow-handle {
+  width: 9px !important;
+  height: 9px !important;
+  background: var(--surface-elevated, #ffffff) !important;
+  border: 2px solid var(--text-secondary, #6b7280) !important;
+  border-radius: 50% !important;
+  outline: none !important;
 }
 
-.flow-field textarea {
-  min-height: 56px;
-  resize: vertical;
+.flow-handle.is-yes {
+  border-color: #10b981 !important;
 }
 
-.flow-ai {
-  flex: 0 0 auto;
-  padding: 8px 12px 10px;
+.flow-handle.is-no {
+  border-color: #ef4444 !important;
 }
 
-.flow-ai .composer-card {
-  width: 100%;
-  max-width: none;
-}
-
-.flow-ai-row {
+/* ──── 6. 底部 AI 流程生成器 (Floating Magic Capsule) ──── */
+.flow-ai-floating {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100% - 48px));
+  z-index: 20;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.flow-ai-card {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
   gap: 8px;
-  align-items: flex-end;
+  width: 100%;
+  padding: 6px 8px 6px 14px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
 }
 
-.flow-ai-row textarea {
+.flow-ai-card:focus-within {
+  background: var(--surface-elevated, #ffffff);
+}
+
+.flow-ai-sparkle {
+  color: var(--text-secondary, #4b5563);
+  font-size: 13px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.flow-ai-input {
   flex: 1;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--text-primary, #111827);
+  outline: none;
+  padding: 4px 0;
 }
 
+.flow-ai-input::placeholder {
+  color: var(--text-tertiary, #9ca3af);
+}
+
+/* 纯色生成按钮（无渐变色） */
+.flow-ai-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: #111827;
+  color: #ffffff;
+  border: 1px solid #111827;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  flex-shrink: 0;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.flow-ai-submit-btn:hover:not(:disabled) {
+  background: #1f2937;
+  border-color: #1f2937;
+}
+
+.flow-ai-submit-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.flow-ai-spin {
+  animation: flow-spin 1.5s infinite linear;
+}
+
+@keyframes flow-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.flow-err {
+  pointer-events: auto;
+  font-size: 11.5px;
+  color: #ef4444;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+/* ──── 7. 右侧试跑台 (Flow Dock / Runner Studio) ──── */
 .flow-dock {
-  flex: 0 0 320px;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
+  flex: 0 0 330px;
+  width: 330px;
+  border-left: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-elevated, #ffffff);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  transition: width 0.2s ease, flex-basis 0.2s ease;
+  z-index: 10;
 }
 
 .flow-dock.is-collapsed {
-  flex-basis: 36px;
-  width: 36px;
+  flex: 0 0 38px;
+  width: 38px;
 }
 
 .flow-dock-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-muted, #f8f9fa);
+  flex-shrink: 0;
+}
+
+.flow-dock-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
   font-weight: 650;
+  color: var(--text-primary, #111827);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.flow-dock-title-icon {
+  color: #f59e0b;
+  font-size: 13px;
+}
+
+.flow-dock-close-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  display: grid;
+  place-items: center;
+  transition: all 0.15s ease;
+}
+
+.flow-dock-close-btn:hover {
+  background: var(--surface-hover, #f3f4f6);
+  border-color: var(--border-solid, #e5e7eb);
+  color: var(--text-primary, #111827);
 }
 
 .flow-dock-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 10px;
+  overflow-y: auto;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
-.flow-dock .wf-progress-list,
-.flow-dock .term-list {
-  margin: 0;
-}
-
-.flow-replay {
+.flow-dock-section {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
+.flow-dock-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary, #4b5563);
+}
+
+.flow-dock-text-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary, #4b5563);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  outline: none;
+}
+
+.flow-dock-text-btn:hover {
+  color: var(--text-primary, #111827);
+  background: var(--surface-hover, #f3f4f6);
+}
+
+.flow-json-textarea {
+  width: 100%;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface-muted, #f8f9fa);
+  color: var(--text-primary, #111827);
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  outline: none;
+  resize: vertical;
+}
+
+.flow-dock-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.flow-dock-run-btn {
+  flex: 1;
+  height: 32px;
+  font-weight: 600;
+}
+
+.flow-dock-replay-toggle {
+  height: 32px;
+  font-weight: 500;
+}
+
+.flow-dock-replay-toggle.is-active {
+  background: var(--surface-hover, #f3f4f6);
+  border-color: var(--border-strong-solid, #cbd5e1);
+}
+
+/* ──── 8. 回放记录列表 (Replay Cards) ──── */
+.flow-replay {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.flow-replay-header {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-primary, #111827);
+}
+
 .flow-replay-item {
-  padding: 6px 8px;
-  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border: 1px solid var(--border-solid, #e5e7eb);
   border-radius: 8px;
   font-size: 12px;
-  background: var(--surface-muted);
+  background: var(--surface-muted, #f8f9fa);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.flow-replay-item.is-running {
-  border-color: var(--accent);
+.flow-replay-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.flow-replay-item.is-failed {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
+.flow-replay-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
 }
 
-.flow-replay-item.is-completed {
-  border-color: transparent;
+.flow-replay-item.is-running .flow-replay-status-dot {
+  background: #f59e0b;
 }
 
-.flow-replay-meta {
-  color: var(--text-tertiary);
+.flow-replay-item.is-failed .flow-replay-status-dot {
+  background: #ef4444;
+}
+
+.flow-replay-label {
+  font-size: 12px;
+  color: var(--text-primary, #111827);
+}
+
+.flow-replay-type {
+  font-size: 10.5px;
+  color: var(--text-tertiary, #9ca3af);
+  margin-left: auto;
+}
+
+.flow-replay-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-elevated, #ffffff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  color: var(--text-secondary, #4b5563);
+}
+
+.flow-replay-rerun {
+  height: 22px;
+  padding: 0 6px;
   font-size: 11px;
 }
 
@@ -359,93 +817,110 @@
   font-size: 11px;
   max-height: 120px;
   overflow: auto;
+  background: var(--surface-elevated, #ffffff);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid, #f1f3f5);
 }
 
+.flow-replay-meta {
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 11px;
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* ──── 9. 节点属性检查器 (Inspector Floating Card) ──── */
+.flow-inspector {
+  position: absolute;
+  left: 14px;
+  bottom: 80px;
+  z-index: 25;
+  width: 290px;
+  max-height: 52%;
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+
+.flow-inspector h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary, #111827);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.flow-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 9px;
+}
+
+.flow-field span {
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-secondary, #4b5563);
+}
+
+.flow-field input,
+.flow-field textarea,
+.flow-field select {
+  width: 100%;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 6px;
+  background: var(--surface-elevated, #ffffff);
+  color: var(--text-primary, #111827);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+.flow-field textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+/* ──── 10. 发布 / 冲突弹窗 (Modals) ──── */
 .flow-modal-back {
   position: fixed;
   inset: 0;
-  z-index: 80;
-  background: rgba(28, 28, 30, 0.28);
+  z-index: 90;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: grid;
   place-items: center;
 }
 
 .flow-modal {
-  width: min(440px, calc(100vw - 32px));
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-solid);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
-  padding: 16px 18px 14px;
+  width: min(460px, calc(100vw - 32px));
+  background: var(--surface-elevated, #ffffff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 14px;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+  padding: 18px 20px 16px;
 }
 
 .flow-modal h2 {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary, #111827);
 }
 
 .flow-modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
-.flow-node {
-  min-width: 156px;
-  max-width: 220px;
-  padding: 8px 10px 10px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-solid);
-  border-radius: 10px;
-  box-shadow: var(--shadow-sm);
-}
-
-.flow-node.is-selected {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-glow);
-}
-
-.flow-node-tag {
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: var(--text-tertiary);
-  margin-bottom: 2px;
-}
-
-.flow-node-title {
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.3;
-}
-
-.flow-node-sub {
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.flow-node.is-start { border-top: 2px solid var(--success); }
-.flow-node.is-agent { border-top: 2px solid var(--accent); }
-.flow-node.is-tool { border-top: 2px solid var(--warning); }
-.flow-node.is-flow { border-top: 2px solid #6b7c93; }
-.flow-node.is-branch { border-top: 2px solid #8b6bb0; }
-.flow-node.is-end { border-top: 2px solid var(--danger); }
-
-.flow-handle {
-  width: 8px;
-  height: 8px;
-  background: var(--surface);
-  border: 1.5px solid var(--text-tertiary);
-}
-
-.flow-handle.is-yes { border-color: var(--success); }
-.flow-handle.is-no { border-color: var(--danger); }
-
-.flow-err {
-  color: var(--danger-deep);
-  font-size: 12px;
-}

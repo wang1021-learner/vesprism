@@ -7,9 +7,9 @@
    ═══════════════════════════════════════════════════ */
 
 .md-body {
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 500;
-  line-height: 1.62;
+  line-height: 1.65;
   overflow-wrap: break-word;
   word-break: normal;
   color: var(--text-primary);
@@ -193,9 +193,23 @@
   background: #fefafa;
 }
 
-/* ── 链接：默认无下划线 ── */
-.md-link {
+/* ── 键盘按键 ── */
+.md-kbd {
+  font-family: inherit;
+  font-size: 0.85em;
+  font-weight: 500;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-strong-solid);
+  box-shadow: 0 1px 0 var(--border-solid);
   color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* ── 链接 ── */
+.md-link {
+  color: var(--accent);
   text-decoration: none;
   border-bottom: 1px solid var(--border-strong-solid);
   text-underline-offset: 2px;
@@ -261,10 +275,10 @@
   margin-bottom: 0;
 }
 
-/* ── 表格：圆角壳 + 细线 + 弱表头；单元格竖向折行，无横滚 ── */
+/* ── 表格：圆角壳 + 细线 + 自适应横滚 ── */
 .md-table-wrapper {
   margin: 0.6em 0 1em;
-  overflow-x: hidden;
+  overflow-x: auto;
   border-radius: 8px;
   border: 1px solid var(--border-solid);
   background: var(--surface-elevated, #fff);
@@ -276,9 +290,10 @@
   border-collapse: collapse;
   border-spacing: 0;
   width: 100%;
-  table-layout: fixed; /* 列宽均分，内容折行而不是撑出横滚 */
-  font-size: 12.5px;
-  line-height: 1.45;
+  min-width: 100%;
+  table-layout: auto;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .md-table th,
@@ -290,7 +305,7 @@
   text-align: left;
   vertical-align: top;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   word-break: normal;
 }
 

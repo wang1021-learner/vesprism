@@ -370,6 +370,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const assist = useComposerAssist(input, setInput, workspaceCwd)
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229) {
+      return
+    }
     if (assist.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()

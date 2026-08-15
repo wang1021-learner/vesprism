@@ -80,9 +80,7 @@ export interface TerminalRuntime {
   killed?: boolean
   /** 已退出 */
   exited: boolean
-  /** 打开时间，用于只留最近 5 张 */
   openedAt: number
-  /** 跑完默认折起；运行中强制展开 */
   expanded: boolean
 }
 

@@ -11,13 +11,23 @@ import {
   getTabState,
   hasTab,
   isBlankNewChat,
+  bumpPtyEpoch,
+  markPtyAlive,
   patchTab,
   removeTab,
   resetTabToNewChat,
   resolveWorkspaceCwd,
   switchTab,
 } from '../store'
-import { closeTab, restartSession, startSession } from '../bridge'
+import { closeTab, killTask, restartSession, startSession, stopPty } from '../bridge'
+
+/** 关 Tab 时先杀该会话登记的后台进程，避免条目没了进程还在。 */
+function killTabBackgroundTasks(tabId: string): void {
+  const tasks = getTabState(tabId)?.backgroundTasks ?? {}
+  for (const t of Object.values(tasks)) {
+    if (t.taskId) void killTask(tabId, t.taskId).catch(() => {})
+  }
+}
 
 /** @returns 是否发生了可见的关闭/重置（最后一个空白新对话返回 false） */
 export function closeChatTab(id: string): boolean {
@@ -34,12 +44,21 @@ export function closeChatTab(id: string): boolean {
 
   const wasActive = id === $activeTabId.get()
 
+  killTabBackgroundTasks(id)
+  markPtyAlive(id, false)
+
   if (isLast) {
     const cwd = resolveWorkspaceCwd()
     resetTabToNewChat(id, cwd)
+    // 先杀掉再 bump，避免 TerminalPane 重挂时 start 抢在 stop 前面。
+    void stopPty(id)
+      .catch(() => {})
+      .finally(() => bumpPtyEpoch(id))
     void refreshLastTabSession(id, cwd)
     return true
   }
+
+  void stopPty(id).catch(() => {})
 
   removeTab(id)
   if (wasActive) {

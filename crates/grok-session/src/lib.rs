@@ -379,6 +379,7 @@ pub enum SessionEvent {
     TerminalOpened {
         terminal_id: String,
         command: String,
+        session_id: String,
     },
     /// 引擎 `terminal/release`：卡片应移除。
     TerminalReleased {
@@ -538,10 +539,11 @@ impl std::fmt::Debug for SessionEvent {
             Self::TerminalOpened {
                 terminal_id,
                 command,
+                session_id,
             } => write!(
                 f,
-                "TerminalOpened {{ id: {:?}, command: {:?} }}",
-                terminal_id, command
+                "TerminalOpened {{ id: {:?}, command: {:?}, session: {:?} }}",
+                terminal_id, command, session_id
             ),
             Self::TerminalReleased { terminal_id } => {
                 write!(f, "TerminalReleased {{ id: {:?} }}", terminal_id)
@@ -697,8 +699,9 @@ impl Client for GuiClient {
         args: CreateTerminalRequest,
     ) -> agent_client_protocol::Result<CreateTerminalResponse> {
         // 子会话终端仍执行（引擎 pull 需要），但不投影到父会话命令输出区。
+        // 必须 own_id 已绑定且等于本次 session_id；未绑定或子会话一律不发 UI。
         let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
-        let emit_ui = own_id.as_ref().is_none_or(|id| *id == args.session_id);
+        let emit_ui = own_id.as_ref().is_some_and(|id| *id == args.session_id);
         let terminal_id = terminal::spawn_terminal(
             &self.terminals,
             &args.session_id,

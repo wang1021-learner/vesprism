@@ -36,6 +36,7 @@ pub async fn open_tab(state: State<'_, AppState>) -> Result<String, String> {
 /// 关闭指定 tab（从共享表移除 sender，TabActor 优雅退出）。
 #[tauri::command]
 pub async fn close_tab(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.pty.stop(&tab_id);
     teardown_tab_sandbox(&tab_id, &state);
     let (reply_tx, reply_rx) = oneshot::channel();
     state
@@ -48,12 +49,52 @@ pub async fn close_tab(tab_id: String, state: State<'_, AppState>) -> Result<(),
 /// 手动重启指定 tab（关旧 actor、起空壳、广播 TabRecovering；前端负责重放会话）。
 #[tauri::command]
 pub async fn restart_tab(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.pty.stop(&tab_id);
     let (reply_tx, reply_rx) = oneshot::channel();
     state
         .supervisor_tx
         .send(SupervisorCommand::RestartTab { tab_id, reply: reply_tx })
         .map_err(|_| "Supervisor 线程已退出".to_string())?;
     reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
+}
+
+#[tauri::command]
+pub fn start_pty(
+    tab_id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state.pty.start(&tab_id, &cwd, cols, rows, app)
+}
+
+#[tauri::command]
+pub fn pty_write(tab_id: String, data: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.pty.write(&tab_id, &data)
+}
+
+#[tauri::command]
+pub fn pty_resize(
+    tab_id: String,
+    cols: u16,
+    rows: u16,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.pty.resize(&tab_id, cols, rows)
+}
+
+#[tauri::command]
+pub fn pty_detach(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.pty.detach(&tab_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_pty(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.pty.stop(&tab_id);
+    Ok(())
 }
 
 /// 编译期推算 monorepo 仓库根（兜底默认工作区）。

@@ -1,23 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { TerminalRuntime } from '../types'
-import {
-  keepTail,
-  pruneTerminals,
-  terminalOutcome,
-  terminalStatusLabel,
-} from './terminalCards'
-
-function card(partial: Partial<TerminalRuntime> & { terminalId: string }): TerminalRuntime {
-  return {
-    command: 'cmd',
-    text: '',
-    truncated: false,
-    exited: false,
-    openedAt: 0,
-    expanded: true,
-    ...partial,
-  }
-}
+import { keepTail, terminalOutcome, terminalStatusLabel } from './terminalCards'
 
 describe('keepTail', () => {
   it('短文本不截断', () => {
@@ -46,13 +28,4 @@ describe('terminalOutcome', () => {
   })
 })
 
-describe('pruneTerminals', () => {
-  it('只留最近 5 张', () => {
-    const map: Record<string, TerminalRuntime> = {}
-    for (let i = 0; i < 7; i++) {
-      map[`t${i}`] = card({ terminalId: `t${i}`, openedAt: i })
-    }
-    const next = pruneTerminals(map, 5)
-    expect(Object.keys(next).sort()).toEqual(['t2', 't3', 't4', 't5', 't6'])
-  })
-})
+

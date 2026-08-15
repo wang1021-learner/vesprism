@@ -15,6 +15,10 @@
   --radius-lg: 14px;
   --radius-full: 999px;
 
+  /* 会话区与各支架/弹层统一网格列宽（单一事实源） */
+  --chat-column-max-width: 54rem;
+  --chat-column-width: 92%;
+
   --bg-canvas: #f3f4f6;
   --bg-canvas-mid: #e8eaed;
   --bg-canvas-glow: none;

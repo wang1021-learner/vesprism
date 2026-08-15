@@ -136,6 +136,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-height: 140px;
+  overflow-y: auto;
   margin-bottom: 10px;
 }
 

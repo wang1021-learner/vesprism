@@ -14,11 +14,15 @@ import {
 const closeTab = vi.fn().mockResolvedValue(undefined)
 const restartSession = vi.fn().mockResolvedValue(undefined)
 const startSession = vi.fn().mockResolvedValue(undefined)
+const killTask = vi.fn().mockResolvedValue(undefined)
+const stopPty = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('../bridge', () => ({
   closeTab: (...a: unknown[]) => closeTab(...a),
   restartSession: (...a: unknown[]) => restartSession(...a),
   startSession: (...a: unknown[]) => startSession(...a),
+  killTask: (...a: unknown[]) => killTask(...a),
+  stopPty: (...a: unknown[]) => stopPty(...a),
 }))
 
 import { closeChatTab } from './closeChatTab'
@@ -28,6 +32,8 @@ beforeEach(() => {
   closeTab.mockClear()
   restartSession.mockClear()
   startSession.mockClear()
+  killTask.mockClear()
+  stopPty.mockClear()
 })
 
 describe('closeChatTab', () => {
@@ -39,6 +45,7 @@ describe('closeChatTab', () => {
     expect(closeTab).not.toHaveBeenCalled()
     expect(restartSession).not.toHaveBeenCalled()
     expect(startSession).not.toHaveBeenCalled()
+    expect(stopPty).not.toHaveBeenCalled()
   })
 
   it('最后一个有内容的 tab：原地清空，不走 close+open', () => {
@@ -56,6 +63,7 @@ describe('closeChatTab', () => {
     expect(getTabState('tab-1')?.messages).toEqual([])
     expect($tabs.get()[0].title).toBe('')
     expect(closeTab).not.toHaveBeenCalled()
+    expect(stopPty).toHaveBeenCalledWith('tab-1')
     expect(restartSession).toHaveBeenCalledWith('tab-1', 'D:\\repo')
   })
 
@@ -68,5 +76,19 @@ describe('closeChatTab', () => {
     expect($activeTabId.get()).toBe('tab-1')
     expect(getTabState('tab-2')).toBeUndefined()
     expect(closeTab).toHaveBeenCalledWith('tab-2')
+    expect(stopPty).toHaveBeenCalledWith('tab-2')
+  })
+
+  it('关闭时终止该 tab 登记的后台任务', () => {
+    createTab('tab-1', { chatTitle: 'A' })
+    createTab('tab-2', {
+      chatTitle: 'B',
+      backgroundTasks: {
+        call_1: { taskId: 'task-9', command: 'sleep 99' },
+      },
+    })
+    switchTab('tab-2')
+    expect(closeChatTab('tab-2')).toBe(true)
+    expect(killTask).toHaveBeenCalledWith('tab-2', 'task-9')
   })
 })

@@ -212,6 +212,8 @@ pub struct AppState {
     pub sandbox_tabs: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<TabId>>>,
     /// tab -> 隔离 worktree 绑定
     pub sandbox_binds: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<TabId, crate::sandbox::SandboxBind>>>,
+    /// 每 Tab 交互式 PTY（关 Tab 杀；关应用 Job/drop 回收）
+    pub pty: std::sync::Arc<crate::pty::PtyManager>,
 }
 
 /// 推给前端 `session-event` 监听器的 JSON 载荷。
@@ -348,6 +350,7 @@ pub enum FrontendEvent {
     TerminalOpened {
         terminal_id: String,
         command: String,
+        session_id: String,
     },
     /// 引擎释放终端，前端应移除卡片。
     TerminalReleased {
@@ -1555,6 +1558,7 @@ fn forward_event(
         SessionEvent::TerminalOpened {
             terminal_id,
             command,
+            session_id,
         } => {
             emit(
                 app,
@@ -1562,6 +1566,7 @@ fn forward_event(
                 FrontendEvent::TerminalOpened {
                     terminal_id,
                     command,
+                    session_id,
                 },
             );
         }

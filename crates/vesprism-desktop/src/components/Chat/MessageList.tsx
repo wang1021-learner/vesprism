@@ -21,8 +21,9 @@ const ROW_GAP = 12
 const LIST_PAD_BOTTOM = 6
 /** 默认估高：减少首屏测高跳动 */
 const DEFAULT_ESTIMATE = 96
-/** 内容区最大宽度 48.75rem */
-const CONTENT_MAX_WIDTH = '48.75rem'
+/** 内容区最大宽度与默认宽度（对齐 tokens.css 单一事实源） */
+const CONTENT_MAX_WIDTH = 'var(--chat-column-max-width, 48.75rem)'
+const CONTENT_WIDTH = 'var(--chat-column-width, 90%)'
 /** 大上下文阈值：超过后提高 overscan；DOM 仍只渲染可视区 */
 const LARGE_CONTEXT_THRESHOLD = 200
 /** 高度缓存软上限 */
@@ -93,10 +94,15 @@ function estimateMessageHeight(msg: ChatMessage | undefined): number {
       }
       return 32 + ROW_GAP
     }
-    case 'tool':
-      // 对齐 OpenWorker：工具行默认折叠（行摘要 + 内容 opt-in），行高固定为 header，
-      // 估高即实际；展开态由 measureElement 实测收敛。
+    case 'tool': {
+      // 工具/子任务行默认全部折叠（仅含 todo 任务清单时默认展开）；估高即为初始 header 高度
+      const tc = msg.toolCall
+      const todoCount = tc?.todo?.todos?.length || 0
+      if (todoCount > 0) {
+        return Math.min(320, 48 + todoCount * 28) + ROW_GAP
+      }
       return 40 + ROW_GAP
+    }
     case 'user': {
       const lines = Math.min(12, Math.ceil(len / EST_CHARS_PER_LINE) || 1)
       return Math.min(280, 48 + lines * 20) + ROW_GAP
@@ -177,7 +183,7 @@ export const MessageList = memo(function MessageList({
         last.toolCall?.status === 'pending'))
   const chatKey = activeChatId || 'empty'
   const largeContext = count >= LARGE_CONTEXT_THRESHOLD
-  const overscan = largeContext ? (tailLive ? 10 : 16) : 12
+  const overscan = largeContext ? (tailLive ? 12 : 20) : 16
 
   const setScrollEl = useCallback(
     (el: HTMLDivElement | null) => {
@@ -211,8 +217,6 @@ export const MessageList = memo(function MessageList({
             (msg.role === 'assistant' || msg.role === 'thought')))
       if (isTail) {
         // 增量预测：以「上次实测高度」为锚，叠加本帧新增字符对应的行数。
-        // 相比对全文重新估算，实测锚点更准、单调递增，且避免代码块/表格
-        // 估高偏低导致的「每帧向上顶」推挤感。无锚点（首帧）时返回保守估高。
         const len = msg.text?.length ?? 0
         const delta = rec ? Math.max(0, len - rec.len) : 0
         const addedLines =
@@ -226,14 +230,18 @@ export const MessageList = memo(function MessageList({
     getItemKey: (index) => messagesRef.current[index]?.id ?? index,
     overscan,
     measureElement: (el) => {
-      // 始终用真实 DOM 高度；虚拟列表 totalSize 与真实内容必须一致，否则贴底假死
+      // 始终使用真实 DOM 亚像素高度，保证 totalSize 与虚拟行坐标无缝对齐
       const height = el.getBoundingClientRect().height
       const index = Number(el.getAttribute('data-index'))
       const msg = messagesRef.current[index]
       if (msg && height > 0) {
+        const payloadLen =
+          (msg.text?.length || 0) +
+          (msg.toolCall?.preview?.length || 0) +
+          (msg.toolCall?.detail?.length || 0)
         heightCacheRef.current.set(msg.id, {
           h: height,
-          len: msg.text?.length ?? 0,
+          len: payloadLen,
         })
       }
       return height
@@ -317,13 +325,23 @@ export const MessageList = memo(function MessageList({
     void scrollToBottom({ animation: 'smooth' })
   }, [count, lastId, scrollReady, scrollToBottom, messages])
 
-  // 非流式新消息且仍在底部
+  // 当产生实际内容增长（新消息到达、尾部工具卡展开、思考块变长等高度增加）且用户原本在底部时，跟进贴底；
+  // 仅在真实内容 ID 或尺寸增长时触发，禁止在用户手动滑轮到底时触发强制 scrollTop 覆写
+  const prevLastMsgIdRef = useRef(lastId)
+  const prevTotalSizeRef = useRef(totalSize)
   useLayoutEffect(() => {
     if (!scrollReady || count === 0) return
+    const idChanged = lastId !== prevLastMsgIdRef.current
+    const sizeGrew = totalSize > prevTotalSizeRef.current + 1
+    prevLastMsgIdRef.current = lastId
+    prevTotalSizeRef.current = totalSize
+
+    // 只有实际产生新消息或内容高度撑大，且用户处于底部时才执行跟随贴底
+    if (!idChanged && !sizeGrew) return
     if (tailLive) return
     if (!isAtBottom) return
     void scrollToBottom({ animation: 'instant' })
-  }, [count, lastId, tailLive, scrollReady, isAtBottom, scrollToBottom])
+  }, [count, lastId, totalSize, tailLive, scrollReady, isAtBottom, scrollToBottom])
 
   const onJump = useCallback(() => {
     // 原生 smooth 回到底部，与 ChatTimeline 刻度跳转同一机制/速度
@@ -387,7 +405,7 @@ export const MessageList = memo(function MessageList({
           style={{
             height: totalSize + LIST_PAD_BOTTOM,
             position: 'relative',
-            width: '90%',
+            width: CONTENT_WIDTH,
             maxWidth: CONTENT_MAX_WIDTH,
             margin: '0 auto',
           }}
@@ -433,19 +451,19 @@ export const MessageList = memo(function MessageList({
         </div>
       </div>
 
-      {showJump ? (
-        <button
-          type="button"
-          className="jump-to-bottom-btn"
-          onClick={onJump}
-          title="回到底部"
-          aria-label="回到底部"
-        >
-          <span className="jump-to-bottom-icon">
-            <DownArrowIcon />
-          </span>
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className={`jump-to-bottom-btn${showJump ? ' is-visible' : ''}`}
+        onClick={onJump}
+        title="回到底部"
+        aria-label="回到底部"
+        aria-hidden={!showJump}
+        tabIndex={showJump ? 0 : -1}
+      >
+        <span className="jump-to-bottom-icon">
+          <DownArrowIcon />
+        </span>
+      </button>
 
       <ChatTimeline messages={messages} virtualizer={virtualizer} />
     </div>
