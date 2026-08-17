@@ -69,7 +69,7 @@ export interface TabState {
   /** bash 后台任务（key=toolCallId → 任务信息；活跃 tab 投影到 $backgroundTasks） */
   backgroundTasks: Record<string, BackgroundTaskInfo>
   /**
-   * 专用面板 Tab：mcp / skills / tools / workflows / flow-canvas；null=普通对话。
+   * 专用面板 Tab：mcp / skills / tools / workflows / flow-canvas / agents；null=普通对话。
    * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
    */
   utilityKind: UtilityKind | null
@@ -86,7 +86,7 @@ export interface TabState {
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
-export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows' | 'flow-canvas'
+export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows' | 'flow-canvas' | 'agents'
 
 export function emptyTabState(): TabState {
   return {

@@ -1206,7 +1206,7 @@ async fn replay_composition_on_session(s: &GrokSession, session_id: &str, cwd: &
             _ => return,
         },
     };
-    if let Err(e) = crate::flows::register_flows(&composition.flows) {
+    if let Err(e) = crate::workbench::flows::register_flows(&composition.flows) {
         eprintln!("[vesprism] 注册组装单流程失败: {e}");
     }
     if let Err(e) = s.apply_composition(&composition).await {

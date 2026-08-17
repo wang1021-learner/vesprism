@@ -22,6 +22,10 @@ export interface MemberRow {
   durationMs: number
   childSessionId?: string
   output?: string
+  /** 官方能力档字符串（read-only/read-write/execute/all），Dock 徽标用 */
+  capabilityMode?: string
+  /** 是否隔离 worktree，Dock 徽标用 */
+  isolation?: boolean
 }
 
 export interface PhaseGroup {
@@ -119,6 +123,8 @@ function memberFromAgent(
     durationMs: a.durationMs,
     childSessionId: child || undefined,
     output,
+    capabilityMode: a.capabilityMode ?? undefined,
+    isolation: a.isolationWorktree ?? undefined,
   }
 }
 

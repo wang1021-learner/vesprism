@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
-import type { FlowNodeType } from '../../lib/flow'
+import type { FlowNodeType } from '../flow'
 
 export type FlowRfData = { nodeType: FlowNodeType } & Record<string, unknown>
 export type FlowRfNode = Node<FlowRfData, FlowNodeType>
@@ -11,7 +11,7 @@ const TYPE_META: Record<
 > = {
   start: { tag: '起点', cls: 'is-start', icon: '▶' },
   agent: { tag: 'Agent', cls: 'is-agent', icon: '✦' },
-  tool: { tag: '工具', cls: 'is-tool', icon: '⚙' },
+  tool: { tag: '代办', cls: 'is-tool', icon: '⚙' },
   flow: { tag: '子流程', cls: 'is-flow', icon: '⑂' },
   branch: { tag: '分支', cls: 'is-branch', icon: '⌥' },
   end: { tag: '终点', cls: 'is-end', icon: '◼' },

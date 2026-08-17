@@ -356,6 +356,7 @@ pub(crate) async fn run_shell_child(
         &mut definition,
         effective_runtime.capability_mode,
         allow_nested_subagents,
+        &effective_runtime.disabled_tools,
     );
     if let Some(mode) = effective_runtime.capability_mode {
         tracing::info!(

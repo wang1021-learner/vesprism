@@ -132,6 +132,15 @@ pub struct WorkflowAgentRow {
     pub tokens_used: u64,
     #[serde(default)]
     pub duration_ms: u64,
+    // jike: 工作台 Agent 的能力档/隔离，随 workflow 进度上报到 Dock 徽标。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_mode: Option<String>,
+    #[serde(default)]
+    pub isolation_worktree: bool,
+    // jike: per-agent deny 规则（`kind:glob`/`glob`），随 workflow 进度上报，
+    // 由 grok-session 在子会话权限自动放行之前拦截。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permission_rules: Vec<String>,
 }
 
 pub(crate) const WORKFLOW_AGENT_ROWS_MAX: usize = 256;
@@ -823,6 +832,9 @@ mod tests {
                 state: "running".into(),
                 tokens_used: 0,
                 duration_ms: 0,
+                capability_mode: None,
+                isolation_worktree: false,
+                permission_rules: vec![],
             },
         );
         let before = t.get(&id).unwrap().revision;
@@ -860,6 +872,9 @@ mod tests {
                 state: "running".into(),
                 tokens_used: 0,
                 duration_ms: 0,
+                capability_mode: None,
+                isolation_worktree: false,
+                permission_rules: vec![],
             },
         );
         let restored = WorkflowTracker::from_snapshot(t.snapshot());
@@ -905,6 +920,9 @@ mod tests {
                 state: "running".into(),
                 tokens_used: 0,
                 duration_ms: 0,
+                capability_mode: None,
+                isolation_worktree: false,
+                permission_rules: vec![],
             },
         );
         t.apply_outcome(
@@ -1290,6 +1308,9 @@ mod tests {
                 state: "running".into(),
                 tokens_used: 0,
                 duration_ms: 0,
+                capability_mode: None,
+                isolation_worktree: false,
+                permission_rules: vec![],
             },
         );
         let spawned = t.get(&id).unwrap().revision;

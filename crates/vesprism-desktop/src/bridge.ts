@@ -306,34 +306,6 @@ export const listWorkflows = (tabId: string) =>
     tabId,
   })
 
-// ── 流程画布（草稿 + 流程包）──
-export type FlowSavePayload = {
-  id: string
-  name: string
-  description?: string
-  version?: string
-  input_schema?: unknown
-  output_schema?: unknown
-  nodes?: unknown
-  edges?: unknown
-  publish?: boolean
-  stage?: boolean
-  rhai?: string | null
-  prompts?: string | null
-}
-
-export const saveFlow = (payload: FlowSavePayload) => invoke<import('./lib/flow').FlowRecord>('save_flow', { payload })
-export const listFlows = () => invoke<import('./lib/flow').FlowListItem[]>('list_flows')
-export const getFlow = (id: string) => invoke<import('./lib/flow').FlowRecord>('get_flow', { id })
-export const deleteFlow = (id: string) => invoke('delete_flow', { id })
-export const exportFlow = (id: string, destPath: string) =>
-  invoke<string>('export_flow', { id, destPath })
-export const importFlow = (zipPath: string, conflictMode?: string | null) =>
-  invoke<import('./lib/flow').ImportFlowResult>('import_flow', {
-    zipPath,
-    conflictMode: conflictMode ?? null,
-  })
-
 /** 与官方 McpServerEntry 对齐的前端 DTO（字段宽松） */
 export type McpServerDto = {
   name: string

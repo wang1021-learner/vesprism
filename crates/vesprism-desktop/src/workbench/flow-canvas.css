@@ -22,6 +22,13 @@
   overflow: hidden;
 }
 
+/* 画布内点击不要全站 :focus-visible 那圈黑描边 */
+.flow-canvas :focus,
+.flow-canvas :focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* ──── 1. 顶部工具栏 (Header & Toolbar) ──── */
 .flow-toolbar {
   flex: 0 0 46px;
@@ -284,6 +291,20 @@
   gap: 8px;
 }
 
+.flow-palette-section {
+  padding: 2px 4px 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-secondary, #6b7280);
+  letter-spacing: 0.06em;
+}
+
+.flow-palette-section-muted {
+  margin-top: 2px;
+  color: var(--text-tertiary, #9ca3af);
+}
+
 .flow-palette-item {
   display: flex;
   flex-direction: column;
@@ -311,6 +332,21 @@
   border-color: var(--border-strong-solid, #cbd5e1);
 }
 
+.flow-palette-agent {
+  background: #ffffff;
+  border-color: #dbe4ea;
+}
+
+.flow-palette-agent:hover {
+  border-color: #8fa3b1;
+  background: #f8fbfc;
+}
+
+.flow-palette-agent .flow-palette-item-icon {
+  background: #eef6f7;
+  color: #2f6f73;
+}
+
 .flow-palette-item-head {
   display: flex;
   align-items: center;
@@ -335,6 +371,10 @@
   font-size: 12px;
   font-weight: 650;
   color: var(--text-primary, #1f2937);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow-palette-item-hint {
@@ -342,6 +382,10 @@
   color: var(--text-secondary, #6b7280);
   line-height: 1.35;
   padding-left: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ──── 4. 画布视口舞台 (Flow Stage & Canvas) ──── */
@@ -603,61 +647,15 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  transition: width 0.2s ease, flex-basis 0.2s ease;
+  overflow: hidden;
+  transition: width 0.2s ease, flex-basis 0.2s ease, border-color 0.2s ease;
   z-index: 10;
 }
 
 .flow-dock.is-collapsed {
-  flex: 0 0 38px;
-  width: 38px;
-}
-
-.flow-dock-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-solid, #e5e7eb);
-  background: var(--surface-muted, #f8f9fa);
-  flex-shrink: 0;
-}
-
-.flow-dock-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  font-weight: 650;
-  color: var(--text-primary, #111827);
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.flow-dock-title-icon {
-  color: #f59e0b;
-  font-size: 13px;
-}
-
-.flow-dock-close-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-tertiary, #9ca3af);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  outline: none;
-  display: grid;
-  place-items: center;
-  transition: all 0.15s ease;
-}
-
-.flow-dock-close-btn:hover {
-  background: var(--surface-hover, #f3f4f6);
-  border-color: var(--border-solid, #e5e7eb);
-  color: var(--text-primary, #111827);
+  flex: 0 0 0;
+  width: 0;
+  border-left-color: transparent;
 }
 
 .flow-dock-body {
@@ -857,6 +855,13 @@
   letter-spacing: 0.04em;
 }
 
+.flow-field-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted, #6b7280);
+  line-height: 1.45;
+}
+
 .flow-field {
   display: flex;
   flex-direction: column;
@@ -924,3 +929,45 @@
   margin-top: 14px;
 }
 
+.flow-modal-hint {
+  margin: -6px 0 12px;
+  font-size: 11px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.flow-req-block {
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface-subtle, #f9fafb);
+}
+
+.flow-req-block strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 12px;
+  color: var(--text-primary, #111827);
+}
+
+.flow-req-block p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary, #4b5563);
+  word-break: break-all;
+}
+
+.flow-req-block.is-missing {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.flow-req-block.is-missing strong {
+  color: #b91c1c;
+}
+
+.flow-req-hint {
+  margin-top: 4px !important;
+  font-size: 11px !important;
+  color: var(--muted, #9ca3af) !important;
+}

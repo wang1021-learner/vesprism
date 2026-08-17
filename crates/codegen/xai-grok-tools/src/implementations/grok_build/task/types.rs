@@ -185,6 +185,12 @@ pub struct SubagentRuntimeOverrides {
     pub output_token_budget: Option<u64>,
     pub output_schema: Option<serde_json::Value>,
     pub loop_task_id: Option<String>,
+    /// // jike: 工作台 Agent 细粒度工具停用（按工具名或 `Name:tool` 全名），
+    /// // 与 `capability_mode` 叠加：先按能力档过滤，再拔掉这几个具体工具。
+    pub disabled_tools: Vec<String>,
+    /// // jike: 工作台 Agent 的 per-agent deny 规则（`kind:glob` 或 `glob`，policy 隐含 deny）。
+    /// // 随子 agent 上报，由 grok-session 在子会话权限自动放行之前拦截。
+    pub permission_rules: Vec<String>,
 }
 
 /// Re-export of [`xai_tool_types::is_not_sentinel`] for existing call sites.

@@ -219,15 +219,31 @@ pub fn apply_definition_runtime_defaults(
         runtime.isolation = SubagentIsolationMode::Worktree;
     }
 }
-/// Apply capability filtering and recursion depth to the exact production
-/// definition toolset.
+/// Apply capability filtering, per-agent tool disabling, and recursion depth
+/// to the exact production definition toolset.
 pub fn apply_child_tool_policy(
     definition: &mut AgentDefinition,
     capability_mode: Option<SubagentCapabilityMode>,
     allow_nested_subagents: bool,
+    disabled_tools: &[String],
 ) {
     if let Some(mode) = capability_mode {
         mode.filter_tool_config(&mut definition.tool_config);
+    }
+    if !disabled_tools.is_empty() {
+        // jike: 工作台 Agent 的细粒度工具停用。按短名（`Name:tool` 的 `tool`）
+        // 或全名（`Name:tool`）匹配，两者任一命中即拔掉。
+        let disabled: Vec<&str> = disabled_tools
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !disabled.is_empty() {
+            definition.tool_config.tools.retain(|tool| {
+                let short = tool.id.rsplit(':').next().unwrap_or(&tool.id);
+                !disabled.iter().any(|d| *d == short || *d == tool.id.as_str())
+            });
+        }
     }
     if !allow_nested_subagents {
         definition
@@ -324,7 +340,7 @@ mod tests {
         let toggles = HashMap::new();
         let mut definition =
             resolve_agent_definition("explore", &context(cwd.path(), &toggles)).unwrap();
-        apply_child_tool_policy(&mut definition, None, false);
+        apply_child_tool_policy(&mut definition, None, false, &[]);
         let kinds: Vec<Option<ToolKind>> = definition
             .tool_config
             .tools

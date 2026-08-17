@@ -43,6 +43,10 @@ pub struct EffectiveRuntimeConfig {
     pub persona_error: Option<String>,
     /// Isolation mode for the child execution environment.
     pub isolation: xai_tool_types::SubagentIsolationMode,
+    /// // jike: 工作台 Agent 细粒度工具停用（显式覆盖），在 `apply_child_tool_policy` 里过滤。
+    pub disabled_tools: Vec<String>,
+    /// // jike: 工作台 Agent 的 per-agent deny 规则（显式覆盖），随子 agent 上报。
+    pub permission_rules: Vec<String>,
 }
 
 /// Data about a completed source subagent, needed for resume validation

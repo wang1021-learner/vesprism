@@ -253,6 +253,8 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       if (ev.status) patchTab(tabId, { status: ev.status as SessionStatus })
       break
     case 'title_changed':
+      // 专用面板（流程画布等）标题固定，不被首条 prompt 改成系统提示词。
+      if (getTabState(tabId)?.utilityKind) break
       if (ev.title) patchTab(tabId, { chatTitle: ev.title })
       break
     // 终态错误（后端已映射事件，前端此前无 UI）：置 error banner + toast

@@ -133,6 +133,11 @@ pub(crate) fn build_workflow_updated(
             state: a.state.clone(),
             tokens_used: a.tokens_used,
             duration_ms: a.duration_ms,
+            // jike: 能力档/隔离随进度上报到 Dock 徽标。
+            capability_mode: a.capability_mode.clone(),
+            isolation_worktree: a.isolation_worktree,
+            // jike: per-agent deny 规则随进度上报。
+            permission_rules: a.permission_rules.clone(),
         })
         .collect();
     let current_agent_label = agents

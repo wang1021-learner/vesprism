@@ -24,12 +24,12 @@ export interface StartParams {
 
 export interface AgentParams {
   label?: string
-  /** 组装单 id；发布时解析成 AgentOpts.model / agent_type，不写进提示词 */
+  /** 工作台 Agent id；发布时解析成 AgentOpts，不写进提示词 */
   presetId?: string
   role?: string
-  /** 空 = 用 preset 的模型，再空 = 继承会话 */
+  /** 空 = 用 Agent 的模型，再空 = 继承会话 */
   model?: string
-  /** 官方 AgentOpts.agent_type；空 = 用 preset，再空 = general-purpose */
+  /** 官方 AgentOpts.agent_type；空 = 用 Agent 源，再空 = general-purpose。不进画布。 */
   agentType?: string
   prompt?: string
 }
@@ -133,13 +133,26 @@ export interface FlowRecord extends FlowListItem {
 
 export type ImportConflictMode = 'overwrite' | 'keep-both' | 'cancel'
 
+export interface FlowRequirements {
+  models: string[]
+  tools: string[]
+}
+
 export type ImportFlowResult =
-  | { status: 'ok'; id: string; version: string }
+  | {
+      status: 'ok'
+      id: string
+      version: string
+      requirements?: FlowRequirements
+      missing_tools?: string[]
+      missingTools?: string[]
+    }
   | {
       status: 'conflict'
       id: string
       existing_version: string
       incoming_version: string
+      requirements?: FlowRequirements
     }
   | { status: 'missing_deps'; id: string; missing: string[] }
   | { status: 'cancelled' }

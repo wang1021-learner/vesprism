@@ -193,6 +193,15 @@ pub struct WorkflowAgentDto {
     pub state: String,
     pub tokens_used: u64,
     pub duration_ms: u64,
+    /// jike: 工作台 Agent 能力档（read-only/read-write/execute/all），Dock 徽标用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_mode: Option<String>,
+    /// jike: 工作台 Agent 是否隔离 worktree，Dock 徽标用。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub isolation_worktree: bool,
+    /// jike: per-agent deny 规则（`kind:glob`/`glob`），子会话权限拦截用。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub permission_rules: Vec<String>,
 }
 
 /// 工作流运行进度（官方 `SessionUpdate::WorkflowUpdated` 投影）。
@@ -560,6 +569,12 @@ struct GuiClient {
     session_id: std::sync::Arc<std::sync::Mutex<Option<SessionId>>>,
     /// 组装单权限策略（apply_composition 时设置；None = 无规则，全部走审批条）。
     policy: std::sync::Arc<std::sync::RwLock<Option<crate::policy::PolicyEngine>>>,
+    /// jike: per-agent deny 规则（child_session_id → 仅含 deny 的 PolicyEngine）。
+    /// 由 WorkflowUpdated 里每个 agent 的 permission_rules 维护，
+    /// 在子会话权限自动放行之前拦截。
+    per_agent_deny: std::sync::Arc<
+        std::sync::RwLock<std::collections::HashMap<String, crate::policy::PolicyEngine>>,
+    >,
     /// 客户端终端注册表（官方 ACP 终端反向请求；!Send，Rc/RefCell）。
     terminals: terminal::TerminalRegistry,
 }
@@ -586,7 +601,7 @@ impl Client for GuiClient {
         };
         let policy = self.policy.read().unwrap_or_else(|e| e.into_inner());
 
-        // 锁定顺序：deny 规则 → 子会话/只读自动放行 → 其余规则 → 审批条。
+        // 锁定顺序：会话级 deny → per-agent deny → 子会话/只读自动放行 → 其余规则 → 审批条。
         if let Some(engine) = policy.as_ref() {
             if engine.has_deny(&category, &detail) {
                 if let Some(opt) = pick_reject_once(&args.options) {
@@ -595,10 +610,26 @@ impl Client for GuiClient {
             }
         }
 
+        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+        let is_child = own_id.as_ref().is_some_and(|id| *id != args.session_id);
+
+        // jike: per-agent deny（工作台 Agent 的 permission_rules）——先于子会话自动放行。
+        if is_child {
+            let deny_map = self
+                .per_agent_deny
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(engine) = deny_map.get(&args.session_id.to_string())
+                && engine.has_deny(&category, &detail)
+                && let Some(opt) = pick_reject_once(&args.options)
+            {
+                return Ok(auto_allow(opt));
+            }
+        }
+
         // 子会话（workflow 子 agent）的工具权限：自动选 AllowOnce（运行一次），
         // 不打扰父会话用户。官方 pager 对后台 turn 同样走 auto-approve。
-        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
-        if own_id.as_ref().is_some_and(|id| *id != args.session_id) {
+        if is_child {
             if let Some(opt) = pick_allow_once(&args.options) {
                 return Ok(auto_allow(opt));
             }
@@ -1043,6 +1074,35 @@ impl Client for GuiClient {
                     pause_message,
                     result_summary,
                 } => {
+                    // jike: 更新 per-agent deny 映射（child_session_id == agent_id），
+                    // 供 request_permission 在子会话自动放行之前拦截。
+                    {
+                        let mut deny = self
+                            .per_agent_deny
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner());
+                        for a in &agents {
+                            if a.permission_rules.is_empty() {
+                                deny.remove(&a.agent_id);
+                            } else {
+                                let rules: Vec<crate::policy::PermissionRule> = a
+                                    .permission_rules
+                                    .iter()
+                                    .map(|m| crate::policy::PermissionRule {
+                                        matcher: m.clone(),
+                                        policy: crate::policy::Policy::Deny,
+                                    })
+                                    .collect();
+                                deny.insert(
+                                    a.agent_id.clone(),
+                                    crate::policy::PolicyEngine::new(
+                                        crate::policy::PermissionMode::Ask,
+                                        rules,
+                                    ),
+                                );
+                            }
+                        }
+                    }
                     let _ = self
                         .event_tx
                         .send(SessionEvent::WorkflowUpdated(WorkflowInfoDto {
@@ -1078,6 +1138,9 @@ impl Client for GuiClient {
                                     state: a.state,
                                     tokens_used: a.tokens_used,
                                     duration_ms: a.duration_ms,
+                                    capability_mode: a.capability_mode,
+                                    isolation_worktree: a.isolation_worktree,
+                                    permission_rules: a.permission_rules,
                                 })
                                 .collect(),
                             last_event,
@@ -1840,10 +1903,14 @@ impl GrokSession {
         let (event_tx, event_rx) = mpsc::channel(4096);
         let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(None));
         let policy = std::sync::Arc::new(std::sync::RwLock::new(None));
+        let per_agent_deny = std::sync::Arc::new(std::sync::RwLock::new(
+            std::collections::HashMap::new(),
+        ));
         let client = GuiClient {
             event_tx: event_tx.clone(),
             session_id: client_session_id.clone(),
             policy: policy.clone(),
+            per_agent_deny: per_agent_deny.clone(),
             terminals: terminal::new_registry(),
         };
 
@@ -1933,6 +2000,9 @@ impl GrokSession {
             event_tx: event_tx.clone(),
             session_id: client_session_id,
             policy: policy.clone(),
+            per_agent_deny: std::sync::Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             terminals: terminal::new_registry(),
         };
         let (connection, io_task) =

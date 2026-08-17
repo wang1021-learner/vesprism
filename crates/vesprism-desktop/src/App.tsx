@@ -21,7 +21,7 @@ import { RewindPicker } from './components/RewindPicker'
 import { CompositionPanel } from './components/CompositionPanel'
 import { GoalStrip } from './components/GoalStrip'
 import { SessionTermDock } from './components/SessionTermDock'
-import { syncWindowTitle } from './lib/windowTitle'
+import { syncWindowTitle, titleForWindow } from './lib/windowTitle'
 import {
   $activeTabId, $tabs,
   $activeChatId, $chats, $composerInput,
@@ -30,7 +30,7 @@ import {
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
   $preferredWorkspaceCwd, $securityPolicy,
-  createTab, patchActiveTab, patchTab, resolveNewTabModel,
+  createTab, getTabState, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast,
 } from './store'
 import { McpPanel } from './components/McpPanel'
@@ -38,7 +38,8 @@ import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
 
-const FlowCanvas = lazy(() => import('./components/FlowCanvas'))
+const FlowCanvas = lazy(() => import('./workbench/canvas'))
+const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, openTab, sendPrompt, setCurrentModel,
@@ -55,7 +56,8 @@ function WindowTitleSync() {
   const tabs = useStore($tabs)
   useEffect(() => {
     const t = tabs.find((tab) => tab.id === activeId)
-    syncWindowTitle(t?.title || '')
+    const kind = activeId ? getTabState(activeId)?.utilityKind : null
+    syncWindowTitle(titleForWindow(t?.title || '', kind))
   }, [activeId, tabs])
   return null
 }
@@ -274,6 +276,13 @@ function AppMainBody() {
     return (
       <Suspense fallback={<div className="flow-canvas-loading">加载流程画布…</div>}>
         <FlowCanvas />
+      </Suspense>
+    )
+  }
+  if (kind === 'agents') {
+    return (
+      <Suspense fallback={<div className="agents-panel-loading">加载 Agent 编制…</div>}>
+        <AgentsPanel />
       </Suspense>
     )
   }

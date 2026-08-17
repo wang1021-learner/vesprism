@@ -230,6 +230,15 @@ function FlowCanvasIcon() {
   )
 }
 
+function AgentsIcon() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="12" cy="8" r="2.4" />
+      <path d="M6.5 18c.6-3 2.8-4.6 5.5-4.6S16.9 15 17.5 18" />
+    </svg>
+  )
+}
+
 function SettingsIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
@@ -909,7 +918,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
   /** 侧栏「技能 / 工具 / MCP / 自动化任务 / 流程画布」：各开一个带标题的专用 Tab */
   const onOpenUtilityTab = useCallback(
-    async (kind: 'skills' | 'tools' | 'mcp' | 'workflows' | 'flow-canvas') => {
+    async (kind: 'skills' | 'tools' | 'mcp' | 'workflows' | 'flow-canvas' | 'agents') => {
       const title =
         kind === 'skills'
           ? '技能'
@@ -919,7 +928,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
               ? 'MCP'
               : kind === 'flow-canvas'
                 ? '流程画布'
-                : '自动化任务'
+                : kind === 'agents'
+                  ? 'Agent 编制'
+                  : '自动化任务'
       setMenuOpenChatId(null)
       await openChatTab({ title, utilityKind: kind })
     },
@@ -932,6 +943,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     { kind: 'mcp' as const, label: 'MCP', Icon: McpIcon },
     { kind: 'workflows' as const, label: '任务', Icon: WorkflowIcon },
     { kind: 'flow-canvas' as const, label: '流程画布', Icon: FlowCanvasIcon },
+    { kind: 'agents' as const, label: 'Agent 编制', Icon: AgentsIcon },
   ]
 
   const renderUtilityGrid = () => (
@@ -941,11 +953,27 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
           key={kind}
           type="button"
           className="sidebar-compose-link"
-          title={kind === 'workflows' ? '自动化任务' : kind === 'flow-canvas' ? '流程画布' : label}
+          title={
+            kind === 'workflows'
+              ? '自动化任务'
+              : kind === 'flow-canvas'
+                ? '流程画布'
+                : kind === 'agents'
+                  ? 'Agent 编制'
+                  : label
+          }
           onClick={() => void onOpenUtilityTab(kind)}
         >
           <Icon />
-          <span>{kind === 'workflows' ? '自动化任务' : kind === 'flow-canvas' ? '流程画布' : label}</span>
+          <span>
+            {kind === 'workflows'
+              ? '自动化任务'
+              : kind === 'flow-canvas'
+                ? '流程画布'
+                : kind === 'agents'
+                  ? 'Agent 编制'
+                  : label}
+          </span>
         </button>
       ))}
     </nav>
@@ -1144,6 +1172,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
               onClick={() => void onOpenUtilityTab('flow-canvas')}
             >
               <FlowCanvasIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title="Agent 编制"
+              onClick={() => void onOpenUtilityTab('agents')}
+            >
+              <AgentsIcon />
             </button>
             <div className="sidebar-spacer" />
             <button

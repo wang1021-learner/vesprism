@@ -4,7 +4,7 @@ export const FLOW_GENERATE_SYSTEM = `你是 Vesprism 流程画布的图生成器
 
 节点类型（六类，type 必须是以下之一）：
 - start  起点：定义流程输入。params.fields 为 [{name, type, required?}]，type 为 string/number/boolean/object/array。
-- agent  Agent：挂一份组装单。params: {label?, presetId?, role?, model?, agentType?, prompt?}。presetId 发布时解析成 model/agent_type，不要写进提示词。
+- agent  Agent：挂一份工作台 Agent。params: {label?, presetId?, role?, model?, prompt?}。presetId 是 Agent id，发布时解析成 model/agent_type，不要写进提示词。
 - tool   工具：调用工具或运行命令。params: {label?, toolName?, command?, args?}。
 - flow   子流程：引用另一个已发布流程。params: {label?, flowId?, input?}。发布时内联成节点序列，禁止再包一层 agent。
 - branch 分支：按上一节点输出分流。params: {label?, condition: "success"|"failure"|"expression", expression?}。恰好两条出边（success / failure）。
@@ -26,9 +26,12 @@ export const FLOW_GENERATE_SYSTEM = `你是 Vesprism 流程画布的图生成器
 7. id 用小写字母、数字、连字符，例如 start-1、agent-summarize。`
 
 export function buildGeneratePrompt(userText: string): string {
-  return `${FLOW_GENERATE_SYSTEM}
+  const need = userText.trim()
+  return `生成流程图：${need}
+
+${FLOW_GENERATE_SYSTEM}
 
 用户需求：
-${userText.trim()}
+${need}
 `
 }

@@ -14,8 +14,8 @@ import { slugifyFlowId } from './types'
 
 export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[] = [
   { type: 'start', label: '起点', hint: '定义流程输入' },
-  { type: 'agent', label: 'Agent', hint: '挂组装单 / 角色' },
-  { type: 'tool', label: '工具', hint: '调用工具或命令' },
+  { type: 'agent', label: 'Agent', hint: '挂编制员工 / 试岗角色' },
+  { type: 'tool', label: '代办', hint: '让子代理代办一件事（命令/工具）' },
   { type: 'flow', label: '子流程', hint: '引用已发布流程' },
   { type: 'branch', label: '分支', hint: '按条件分流' },
   { type: 'end', label: '终点', hint: '定义流程输出' },
@@ -36,7 +36,7 @@ export function defaultParams(type: FlowNodeType): FlowGraphNode['params'] {
     case 'agent':
       return { label: 'Agent', role: '', presetId: '', model: '', agentType: '', prompt: '' }
     case 'tool':
-      return { label: '工具', toolName: '', command: '', args: {} }
+      return { label: '代办', toolName: '', command: '', args: {} }
     case 'flow':
       return { label: '子流程', flowId: '', input: {} }
     case 'branch':

@@ -37,6 +37,37 @@ function Dot({ state }: { state: ReturnType<typeof dotState> }) {
   return <span className={`st-dot is-${state}`} aria-hidden />
 }
 
+/** 能力档 → 中文徽标（官方 capability_mode 字符串）。 */
+function capabilityLabel(mode: string): string {
+  switch (mode) {
+    case 'read-only':
+      return '只读'
+    case 'read-write':
+      return '可改'
+    case 'execute':
+      return '能跑'
+    case 'all':
+      return '全权'
+    default:
+      return mode
+  }
+}
+
+function capabilityClass(mode: string): string {
+  switch (mode) {
+    case 'read-only':
+      return 'is-readonly'
+    case 'read-write':
+      return 'is-readwrite'
+    case 'execute':
+      return 'is-execute'
+    case 'all':
+      return 'is-all'
+    default:
+      return 'is-unknown'
+  }
+}
+
 function RunView({ tree }: { tree: RunTree }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null)
   const shown = userOpen ?? tree.runRequiresExpansion
@@ -133,6 +164,16 @@ function MemberRowView({ m }: { m: MemberRow }) {
         <span className="st-label" title={m.label}>
           {m.label}
         </span>
+        {m.capabilityMode ? (
+          <span className={`st-cap ${capabilityClass(m.capabilityMode)}`} title={`能力档：${m.capabilityMode}`}>
+            {capabilityLabel(m.capabilityMode)}
+          </span>
+        ) : null}
+        {m.isolation ? (
+          <span className="st-cap is-iso" title="在隔离 git worktree 里跑，不碰主仓库">
+            隔离
+          </span>
+        ) : null}
         <span className="st-member-meta">
           {m.durationMs > 0 ? fmtWorkflowElapsed(m.durationMs) : ''}
           {m.model ? `${m.durationMs > 0 ? ' · ' : ''}${m.model}` : ''}

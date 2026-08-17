@@ -19,17 +19,19 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useStore } from '@nanostores/react'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { $activeTabId, $generating, $messages, $workflows, getTabState, pushToast } from '../../store'
+import { $activeTabId, $generating, $messages, $workflows, getTabState, patchTab, pushToast } from '../../store'
+import { sendPrompt } from '../../bridge'
+import { openChatTab } from '../../lib/openChatTab'
 import {
   deleteFlow,
   exportFlow,
   getFlow,
   importFlow,
-  listCompositions,
+  listAgents,
   listFlows,
+  saveAgent,
   saveFlow,
-  sendPrompt,
-} from '../../bridge'
+} from '../bridge'
 import {
   AI_GRAPH_FAIL_MESSAGE,
   NODE_LIBRARY,
@@ -57,12 +59,25 @@ import {
   type FlowGraphNode,
   type FlowListItem,
   type FlowNodeType,
+  type FlowRequirements,
   type FlowRunStep,
   type ImportFlowResult,
   type SchemaField,
-} from '../../lib/flow'
-import { SubagentRunTree } from '../SubagentRunTree'
-import { TerminalList } from '../TerminalList'
+  type PresetResolve,
+} from '../flow'
+import {
+  AGENT_CAPABILITY_LABEL,
+  AGENT_CAPABILITY_OFFICIAL,
+  emptyAgent,
+  isValidAgentId,
+  slugifyAgentId,
+  type AgentListItem,
+  type AgentRecord,
+} from '../types'
+import { requestAgentsFocus } from '../agents/focus'
+import { noteGenerateProgress, type GenerateWait } from '../generateWait'
+import { SubagentRunTree } from '../../components/SubagentRunTree'
+import { TerminalList } from '../../components/TerminalList'
 import { FlowNode, type FlowRfData } from './nodes'
 
 const flowNodeTypes = {
@@ -133,6 +148,15 @@ function testKey(id: string): string {
   return `vesprism.flow-test.${id}`
 }
 
+function agentNodeData(agent: AgentListItem): FlowRfData {
+  return {
+    ...defaultParams('agent'),
+    nodeType: 'agent',
+    label: (agent.name || agent.id).trim(),
+    presetId: agent.id,
+  }
+}
+
 function FlowCanvasInner() {
   const tabId = useStore($activeTabId)
   const generating = useStore($generating)
@@ -144,6 +168,7 @@ function FlowCanvasInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState<RfNode>(toRfNodes(createDemoDraft()))
   const [edges, setEdges, onEdgesChange] = useEdgesState<RfEdge>(toRfEdges(createDemoDraft()))
   const [list, setList] = useState<FlowListItem[]>([])
+  const [agents, setAgents] = useState<AgentListItem[]>([])
   const [dockOpen, setDockOpen] = useState(true)
   const [publishOpen, setPublishOpen] = useState(false)
   const [pubDesc, setPubDesc] = useState('')
@@ -159,8 +184,26 @@ function FlowCanvasInner() {
   const [conflict, setConflict] = useState<Extract<ImportFlowResult, { status: 'conflict' }> | null>(null)
   const [pendingZip, setPendingZip] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [promoteOpen, setPromoteOpen] = useState(false)
+  const [promoteId, setPromoteId] = useState('')
+  const [promoteName, setPromoteName] = useState('')
+  const [promoteDesc, setPromoteDesc] = useState('')
+  const [promoteBusy, setPromoteBusy] = useState(false)
+  const [review, setReview] = useState<{
+    id: string
+    requirements: FlowRequirements
+    missingTools: string[]
+  } | null>(null)
   const saveTimer = useRef<number>(0)
-  const aiWait = useRef<{ before: number } | null>(null)
+  const aiWait = useRef<GenerateWait | null>(null)
+
+  useEffect(() => {
+    if (!tabId) return
+    const st = getTabState(tabId)
+    if (st?.utilityKind === 'flow-canvas' && st.chatTitle !== '流程画布') {
+      patchTab(tabId, { chatTitle: '流程画布' })
+    }
+  }, [tabId])
 
   const applyDraft = useCallback((next: FlowDraft, markDirty = true) => {
     const d = { ...next, dirty: markDirty ? true : next.dirty }
@@ -174,6 +217,11 @@ function FlowCanvasInner() {
       setList(await listFlows())
     } catch {
       /* 未进桌面壳时忽略 */
+    }
+    try {
+      setAgents(await listAgents())
+    } catch {
+      /* 工作台 Agent 目录为空或不在桌面壳 */
     }
   }, [])
 
@@ -238,16 +286,21 @@ function FlowCanvasInner() {
             /* 列表项可能已删 */
           }
         }
-        const presets: Record<string, { model?: string; agentType?: string }> = {}
+        const presets: Record<string, PresetResolve> = {}
         try {
-          for (const p of await listCompositions()) {
-            presets[p.id] = {
-              model: p.model || undefined,
-              agentType: p.agentType || undefined,
+          for (const a of await listAgents()) {
+            presets[a.id] = {
+              model: a.model || undefined,
+              agentType: (a.agentType || a.agent_type) || undefined,
+              capability: a.capability ? AGENT_CAPABILITY_OFFICIAL[a.capability] : undefined,
+              isolation: a.isolation,
+              outputSchema: (a.outputSchema ?? a.output_schema) ?? undefined,
+              disabledTools: (a.disabledTools ?? a.disabled_tools) ?? [],
+              permissionRules: (a.permissionRules ?? a.permission_rules) ?? [],
             }
           }
         } catch {
-          /* 非桌面壳时按无 preset 处理，缺 id 会在编译时报 */
+          /* 非桌面壳时按无 Agent 处理，缺 id 会在编译时报 */
         }
         const compiled = compileInlinedRhai(d, catalog, (next) => compileToRhai(next, { presets }))
         if (!compiled.ok) throw new Error(compiled.error)
@@ -302,15 +355,18 @@ function FlowCanvasInner() {
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
+      const agentId = e.dataTransfer.getData('application/vesprism-agent').trim()
       const type = e.dataTransfer.getData('application/vesprism-node') as FlowNodeType
-      if (!type) return
+      const agent = agentId ? agents.find((a) => a.id === agentId) : null
+      if (!type && !agent) return
+      const nodeType: FlowNodeType = agent ? 'agent' : type
       const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-      const id = createNodeId(type)
+      const id = createNodeId(nodeType)
       const node: RfNode = {
         id,
-        type,
+        type: nodeType,
         position: pos,
-        data: { ...defaultParams(type), nodeType: type },
+        data: agent ? agentNodeData(agent) : { ...defaultParams(nodeType), nodeType },
       }
       setNodes((ns) => {
         const next = [...ns, node]
@@ -321,7 +377,7 @@ function FlowCanvasInner() {
         return next
       })
     },
-    [commitGraph, screenToFlowPosition, setEdges, setNodes],
+    [agents, commitGraph, screenToFlowPosition, setEdges, setNodes],
   )
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null
@@ -477,6 +533,11 @@ function FlowCanvasInner() {
       if (r.status === 'cancelled') return
       setConflict(null)
       setPendingZip('')
+      const missingTools = (r.missingTools ?? r.missing_tools ?? []).map(String)
+      const requirements = r.requirements ?? { models: [], tools: [] }
+      if (missingTools.length > 0 || requirements.models.length > 0) {
+        setReview({ id: r.id, requirements, missingTools })
+      }
       const rec = await getFlow(r.id)
       applyDraft(
         {
@@ -528,16 +589,77 @@ function FlowCanvasInner() {
     }
   }
 
+  const openPromote = () => {
+    if (!selected || selected.data.nodeType !== 'agent') return
+    const data = selected.data as { label?: string; role?: string; prompt?: string }
+    const label = String(data.label ?? '').trim()
+    const role = String(data.role ?? '').trim()
+    setPromoteId(slugifyAgentId(label || role || 'trial-agent'))
+    setPromoteName(label || role || '新 Agent')
+    setPromoteDesc([role, data.prompt].filter((s) => s && String(s).trim()).join('\n'))
+    setPromoteOpen(true)
+  }
+
+  const doPromote = async () => {
+    const id = promoteId.trim()
+    const name = promoteName.trim()
+    if (!isValidAgentId(id)) {
+      pushToast('Agent id 不合法（1-64 位小写字母、数字、单连字符）', 'error')
+      return
+    }
+    if (!name) {
+      pushToast('Agent 显示名不能为空', 'error')
+      return
+    }
+    if (agents.some((a) => a.id === id)) {
+      pushToast(`工号「${id}」已存在，请换一个或去编制面板改源`, 'error')
+      return
+    }
+    const data = selected?.data as { role?: string; prompt?: string } | undefined
+    const sections = [data?.role, data?.prompt, promoteDesc.trim()]
+      .filter((s): s is string => Boolean(s && s.trim()))
+      .map((s) => s.trim())
+    const agent: AgentRecord = {
+      ...emptyAgent(id, name),
+      description: promoteDesc.trim(),
+      persona: { label: name, sections },
+    }
+    setPromoteBusy(true)
+    try {
+      await saveAgent(agent, sections.join('\n\n'))
+      setPromoteOpen(false)
+      if (selected) patchSelected({ presetId: id })
+      await reloadList()
+      pushToast(`已升格为 Agent「${id}」，本节点已冻结引用`, 'success')
+    } catch (e) {
+      pushToast(`升格失败：${String(e)}`, 'error')
+    } finally {
+      setPromoteBusy(false)
+    }
+  }
+
+  const demoteToTrial = () => {
+    if (!selected) return
+    patchSelected({ presetId: '' })
+    pushToast('已卸任：人设留在节点上，不再引用编制', 'success')
+  }
+
+  const openBoundAgent = (id: string) => {
+    requestAgentsFocus(id)
+    void openChatTab({ title: 'Agent 编制', utilityKind: 'agents' })
+  }
+
   const onGenerate = async () => {
     const text = aiText.trim()
     if (!text || !tabId) return
     setAiBusy(true)
     setAiError('')
     const before = getTabState(tabId)?.messages.length ?? messages.length
-    aiWait.current = { before }
+    aiWait.current = { before, started: false }
     try {
       await sendPrompt(tabId, buildGeneratePrompt(text))
     } catch (e) {
+      aiWait.current = null
       setAiBusy(false)
       setAiError(String(e))
       pushToast(AI_GRAPH_FAIL_MESSAGE, 'error')
@@ -545,9 +667,10 @@ function FlowCanvasInner() {
   }
 
   useEffect(() => {
-    if (!aiBusy || generating) return
     const wait = aiWait.current
-    if (!wait) return
+    const step = noteGenerateProgress(wait, aiBusy, generating)
+    if (step === 'started' && wait) wait.started = true
+    if (step !== 'finish' || !wait) return
     const added = messages.slice(wait.before).filter((m) => m.role === 'assistant').slice(-1)[0]
     aiWait.current = null
     setAiBusy(false)
@@ -621,52 +744,79 @@ function FlowCanvasInner() {
           />
         </label>
       )}
-      {selected.data.nodeType === 'agent' && (
-        <>
-          <label className="flow-field">
-            <span>角色说明（Role Definition）</span>
-            <textarea
-              rows={2}
-              placeholder="如：资深前端架构师，专注于组件复用与性能优化"
-              value={String((selected.data as { role?: string }).role ?? '')}
-              onChange={(e) => patchSelected({ role: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-          <label className="flow-field">
-            <span>任务提示词（Prompt / 指令要求）</span>
-            <textarea
-              rows={4}
-              placeholder="如：请仔细分析上一步传入的需求与代码，提炼核心变更逻辑与待办事项，给出清晰结构化的技术摘要。"
-              value={String((selected.data as { prompt?: string }).prompt ?? '')}
-              onChange={(e) => patchSelected({ prompt: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-          <label className="flow-field">
-            <span>执行模型（留空继承主会话模型）</span>
-            <input
-              placeholder="如：claude-3-7-sonnet, gpt-4o, deepseek-r1"
-              value={String((selected.data as { model?: string }).model ?? '')}
-              onChange={(e) => patchSelected({ model: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-          <label className="flow-field">
-            <span>Agent 类型（留空默认 general-purpose）</span>
-            <input
-              placeholder="如：coder, architect, reviewer"
-              value={String((selected.data as { agentType?: string }).agentType ?? '')}
-              onChange={(e) => patchSelected({ agentType: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-          <label className="flow-field">
-            <span>预设 Preset ID（可选）</span>
-            <input
-              placeholder="如：code-reviewer-preset"
-              value={String((selected.data as { presetId?: string }).presetId ?? '')}
-              onChange={(e) => patchSelected({ presetId: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-        </>
-      )}
+      {selected.data.nodeType === 'agent' && (() => {
+        const presetId = String((selected.data as { presetId?: string }).presetId ?? '').trim()
+        const bound = presetId ? agents.find((a) => a.id === presetId) : undefined
+        if (presetId) {
+          return (
+            <>
+              <p className="flow-field-hint">在编：节点只读引用编制，权限在「Agent 编制」改。</p>
+              <div className="flow-field">
+                <span>编制</span>
+                <strong>{bound ? `${bound.name} (${bound.id})` : presetId}</strong>
+                <span className="flow-field-hint">
+                  {bound?.version ? `v${bound.version}` : ''}
+                  {bound?.capability ? ` · ${AGENT_CAPABILITY_LABEL[bound.capability]}` : ' · 未设能力档'}
+                  {bound?.isolation ? ' · 隔离' : ''}
+                </span>
+              </div>
+              <button type="button" className="flow-btn" onClick={() => openBoundAgent(presetId)}>
+                打开编制
+              </button>
+              <button type="button" className="flow-btn" onClick={demoteToTrial}>
+                复制为试岗
+              </button>
+            </>
+          )
+        }
+        return (
+          <>
+            <label className="flow-field">
+              <span>角色说明（Role Definition）</span>
+              <textarea
+                rows={2}
+                placeholder="如：资深前端架构师，专注于组件复用与性能优化"
+                value={String((selected.data as { role?: string }).role ?? '')}
+                onChange={(e) => patchSelected({ role: e.target.value } as Partial<FlowRfData>)}
+              />
+            </label>
+            <label className="flow-field">
+              <span>任务提示词（Prompt / 指令要求）</span>
+              <textarea
+                rows={4}
+                placeholder="如：请仔细分析上一步传入的需求与代码，提炼核心变更逻辑与待办事项，给出清晰结构化的技术摘要。"
+                value={String((selected.data as { prompt?: string }).prompt ?? '')}
+                onChange={(e) => patchSelected({ prompt: e.target.value } as Partial<FlowRfData>)}
+              />
+            </label>
+            <label className="flow-field">
+              <span>执行模型（留空继承主会话模型）</span>
+              <input
+                placeholder="如：claude-3-7-sonnet, gpt-4o, deepseek-r1"
+                value={String((selected.data as { model?: string }).model ?? '')}
+                onChange={(e) => patchSelected({ model: e.target.value } as Partial<FlowRfData>)}
+              />
+            </label>
+            <label className="flow-field">
+              <span>引用 Agent</span>
+              <select
+                value=""
+                onChange={(e) => patchSelected({ presetId: e.target.value } as Partial<FlowRfData>)}
+              >
+                <option value="">试岗（不引用编制）</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name ? `${a.name} (${a.id})` : a.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="flow-btn primary" onClick={openPromote}>
+              ✦ 升格为 Agent
+            </button>
+          </>
+        )
+      })()}
       {selected.data.nodeType === 'tool' && (
         <>
           <label className="flow-field">
@@ -856,6 +1006,38 @@ function FlowCanvasInner() {
             <span className="flow-palette-sub">拖拽添加节点</span>
           </div>
           <div className="flow-palette-list">
+            {agents.length > 0 && (
+              <>
+                <div className="flow-palette-section">编制员工</div>
+                {agents.map((agent) => {
+                  const label = agent.name || agent.id
+                  const capability = agent.capability ? AGENT_CAPABILITY_LABEL[agent.capability] : '继承权限'
+                  const hint = [capability, agent.model].filter(Boolean).join(' · ')
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      className="flow-palette-item flow-palette-agent"
+                      draggable
+                      title={`${label} (${agent.id})`}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('application/vesprism-agent', agent.id)
+                        e.dataTransfer.effectAllowed = 'move'
+                      }}
+                    >
+                      <div className="flow-palette-item-head">
+                        <span className="flow-palette-item-icon">
+                          ✦
+                        </span>
+                        <strong className="flow-palette-item-label">{label}</strong>
+                      </div>
+                      <span className="flow-palette-item-hint">{hint}</span>
+                    </button>
+                  )
+                })}
+                <div className="flow-palette-section flow-palette-section-muted">通用节点</div>
+              </>
+            )}
             {NODE_LIBRARY.map((item) => {
               const meta = PALETTE_META[item.type]
               return (
@@ -943,21 +1125,6 @@ function FlowCanvasInner() {
         </div>
 
         <aside className={`flow-dock${dockOpen ? '' : ' is-collapsed'}`} aria-label="试跑台">
-          <div className="flow-dock-head">
-            <div className="flow-dock-title">
-              <span className="flow-dock-title-icon">⚡</span>
-              <span>试跑控制台</span>
-            </div>
-            <button
-              type="button"
-              className="flow-dock-close-btn"
-              onClick={() => setDockOpen(false)}
-              title="关闭控制台"
-              aria-label="关闭控制台"
-            >
-              ✕
-            </button>
-          </div>
           {dockOpen && (
             <div className="flow-dock-body scrollbar-dt">
               <div className="flow-dock-section">
@@ -1089,6 +1256,73 @@ function FlowCanvasInner() {
               </button>
               <button type="button" className="flow-btn primary" onClick={() => void finishImport(pendingZip, 'overwrite')}>
                 覆盖
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {promoteOpen && (
+        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="升格为 Agent">
+          <div className="flow-modal">
+            <h2>✦ 升格为 Agent</h2>
+            <p className="flow-modal-hint">把当前试岗节点固化成编制员工。升格后节点冻结引用该 Agent，能力/隔离/停用工具从 Agent 资产来。</p>
+            <label className="flow-field">
+              <span>id（小写字母/数字/单连字符）</span>
+              <input value={promoteId} onChange={(e) => setPromoteId(slugifyAgentId(e.target.value))} />
+            </label>
+            <label className="flow-field">
+              <span>显示名</span>
+              <input value={promoteName} onChange={(e) => setPromoteName(e.target.value)} />
+            </label>
+            <label className="flow-field">
+              <span>说明（编进人设段落）</span>
+              <textarea value={promoteDesc} onChange={(e) => setPromoteDesc(e.target.value)} rows={4} />
+            </label>
+            <div className="flow-modal-actions">
+              <button type="button" className="flow-btn" onClick={() => setPromoteOpen(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="flow-btn primary"
+                disabled={promoteBusy || !promoteId.trim() || !promoteName.trim()}
+                onClick={() => void doPromote()}
+              >
+                {promoteBusy ? '创建中…' : '升格'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {review && (
+        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="导入依赖检查">
+          <div className="flow-modal">
+            <h2>已导入 {review.id} — 依赖检查</h2>
+            {review.missingTools.length > 0 ? (
+              <div className="flow-req-block is-missing">
+                <strong>缺命令（硬约束，缺了可能跑不动）：</strong>
+                <p>{review.missingTools.join('、')}</p>
+                <p className="flow-req-hint">请在本机安装后再跑该流程。</p>
+              </div>
+            ) : null}
+            {review.requirements.tools.length > 0 ? (
+              <div className="flow-req-block">
+                <strong>依赖命令：</strong>
+                <p>{review.requirements.tools.join('、')}</p>
+              </div>
+            ) : null}
+            {review.requirements.models.length > 0 ? (
+              <div className="flow-req-block">
+                <strong>推荐模型（软约束，可映射到本机模型）：</strong>
+                <p>{review.requirements.models.join('、')}</p>
+                <p className="flow-req-hint">模型不匹配可忽略，会继承主会话模型。</p>
+              </div>
+            ) : null}
+            <div className="flow-modal-actions">
+              <button type="button" className="flow-btn primary" onClick={() => setReview(null)}>
+                知道了
               </button>
             </div>
           </div>

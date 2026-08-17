@@ -150,6 +150,10 @@ pub fn resolve_effective_overrides(
         role_name,
         persona_error,
         isolation,
+        // jike: 显式覆盖的细粒度工具停用，透传下去在 apply_child_tool_policy 过滤。
+        disabled_tools: overrides.disabled_tools.clone(),
+        // jike: per-agent deny 规则，随子 agent 上报，由 grok-session 拦截。
+        permission_rules: overrides.permission_rules.clone(),
     }
 }
 

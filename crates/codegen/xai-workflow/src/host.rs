@@ -25,6 +25,13 @@ pub struct AgentOpts {
     pub output_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub phase: Option<String>,
+    /// // jike: 工作台 Agent 细粒度工具停用；透传到子 agent 工具集过滤。
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
+    /// // jike: 工作台 Agent 的 per-agent deny 规则（`kind:glob` 或 `glob`，policy 隐含 deny）。
+    /// // 随子 agent 上报，由 grok-session 在子会话权限自动放行之前拦截。
+    #[serde(default)]
+    pub permission_rules: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

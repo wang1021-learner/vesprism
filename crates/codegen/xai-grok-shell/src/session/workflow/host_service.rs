@@ -515,6 +515,11 @@ impl HostService {
                 state: "running".to_string(),
                 tokens_used: 0,
                 duration_ms: 0,
+                // jike: 工作台 Agent 能力档/隔离随 roster 上报到 Dock 徽标。
+                capability_mode: opts.capability_mode.clone(),
+                isolation_worktree: opts.isolation_worktree,
+                // jike: per-agent deny 规则随 roster 上报，由 grok-session 拦截。
+                permission_rules: opts.permission_rules.clone(),
             },
         );
         let mut row = FinishOnce {
@@ -542,6 +547,10 @@ impl HostService {
                         capability_mode,
                         isolation,
                         output_schema: None,
+                        // jike: 工作台 Agent 的细粒度工具停用透传到子 agent。
+                        disabled_tools: opts.disabled_tools.clone(),
+                        // jike: per-agent deny 规则透传，随子 agent 上报由 grok-session 拦截。
+                        permission_rules: opts.permission_rules.clone(),
                         ..Default::default()
                     },
                     run_in_background: false,

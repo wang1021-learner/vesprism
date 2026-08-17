@@ -1,9 +1,9 @@
 mod commands;
-mod flows;
 mod pty;
 mod sandbox;
 mod session_index;
 mod state;
+mod workbench;
 
 use state::{spawn_supervisor, AppState};
 use tauri::Manager;
@@ -158,12 +158,16 @@ pub fn run() {
             commands::get_composition,
             commands::save_composition,
             commands::list_compositions,
-            flows::save_flow,
-            flows::list_flows,
-            flows::get_flow,
-            flows::delete_flow,
-            flows::export_flow,
-            flows::import_flow,
+            workbench::flows::save_flow,
+            workbench::flows::list_flows,
+            workbench::flows::get_flow,
+            workbench::flows::delete_flow,
+            workbench::flows::export_flow,
+            workbench::flows::import_flow,
+            workbench::agents::list_agents,
+            workbench::agents::get_agent,
+            workbench::agents::save_agent,
+            workbench::agents::delete_agent,
             commands::read_file_for_preview,
             commands::save_artifact_file,
             commands::list_dir,

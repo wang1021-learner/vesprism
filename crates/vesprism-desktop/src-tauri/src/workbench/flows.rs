@@ -27,6 +27,16 @@ pub struct FlowYaml {
     pub dependencies: Vec<String>,
 }
 
+/// `.vesp` 自包含标准件的运行环境声明（`requirements.yaml`）。
+/// models 是软约束（推荐模型，可映射/忽略），tools 是硬约束（缺了跑不动）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Requirements {
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveFlowRequest {
     pub id: String,
@@ -87,12 +97,21 @@ pub struct FlowRecord {
 #[serde(tag = "status")]
 pub enum ImportFlowResult {
     #[serde(rename = "ok")]
-    Ok { id: String, version: String },
+    Ok {
+        id: String,
+        version: String,
+        #[serde(default)]
+        requirements: Requirements,
+        #[serde(default)]
+        missing_tools: Vec<String>,
+    },
     #[serde(rename = "conflict")]
     Conflict {
         id: String,
         existing_version: String,
         incoming_version: String,
+        #[serde(default)]
+        requirements: Requirements,
     },
     #[serde(rename = "missing_deps")]
     MissingDeps { id: String, missing: Vec<String> },
@@ -250,6 +269,86 @@ fn collect_deps_from_nodes(nodes: &Value) -> Vec<String> {
     }
     deps.sort();
     deps
+}
+
+/// 从代办节点命令取第一个词当命令名（`cargo test` → `cargo`，`npm run x` → `npm`）。
+fn command_name(cmd: &str) -> Option<String> {
+    let first = cmd.trim().split_whitespace().next()?;
+    let base = first
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(first)
+        .trim()
+        .trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'));
+    if base.is_empty() {
+        None
+    } else {
+        Some(base.to_string())
+    }
+}
+
+/// 从节点收集运行环境声明：agent 的 model（软）+ 代办节点的命令（硬）。
+fn collect_requirements(nodes: &Value) -> Requirements {
+    let mut models = Vec::new();
+    let mut tools = Vec::new();
+    let Some(arr) = nodes.as_array() else {
+        return Requirements::default();
+    };
+    for n in arr {
+        let ty = n.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let params = n.get("params");
+        match ty {
+            "agent" => {
+                if let Some(m) = params.and_then(|p| p.get("model")).and_then(|v| v.as_str()) {
+                    let m = m.trim();
+                    if !m.is_empty() && !models.iter().any(|x| x == m) {
+                        models.push(m.to_string());
+                    }
+                }
+            }
+            "tool" => {
+                if let Some(c) = params
+                    .and_then(|p| p.get("command"))
+                    .and_then(|v| v.as_str())
+                {
+                    if let Some(name) = command_name(c) {
+                        if !tools.iter().any(|x| x == &name) {
+                            tools.push(name);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    models.sort();
+    tools.sort();
+    Requirements { models, tools }
+}
+
+fn command_available(cmd: &str) -> bool {
+    if cmd.trim().is_empty() {
+        return true;
+    }
+    #[cfg(windows)]
+    let mut probe = std::process::Command::new("where");
+    #[cfg(not(windows))]
+    let mut probe = std::process::Command::new("which");
+    probe.arg(cmd);
+    probe
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn missing_tools(tools: &[String]) -> Vec<String> {
+    tools
+        .iter()
+        .filter(|t| !command_available(t))
+        .cloned()
+        .collect()
 }
 
 fn mkdir(p: &Path) -> Result<(), String> {
@@ -676,6 +775,10 @@ pub fn export_flow(id: String, dest_path: String) -> Result<String, String> {
     let mut zip = zip::ZipWriter::new(file);
     add_zip_file(&mut zip, &format!("{}.flow.yaml", rec.id), yaml.as_bytes())?;
     add_zip_file(&mut zip, &format!("{}.rhai", rec.id), rhai.as_bytes())?;
+    let reqs = collect_requirements(&rec.nodes);
+    let reqs_yaml =
+        serde_yaml::to_string(&reqs).map_err(|e| format!("序列化 requirements.yaml 失败: {e}"))?;
+    add_zip_file(&mut zip, "requirements.yaml", reqs_yaml.as_bytes())?;
     zip.finish().map_err(|e| format!("关闭 zip 失败: {e}"))?;
     Ok(dest.display().to_string())
 }
@@ -712,6 +815,11 @@ pub fn import_flow(
     meta.id = id.clone();
     meta.dependencies.clear();
 
+    let reqs = read_zip_entry(&mut archive, "requirements.yaml")?
+        .and_then(|s| serde_yaml::from_str::<Requirements>(&s).ok())
+        .unwrap_or_default();
+    let missing = missing_tools(&reqs.tools);
+
     if let Some(existing) = load_package_meta(&id) {
         let mode = conflict_mode.unwrap_or_default();
         if mode.is_empty() {
@@ -719,6 +827,7 @@ pub fn import_flow(
                 id,
                 existing_version: existing.version,
                 incoming_version: meta.version.clone(),
+                requirements: reqs.clone(),
             });
         }
         match mode.as_str() {
@@ -733,6 +842,8 @@ pub fn import_flow(
                 return Ok(ImportFlowResult::Ok {
                     id: new_id,
                     version: meta.version,
+                    requirements: reqs,
+                    missing_tools: missing,
                 });
             }
             other => return Err(format!("未知撞名处理: {other}")),
@@ -743,6 +854,8 @@ pub fn import_flow(
     Ok(ImportFlowResult::Ok {
         id: meta.id,
         version: meta.version,
+        requirements: reqs,
+        missing_tools: missing,
     })
 }
 

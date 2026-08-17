@@ -55,16 +55,47 @@ describe('compileToRhai', () => {
     ).toThrow(/未内联/)
   })
 
-  it('preset 解析进 AgentOpts，不写进提示词', () => {
+  it('Agent 解析进 AgentOpts，不写进提示词', () => {
     const d = createDemoDraft()
     ;(d.nodes[1].params as { presetId?: string }).presetId = 'coding'
-    expect(() => compileToRhai(d)).toThrow(/组装单「coding」不存在/)
+    expect(() => compileToRhai(d)).toThrow(/Agent「coding」不存在/)
     const rhai = compileToRhai(d, {
       presets: { coding: { model: 'grok-4', agentType: 'explore' } },
     })
     expect(rhai).toContain('model: "grok-4"')
     expect(rhai).toContain('agent_type: "explore"')
     expect(rhai).not.toContain('你按组装单')
+  })
+
+  it('Agent 的 capability / isolation / output_schema / disabled_tools / permission_rules 编译进官方 AgentOpts', () => {
+    const d = createDemoDraft()
+    ;(d.nodes[1].params as { presetId?: string }).presetId = 'auditor'
+    const rhai = compileToRhai(d, {
+      presets: {
+        auditor: {
+          capability: 'read-only',
+          isolation: true,
+          outputSchema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+          disabledTools: ['web_search', 'Name:shell'],
+          permissionRules: ['edit:**/.env', 'web_*'],
+        },
+      },
+    })
+    expect(rhai).toContain('capability_mode: "read-only"')
+    expect(rhai).toContain('isolation_worktree: true')
+    expect(rhai).toContain('output_schema: #{ "type": "object"')
+    expect(rhai).toContain('"required": ["ok"]')
+    expect(rhai).toContain('disabled_tools: ["web_search", "Name:shell"]')
+    expect(rhai).toContain('permission_rules: ["edit:**/.env", "web_*"]')
+  })
+
+  it('无 capability/isolation/outputSchema/disabledTools/permissionRules 时，不输出这些字段', () => {
+    const rhai = compileToRhai(createDemoDraft())
+    expect(rhai).not.toContain('capability_mode: "read-only"')
+    expect(rhai).not.toContain('isolation_worktree')
+    expect(rhai).not.toContain('output_schema:')
+    expect(rhai).not.toContain('disabled_tools:')
+    expect(rhai).not.toContain('permission_rules:')
   })
 
   it('草稿含绝对路径时被检测', () => {

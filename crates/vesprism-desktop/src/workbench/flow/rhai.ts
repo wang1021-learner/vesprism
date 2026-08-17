@@ -5,12 +5,41 @@ import { graphJsonFromDraft, nodeLabel } from './graph'
 import { validateFlowGraph } from './schema'
 import type { FlowDraft, FlowGraphEdge, FlowGraphNode } from './types'
 
-/** 发布时把组装单 preset 收成官方 AgentOpts 能认的字段。 */
-export type PresetResolve = { model?: string; agentType?: string }
+/** 发布时把工作台 Agent 收成官方 AgentOpts 能认的字段。 */
+export type PresetResolve = {
+  model?: string
+  agentType?: string
+  /** 官方 capability_mode 字符串：read-only / read-write / execute / all */
+  capability?: string
+  /** isolation_worktree：在隔离工作区里跑，弄脏不进主仓库 */
+  isolation?: boolean
+  /** JSON Schema，编译进 AgentOpts.output_schema（官方会按它重试） */
+  outputSchema?: unknown
+  /** 细粒度工具停用（工具短名或 `Name:tool` 全名），编译进 AgentOpts.disabled_tools */
+  disabledTools?: string[]
+  /** per-agent deny 规则（`kind:glob` 或 `glob`），编译进 AgentOpts.permission_rules */
+  permissionRules?: string[]
+}
 export type CompileOpts = { presets?: Record<string, PresetResolve> }
 
 function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')
+}
+
+/** 把 JSON 值渲染成 Rhai 字面量（map 键一律加引号，安全兼容任意 schema 键）。 */
+function jsonToRhaiLiteral(v: unknown): string {
+  if (v === null || v === undefined) return '()'
+  if (typeof v === 'string') return `"${esc(v)}"`
+  if (typeof v === 'number') return String(v)
+  if (typeof v === 'boolean') return v ? 'true' : 'false'
+  if (Array.isArray(v)) return `[${v.map(jsonToRhaiLiteral).join(', ')}]`
+  if (typeof v === 'object') {
+    const entries = Object.entries(v as Record<string, unknown>).map(
+      ([k, val]) => `"${esc(k)}": ${jsonToRhaiLiteral(val)}`,
+    )
+    return `#{ ${entries.join(', ')} }`
+  }
+  return '()'
 }
 
 function ident(id: string): string {
@@ -43,22 +72,44 @@ function agentPrompt(n: FlowGraphNode): string {
 function resolveAgentOpts(
   n: FlowGraphNode,
   presets: Record<string, PresetResolve>,
-): { model?: string; agentType?: string } {
-  const p = n.params as { presetId?: string; model?: string; agentType?: string }
+): PresetResolve {
+  const p = n.params as {
+    presetId?: string
+    model?: string
+    agentType?: string
+    capability?: string
+    isolation?: boolean
+  }
   const presetId = p.presetId?.trim()
   let model = p.model?.trim()
   let agentType = p.agentType?.trim()
+  // 节点显式值 > Agent 源 > 缺省。capability/isolation/outputSchema/disabledTools 只从 Agent 源来。
+  let capability = p.capability?.trim()
+  let isolation = p.isolation ?? false
+  let outputSchema: unknown
+  let disabledTools: string[] | undefined
+  let permissionRules: string[] | undefined
   if (presetId) {
     const resolved = presets[presetId]
     if (!resolved) {
-      throw new Error(`组装单「${presetId}」不存在，无法编译节点 ${n.id}`)
+      throw new Error(`Agent「${presetId}」不存在，无法编译节点 ${n.id}`)
     }
     if (!model) model = resolved.model?.trim()
     if (!agentType) agentType = resolved.agentType?.trim()
+    if (!capability) capability = resolved.capability?.trim()
+    isolation = isolation || resolved.isolation === true
+    if (resolved.outputSchema !== undefined) outputSchema = resolved.outputSchema
+    if (resolved.disabledTools?.length) disabledTools = resolved.disabledTools
+    if (resolved.permissionRules?.length) permissionRules = resolved.permissionRules
   }
   return {
     model: model || undefined,
     agentType: agentType || undefined,
+    capability: capability || undefined,
+    isolation: isolation || undefined,
+    outputSchema,
+    disabledTools,
+    permissionRules,
   }
 }
 
@@ -76,6 +127,17 @@ function emitAgentCall(
   const opts: string[] = [`label: "${esc(n.id)}"`]
   if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
   if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
+  if (resolved.capability) opts.push(`capability_mode: "${esc(resolved.capability)}"`)
+  if (resolved.isolation) opts.push(`isolation_worktree: true`)
+  if (resolved.outputSchema !== undefined) {
+    opts.push(`output_schema: ${jsonToRhaiLiteral(resolved.outputSchema)}`)
+  }
+  if (resolved.disabledTools && resolved.disabledTools.length > 0) {
+    opts.push(`disabled_tools: ${jsonToRhaiLiteral(resolved.disabledTools)}`)
+  }
+  if (resolved.permissionRules && resolved.permissionRules.length > 0) {
+    opts.push(`permission_rules: ${jsonToRhaiLiteral(resolved.permissionRules)}`)
+  }
   lines.push(`let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ ${opts.join(', ')} });`)
   lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "agent failed" }); }`)
   return v

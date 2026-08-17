@@ -117,7 +117,7 @@ function CompositionPanelInner() {
         <header className="comp-head">
           <span className="comp-title">会话组装单</span>
           <span className="comp-subtitle">
-            已接线：模型 · 工具停用 · 权限 · 流程。人设段落 / 技能 / MCP / 插件未下发
+            会话级热生效：模型 · 工具停用 · 权限 · 流程。人设 / 技能 / MCP / 插件由工作台 Agent 资产承载（YAML 组装单兼容读取）
           </span>
           <button type="button" className="comp-close" onClick={close} title="关闭">
             ✕

@@ -101,6 +101,10 @@ export interface WorkflowInfoDto {
     state: string
     tokensUsed: number
     durationMs: number
+    /** 官方能力档：read-only / read-write / execute / all（工作台 Agent 透传） */
+    capabilityMode?: string | null
+    /** 是否隔离 worktree（工作台 Agent 透传） */
+    isolationWorktree?: boolean
   }[]
   lastEvent?: string | null
   lastEventDetail?: string | null

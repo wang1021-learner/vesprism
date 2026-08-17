@@ -20,7 +20,8 @@
 @import './styles/tools.css';
 @import './styles/skills.css';
 @import './styles/workflows.css';
-@import './styles/flow-canvas.css';
+@import './workbench/flow-canvas.css';
+@import './workbench/agents.css';
 @import './styles/settings.css';
 @import './styles/composer-extras.css';
 @import './styles/settings-fields.css';

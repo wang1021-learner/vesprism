@@ -2168,7 +2168,7 @@ pub async fn apply_composition(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let composition = parse_composition_json(composition, "apply_composition")?;
-    crate::flows::register_flows(&composition.flows)?;
+    crate::workbench::flows::register_flows(&composition.flows)?;
     if let Some(sid) = session_id.as_deref().filter(|s| !s.is_empty()) {
         let json = serde_json::to_string(&composition)
             .map_err(|e| format!("序列化组装单失败: {e}"))?;

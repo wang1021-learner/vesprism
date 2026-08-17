@@ -33,6 +33,14 @@ pub struct WorkflowAgentInfo {
     pub tokens_used: u64,
     #[serde(default)]
     pub duration_ms: u64,
+    // jike: 工作台 Agent 的能力档/隔离，随 workflow 进度上报到 Dock 徽标。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_mode: Option<String>,
+    #[serde(default)]
+    pub isolation_worktree: bool,
+    // jike: per-agent deny 规则，随 workflow 进度上报由 grok-session 拦截。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permission_rules: Vec<String>,
 }
 
 /// `_meta` key on rename fan-out (`SessionSummaryGenerated` + ACP

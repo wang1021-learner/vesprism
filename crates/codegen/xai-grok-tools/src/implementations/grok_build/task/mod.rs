@@ -537,6 +537,10 @@ impl xai_tool_runtime::Tool for TaskTool {
                 output_token_budget: None,
                 output_schema: None,
                 loop_task_id: None,
+                // jike: 模型面 task 工具不带细粒度停用；由工作台/工作流 AgentOpts 提供。
+                disabled_tools: Vec::new(),
+                // jike: 模型面 task 工具不带 per-agent deny；由工作台 AgentOpts 提供。
+                permission_rules: Vec::new(),
             },
             run_in_background: input.run_in_background,
             // Model-spawned subagents must still appear in the idle reminder.

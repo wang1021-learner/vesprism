@@ -237,6 +237,12 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('workflows')).toBeUndefined()
   })
 
+  it('findTabByUtilityKind 可复用 agents 专用 Tab', () => {
+    createTab('tab-agents', { utilityKind: 'agents', chatTitle: 'Agent 编制' })
+    expect(findTabByUtilityKind('agents')).toBe('tab-agents')
+    expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
+  })
+
   it('looksAbsolutePath / resolveWorkspaceCwd 兜底空投影', () => {
     expect(looksAbsolutePath('')).toBe(false)
     expect(looksAbsolutePath('relative')).toBe(false)
