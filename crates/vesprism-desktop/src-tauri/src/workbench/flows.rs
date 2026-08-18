@@ -13,8 +13,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-const ABS_HINTS: &[&str] = &["https://", "http://"];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlowYaml {
     pub id: String,
@@ -57,6 +55,9 @@ pub struct SaveFlowRequest {
     pub publish: bool,
     #[serde(default)]
     pub stage: bool,
+    /// 试跑子图：只写 sidecar，不落草稿、不污染流程列表。
+    #[serde(default)]
+    pub ephemeral: bool,
     pub rhai: Option<String>,
     pub prompts: Option<String>,
 }
@@ -143,6 +144,42 @@ fn sidecar_yaml(id: &str) -> PathBuf {
     workflows_dir().join(format!("{id}.flow.yaml"))
 }
 
+fn is_rerun_sidecar_name(name: &str) -> bool {
+    name.ends_with("-rerun.rhai") || name.ends_with("-rerun.flow.yaml")
+}
+
+/// 清掉试跑留下的 `*-rerun.rhai` / `*-rerun.flow.yaml`。
+/// `except` 为正在写入的那对，避免刚写就被删。
+fn purge_rerun_files(except: Option<&str>) -> Result<u32, String> {
+    let dir = workflows_dir();
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let keep = except.unwrap_or("").trim();
+    let mut n = 0u32;
+    let rd = fs::read_dir(&dir).map_err(|e| format!("读取 workflows 失败: {e}"))?;
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if !is_rerun_sidecar_name(&name) {
+            continue;
+        }
+        if !keep.is_empty()
+            && (name == format!("{keep}.rhai") || name == format!("{keep}.flow.yaml"))
+        {
+            continue;
+        }
+        if fs::remove_file(ent.path()).is_ok() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+#[tauri::command]
+pub fn purge_rerun_sidecars(except: Option<String>) -> Result<u32, String> {
+    purge_rerun_files(except.as_deref())
+}
+
 fn draft_path(id: &str) -> PathBuf {
     drafts_dir().join(format!("{id}.json"))
 }
@@ -204,29 +241,29 @@ pub fn strip_positions(nodes: &Value) -> Value {
 }
 
 pub fn text_has_absolute_path(text: &str) -> bool {
-    if text.contains("://") && ABS_HINTS.iter().any(|h| text.contains(h)) {
-        // URL 允许；真正的盘符 / UNC / Unix 家目录才拦
-    }
-    let bytes = text.as_bytes();
-    // C:\ or C:/
-    for i in 0..bytes.len().saturating_sub(2) {
-        let c = bytes[i];
-        if c.is_ascii_alphabetic()
-            && bytes[i + 1] == b':'
-            && (bytes[i + 2] == b'\\' || bytes[i + 2] == b'/')
+    for token in text.split_whitespace() {
+        let clean = token.trim_matches(|c: char| {
+            c == '"' || c == '\'' || c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}'
+        });
+        if clean.contains("://") {
+            continue;
+        }
+        let bytes = clean.as_bytes();
+        // C:\ or C:/
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/')
         {
-            let ok_prev = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
-            if ok_prev {
+            return true;
+        }
+        if clean.starts_with("\\\\") || clean.starts_with("~/") {
+            return true;
+        }
+        for prefix in ["/home/", "/Users/", "/usr/", "/var/", "/opt/", "/tmp/", "/etc/"] {
+            if clean.starts_with(prefix) || clean.contains(prefix) {
                 return true;
             }
-        }
-    }
-    if text.contains("\\\\") {
-        return true;
-    }
-    for prefix in ["/home/", "/Users/", "/usr/", "/var/", "/opt/", "/tmp/"] {
-        if text.contains(prefix) {
-            return true;
         }
     }
     false
@@ -234,7 +271,9 @@ pub fn text_has_absolute_path(text: &str) -> bool {
 
 fn reject_abs(label: &str, text: &str) -> Result<(), String> {
     if text_has_absolute_path(text) {
-        return Err(format!("{label} 含绝对路径，流程包内引用必须是相对路径或 id"));
+        return Err(format!(
+            "{label} 含绝对路径，流程包内引用必须是相对路径或 id"
+        ));
     }
     Ok(())
 }
@@ -366,11 +405,6 @@ fn read_to_string(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))
 }
 
-fn register_rhai(id: &str, rhai: &str) -> Result<(), String> {
-    mkdir(&workflows_dir())?;
-    write_file(&sidecar_rhai(id), rhai.as_bytes())
-}
-
 fn write_sidecar(id: &str, yaml: &str, rhai: &str) -> Result<(), String> {
     mkdir(&workflows_dir())?;
     write_file(&sidecar_yaml(id), yaml.as_bytes())?;
@@ -390,8 +424,50 @@ pub fn register_flows(ids: &[String]) -> Result<(), String> {
         let old_rhai = package_dir(&id).join("flow.rhai");
         let old_yaml = package_dir(&id).join("flow.yaml");
         if old_rhai.is_file() && old_yaml.is_file() {
-            write_sidecar(&id, &read_to_string(&old_yaml)?, &read_to_string(&old_rhai)?)?;
+            write_sidecar(
+                &id,
+                &read_to_string(&old_yaml)?,
+                &read_to_string(&old_rhai)?,
+            )?;
             continue;
+        }
+        if let Some(draft) = load_draft(&id) {
+            if let Some(rhai) = draft
+                .get("rhai")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let meta = FlowYaml {
+                    id: id.clone(),
+                    name: draft
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&id)
+                        .to_string(),
+                    description: draft
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    input_schema: draft
+                        .get("input_schema")
+                        .cloned()
+                        .unwrap_or(Value::Object(Default::default())),
+                    output_schema: draft
+                        .get("output_schema")
+                        .cloned()
+                        .unwrap_or(Value::Object(Default::default())),
+                    version: draft
+                        .get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("1")
+                        .to_string(),
+                    dependencies: Vec::new(),
+                };
+                write_sidecar(&id, &write_yaml(&meta)?, rhai)?;
+                continue;
+            }
         }
         return Err(format!(
             "组装单引用的流程缺失 sidecar：{id}.rhai / {id}.flow.yaml"
@@ -502,13 +578,48 @@ pub fn save_flow(payload: SaveFlowRequest) -> Result<FlowRecord, String> {
     let mut deps = collect_deps_from_nodes(&req.nodes);
     deps.sort();
     deps.dedup();
-    write_draft(&req)?;
+    if !req.ephemeral {
+        write_draft(&req)?;
+    } else {
+        // 写新临时 sidecar 前清掉其它 *-rerun，避免 workflows/ 累积。
+        let _ = purge_rerun_files(Some(&id));
+    }
     if req.publish {
         write_package(&req, &deps)?;
     } else if req.stage {
-        if let Some(rhai) = req.rhai.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            register_rhai(&id, rhai)?;
-        }
+        let rhai = req
+            .rhai
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "热挂载 / 试跑需要已编译的 rhai".to_string())?;
+        let meta = FlowYaml {
+            id: id.clone(),
+            name: req.name.clone(),
+            description: req.description.clone(),
+            input_schema: req.input_schema.clone(),
+            output_schema: req.output_schema.clone(),
+            version: req.version.clone(),
+            dependencies: deps.clone(),
+        };
+        write_sidecar(&id, &write_yaml(&meta)?, rhai)?;
+    }
+    if req.ephemeral {
+        return Ok(FlowRecord {
+            id: id.clone(),
+            name: req.name.clone(),
+            description: req.description.clone(),
+            version: req.version.clone(),
+            published: false,
+            draft: false,
+            dependencies: deps,
+            input_schema: req.input_schema.clone(),
+            output_schema: req.output_schema.clone(),
+            nodes: req.nodes.clone(),
+            edges: req.edges.clone(),
+            rhai: req.rhai.clone(),
+            prompts: req.prompts.clone(),
+        });
     }
     get_flow(id)
 }
@@ -783,7 +894,10 @@ pub fn export_flow(id: String, dest_path: String) -> Result<String, String> {
     Ok(dest.display().to_string())
 }
 
-fn read_zip_entry(archive: &mut zip::ZipArchive<fs::File>, name: &str) -> Result<Option<String>, String> {
+fn read_zip_entry(
+    archive: &mut zip::ZipArchive<fs::File>,
+    name: &str,
+) -> Result<Option<String>, String> {
     match archive.by_name(name) {
         Ok(mut f) => {
             let mut buf = String::new();
@@ -887,7 +1001,10 @@ fn read_zip_sidecar_pair(
 ) -> Result<(String, String), String> {
     let names: Vec<String> = (0..archive.len())
         .filter_map(|i| {
-            archive.by_index(i).ok().map(|f| f.name().replace('\\', "/"))
+            archive
+                .by_index(i)
+                .ok()
+                .map(|f| f.name().replace('\\', "/"))
         })
         .collect();
     if let Some(yaml_name) = names
@@ -946,9 +1063,21 @@ mod tests {
     }
 
     #[test]
+    fn rerun_sidecar_names() {
+        assert!(is_rerun_sidecar_name("demo-linear-rerun.rhai"));
+        assert!(is_rerun_sidecar_name("demo-linear-rerun.flow.yaml"));
+        assert!(!is_rerun_sidecar_name("demo-linear.rhai"));
+        assert!(!is_rerun_sidecar_name("demo-linear.flow.yaml"));
+    }
+
+    #[test]
     fn sidecar_filenames_match_official_layout() {
         assert!(sidecar_rhai("refund").ends_with("refund.rhai"));
         assert!(sidecar_yaml("refund").ends_with("refund.flow.yaml"));
-        assert!(!sidecar_yaml("refund").to_string_lossy().contains("position"));
+        assert!(
+            !sidecar_yaml("refund")
+                .to_string_lossy()
+                .contains("position")
+        );
     }
 }

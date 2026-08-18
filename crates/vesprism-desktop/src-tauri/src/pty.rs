@@ -159,7 +159,9 @@ impl PtyManager {
 
     pub fn write(&self, tab_id: &str, data: &str) -> Result<(), String> {
         let slots = self.slots.lock().map_err(|_| "pty 锁损坏")?;
-        let slot = slots.get(tab_id).ok_or_else(|| "该 Tab 没有终端".to_string())?;
+        let slot = slots
+            .get(tab_id)
+            .ok_or_else(|| "该 Tab 没有终端".to_string())?;
         let mut w = slot.writer.lock().map_err(|_| "pty writer 锁损坏")?;
         w.write_all(data.as_bytes())
             .map_err(|e| format!("写入终端失败: {e}"))?;
@@ -169,7 +171,9 @@ impl PtyManager {
 
     pub fn resize(&self, tab_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let slots = self.slots.lock().map_err(|_| "pty 锁损坏")?;
-        let slot = slots.get(tab_id).ok_or_else(|| "该 Tab 没有终端".to_string())?;
+        let slot = slots
+            .get(tab_id)
+            .ok_or_else(|| "该 Tab 没有终端".to_string())?;
         let master = slot.master.lock().map_err(|_| "pty master 锁损坏")?;
         master
             .resize(PtySize {
@@ -183,7 +187,9 @@ impl PtyManager {
 
     pub fn stop(&self, tab_id: &str) {
         let slot = {
-            let Ok(mut slots) = self.slots.lock() else { return };
+            let Ok(mut slots) = self.slots.lock() else {
+                return;
+            };
             slots.remove(tab_id)
         };
         if let Some(slot) = slot {
@@ -195,12 +201,7 @@ impl PtyManager {
     }
 }
 
-fn read_loop(
-    app: AppHandle,
-    tab_id: String,
-    mut reader: Box<dyn Read + Send>,
-    slot: Arc<PtySlot>,
-) {
+fn read_loop(app: AppHandle, tab_id: String, mut reader: Box<dyn Read + Send>, slot: Arc<PtySlot>) {
     let mut buf = [0u8; 4096];
     loop {
         match reader.read(&mut buf) {
@@ -345,8 +346,8 @@ impl Drop for JobGuard {
 #[cfg(windows)]
 unsafe fn create_kill_on_close_job() -> Option<windows::Win32::Foundation::HANDLE> {
     use windows::Win32::System::JobObjects::{
-        CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
     };
 
     let job = unsafe { CreateJobObjectW(None, windows::core::PCWSTR::null()) }.ok()?;

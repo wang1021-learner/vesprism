@@ -55,6 +55,8 @@ pub struct AgentRecord {
     #[serde(default)]
     pub agent_type: Option<String>,
     #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
     pub flows: Vec<String>,
 }
 
@@ -75,6 +77,7 @@ impl Default for AgentRecord {
             output_contract: String::new(),
             output_schema: None,
             agent_type: None,
+            skills: Vec::new(),
             flows: Vec::new(),
         }
     }
@@ -85,6 +88,7 @@ impl Default for AgentRecord {
 pub struct AgentListItem {
     pub id: String,
     pub name: String,
+    pub description: Option<String>,
     pub version: String,
     pub model: Option<String>,
     pub capability: Option<AgentCapability>,
@@ -93,6 +97,9 @@ pub struct AgentListItem {
     pub permission_rules: Vec<String>,
     pub agent_type: Option<String>,
     pub output_schema: Option<Value>,
+    pub skills: Vec<String>,
+    pub system_prompt: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,8 +149,8 @@ fn prompt_path(root: &Path, id: &str) -> PathBuf {
 }
 
 pub fn parse_agent_yaml(yaml: &str, source: &str) -> Result<AgentRecord, String> {
-    let rec: AgentRecord = serde_yaml::from_str(yaml)
-        .map_err(|e| format!("解析 Agent 失败（{source}）: {e}"))?;
+    let rec: AgentRecord =
+        serde_yaml::from_str(yaml).map_err(|e| format!("解析 Agent 失败（{source}）: {e}"))?;
     rec.validate()
         .map_err(|e| format!("Agent 校验失败（{source}）: {e}"))?;
     Ok(rec)
@@ -188,24 +195,96 @@ pub fn list_agents_in(root: &Path) -> Result<Vec<AgentListItem>, String> {
         if !path.is_dir() {
             continue;
         }
-        let yaml = path.join("agent.yaml");
-        if !yaml.is_file() {
-            continue;
-        }
-        let Ok(text) = fs::read_to_string(&yaml) else {
-            continue;
-        };
         let stem = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .trim();
-        let Ok(rec) = parse_agent_yaml(&text, stem) else {
+        if stem.is_empty() {
             continue;
+        }
+        let yaml = path.join("agent.yaml");
+        if !yaml.is_file() {
+            continue;
+        }
+        let text = match fs::read_to_string(&yaml) {
+            Ok(t) => t,
+            Err(e) => {
+                out.push(AgentListItem {
+                    id: stem.to_string(),
+                    name: format!("⚠️ {stem} (读取失败)"),
+                    description: None,
+                    version: "1".into(),
+                    model: None,
+                    capability: None,
+                    isolation: false,
+                    disabled_tools: Vec::new(),
+                    permission_rules: Vec::new(),
+                    agent_type: None,
+                    output_schema: None,
+                    skills: Vec::new(),
+                    system_prompt: None,
+                    error: Some(format!("读取 agent.yaml 失败: {e}")),
+                });
+                continue;
+            }
+        };
+        let rec = match parse_agent_yaml(&text, stem) {
+            Ok(r) if r.id != stem => {
+                out.push(AgentListItem {
+                    id: stem.to_string(),
+                    name: format!("⚠️ {stem} (id 不一致)"),
+                    description: Some(format!("目录名 {stem}，yaml id 为 {}", r.id)),
+                    version: r.version,
+                    model: None,
+                    capability: None,
+                    isolation: false,
+                    disabled_tools: Vec::new(),
+                    permission_rules: Vec::new(),
+                    agent_type: None,
+                    output_schema: None,
+                    skills: Vec::new(),
+                    system_prompt: None,
+                    error: Some(format!(
+                        "目录名 {stem} 与 agent.yaml 的 id {} 不一致。请改 yaml 或改目录名后重开。",
+                        r.id
+                    )),
+                });
+                continue;
+            }
+            Ok(r) => r,
+            Err(e) => {
+                out.push(AgentListItem {
+                    id: stem.to_string(),
+                    name: format!("⚠️ {stem} (格式损坏)"),
+                    description: None,
+                    version: "1".into(),
+                    model: None,
+                    capability: None,
+                    isolation: false,
+                    disabled_tools: Vec::new(),
+                    permission_rules: Vec::new(),
+                    agent_type: None,
+                    output_schema: None,
+                    skills: Vec::new(),
+                    system_prompt: None,
+                    error: Some(e),
+                });
+                continue;
+            }
+        };
+        let system_prompt = fs::read_to_string(path.join("system-prompt.md"))
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let desc = if rec.description.trim().is_empty() {
+            None
+        } else {
+            Some(rec.description)
         };
         out.push(AgentListItem {
             id: rec.id,
             name: rec.name,
+            description: desc,
             version: rec.version,
             model: rec.model.filter(|s| !s.trim().is_empty()),
             capability: rec.capability,
@@ -214,6 +293,9 @@ pub fn list_agents_in(root: &Path) -> Result<Vec<AgentListItem>, String> {
             permission_rules: rec.permission_rules,
             agent_type: rec.agent_type.filter(|s| !s.trim().is_empty()),
             output_schema: rec.output_schema,
+            skills: rec.skills,
+            system_prompt,
+            error: None,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -309,7 +391,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!("vesp-wb-agents-{}-{nanos}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vesp-wb-agents-{}-{nanos}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -363,7 +446,10 @@ mod tests {
     #[test]
     fn missing_version_rejected_on_parse() {
         let err = parse_agent_yaml("id: x\nname: X\n", "t").unwrap_err();
-        assert!(err.contains("version") || err.contains("missing"), "err: {err}");
+        assert!(
+            err.contains("version") || err.contains("missing"),
+            "err: {err}"
+        );
     }
 
     #[test]
@@ -374,5 +460,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("preset") || err.contains("解析"), "err: {err}");
+    }
+
+    #[test]
+    fn list_flags_dir_id_mismatch() {
+        let root = tmp();
+        let dir = root.join("folder-a");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("agent.yaml"),
+            "id: other-id\nname: 错位\nversion: \"1\"\n",
+        )
+        .unwrap();
+        let list = list_agents_in(&root).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "folder-a");
+        assert!(list[0].error.as_deref().unwrap_or("").contains("不一致"));
+        let _ = fs::remove_dir_all(&root);
     }
 }

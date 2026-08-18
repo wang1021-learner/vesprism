@@ -120,7 +120,12 @@ fn porcelain_paths(dest: &Path) -> Result<Vec<String>, String> {
 
 fn git_with_ident(cwd: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Command::new("git")
-        .args(["-c", "user.name=Vesprism", "-c", "user.email=vesprism@localhost"])
+        .args([
+            "-c",
+            "user.name=Vesprism",
+            "-c",
+            "user.email=vesprism@localhost",
+        ])
         .args(args)
         .current_dir(cwd)
         .output()
@@ -182,11 +187,7 @@ pub fn sync_to_origin(bind: &SandboxBind, tab_id: &str) -> Result<SandboxSyncDto
     let _ = run_git(&bind.dest, &["reset", "HEAD", "--", MARKER]);
     let commit = git_with_ident(
         &bind.dest,
-        &[
-            "commit",
-            "-m",
-            &format!("vesprism sandbox sync ({tab_id})"),
-        ],
+        &["commit", "-m", &format!("vesprism sandbox sync ({tab_id})")],
     )?;
     if !commit.status.success() {
         let err = String::from_utf8_lossy(&commit.stderr);

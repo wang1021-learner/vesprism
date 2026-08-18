@@ -11,15 +11,16 @@ async fn send_cmd(
 ) -> Result<(), String> {
     let cmd_tx = {
         let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
-        guard.get(tab_id).cloned().ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+        guard
+            .get(tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
     };
     let (reply_tx, reply_rx) = oneshot::channel();
     cmd_tx
         .send(make(reply_tx))
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 打开一个新 tab（Supervisor 分配 tab_id 并启动对应 TabActor）。
@@ -30,7 +31,9 @@ pub async fn open_tab(state: State<'_, AppState>) -> Result<String, String> {
         .supervisor_tx
         .send(SupervisorCommand::OpenTab { reply: reply_tx })
         .map_err(|_| "Supervisor 线程已退出".to_string())?;
-    reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
+    reply_rx
+        .await
+        .map_err(|_| "Supervisor 无响应".to_string())?
 }
 
 /// 关闭指定 tab（从共享表移除 sender，TabActor 优雅退出）。
@@ -41,9 +44,14 @@ pub async fn close_tab(tab_id: String, state: State<'_, AppState>) -> Result<(),
     let (reply_tx, reply_rx) = oneshot::channel();
     state
         .supervisor_tx
-        .send(SupervisorCommand::CloseTab { tab_id, reply: reply_tx })
+        .send(SupervisorCommand::CloseTab {
+            tab_id,
+            reply: reply_tx,
+        })
         .map_err(|_| "Supervisor 线程已退出".to_string())?;
-    reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
+    reply_rx
+        .await
+        .map_err(|_| "Supervisor 无响应".to_string())?
 }
 
 /// 手动重启指定 tab（关旧 actor、起空壳、广播 TabRecovering；前端负责重放会话）。
@@ -53,9 +61,14 @@ pub async fn restart_tab(tab_id: String, state: State<'_, AppState>) -> Result<(
     let (reply_tx, reply_rx) = oneshot::channel();
     state
         .supervisor_tx
-        .send(SupervisorCommand::RestartTab { tab_id, reply: reply_tx })
+        .send(SupervisorCommand::RestartTab {
+            tab_id,
+            reply: reply_tx,
+        })
         .map_err(|_| "Supervisor 线程已退出".to_string())?;
-    reply_rx.await.map_err(|_| "Supervisor 无响应".to_string())?
+    reply_rx
+        .await
+        .map_err(|_| "Supervisor 无响应".to_string())?
 }
 
 #[tauri::command]
@@ -97,20 +110,39 @@ pub fn stop_pty(tab_id: String, state: State<'_, AppState>) -> Result<(), String
     Ok(())
 }
 
-/// 编译期推算 monorepo 仓库根（兜底默认工作区）。
-fn default_repo_root() -> PathBuf {
-    // src-tauri → vesprism-desktop → crates → 仓库根
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if let Some(root) = manifest
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-    {
-        if root.is_dir() {
-            return root.to_path_buf();
-        }
+fn display_path(path: &std::path::Path) -> String {
+    let s = path.display().to_string();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+}
+
+fn paths_eq(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let na = display_path(a).replace('\\', "/").trim_end_matches('/').to_ascii_lowercase();
+    let nb = display_path(b).replace('\\', "/").trim_end_matches('/').to_ascii_lowercase();
+    if na == nb {
+        return true;
     }
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(ca), Ok(cb)) => display_path(&ca).eq_ignore_ascii_case(&display_path(&cb)),
+        _ => false,
+    }
+}
+
+/// 未绑定项目时的闲聊工作区：官方 `session/new` 仍要绝对 cwd。
+pub fn scratch_dir() -> PathBuf {
+    let dir = desktop_home_dir().join("scratch");
+    let _ = std::fs::create_dir_all(&dir);
+    let readme = dir.join("README.txt");
+    if !readme.exists() {
+        let _ = std::fs::write(
+            readme,
+            "这是未绑定项目时的闲聊工作区。\n附件走官方 ACP ContentBlock，不会改成你的项目目录。\n要改仓库请先在输入框选择项目。\n",
+        );
+    }
+    dir
+}
+
+fn is_scratch_path(path: &std::path::Path) -> bool {
+    paths_eq(path, &scratch_dir())
 }
 
 /// 从 `$GROK_HOME/config.toml` 的 `[desktop] workspace_cwd` 读取用户保存的工作目录。
@@ -130,11 +162,7 @@ fn load_persisted_workspace_cwd() -> Option<PathBuf> {
         return None;
     }
     let p = PathBuf::from(s);
-    if p.is_dir() {
-        Some(p)
-    } else {
-        None
-    }
+    if p.is_dir() { Some(p) } else { None }
 }
 
 /// 将工作目录写入 config.toml（保留其它表，如 model 配置）。
@@ -163,8 +191,36 @@ fn save_persisted_workspace_cwd(cwd: &std::path::Path) -> Result<(), String> {
         "workspace_cwd".to_string(),
         toml::Value::String(cwd.display().to_string()),
     );
-    let serialized = toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
-    std::fs::write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    let serialized =
+        toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
+    std::fs::write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    Ok(())
+}
+
+fn clear_persisted_workspace_cwd() -> Result<(), String> {
+    let path = desktop_config_path();
+    if !path.exists() {
+        return Ok(());
+    }
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("读取 config.toml 失败: {e}"))?;
+    let mut root: toml::Value =
+        toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))?;
+    let Some(desktop) = root
+        .as_table_mut()
+        .and_then(|t| t.get_mut("desktop"))
+        .and_then(|v| v.as_table_mut())
+    else {
+        return Ok(());
+    };
+    if desktop.remove("workspace_cwd").is_none() {
+        return Ok(());
+    }
+    let serialized =
+        toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
+    std::fs::write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -172,8 +228,8 @@ fn save_persisted_workspace_cwd(cwd: &std::path::Path) -> Result<(), String> {
 ///
 /// 优先级：
 /// 1. AppState 内存覆盖路径（设置页保存后立即写入）
-/// 2. `config.toml` → `[desktop] workspace_cwd`（持久化保存）
-/// 3. monorepo 仓库根 / 进程 cwd（兜底）
+/// 2. `config.toml` → `[desktop] workspace_cwd`（用户选过的项目）
+/// 3. `~/.vesprism/scratch`（闲聊，官方 session/new 仍要绝对 cwd）
 fn resolve_workspace_cwd(state: &AppState) -> PathBuf {
     if let Some(p) = state.workspace_cwd_override.lock().unwrap().clone() {
         if p.is_dir() {
@@ -183,12 +239,15 @@ fn resolve_workspace_cwd(state: &AppState) -> PathBuf {
     if let Some(p) = load_persisted_workspace_cwd() {
         return p;
     }
-    default_repo_root()
+    scratch_dir()
 }
 
 /// 校验 `requested` 是否落在 `workspace_root` 范围内，返回规范化后的绝对路径。
 /// 供所有"按路径读工作区内文件"的 command 复用，避免校验逻辑散落多处。
-fn ensure_within_workspace(requested: &str, workspace_root: &std::path::Path) -> Result<PathBuf, String> {
+fn ensure_within_workspace(
+    requested: &str,
+    workspace_root: &std::path::Path,
+) -> Result<PathBuf, String> {
     let requested_path = std::path::Path::new(requested);
 
     let canonical_root = workspace_root
@@ -218,8 +277,11 @@ pub fn workspace_cwd(state: State<'_, AppState>) -> String {
 #[tauri::command]
 pub fn set_workspace_cwd(cwd: String, state: State<'_, AppState>) -> Result<String, String> {
     let raw = cwd.trim();
-    if raw.is_empty() {
-        return Err("工作目录不能为空".into());
+    if raw.is_empty() || is_scratch_path(std::path::Path::new(raw)) {
+        let scratch = scratch_dir();
+        *state.workspace_cwd_override.lock().unwrap() = Some(scratch.clone());
+        clear_persisted_workspace_cwd()?;
+        return Ok(display_path(&scratch));
     }
     let path = PathBuf::from(raw);
     if !path.exists() {
@@ -228,20 +290,26 @@ pub fn set_workspace_cwd(cwd: String, state: State<'_, AppState>) -> Result<Stri
     if !path.is_dir() {
         return Err(format!("不是目录: {}", path.display()));
     }
-    let canonical = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.clone());
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
     // Windows 上 canonicalize 可能带 \\?\ 前缀，尽量剥掉便于展示
-    let display_path = {
-        let s = canonical.display().to_string();
-        s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
-    };
-    let store = PathBuf::from(&display_path);
+    let shown = display_path(&canonical);
+    let store = PathBuf::from(&shown);
+    if is_scratch_path(&store) {
+        *state.workspace_cwd_override.lock().unwrap() = Some(store);
+        clear_persisted_workspace_cwd()?;
+        return Ok(shown);
+    }
     save_persisted_workspace_cwd(&store)?;
     // 进程内立即生效（不依赖再次读盘），用共享状态代替环境变量，
     // 避免多线程环境下 unsafe 的 env::set_var 潜在竞态
     *state.workspace_cwd_override.lock().unwrap() = Some(store);
-    Ok(display_path)
+    Ok(shown)
+}
+
+/// 闲聊工作区绝对路径（不绑定项目）。
+#[tauri::command]
+pub fn scratch_cwd() -> String {
+    display_path(&scratch_dir())
 }
 
 fn tab_wants_sandbox(tab_id: &str, cwd: &str, state: &AppState) -> bool {
@@ -277,7 +345,10 @@ fn plan_session_cwd(
             },
         );
     }
-    Ok((dest.to_string_lossy().into_owned(), Some(origin.to_string())))
+    Ok((
+        dest.to_string_lossy().into_owned(),
+        Some(origin.to_string()),
+    ))
 }
 
 pub fn teardown_tab_sandbox(tab_id: &str, state: &AppState) {
@@ -344,7 +415,11 @@ pub fn sync_sandbox_to_origin(
 
 /// 在进程内为指定 `cwd` 启动 Grok agent 会话。
 #[tauri::command]
-pub async fn start_session(tab_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn start_session(
+    tab_id: String,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
     send_cmd(&state, &tab_id, |reply| ActorCommand::Start {
         cwd: agent_cwd,
@@ -355,19 +430,23 @@ pub async fn start_session(tab_id: String, cwd: String, state: State<'_, AppStat
 }
 
 /// 发送用户消息；流式回复通过 `session-event` 推送。
+/// 附件走官方 ACP ContentBlock（Image / Resource / ResourceLink）。
 #[tauri::command]
 pub async fn send_prompt(
     tab_id: String,
     text: String,
     prompt_id: String,
+    attachments: Option<Vec<grok_session::PromptAttach>>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    if text.trim().is_empty() {
+    let attachments = attachments.unwrap_or_default();
+    if text.trim().is_empty() && attachments.is_empty() {
         return Err("消息不能为空".into());
     }
     send_cmd(&state, &tab_id, |reply| ActorCommand::SendPrompt {
         text,
         prompt_id,
+        attachments,
         reply,
     })
     .await
@@ -381,7 +460,11 @@ pub async fn cancel_turn(tab_id: String, state: State<'_, AppState>) -> Result<(
 
 /// 销毁旧会话并以新 cwd 重建。
 #[tauri::command]
-pub async fn restart_session(tab_id: String, cwd: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn restart_session(
+    tab_id: String,
+    cwd: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
     send_cmd(&state, &tab_id, |reply| ActorCommand::Restart {
         cwd: agent_cwd,
@@ -444,9 +527,7 @@ pub async fn cancel_subagent(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 查询子 agent 快照。
@@ -474,9 +555,7 @@ pub async fn get_subagent(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 派生新会话（x.ai/session/fork），返回新会话 id。
@@ -502,9 +581,7 @@ pub async fn fork_session(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 终止后台任务（官方 x.ai/task/kill）。
@@ -528,9 +605,7 @@ pub async fn kill_task(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 查询仍在运行的子 agent（官方 x.ai/subagent/list_running；重启/重连对账）。
@@ -550,9 +625,7 @@ pub async fn list_running_subagents(
     cmd_tx
         .send(ActorCommand::ListRunningSubagents { reply: reply_tx })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 列出 MCP 服务器（官方 x.ai/mcp/list）。
@@ -576,9 +649,7 @@ pub async fn list_mcp_servers(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 启用/禁用 MCP 服务器（官方 x.ai/mcp/toggle）。
@@ -604,9 +675,7 @@ pub async fn toggle_mcp_server(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 新增/更新 MCP 服务器（官方 x.ai/mcp/upsert）。
@@ -632,9 +701,7 @@ pub async fn upsert_mcp_server(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 删除本地 MCP 服务器（官方 x.ai/mcp/delete）。
@@ -658,9 +725,7 @@ pub async fn delete_mcp_server(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 列出当前会话可用命令与工具（官方 x.ai/commands/list）。
@@ -685,9 +750,7 @@ pub async fn list_session_commands(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 列出自动化工作流（官方 x.ai/workflows/list）。
@@ -707,9 +770,29 @@ pub async fn list_workflows(
     cmd_tx
         .send(ActorCommand::ListWorkflows { reply: reply_tx })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 热更新会话挂载的流程（官方 x.ai/session/update_flows）。
+#[tauri::command]
+pub async fn update_session_flows(
+    tab_id: String,
+    flows: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    crate::workbench::flows::register_flows(&flows)?;
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::UpdateFlows { flows, reply: reply_tx })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 async fn session_cmd_json(
@@ -737,8 +820,11 @@ pub async fn list_skills(
     cwd: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    session_cmd_json(&tab_id, &state, |reply| ActorCommand::ListSkills { cwd, reply })
-        .await
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::ListSkills {
+        cwd,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -748,8 +834,12 @@ pub async fn add_skill(
     cwd: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    session_cmd_json(&tab_id, &state, |reply| ActorCommand::AddSkill { path, cwd, reply })
-        .await
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::AddSkill {
+        path,
+        cwd,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -850,8 +940,8 @@ pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<Str
         ensure_within_workspace(&path, std::path::Path::new(&workspace_root))?;
 
     const MAX_PREVIEW_FILE_BYTES: u64 = 10 * 1024 * 1024; // 10MB 上限
-    let metadata = std::fs::metadata(&canonical_requested)
-        .map_err(|e| format!("读取文件信息失败: {e}"))?;
+    let metadata =
+        std::fs::metadata(&canonical_requested).map_err(|e| format!("读取文件信息失败: {e}"))?;
     if metadata.len() > MAX_PREVIEW_FILE_BYTES {
         return Err(format!(
             "文件过大（{} bytes），超过预览上限 {} bytes",
@@ -870,7 +960,6 @@ pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<Str
 pub fn save_artifact_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("保存文件失败: {e}"))
 }
-
 
 /// API Key 设置状态（不含明文值）。
 #[derive(serde::Serialize)]
@@ -958,7 +1047,10 @@ fn desktop_config_path() -> PathBuf {
 }
 
 fn norm_cwd_key(cwd: &str) -> String {
-    cwd.trim().replace('\\', "/").trim_end_matches('/').to_lowercase()
+    cwd.trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
 }
 
 fn load_config_root() -> Result<toml::Value, String> {
@@ -1215,9 +1307,7 @@ fn reasoning_efforts_for(model: &str, base_url: &str) -> &'static [&'static str]
         // Official Chat Completions: low / high / max (medium/xhigh map to high).
         &["low", "high", "max"]
     } else {
-        &[
-            "none", "minimal", "low", "medium", "high", "xhigh", "max",
-        ]
+        &["none", "minimal", "low", "medium", "high", "xhigh", "max"]
     }
 }
 
@@ -1296,7 +1386,6 @@ fn table_u64(t: &toml::map::Map<String, toml::Value>, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
-
 fn table_opt_f64(t: &toml::map::Map<String, toml::Value>, key: &str) -> Option<f64> {
     t.get(key)
         .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
@@ -1361,9 +1450,7 @@ fn parse_model_entries(root: &toml::Value) -> Vec<ModelEntryDto> {
                     a
                 }
             };
-            let laziness = t
-                .get("laziness_detector")
-                .and_then(|v| v.as_table());
+            let laziness = t.get("laziness_detector").and_then(|v| v.as_table());
             let laziness_enabled = laziness
                 .and_then(|l| l.get("enabled"))
                 .and_then(|v| v.as_bool())
@@ -1375,7 +1462,8 @@ fn parse_model_entries(root: &toml::Value) -> Vec<ModelEntryDto> {
                 .map(|n| n as u32)
                 .unwrap_or(0);
 
-            let supports_reasoning = table_opt_bool(t, "supports_reasoning_effort").unwrap_or(false)
+            let supports_reasoning = table_opt_bool(t, "supports_reasoning_effort")
+                .unwrap_or(false)
                 || t.get("reasoning_effort").is_some()
                 || t.get("reasoning_efforts")
                     .and_then(|v| v.as_array())
@@ -1424,11 +1512,7 @@ fn parse_tri_mode(t: &toml::map::Map<String, toml::Value>, key: &str) -> String 
         return String::new();
     };
     if let Some(b) = v.as_bool() {
-        return if b {
-            "dynamic".into()
-        } else {
-            "off".into()
-        };
+        return if b { "dynamic".into() } else { "off".into() };
     }
     if let Some(n) = v.as_integer() {
         if n >= 0 {
@@ -1464,10 +1548,11 @@ pub fn get_model_settings() -> Result<ModelSettings, String> {
             config_path,
         });
     }
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取 config.toml 失败: {e}"))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("读取 config.toml 失败: {e}"))?;
     // toml 0.9：必须用 from_str，不能用 str::parse::<Value>()（后者会把 [table] 当成非法）
-    let root: toml::Value = toml::from_str(&content)
-        .map_err(|e| format!("解析 config.toml 失败: {e}"))?;
+    let root: toml::Value =
+        toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))?;
     let default_id = root
         .get("models")
         .and_then(|m| m.get("default"))
@@ -1537,11 +1622,7 @@ fn validate_model_entry(entry: &ModelEntryDto) -> Result<(), String> {
     Ok(())
 }
 
-fn insert_opt_string(
-    tbl: &mut toml::map::Map<String, toml::Value>,
-    key: &str,
-    value: &str,
-) {
+fn insert_opt_string(tbl: &mut toml::map::Map<String, toml::Value>, key: &str, value: &str) {
     let v = value.trim();
     if v.is_empty() {
         tbl.remove(key);
@@ -1684,14 +1765,13 @@ fn upsert_model_entry(
 
     // 推理
     if entry.supports_reasoning_effort {
-        entry_tbl.insert("supports_reasoning_effort".into(), toml::Value::Boolean(true));
-        let effort = normalize_reasoning_effort(&entry.reasoning_effort)
-            .unwrap_or_default();
-        let effort = default_reasoning_effort_for(&entry.model, &entry.base_url, &effort);
         entry_tbl.insert(
-            "reasoning_effort".into(),
-            toml::Value::String(effort),
+            "supports_reasoning_effort".into(),
+            toml::Value::Boolean(true),
         );
+        let effort = normalize_reasoning_effort(&entry.reasoning_effort).unwrap_or_default();
+        let effort = default_reasoning_effort_for(&entry.model, &entry.base_url, &effort);
+        entry_tbl.insert("reasoning_effort".into(), toml::Value::String(effort));
         // 通用模型写满七档；DeepSeek 官方只认 low/high/max，避免把 none/minimal 写进菜单。
         let efforts = reasoning_efforts_for(&entry.model, &entry.base_url)
             .iter()
@@ -1722,8 +1802,16 @@ fn upsert_model_entry(
         entry_tbl.remove("laziness_detector");
     }
 
-    write_tri_mode(entry_tbl, "compactions_remaining", &entry.compactions_remaining);
-    write_tri_mode(entry_tbl, "compaction_at_tokens", &entry.compaction_at_tokens);
+    write_tri_mode(
+        entry_tbl,
+        "compactions_remaining",
+        &entry.compactions_remaining,
+    );
+    write_tri_mode(
+        entry_tbl,
+        "compaction_at_tokens",
+        &entry.compaction_at_tokens,
+    );
 
     let headers: toml::map::Map<String, toml::Value> = entry
         .extra_headers
@@ -1739,11 +1827,7 @@ fn upsert_model_entry(
     Ok(())
 }
 
-fn write_tri_mode(
-    tbl: &mut toml::map::Map<String, toml::Value>,
-    key: &str,
-    raw: &str,
-) {
+fn write_tri_mode(tbl: &mut toml::map::Map<String, toml::Value>, key: &str, raw: &str) {
     let s = raw.trim().to_ascii_lowercase();
     match s.as_str() {
         "" => {
@@ -1773,10 +1857,7 @@ fn write_tri_mode(
 /// - 提交列表中的 id：新建或更新（保留该段内未暴露字段）
 /// - 磁盘上有、但不在本次列表中的 id：**删除**（与设置 UI 列表一致）
 #[tauri::command]
-pub fn save_model_settings(
-    default_id: String,
-    models: Vec<ModelEntryDto>,
-) -> Result<(), String> {
+pub fn save_model_settings(default_id: String, models: Vec<ModelEntryDto>) -> Result<(), String> {
     if models.is_empty() {
         return Err("至少需要配置一个模型".into());
     }
@@ -1851,7 +1932,10 @@ pub fn save_model_settings(
 /// 热重载运行中 agent 的模型目录（写盘后调用，无需 restart_session）。
 #[tauri::command]
 pub async fn reload_models(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    send_cmd(&state, &tab_id, |reply| ActorCommand::ReloadModels { reply }).await
+    send_cmd(&state, &tab_id, |reply| ActorCommand::ReloadModels {
+        reply,
+    })
+    .await
 }
 
 /// 会话摘要（前端友好字段：列表来自 threads 索引）。
@@ -1975,6 +2059,14 @@ pub async fn search_sessions(
                 matched_fields: r.matched_fields,
             }
         })
+        .filter(|r| {
+            // 主聊天全部可搜；工具会话只有绑过 Flow / Agent 的进结果（点开走工作台）。
+            match crate::session_index::is_tool_session(&r.id) {
+                Ok(false) => true,
+                Ok(true) => crate::session_index::has_workbench_artifact(&r.id).unwrap_or(false),
+                Err(_) => true,
+            }
+        })
         .collect();
 
     Ok(SearchSessionsResultDto {
@@ -2027,7 +2119,9 @@ pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessa
 /// - 空会话已过滤
 /// - `limit`：可选上限
 /// 把官方 Summary 组装成本地索引行；list_sessions 全量重建与单条 upsert 共用同一份逻辑，避免两处字段映射各自漂移。
-pub(crate) fn thread_row_from_summary(s: &grok_session::Summary) -> crate::session_index::ThreadRow {
+pub(crate) fn thread_row_from_summary(
+    s: &grok_session::Summary,
+) -> crate::session_index::ThreadRow {
     let title = s
         .display_title_opt()
         .or_else(|| grok_session::get_session_first_prompt(s))
@@ -2074,7 +2168,10 @@ pub(crate) fn build_thread_row_by_id(session_id: &str) -> Option<crate::session_
 
 /// 列出会话（threads 排序）。纯读：只查已经维护好的本地索引，不再每次全量重建。
 #[tauri::command]
-pub async fn list_sessions(cwd: String, limit: Option<u32>) -> Result<Vec<SessionSummaryDto>, String> {
+pub async fn list_sessions(
+    cwd: String,
+    limit: Option<u32>,
+) -> Result<Vec<SessionSummaryDto>, String> {
     tokio::task::spawn_blocking(move || {
         let listed = crate::session_index::list_threads(&cwd, limit)?;
         Ok(listed
@@ -2091,6 +2188,23 @@ pub async fn list_sessions(cwd: String, limit: Option<u32>) -> Result<Vec<Sessio
     })
     .await
     .map_err(|e| format!("list_sessions 任务失败: {e}"))?
+}
+
+/// 标记会话为工具会话（flow-canvas / agents 等面板），默认不进侧栏历史。
+#[tauri::command]
+pub fn mark_tool_session(session_id: String) -> Result<(), String> {
+    crate::session_index::mark_tool_session(&session_id)
+}
+
+/// 取消工具会话标记（有产物的会话由 list_workbench_sessions 单独列出）。
+#[tauri::command]
+pub fn unmark_tool_session(session_id: String) -> Result<(), String> {
+    crate::session_index::unmark_tool_session(&session_id)
+}
+
+#[tauri::command]
+pub fn is_tool_session(session_id: String) -> Result<bool, String> {
+    crate::session_index::is_tool_session(&session_id)
 }
 
 /// 删除会话：走 Actor，保证删当前会话时先释放再删盘，避免文件锁失败。
@@ -2114,11 +2228,7 @@ pub async fn delete_session(
 
 /// 重命名会话标题（持久化到官方 summary.json + 索引）。
 #[tauri::command]
-pub async fn rename_session(
-    session_id: String,
-    cwd: String,
-    title: String,
-) -> Result<(), String> {
+pub async fn rename_session(session_id: String, cwd: String, title: String) -> Result<(), String> {
     grok_session::rename_session(&session_id, &cwd, &title)
         .await
         .map_err(|e| e.to_string())?;
@@ -2144,7 +2254,10 @@ pub async fn set_current_model(
 // ── 组装单（半插件化 P0）──
 
 /// 解析并校验前端传来的组装单 JSON（严格模式：未知字段/坏规则报错）。
-fn parse_composition_json(value: serde_json::Value, source: &str) -> Result<grok_session::composition::Composition, String> {
+fn parse_composition_json(
+    value: serde_json::Value,
+    source: &str,
+) -> Result<grok_session::composition::Composition, String> {
     let mut value = value;
     // 旧草稿可能带已删除的 workflows.auto_run。
     if let Some(obj) = value.as_object_mut() {
@@ -2170,8 +2283,8 @@ pub async fn apply_composition(
     let composition = parse_composition_json(composition, "apply_composition")?;
     crate::workbench::flows::register_flows(&composition.flows)?;
     if let Some(sid) = session_id.as_deref().filter(|s| !s.is_empty()) {
-        let json = serde_json::to_string(&composition)
-            .map_err(|e| format!("序列化组装单失败: {e}"))?;
+        let json =
+            serde_json::to_string(&composition).map_err(|e| format!("序列化组装单失败: {e}"))?;
         crate::session_index::set_thread_composition(sid, &json)?;
     }
     send_cmd(&state, &tab_id, |reply| ActorCommand::ApplyComposition {
@@ -2206,8 +2319,9 @@ pub async fn get_composition(
     let composition = match overlay {
         Some(c) => c,
         None => {
-            let workspace = grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
-                .map_err(|e| format!("{e:#}"))?;
+            let workspace =
+                grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
+                    .map_err(|e| format!("{e:#}"))?;
             workspace.unwrap_or_default()
         }
     };
@@ -2216,15 +2330,20 @@ pub async fn get_composition(
 
 /// 保存用户级组装单到 `$GROK_HOME/compositions/<name>.yml`（YAML）。
 #[tauri::command]
-pub async fn save_composition(name: String, yaml: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn save_composition(
+    name: String,
+    yaml: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let _ = &state;
     let name = name.trim();
     if name.is_empty() || name.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
         return Err(format!("组装单名无效: {name:?}"));
     }
     // 先解析校验再落盘（fail loud，避免坏文件覆盖好文件）。
-    let composition = grok_session::composition::parse_composition(&yaml, &format!("save_composition:{name}"))
-        .map_err(|e| format!("解析组装单失败: {e:#}"))?;
+    let composition =
+        grok_session::composition::parse_composition(&yaml, &format!("save_composition:{name}"))
+            .map_err(|e| format!("解析组装单失败: {e:#}"))?;
     composition
         .validate()
         .map_err(|e| format!("组装单校验失败: {e:#}"))?;
@@ -2272,7 +2391,10 @@ pub fn list_compositions() -> Result<Vec<CompositionPresetDto>, String> {
         let Ok(c) = grok_session::composition::parse_composition(&yaml, stem) else {
             continue;
         };
-        let id = c.id.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| stem.to_string());
+        let id =
+            c.id.clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| stem.to_string());
         out.push(CompositionPresetDto {
             id,
             model: c.model.name,
@@ -2312,7 +2434,11 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     }
     entries.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
-            return if a.is_dir { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+            return if a.is_dir {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
         }
         a.name.to_lowercase().cmp(&b.name.to_lowercase())
     });
@@ -2325,10 +2451,14 @@ pub fn read_file_text(path: String, state: State<'_, AppState>) -> Result<String
     let canonical_requested = ensure_within_workspace(&path, &workspace_root)?;
 
     const MAX_BYTES: u64 = 10 * 1024 * 1024; // 10MB 上限
-    let meta = std::fs::metadata(&canonical_requested)
-        .map_err(|e| format!("读取文件信息失败: {e}"))?;
+    let meta =
+        std::fs::metadata(&canonical_requested).map_err(|e| format!("读取文件信息失败: {e}"))?;
     if meta.len() > MAX_BYTES {
-        return Err(format!("文件过大（{} bytes），上限 {} bytes", meta.len(), MAX_BYTES));
+        return Err(format!(
+            "文件过大（{} bytes），上限 {} bytes",
+            meta.len(),
+            MAX_BYTES
+        ));
     }
     std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
 }
@@ -2441,8 +2571,7 @@ fn collect_file_working_diff(
 
     const MAX_BYTES: u64 = 2 * 1024 * 1024;
     let new_text = if exists && canonical.is_file() {
-        let meta = std::fs::metadata(&canonical)
-            .map_err(|e| format!("读取文件信息失败: {e}"))?;
+        let meta = std::fs::metadata(&canonical).map_err(|e| format!("读取文件信息失败: {e}"))?;
         if meta.len() > MAX_BYTES {
             return Err(format!(
                 "文件过大（{} bytes），差异上限 {} bytes",
@@ -2663,7 +2792,6 @@ pub async fn workspace_changes(
         .map_err(|e| format!("workspace_changes 任务失败: {e}"))?
 }
 
-
 /// 获取当前会话可撤销的历史点列表
 #[tauri::command]
 pub async fn get_rewind_points(
@@ -2672,15 +2800,16 @@ pub async fn get_rewind_points(
 ) -> Result<Vec<grok_session::RewindPointInfo>, String> {
     let cmd_tx = {
         let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
-        guard.get(&tab_id).cloned().ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
     };
     let (reply_tx, reply_rx) = oneshot::channel();
     cmd_tx
         .send(ActorCommand::GetRewindPoints { reply: reply_tx })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 /// 执行会话撤销到指定历史点
@@ -2694,7 +2823,10 @@ pub async fn execute_rewind(
 ) -> Result<grok_session::RewindResponse, String> {
     let cmd_tx = {
         let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
-        guard.get(&tab_id).cloned().ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
     };
     let (reply_tx, reply_rx) = oneshot::channel();
     cmd_tx
@@ -2705,16 +2837,12 @@ pub async fn execute_rewind(
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx
-        .await
-        .map_err(|_| "会话线程无响应".to_string())?
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
 #[cfg(test)]
 mod deepseek_preset_tests {
-    use super::{
-        default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for,
-    };
+    use super::{default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for};
 
     #[test]
     fn detects_official_host_and_model_prefix() {

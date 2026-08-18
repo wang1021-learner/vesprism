@@ -46,6 +46,7 @@ pub enum ActorCommand {
     SendPrompt {
         text: String,
         prompt_id: String,
+        attachments: Vec<grok_session::PromptAttach>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 取消当前生成。
@@ -170,6 +171,11 @@ pub enum ActorCommand {
     ListWorkflows {
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
+    /// 热更新本会话挂载的流程（x.ai/session/update_flows）
+    UpdateFlows {
+        flows: Vec<String>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     GitWorkspaceChanges {
         reply: oneshot::Sender<Result<Vec<serde_json::Value>, String>>,
     },
@@ -211,7 +217,9 @@ pub struct AppState {
     /// 本 tab 强制走沙箱（/sandbox），不写盘
     pub sandbox_tabs: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<TabId>>>,
     /// tab -> 隔离 worktree 绑定
-    pub sandbox_binds: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<TabId, crate::sandbox::SandboxBind>>>,
+    pub sandbox_binds: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<TabId, crate::sandbox::SandboxBind>>,
+    >,
     /// 每 Tab 交互式 PTY（关 Tab 杀；关应用 Job/drop 回收）
     pub pty: std::sync::Arc<crate::pty::PtyManager>,
 }
@@ -221,9 +229,13 @@ pub struct AppState {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FrontendEvent {
     /// AI 文本片段。
-    AgentTextChunk { text: String },
+    AgentTextChunk {
+        text: String,
+    },
     /// AI 思考片段。
-    AgentThoughtChunk { text: String },
+    AgentThoughtChunk {
+        text: String,
+    },
     /// 用户消息回显。
     UserTextChunk {
         text: String,
@@ -240,11 +252,17 @@ pub enum FrontendEvent {
         prompt_id: Option<String>,
     },
     /// 上下文超限（终态失败，需要用户压缩会话或开始新会话）。
-    ContextOverflow { message: String },
+    ContextOverflow {
+        message: String,
+    },
     /// 速率限制重试已耗尽。
-    RateLimitExceeded { message: String },
+    RateLimitExceeded {
+        message: String,
+    },
     /// 认证已失效，需要重新登录。
-    AuthExpired { message: String },
+    AuthExpired {
+        message: String,
+    },
     /// 正在自动重试中（非终态，仅用于前端展示进度）。
     RetryInProgress {
         attempt: u32,
@@ -252,15 +270,25 @@ pub enum FrontendEvent {
         reason: String,
     },
     /// 其它调试信息。
-    Other { debug: String },
+    Other {
+        debug: String,
+    },
     /// 新工具调用（完整快照）。
-    ToolCall { tool: ToolCallInfo },
+    ToolCall {
+        tool: ToolCallInfo,
+    },
     /// 工具调用增量更新。
-    ToolCallUpdate { update: ToolCallUpdateInfo },
+    ToolCallUpdate {
+        update: ToolCallUpdateInfo,
+    },
     /// 上下文 token 用量（累计估计）。
-    TokenUsage { total_tokens: u64 },
+    TokenUsage {
+        total_tokens: u64,
+    },
     /// 会话标题更新（引擎 LLM 生成 / 手动改名）。
-    TitleChanged { title: String },
+    TitleChanged {
+        title: String,
+    },
     /// 官方 git HEAD 变化通知（分支切换等；前端用于自动刷新右栏差异）。
     GitHeadChanged {
         session_id: String,
@@ -357,16 +385,26 @@ pub enum FrontendEvent {
         terminal_id: String,
     },
     /// 会话状态变更。
-    StatusChanged { status: SessionStatus },
+    StatusChanged {
+        status: SessionStatus,
+    },
     /// 当前会话 ID 变化（新建/重启/恢复后广播）。
-    SessionIdChanged { session_id: String },
+    SessionIdChanged {
+        session_id: String,
+    },
     /// 历史回放事件已全部转发完毕（前端据此一次落盘 transcript）。
-    ReplayComplete { session_id: String },
+    ReplayComplete {
+        session_id: String,
+    },
     /// TabActor 已重建为空壳（第 attempt 次，手动 RestartTab 为 0 或 panic 自动重建），
     /// 前端需要用自己保存的该 tab 状态（cwd/session_id/model）重放会话，并清理挂起的 UI 状态。
-    TabRecovering { attempt: u32 },
+    TabRecovering {
+        attempt: u32,
+    },
     /// 连续 panic 超过重试上限，不再自动重建，需要用户手动操作重连。
-    TabFailed { attempts: u32 },
+    TabFailed {
+        attempts: u32,
+    },
     /// 本会话在隔离 git worktree 中执行
     SandboxActivated {
         origin_cwd: String,
@@ -434,7 +472,11 @@ fn emit(app: &AppHandle, tab_id: &str, event: FrontendEvent) {
 
 /// 单个 tab 的会话 Actor：在 tab 专属线程的 LocalSet 中永久循环。
 /// 当 cmd_rx 的所有 sender 被释放（CloseTab 已从共享表移除）时优雅退出。
-pub async fn run_tab_actor(app: AppHandle, tab_id: TabId, mut cmd_rx: mpsc::UnboundedReceiver<ActorCommand>) {
+pub async fn run_tab_actor(
+    app: AppHandle,
+    tab_id: TabId,
+    mut cmd_rx: mpsc::UnboundedReceiver<ActorCommand>,
+) {
     let mut session: Option<GrokSession> = None;
     let mut status_rx: Option<tokio::sync::watch::Receiver<SessionStatus>> = None;
     // 待处理的权限 oneshot，key 为 request_id。
@@ -546,12 +588,20 @@ async fn handle_command(
                 .await;
             }
         }
-        ActorCommand::SendPrompt { text, prompt_id, reply } => {
+        ActorCommand::SendPrompt {
+            text,
+            prompt_id,
+            attachments,
+            reply,
+        } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
             };
-            match s.send_prompt(text, prompt_id).await {
+            match s
+                .send_prompt_with_attachments(text, attachments, prompt_id)
+                .await
+            {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
@@ -583,10 +633,7 @@ async fn handle_command(
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
             };
-            match s
-                .set_model(model_id, reasoning_effort.as_deref())
-                .await
-            {
+            match s.set_model(model_id, reasoning_effort.as_deref()).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
@@ -700,7 +747,11 @@ async fn handle_command(
                 return;
             };
             match s
-                .fork_session(&s.session_id(), &std::path::Path::new(&cwd), new_session_id.as_deref())
+                .fork_session(
+                    &s.session_id(),
+                    &std::path::Path::new(&cwd),
+                    new_session_id.as_deref(),
+                )
                 .await
             {
                 Ok(new_id) => {
@@ -789,10 +840,7 @@ async fn handle_command(
                 }
             }
         }
-        ActorCommand::DeleteMcpServer {
-            server_name,
-            reply,
-        } => {
+        ActorCommand::DeleteMcpServer { server_name, reply } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
@@ -831,6 +879,20 @@ async fn handle_command(
                 }
                 Err(e) => {
                     let _ = reply.send(Err(format!("列出工作流失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::UpdateFlows { flows, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.update_flows(&flows).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("更新会话流程挂载失败: {e}")));
                 }
             }
         }
@@ -988,7 +1050,13 @@ async fn handle_command(
             *status_rx = None;
             pending_permissions.clear();
 
-            emit(app, tab_id, FrontendEvent::StatusChanged { status: SessionStatus::Initializing });
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::StatusChanged {
+                    status: SessionStatus::Initializing,
+                },
+            );
             match GrokSession::resume(session_id, cwd.clone(), restore_code).await {
                 Ok(mut s) => {
                     *status_rx = Some(s.subscribe_status());
@@ -1007,14 +1075,43 @@ async fn handle_command(
                     .await;
                     replay_composition_on_session(&s, &sid, &cwd).await;
                     *session = Some(s);
-                    emit(app, tab_id, FrontendEvent::StatusChanged { status: SessionStatus::Idle });
-                    emit(app, tab_id, FrontendEvent::SessionIdChanged { session_id: sid.clone() });
-                    emit(app, tab_id, FrontendEvent::ReplayComplete { session_id: sid });
+                    emit(
+                        app,
+                        tab_id,
+                        FrontendEvent::StatusChanged {
+                            status: SessionStatus::Idle,
+                        },
+                    );
+                    emit(
+                        app,
+                        tab_id,
+                        FrontendEvent::SessionIdChanged {
+                            session_id: sid.clone(),
+                        },
+                    );
+                    emit(
+                        app,
+                        tab_id,
+                        FrontendEvent::ReplayComplete { session_id: sid },
+                    );
                     let _ = reply.send(Ok(()));
                 }
                 Err(e) => {
-                    emit(app, tab_id, FrontendEvent::Error { message: format!("恢复会话失败: {e}"), prompt_id: None });
-                    emit(app, tab_id, FrontendEvent::StatusChanged { status: SessionStatus::Ended });
+                    emit(
+                        app,
+                        tab_id,
+                        FrontendEvent::Error {
+                            message: format!("恢复会话失败: {e}"),
+                            prompt_id: None,
+                        },
+                    );
+                    emit(
+                        app,
+                        tab_id,
+                        FrontendEvent::StatusChanged {
+                            status: SessionStatus::Ended,
+                        },
+                    );
                     let _ = reply.send(Err(e.to_string()));
                 }
             }
@@ -1103,7 +1200,10 @@ async fn begin_fresh_session(
     reply: oneshot::Sender<Result<(), String>>,
     discard_blank_old: bool,
 ) {
-    let persist_cwd = sandbox_origin.as_deref().unwrap_or(cwd.as_str()).to_string();
+    let persist_cwd = sandbox_origin
+        .as_deref()
+        .unwrap_or(cwd.as_str())
+        .to_string();
     // 销毁旧会话：drop 关闭内存双工管道，底层 agent 任务应随之退出
     if let Some(old_session) = session.take() {
         let old_id = old_session.session_id();
@@ -1132,11 +1232,12 @@ async fn begin_fresh_session(
             status: SessionStatus::Initializing,
         },
     );
-    let seed_flows = grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
-        .ok()
-        .flatten()
-        .map(|c| c.flows)
-        .filter(|ids| !ids.is_empty());
+    let seed_flows =
+        grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
+            .ok()
+            .flatten()
+            .map(|c| c.flows)
+            .filter(|ids| !ids.is_empty());
     match GrokSession::start_with_flows(cwd.clone(), seed_flows.unwrap_or_default()).await {
         Ok(s) => {
             *status_rx = Some(s.subscribe_status());
@@ -1150,7 +1251,11 @@ async fn begin_fresh_session(
                     status: SessionStatus::Idle,
                 },
             );
-            emit(app, tab_id, FrontendEvent::SessionIdChanged { session_id: sid });
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::SessionIdChanged { session_id: sid },
+            );
             if let Some(origin) = sandbox_origin.clone() {
                 emit(
                     app,
@@ -1200,11 +1305,12 @@ async fn replay_composition_on_session(s: &GrokSession, session_id: &str, cwd: &
         });
     let composition = match overlay {
         Some(c) => c,
-        None => match grok_session::composition::load_workspace_composition(std::path::Path::new(cwd))
-        {
-            Ok(Some(c)) => c,
-            _ => return,
-        },
+        None => {
+            match grok_session::composition::load_workspace_composition(std::path::Path::new(cwd)) {
+                Ok(Some(c)) => c,
+                _ => return,
+            }
+        }
     };
     if let Err(e) = crate::workbench::flows::register_flows(&composition.flows) {
         eprintln!("[vesprism] 注册组装单流程失败: {e}");
@@ -1245,7 +1351,14 @@ async fn drain_session_events_until_quiet(
                 n += 1;
                 continue;
             }
-            forward_event(app, tab_id, ev, pending, next_id, current_session_id.clone());
+            forward_event(
+                app,
+                tab_id,
+                ev,
+                pending,
+                next_id,
+                current_session_id.clone(),
+            );
             n += 1;
         }
         if n > 0 {
@@ -1298,7 +1411,11 @@ fn forward_event(
             }
         }
         SessionEvent::UserTextChunk { text, prompt_id } => {
-            emit(app, tab_id, FrontendEvent::UserTextChunk { text, prompt_id });
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::UserTextChunk { text, prompt_id },
+            );
         }
         SessionEvent::TurnEnded {
             stop_reason,
@@ -1571,11 +1688,7 @@ fn forward_event(
             );
         }
         SessionEvent::TerminalReleased { terminal_id } => {
-            emit(
-                app,
-                tab_id,
-                FrontendEvent::TerminalReleased { terminal_id },
-            );
+            emit(app, tab_id, FrontendEvent::TerminalReleased { terminal_id });
         }
     }
 }
@@ -1639,7 +1752,9 @@ async fn run_supervisor(
     fn spawn_tab(
         app: &AppHandle,
         tab_id: TabId,
-        tabs: &std::sync::Arc<std::sync::Mutex<HashMap<TabId, mpsc::UnboundedSender<ActorCommand>>>>,
+        tabs: &std::sync::Arc<
+            std::sync::Mutex<HashMap<TabId, mpsc::UnboundedSender<ActorCommand>>>,
+        >,
         exited_tx: &mpsc::UnboundedSender<TabExitedMsg>,
     ) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<ActorCommand>();
@@ -1655,7 +1770,10 @@ async fn run_supervisor(
         let tab_id3 = tab_id.clone();
         tokio::task::spawn_local(async move {
             let result = handle.await;
-            let _ = exited_tx2.send(TabExitedMsg { tab_id: tab_id3, result });
+            let _ = exited_tx2.send(TabExitedMsg {
+                tab_id: tab_id3,
+                result,
+            });
         });
     }
 

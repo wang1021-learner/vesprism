@@ -5,7 +5,7 @@ mod session_index;
 mod state;
 mod workbench;
 
-use state::{spawn_supervisor, AppState};
+use state::{AppState, spawn_supervisor};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -35,8 +35,7 @@ pub fn run() {
     }
 
     if !desktop_grok_home.exists() {
-        std::fs::create_dir_all(&desktop_grok_home)
-            .expect("创建隔离配置目录失败");
+        std::fs::create_dir_all(&desktop_grok_home).expect("创建隔离配置目录失败");
     }
 
     // SAFETY: 此时进程尚处于单线程启动阶段，早于任何读取 GROK_HOME 的代码路径
@@ -56,10 +55,7 @@ pub fn run() {
         if let Some(legacy) = legacy {
             if legacy.is_file() {
                 match std::fs::copy(&legacy, &secrets_env) {
-                    Ok(_) => eprintln!(
-                        "[vesprism] 已将旧版密钥迁移到 {}",
-                        secrets_env.display()
-                    ),
+                    Ok(_) => eprintln!("[vesprism] 已将旧版密钥迁移到 {}", secrets_env.display()),
                     Err(e) => eprintln!(
                         "[vesprism] 迁移旧版 .env 失败（{} → {}）: {e}",
                         legacy.display(),
@@ -73,10 +69,7 @@ pub fn run() {
     // 仅从用户隔离目录加载密钥（不扫描仓库内相对路径）。
     if secrets_env.is_file() {
         if let Err(e) = dotenvy::from_path_override(&secrets_env) {
-            eprintln!(
-                "[vesprism] 加载 {} 失败: {e}",
-                secrets_env.display()
-            );
+            eprintln!("[vesprism] 加载 {} 失败: {e}", secrets_env.display());
         }
         commands::harden_env_file_permissions(&secrets_env);
     }
@@ -97,8 +90,12 @@ pub fn run() {
                 tabs,
                 supervisor_tx,
                 workspace_cwd_override: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                sandbox_tabs: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-                sandbox_binds: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                sandbox_tabs: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashSet::new(),
+                )),
+                sandbox_binds: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
                 pty: std::sync::Arc::new(crate::pty::PtyManager::new()),
             });
 
@@ -118,6 +115,7 @@ pub fn run() {
             commands::restart_tab,
             commands::workspace_cwd,
             commands::set_workspace_cwd,
+            commands::scratch_cwd,
             commands::get_security_policy,
             commands::set_security_policy,
             commands::enable_tab_sandbox,
@@ -136,6 +134,7 @@ pub fn run() {
             commands::delete_mcp_server,
             commands::list_session_commands,
             commands::list_workflows,
+            commands::update_session_flows,
             commands::list_skills,
             commands::add_skill,
             commands::remove_skill,
@@ -150,6 +149,9 @@ pub fn run() {
             commands::load_session,
             commands::list_sessions,
             commands::search_sessions,
+            commands::mark_tool_session,
+            commands::unmark_tool_session,
+            commands::is_tool_session,
             commands::get_session_messages,
             commands::delete_session,
             commands::rename_session,
@@ -164,10 +166,15 @@ pub fn run() {
             workbench::flows::delete_flow,
             workbench::flows::export_flow,
             workbench::flows::import_flow,
+            workbench::flows::purge_rerun_sidecars,
             workbench::agents::list_agents,
             workbench::agents::get_agent,
             workbench::agents::save_agent,
             workbench::agents::delete_agent,
+            workbench::bindings::get_workbench_binding,
+            workbench::bindings::list_workbench_bindings,
+            workbench::bindings::list_workbench_sessions,
+            workbench::bindings::bind_workbench_artifact,
             commands::read_file_for_preview,
             commands::save_artifact_file,
             commands::list_dir,

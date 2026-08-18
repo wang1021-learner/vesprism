@@ -4,4 +4,5 @@
 //! `apply_composition`。聊天区继续用 grok-session 组装单。
 
 pub mod agents;
+pub mod bindings;
 pub mod flows;
