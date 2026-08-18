@@ -67,13 +67,19 @@ pub fn append_output_with_limit(current: &mut String, chunk: &str, limit: Option
 fn build_command(command: &str) -> (String, Vec<String>) {
     #[cfg(windows)]
     {
-        ("cmd".to_string(), vec!["/C".to_string(), command.to_string()])
+        (
+            "cmd".to_string(),
+            vec!["/C".to_string(), command.to_string()],
+        )
     }
     #[cfg(not(windows))]
     {
         match shlex::split(command) {
             Some(parts) if !parts.is_empty() => (parts[0].clone(), parts[1..].to_vec()),
-            _ => ("/bin/sh".to_string(), vec!["-c".to_string(), command.to_string()]),
+            _ => (
+                "/bin/sh".to_string(),
+                vec!["-c".to_string(), command.to_string()],
+            ),
         }
     }
 }
@@ -107,16 +113,16 @@ pub async fn spawn_terminal(
     cmd.kill_on_drop(true);
 
     // 引擎未指定上限时与卡片一致：64KB 砍头留尾。
-    let output_byte_limit = Some(output_byte_limit.unwrap_or(DEFAULT_OUTPUT_BYTE_LIMIT).min(DEFAULT_OUTPUT_BYTE_LIMIT));
+    let output_byte_limit = Some(
+        output_byte_limit
+            .unwrap_or(DEFAULT_OUTPUT_BYTE_LIMIT)
+            .min(DEFAULT_OUTPUT_BYTE_LIMIT),
+    );
 
     let mut child = cmd.spawn().map_err(|e| format!("启动终端进程失败: {e}"))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let terminal_id = format!(
-        "term-{}-{}",
-        session_id.to_string(),
-        uuid_simple(&command)
-    );
+    let terminal_id = format!("term-{}-{}", session_id.to_string(), uuid_simple(&command));
 
     let entry = TerminalEntry {
         output: String::new(),
@@ -176,8 +182,7 @@ pub async fn spawn_terminal(
         };
         let status = match child {
             Some(mut child) => match child.wait().await {
-                Ok(status) => TerminalExitStatus::new()
-                    .exit_code(status.code().map(|c| c as u32)),
+                Ok(status) => TerminalExitStatus::new().exit_code(status.code().map(|c| c as u32)),
                 Err(_) => TerminalExitStatus::new().exit_code(Some(1)),
             },
             None => TerminalExitStatus::new(),
@@ -222,7 +227,9 @@ async fn read_stream<R: tokio::io::AsyncRead + Unpin>(
                 let chunk = String::from_utf8_lossy(&buf[..n]);
                 let (snapshot, truncated) = {
                     let mut guard = registry.borrow_mut();
-                    let Some(entry) = guard.get_mut(&terminal_id) else { break };
+                    let Some(entry) = guard.get_mut(&terminal_id) else {
+                        break;
+                    };
                     let t = append_output_with_limit(&mut entry.output, &chunk, limit);
                     entry.truncated = entry.truncated || t;
                     (entry.output.clone(), entry.truncated)
@@ -347,7 +354,10 @@ mod tests {
             "must stay within the limit (got {} bytes): {out:?}",
             out.len()
         );
-        assert!(out.is_char_boundary(out.len()), "output must stay valid UTF-8");
+        assert!(
+            out.is_char_boundary(out.len()),
+            "output must stay valid UTF-8"
+        );
     }
 
     #[test]

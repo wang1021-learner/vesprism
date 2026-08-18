@@ -8,14 +8,19 @@
 //! 因为 ACP 客户端与 agent 任务都使用 `spawn_local`。
 
 mod display_messages;
-pub use display_messages::{load_display_messages, load_display_messages_from_session_dir, DisplayMessage};
+pub use display_messages::{
+    DisplayMessage, load_display_messages, load_display_messages_from_session_dir,
+};
+
+mod prompt_attach;
+pub use prompt_attach::{PromptAttach, build_prompt_blocks};
 
 pub mod composition;
 pub mod policy;
 mod terminal;
 
 use agent_client_protocol::{
-    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection,
+    Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ContentBlock,
     CreateTerminalRequest, CreateTerminalResponse, ExtNotification, ExtRequest, ExtResponse,
     InitializeRequest, KillTerminalRequest, KillTerminalResponse, LoadSessionRequest, ModelId,
     NewSessionRequest, PromptRequest, ProtocolVersion, ReleaseTerminalRequest,
@@ -33,7 +38,9 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xai_grok_shell::agent::app::spawn_agent_local;
 use xai_grok_shell::agent::config::Config as AgentConfig;
 use xai_grok_shell::extensions::notification::{GoalClassifierVerdict, RetryState};
-pub use xai_grok_shell::session::{RewindConflictInfo, RewindMode, RewindPointInfo, RewindResponse};
+pub use xai_grok_shell::session::{
+    RewindConflictInfo, RewindMode, RewindPointInfo, RewindResponse,
+};
 
 /// 会话摘要（来自官方持久化层，直接复用不重新定义）。
 pub use xai_grok_shell::session::persistence::Summary;
@@ -264,17 +271,11 @@ pub enum SessionEvent {
         prompt_id: Option<String>,
     },
     /// 上下文超限（不可重试的终态失败，error_type == "context_length"）。
-    ContextOverflow {
-        message: String,
-    },
+    ContextOverflow { message: String },
     /// 速率限制耗尽重试（HTTP 429）。
-    RateLimitExceeded {
-        message: String,
-    },
+    RateLimitExceeded { message: String },
     /// 认证失效，需要重新登录（error_type == "auth"）。
-    AuthExpired {
-        message: String,
-    },
+    AuthExpired { message: String },
     /// 正在重试中，用于前端展示重试进度而非静默等待。
     RetryInProgress {
         attempt: u32,
@@ -288,13 +289,9 @@ pub enum SessionEvent {
     /// 工具调用状态/内容更新。
     ToolCallUpdate(ToolCallUpdateInfo),
     /// 上下文用量（来自 session/update `_meta.totalTokens`，会话累计估计）。
-    TokenUsage {
-        total_tokens: u64,
-    },
+    TokenUsage { total_tokens: u64 },
     /// 会话标题已生成/更新（官方引擎 LLM 自动生成，或用户手动改名）。
-    TitleChanged {
-        title: String,
-    },
+    TitleChanged { title: String },
     /// 官方 git HEAD 变化通知（`x.ai/git_head_changed`；分支切换等）。
     GitHeadChanged {
         session_id: String,
@@ -391,9 +388,7 @@ pub enum SessionEvent {
         session_id: String,
     },
     /// 引擎 `terminal/release`：卡片应移除。
-    TerminalReleased {
-        terminal_id: String,
-    },
+    TerminalReleased { terminal_id: String },
 }
 
 /// 问卷选项（与 ACP camelCase 对齐）。
@@ -423,13 +418,28 @@ impl std::fmt::Debug for SessionEvent {
             Self::AgentTextChunk(t) => write!(f, "AgentTextChunk({:?})", t),
             Self::AgentThoughtChunk(t) => write!(f, "AgentThoughtChunk({:?})", t),
             Self::UserTextChunk { text, prompt_id } => {
-                write!(f, "UserTextChunk {{ text: {:?}, prompt_id: {:?} }}", text, prompt_id)
+                write!(
+                    f,
+                    "UserTextChunk {{ text: {:?}, prompt_id: {:?} }}",
+                    text, prompt_id
+                )
             }
-            Self::TurnEnded { stop_reason, prompt_id } => {
-                write!(f, "TurnEnded {{ stop_reason: {:?}, prompt_id: {:?} }}", stop_reason, prompt_id)
+            Self::TurnEnded {
+                stop_reason,
+                prompt_id,
+            } => {
+                write!(
+                    f,
+                    "TurnEnded {{ stop_reason: {:?}, prompt_id: {:?} }}",
+                    stop_reason, prompt_id
+                )
             }
             Self::Error { message, prompt_id } => {
-                write!(f, "Error {{ message: {:?}, prompt_id: {:?} }}", message, prompt_id)
+                write!(
+                    f,
+                    "Error {{ message: {:?}, prompt_id: {:?} }}",
+                    message, prompt_id
+                )
             }
             Self::ContextOverflow { message } => {
                 write!(f, "ContextOverflow {{ message: {:?} }}", message)
@@ -440,7 +450,11 @@ impl std::fmt::Debug for SessionEvent {
             Self::AuthExpired { message } => {
                 write!(f, "AuthExpired {{ message: {:?} }}", message)
             }
-            Self::RetryInProgress { attempt, max_retries, reason } => {
+            Self::RetryInProgress {
+                attempt,
+                max_retries,
+                reason,
+            } => {
                 write!(
                     f,
                     "RetryInProgress {{ attempt: {}, max_retries: {}, reason: {:?} }}",
@@ -467,7 +481,9 @@ impl std::fmt::Debug for SessionEvent {
                 "GitHeadChanged {{ session_id: {:?}, branch: {:?} }}",
                 session_id, branch
             ),
-            Self::TaskBackgrounded { task_id, command, .. } => write!(
+            Self::TaskBackgrounded {
+                task_id, command, ..
+            } => write!(
                 f,
                 "TaskBackgrounded {{ task_id: {:?}, command: {:?} }}",
                 task_id, command
@@ -570,8 +586,7 @@ struct GuiClient {
     /// 组装单权限策略（apply_composition 时设置；None = 无规则，全部走审批条）。
     policy: std::sync::Arc<std::sync::RwLock<Option<crate::policy::PolicyEngine>>>,
     /// jike: per-agent deny 规则（child_session_id → 仅含 deny 的 PolicyEngine）。
-    /// 由 WorkflowUpdated 里每个 agent 的 permission_rules 维护，
-    /// 在子会话权限自动放行之前拦截。
+    /// 优先由 SubagentSpawned 在子会话第一下工具前写入；WorkflowUpdated 再对齐。
     per_agent_deny: std::sync::Arc<
         std::sync::RwLock<std::collections::HashMap<String, crate::policy::PolicyEngine>>,
     >,
@@ -768,7 +783,8 @@ impl Client for GuiClient {
         &self,
         args: WaitForTerminalExitRequest,
     ) -> agent_client_protocol::Result<WaitForTerminalExitResponse> {
-        let Some(exit) = terminal::wait_terminal_exit(&self.terminals, &args.terminal_id.to_string()).await
+        let Some(exit) =
+            terminal::wait_terminal_exit(&self.terminals, &args.terminal_id.to_string()).await
         else {
             return Err(agent_client_protocol::Error::method_not_found());
         };
@@ -826,10 +842,7 @@ impl Client for GuiClient {
         Ok(())
     }
 
-    async fn ext_notification(
-        &self,
-        args: ExtNotification,
-    ) -> agent_client_protocol::Result<()> {
+    async fn ext_notification(&self, args: ExtNotification) -> agent_client_protocol::Result<()> {
         match args.method.as_ref() {
             "x.ai/session_notification" => {}
             "x.ai/git_head_changed" => {
@@ -900,8 +913,35 @@ impl Client for GuiClient {
                     subagent_type,
                     description,
                     model,
+                    permission_rules,
                     ..
                 } => {
+                    // jike: spawn 通知早于子会话 Prompt，此处挂 deny，第一下工具就能拦。
+                    {
+                        let mut deny = self
+                            .per_agent_deny
+                            .write()
+                            .unwrap_or_else(|e| e.into_inner());
+                        if permission_rules.is_empty() {
+                            deny.remove(&child_session_id);
+                        } else {
+                            let rules: Vec<crate::policy::PermissionRule> = permission_rules
+                                .iter()
+                                .filter(|m| !m.trim().is_empty())
+                                .map(|m| crate::policy::PermissionRule {
+                                    matcher: m.clone(),
+                                    policy: crate::policy::Policy::Deny,
+                                })
+                                .collect();
+                            deny.insert(
+                                child_session_id.clone(),
+                                crate::policy::PolicyEngine::new(
+                                    crate::policy::PermissionMode::Ask,
+                                    rules,
+                                ),
+                            );
+                        }
+                    }
                     let _ = self
                         .event_tx
                         .send(SessionEvent::SubagentSpawned {
@@ -1167,10 +1207,7 @@ impl Client for GuiClient {
         Ok(())
     }
 
-    async fn ext_method(
-        &self,
-        args: ExtRequest,
-    ) -> agent_client_protocol::Result<ExtResponse> {
+    async fn ext_method(&self, args: ExtRequest) -> agent_client_protocol::Result<ExtResponse> {
         if args.method.as_ref() != "x.ai/ask_user_question" {
             // 未实现的扩展方法：返回 null，与 ACP Client 默认行为一致。
             return Ok(ExtResponse::new(
@@ -1255,7 +1292,10 @@ fn format_permission_description(tc: &agent_client_protocol::ToolCallUpdate) -> 
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let kind = fields.kind.map(tool_kind_str).unwrap_or_else(|| "other".into());
+    let kind = fields
+        .kind
+        .map(tool_kind_str)
+        .unwrap_or_else(|| "other".into());
     let kind_label = match kind.as_str() {
         "execute" => "运行终端命令",
         "read" => "读取文件",
@@ -1297,15 +1337,17 @@ fn format_permission_description(tc: &agent_client_protocol::ToolCallUpdate) -> 
             || t.starts_with("execute ")
             || (t.starts_with('`') && t.ends_with('`'));
         let duplicates_detail = !detail.is_empty()
-            && (t == detail
-                || t.contains(detail.as_str())
-                || detail.contains(t.trim_matches('`')));
+            && (t == detail || t.contains(detail.as_str()) || detail.contains(t.trim_matches('`')));
         if !is_execute_wrap && !duplicates_detail {
             lines.push(format!("工具：{t}"));
         }
     }
     if !detail.is_empty() {
-        let label = if kind == "execute" { "命令" } else { "目标" };
+        let label = if kind == "execute" {
+            "命令"
+        } else {
+            "目标"
+        };
         let shown = if detail.chars().count() > 800 {
             let mut s: String = detail.chars().take(800).collect();
             s.push('…');
@@ -1463,10 +1505,7 @@ fn collect_git_changes(payload: &serde_json::Value) -> Vec<serde_json::Value> {
             if path.is_empty() || !seen.insert(path.clone()) {
                 continue;
             }
-            let ty = item
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("edit");
+            let ty = item.get("type").and_then(|v| v.as_str()).unwrap_or("edit");
             out.push(serde_json::json!({
                 "path": path,
                 "status": git_change_status(ty),
@@ -1534,7 +1573,14 @@ fn tool_detail(
         ToolKind::Execute => raw_str_field(raw_input, &["command", "cmd"]),
         ToolKind::Read | ToolKind::Edit | ToolKind::Delete | ToolKind::Move => raw_str_field(
             raw_input,
-            &["file_path", "filePath", "target_file", "path", "old_path", "new_path"],
+            &[
+                "file_path",
+                "filePath",
+                "target_file",
+                "path",
+                "old_path",
+                "new_path",
+            ],
         ),
         ToolKind::Search => raw_str_field(
             raw_input,
@@ -1646,15 +1692,12 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
         (Some(k), raw, None) => Some(tool_detail(k, raw, "")),
         (None, raw, Some(t)) if raw.is_some() => {
             // kind 未知时仍尽量从 raw 抽
-            Some(tool_detail(
-                agent_client_protocol::ToolKind::Other,
-                raw,
-                t,
-            ))
+            Some(tool_detail(agent_client_protocol::ToolKind::Other, raw, t))
         }
-        (None, Some(raw), None) => {
-            raw_str_field(&Some(raw.clone()), &["command", "file_path", "path", "query", "url"])
-        }
+        (None, Some(raw), None) => raw_str_field(
+            &Some(raw.clone()),
+            &["command", "file_path", "path", "query", "url"],
+        ),
         _ => None,
     };
     let mut preview = fields
@@ -1672,16 +1715,14 @@ fn tool_call_update_to_info(tcu: &agent_client_protocol::ToolCallUpdate) -> Tool
     // 仅在 content 携带 Diff 时更新 diffs，避免空更新抹掉已有 diff
     let diffs = fields.content.as_ref().and_then(|c| {
         let d = extract_tool_diffs(c);
-        if d.is_empty() {
-            None
-        } else {
-            Some(d)
-        }
+        if d.is_empty() { None } else { Some(d) }
     });
     // todo_write：raw_output 形如 {"TodosUpdated": {summary_for_prompt, todos, state}}
     let todo = fields.raw_output.as_ref().and_then(|v| {
         let ok = v.get("TodosUpdated");
-        let body = ok.or_else(|| v.get("todos_updated")).or_else(|| v.get("todosUpdated"));
+        let body = ok
+            .or_else(|| v.get("todos_updated"))
+            .or_else(|| v.get("todosUpdated"));
         let Some(body) = body else { return None };
         let summary = body
             .get("summary_for_prompt")
@@ -1882,14 +1923,8 @@ impl GrokSession {
         let compat_tx = agent_tx.compat_write();
 
         tokio::task::spawn_local(async move {
-            let handle_io = spawn_agent_local(
-                agent_config,
-                auth_manager,
-                None,
-                None,
-                compat_tx,
-                compat_rx,
-            );
+            let handle_io =
+                spawn_agent_local(agent_config, auth_manager, None, None, compat_tx, compat_rx);
             if let Err(e) = handle_io.await {
                 eprintln!("Agent 运行时错误: {:?}", e);
             }
@@ -1903,9 +1938,8 @@ impl GrokSession {
         let (event_tx, event_rx) = mpsc::channel(4096);
         let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(None));
         let policy = std::sync::Arc::new(std::sync::RwLock::new(None));
-        let per_agent_deny = std::sync::Arc::new(std::sync::RwLock::new(
-            std::collections::HashMap::new(),
-        ));
+        let per_agent_deny =
+            std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let client = GuiClient {
             event_tx: event_tx.clone(),
             session_id: client_session_id.clone(),
@@ -1925,9 +1959,7 @@ impl GrokSession {
             }
         }));
 
-        connection
-            .initialize(desktop_initialize_request())
-            .await?;
+        connection.initialize(desktop_initialize_request()).await?;
 
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
 
@@ -1937,12 +1969,15 @@ impl GrokSession {
             let mut m = agent_client_protocol::Meta::new();
             m.insert(
                 "x.ai/flows".into(),
-                serde_json::Value::Array(flows.into_iter().map(serde_json::Value::String).collect()),
+                serde_json::Value::Array(
+                    flows.into_iter().map(serde_json::Value::String).collect(),
+                ),
             );
             new_req = new_req.meta(Some(m));
         }
         let session_response = connection.new_session(new_req).await?;
-        *client_session_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(session_response.session_id.clone());
+        *client_session_id.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(session_response.session_id.clone());
 
         let _ = status_tx.send(SessionStatus::Idle);
 
@@ -1976,14 +2011,8 @@ impl GrokSession {
         let compat_rx = agent_rx.compat();
         let compat_tx = agent_tx.compat_write();
         tokio::task::spawn_local(async move {
-            let handle_io = spawn_agent_local(
-                agent_config,
-                auth_manager,
-                None,
-                None,
-                compat_tx,
-                compat_rx,
-            );
+            let handle_io =
+                spawn_agent_local(agent_config, auth_manager, None, None, compat_tx, compat_rx);
             if let Err(e) = handle_io.await {
                 eprintln!("Agent 运行时错误: {:?}", e);
             }
@@ -1994,7 +2023,8 @@ impl GrokSession {
         let (event_tx, event_rx) = mpsc::channel(4096);
         // 先转换参数（impl Into<SessionId> 无法 clone）
         let session_id: SessionId = session_id.into();
-        let client_session_id = std::sync::Arc::new(std::sync::Mutex::new(Some(session_id.clone())));
+        let client_session_id =
+            std::sync::Arc::new(std::sync::Mutex::new(Some(session_id.clone())));
         let policy = std::sync::Arc::new(std::sync::RwLock::new(None));
         let client = GuiClient {
             event_tx: event_tx.clone(),
@@ -2014,9 +2044,7 @@ impl GrokSession {
                 eprintln!("IO 任务错误: {:?}", e);
             }
         }));
-        connection
-            .initialize(desktop_initialize_request())
-            .await?;
+        connection.initialize(desktop_initialize_request()).await?;
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
         let load_session_id = session_id.clone();
         let mut load_req = LoadSessionRequest::new(load_session_id, cwd.into());
@@ -2048,8 +2076,27 @@ impl GrokSession {
         text: impl Into<String>,
         prompt_id: String,
     ) -> anyhow::Result<()> {
+        self.send_prompt_with_attachments(text, Vec::new(), prompt_id)
+            .await
+    }
+
+    /// jike: 文本 + 官方 ACP 附件块（Image / Resource / ResourceLink）。
+    pub async fn send_prompt_with_attachments(
+        &self,
+        text: impl Into<String>,
+        attachments: Vec<PromptAttach>,
+        prompt_id: String,
+    ) -> anyhow::Result<()> {
+        let blocks = build_prompt_blocks(&text.into(), &attachments)?;
+        self.send_prompt_blocks(blocks, prompt_id).await
+    }
+
+    async fn send_prompt_blocks(
+        &self,
+        blocks: Vec<ContentBlock>,
+        prompt_id: String,
+    ) -> anyhow::Result<()> {
         let session_id = self.session_id.clone();
-        let text = text.into();
         let connection = Arc::clone(&self.connection);
         let event_tx = self.event_tx.clone();
         let status_tx = self.status_tx.clone();
@@ -2066,19 +2113,17 @@ impl GrokSession {
         let pid_for_task = prompt_id.clone();
         tokio::task::spawn_local(async move {
             let result = connection
-                .prompt(
-                    PromptRequest::new(session_id, vec![text.into()]).meta({
-                        let mut m = serde_json::Map::new();
-                        m.insert(
-                            "promptId".to_string(),
-                            serde_json::Value::String(pid_for_task.clone()),
-                        );
-                        if let Some(overrides) = tool_overrides {
-                            m.insert("toolOverrides".to_string(), overrides);
-                        }
-                        m
-                    }),
-                )
+                .prompt(PromptRequest::new(session_id, blocks).meta({
+                    let mut m = serde_json::Map::new();
+                    m.insert(
+                        "promptId".to_string(),
+                        serde_json::Value::String(pid_for_task.clone()),
+                    );
+                    if let Some(overrides) = tool_overrides {
+                        m.insert("toolOverrides".to_string(), overrides);
+                    }
+                    m
+                }))
                 .await;
             match result {
                 Ok(response) => {
@@ -2133,10 +2178,8 @@ impl GrokSession {
         system_prompt_label: Option<&str>,
     ) -> anyhow::Result<()> {
         let model_id = model_id.into();
-        let mut req = SetSessionModelRequest::new(
-            self.session_id.clone(),
-            ModelId::new(model_id.clone()),
-        );
+        let mut req =
+            SetSessionModelRequest::new(self.session_id.clone(), ModelId::new(model_id.clone()));
         let mut meta = serde_json::Map::new();
         if let Some(effort) = reasoning_effort.map(str::trim).filter(|s| !s.is_empty()) {
             meta.insert(
@@ -2196,12 +2239,8 @@ impl GrokSession {
 
         let label = composition.persona.label.as_deref();
         if let Some(model) = composition.model.name.as_deref() {
-            self.set_model_with_label(
-                model,
-                composition.model.reasoning_effort.as_deref(),
-                label,
-            )
-            .await?;
+            self.set_model_with_label(model, composition.model.reasoning_effort.as_deref(), label)
+                .await?;
         } else if label.is_some() {
             let current = self
                 .last_model_id
@@ -2232,10 +2271,7 @@ impl GrokSession {
         }))
         .map_err(|e| anyhow::anyhow!("序列化 update_flows 参数失败: {e}"))?;
         self.connection
-            .ext_method(ExtRequest::new(
-                "x.ai/session/update_flows",
-                params.into(),
-            ))
+            .ext_method(ExtRequest::new("x.ai/session/update_flows", params.into()))
             .await
             .map_err(|e| anyhow::anyhow!("update_flows 失败: {e:?}"))?;
         Ok(())
@@ -2260,9 +2296,7 @@ impl GrokSession {
 
     /// 获取当前会话可回滚的历史点列表（x.ai/rewind/points 扩展方法）。
     /// 用于前端渲染"撤销到哪一轮"的选择器。
-    pub async fn get_rewind_points(
-        &self,
-    ) -> anyhow::Result<Vec<RewindPointInfo>> {
+    pub async fn get_rewind_points(&self) -> anyhow::Result<Vec<RewindPointInfo>> {
         let params = serde_json::value::to_raw_value(&serde_json::json!({
             "session_id": self.session_id.to_string(),
         }))
@@ -2361,9 +2395,8 @@ impl GrokSession {
         let cwd_str = cwd.to_string_lossy().into_owned();
         // 官方语义：sourceCwd 是父会话的真实落盘目录（可能不在当前 cwd 下，
         // 如跨 cwd 恢复的历史会话）；解析不到时回退传入的 cwd。
-        let source_cwd =
-            xai_grok_shell::session::resolve_local_session_any_cwd(source_session_id)
-                .unwrap_or_else(|| cwd_str.clone());
+        let source_cwd = xai_grok_shell::session::resolve_local_session_any_cwd(source_session_id)
+            .unwrap_or_else(|| cwd_str.clone());
         let mut payload = serde_json::json!({
             "sourceSessionId": source_session_id,
             "sourceCwd": source_cwd,
@@ -2817,9 +2850,14 @@ pub async fn delete_session(session_id: &str, cwd: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("创建 agent 配置失败: {}", e))?;
     let auth_manager = Arc::new(agent_config.create_auth_manager());
 
-    xai_grok_shell::session::persistence::delete_session_history(session_id, Some(cwd), false, auth_manager)
-        .await
-        .map_err(|e| anyhow::anyhow!("删除会话失败: {}", e))?;
+    xai_grok_shell::session::persistence::delete_session_history(
+        session_id,
+        Some(cwd),
+        false,
+        auth_manager,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("删除会话失败: {}", e))?;
     Ok(())
 }
 
@@ -2899,7 +2937,10 @@ pub async fn purge_blank_sessions(cwd: &str) -> usize {
 fn session_dir_has_real_user_prompt(session_dir: &std::path::Path) -> bool {
     let prompt_file = session_dir.join("prompts").join("prompt_0.txt");
     if let Ok(content) = std::fs::read_to_string(prompt_file) {
-        if content.lines().any(|l| extract_user_question_text(l).is_some()) {
+        if content
+            .lines()
+            .any(|l| extract_user_question_text(l).is_some())
+        {
             return true;
         }
     }
@@ -3082,7 +3123,10 @@ mod tests {
     fn user_message_chunk_becomes_user_text_chunk() {
         let update = SessionUpdate::UserMessageChunk(text_chunk("提问"));
         let mut meta = serde_json::Map::new();
-        meta.insert("promptId".to_string(), serde_json::Value::String("p-123".to_string()));
+        meta.insert(
+            "promptId".to_string(),
+            serde_json::Value::String("p-123".to_string()),
+        );
         let event = session_update_to_event(update, Some(&meta));
         match event {
             SessionEvent::UserTextChunk { text, prompt_id } => {

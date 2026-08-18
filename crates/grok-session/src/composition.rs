@@ -113,9 +113,7 @@ pub fn canonicalize_tool_name(raw: &str) -> Result<String> {
     if OFFICIAL_TOOL_NAMES.contains(&name) {
         return Ok(name.to_string());
     }
-    anyhow::bail!(
-        "未知工具名 {name:?}。请用官方函数名（如 run_terminal_command / web_search）"
-    )
+    anyhow::bail!("未知工具名 {name:?}。请用官方函数名（如 run_terminal_command / web_search）")
 }
 
 /// 一个 MCP 服务器引用（stdio 或 HTTP 定义，映射官方 NewSessionRequest.mcp_servers）。
@@ -179,8 +177,7 @@ pub struct Composition {
 
 /// 从 YAML 文本解析一个组装单（严格模式：未知字段报错）。
 pub fn parse_composition(yaml: &str, source: &str) -> Result<Composition> {
-    serde_yaml::from_str(yaml)
-        .with_context(|| format!("解析组装单失败（{source}）"))
+    serde_yaml::from_str(yaml).with_context(|| format!("解析组装单失败（{source}）"))
 }
 
 /// 加载用户级组装单文件 `<root>/compositions/<name>.yml`。
@@ -200,7 +197,9 @@ fn load_user_composition_inner(root: &Path, name: &str, depth: usize) -> Result<
     let yaml = std::fs::read_to_string(&path)
         .with_context(|| format!("读取用户级组装单失败：{}", path.display()))?;
     let parsed = parse_composition(&yaml, &path.display().to_string())?;
-    parsed.validate().with_context(|| format!("组装单校验失败：{}", path.display()))?;
+    parsed
+        .validate()
+        .with_context(|| format!("组装单校验失败：{}", path.display()))?;
     let base = match parsed.extends.as_deref() {
         Some(parent) => load_user_composition_inner(root, parent, depth + 1)?,
         None => Composition::default(),
@@ -217,7 +216,9 @@ pub fn load_workspace_composition(cwd: &Path) -> Result<Option<Composition>> {
     let yaml = std::fs::read_to_string(&path)
         .with_context(|| format!("读取工作区组装单失败：{}", path.display()))?;
     let parsed = parse_composition(&yaml, &path.display().to_string())?;
-    parsed.validate().with_context(|| format!("组装单校验失败：{}", path.display()))?;
+    parsed
+        .validate()
+        .with_context(|| format!("组装单校验失败：{}", path.display()))?;
     Ok(Some(parsed))
 }
 
@@ -284,7 +285,10 @@ pub fn merge_composition(base: &Composition, overlay: &Composition) -> Compositi
         merged.mcp.servers = overlay.mcp.servers.clone();
     }
     for (server, tools) in &overlay.mcp.disabled_tools {
-        merged.mcp.disabled_tools.insert(server.clone(), tools.clone());
+        merged
+            .mcp
+            .disabled_tools
+            .insert(server.clone(), tools.clone());
     }
     if !overlay.plugins.dirs.is_empty() {
         merged.plugins.dirs = overlay.plugins.dirs.clone();
@@ -334,8 +338,7 @@ impl Composition {
             }
         }
         for name in &self.tools.disable {
-            canonicalize_tool_name(name)
-                .with_context(|| format!("tools.disable 无效：{name}"))?;
+            canonicalize_tool_name(name).with_context(|| format!("tools.disable 无效：{name}"))?;
         }
         for rule in &self.permissions.rules {
             rule.validate()
@@ -348,9 +351,7 @@ impl Composition {
         }
         for id in &self.flows {
             if !is_valid_flow_id(id) {
-                anyhow::bail!(
-                    "flows 项不是合法流程 id：{id:?}（1-64 位小写字母、数字、单连字符）"
-                );
+                anyhow::bail!("flows 项不是合法流程 id：{id:?}（1-64 位小写字母、数字、单连字符）");
             }
         }
         for server in &self.mcp.servers {
@@ -430,7 +431,10 @@ flows:
             parsed.mcp.disabled_tools.get("context7").unwrap(),
             &vec!["tool_a".to_string()]
         );
-        assert_eq!(parsed.plugins.dirs, vec![PathBuf::from("~/.vesprism/plugins")]);
+        assert_eq!(
+            parsed.plugins.dirs,
+            vec![PathBuf::from("~/.vesprism/plugins")]
+        );
         assert_eq!(parsed.flows, vec!["demo-linear".to_string()]);
         parsed.validate().unwrap();
     }
@@ -497,8 +501,14 @@ flows:
         .unwrap();
         let overlay = parse_composition("mcp:\n  disabled_tools:\n    a: [t3]\n", "test").unwrap();
         let merged = merge_composition(&base, &overlay);
-        assert_eq!(merged.mcp.disabled_tools.get("a").unwrap(), &vec!["t3".to_string()]);
-        assert_eq!(merged.mcp.disabled_tools.get("b").unwrap(), &vec!["t2".to_string()]);
+        assert_eq!(
+            merged.mcp.disabled_tools.get("a").unwrap(),
+            &vec!["t3".to_string()]
+        );
+        assert_eq!(
+            merged.mcp.disabled_tools.get("b").unwrap(),
+            &vec!["t2".to_string()]
+        );
     }
 
     #[test]
@@ -543,13 +553,15 @@ flows:
         let _ = std::fs::remove_dir_all(&tmp);
         let grok = tmp.join(".grok");
         std::fs::create_dir_all(&grok).unwrap();
-        std::fs::write(
-            grok.join("agent.yml"),
-            "persona:\n  label: ws-label\n",
+        std::fs::write(grok.join("agent.yml"), "persona:\n  label: ws-label\n").unwrap();
+        let session = parse_composition("model:\n  name: session-model\n", "test").unwrap();
+        let resolved = resolve_composition(
+            None,
+            &tmp,
+            Some(&session),
+            Path::new("/nonexistent-user-root"),
         )
         .unwrap();
-        let session = parse_composition("model:\n  name: session-model\n", "test").unwrap();
-        let resolved = resolve_composition(None, &tmp, Some(&session), Path::new("/nonexistent-user-root")).unwrap();
         assert_eq!(resolved.persona.label.as_deref(), Some("ws-label"));
         assert_eq!(resolved.model.name.as_deref(), Some("session-model"));
         let _ = std::fs::remove_dir_all(&tmp);

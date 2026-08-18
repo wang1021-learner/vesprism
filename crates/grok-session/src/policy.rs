@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,9 @@ impl ToolKind {
 pub fn classify_tool(tool_name: &str) -> ToolKind {
     match tool_name {
         // ACP 类别词 + 官方工具名同义词。
-        "execute" | "bash" | "shell" | "run_terminal_command" | "run_terminal_cmd" => ToolKind::Bash,
+        "execute" | "bash" | "shell" | "run_terminal_command" | "run_terminal_cmd" => {
+            ToolKind::Bash
+        }
         "edit" | "write" | "search_replace" | "multi_edit" | "apply_patch" => ToolKind::Edit,
         "read" | "view" | "read_file" | "cursor_read" => ToolKind::Read,
         "search" | "grep" | "glob" | "search_content" | "search_file" => ToolKind::Grep,
@@ -146,7 +148,9 @@ impl GlobPattern {
         if raw.trim().is_empty() {
             bail!("glob 不能为空");
         }
-        Ok(Self { raw: raw.to_string() })
+        Ok(Self {
+            raw: raw.to_string(),
+        })
     }
 
     /// `*` 不跨 `/`；`**` 跨任意深度（含零段）。

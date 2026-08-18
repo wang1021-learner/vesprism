@@ -189,12 +189,7 @@ fn apply_update_line(msgs: &mut Vec<DisplayMessage>, next: &mut u64, v: &Value) 
                     }
                 }
             }
-            msgs.push(DisplayMessage::plain(
-                new_id(next),
-                "user",
-                text,
-                pid,
-            ));
+            msgs.push(DisplayMessage::plain(new_id(next), "user", text, pid));
         }
         "agent_message_chunk" | "agent_message" | "message_chunk" => {
             let text = update
@@ -232,7 +227,10 @@ fn apply_tool_call(msgs: &mut Vec<DisplayMessage>, next: &mut u64, update: &Valu
     } else {
         detail.clone()
     };
-    let start_ms = root.get("timestamp").and_then(|t| t.as_i64()).map(|s| s * 1000);
+    let start_ms = root
+        .get("timestamp")
+        .and_then(|t| t.as_i64())
+        .map(|s| s * 1000);
     upsert_tool(
         msgs,
         next,
@@ -504,13 +502,15 @@ fn normalize_status(s: &str) -> String {
 }
 
 fn extract_detail(update: &Value) -> Option<String> {
-    let raw = update
-        .get("rawInput")
-        .or_else(|| update.get("raw_input"))?;
+    let raw = update.get("rawInput").or_else(|| update.get("raw_input"))?;
     // 字符串命令
     if let Some(s) = raw.as_str() {
         let t = s.trim();
-        return if t.is_empty() { None } else { Some(t.to_string()) };
+        return if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        };
     }
     let obj = raw.as_object()?;
     const KEYS: &[&str] = &[
@@ -568,10 +568,7 @@ fn extract_preview(update: &Value) -> String {
             for item in arr {
                 let ty = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
                 if ty.eq_ignore_ascii_case("diff") {
-                    let path = item
-                        .get("path")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("diff");
+                    let path = item.get("path").and_then(|x| x.as_str()).unwrap_or("diff");
                     let new_t = item
                         .get("newText")
                         .or_else(|| item.get("new_text"))
@@ -653,18 +650,10 @@ fn load_display_messages_from_chat_history(path: &Path) -> anyhow::Result<Vec<Di
                 if text.contains("<system-reminder>") || text.contains("system-reminder") {
                     continue;
                 }
-                msgs.push(DisplayMessage::plain(
-                    new_id(&mut next),
-                    "user",
-                    text,
-                    None,
-                ));
+                msgs.push(DisplayMessage::plain(new_id(&mut next), "user", text, None));
             }
             "assistant" => {
-                let text = v
-                    .get("content")
-                    .map(text_from_content)
-                    .unwrap_or_default();
+                let text = v.get("content").map(text_from_content).unwrap_or_default();
                 if text.is_empty() {
                     continue;
                 }

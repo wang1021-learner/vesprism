@@ -5346,6 +5346,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "futures",
  "serde",
  "serde_json",
