@@ -135,14 +135,15 @@
 }
 
 .tabbar-close,
-.tabbar-retry {
+.tabbar-retry,
+.tabbar-comp-btn {
   display: grid;
   place-items: center;
   width: 16px;
   height: 16px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -155,8 +156,22 @@
 
 .tabbar-item:hover .tabbar-close,
 .tabbar-item.is-active .tabbar-close,
+.tabbar-item:hover .tabbar-comp-btn,
+.tabbar-item.is-active .tabbar-comp-btn,
 .tabbar-retry {
+  opacity: 0.7;
+}
+
+.tabbar-item:hover .tabbar-close,
+.tabbar-item.is-active .tabbar-close {
   opacity: 1;
+}
+
+.tabbar-comp-btn:hover,
+.tabbar-comp-btn.is-active {
+  opacity: 1 !important;
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .tabbar-close:hover:not(:disabled) {

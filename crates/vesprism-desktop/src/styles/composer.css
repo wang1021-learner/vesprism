@@ -43,15 +43,12 @@
 .composer-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   max-width: min(320px, 70vw);
-  padding: 5px 10px 5px 9px;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.04),
-    0 0 0 0.5px rgba(0, 0, 0, 0.02);
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 12.5px;
   font-weight: 500;
@@ -60,22 +57,17 @@
   user-select: none;
   transition:
     background 0.15s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease,
     color 0.15s ease;
 }
 
 .composer-chip:hover:not(:disabled):not(.readonly) {
   background: var(--surface-hover);
-  border-color: rgba(0, 0, 0, 0.1);
   color: var(--text-primary);
 }
 
 .composer-chip.open {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-glow);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .composer-chip:disabled {
@@ -85,7 +77,7 @@
 
 .composer-chip.readonly {
   cursor: default;
-  background: rgba(250, 250, 250, 0.95);
+  background: transparent;
   color: var(--text-secondary);
 }
 
@@ -93,8 +85,7 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  color: var(--text-tertiary);
-  /* 禁止系统把路径/文案渲成彩色 emoji 图标（如「桌面」→ 电脑图标） */
+  color: var(--text-secondary);
   font-variant-emoji: text;
   font-family: inherit;
 }
@@ -105,7 +96,7 @@
 
 .composer-chip.open .chip-icon,
 .composer-chip:hover:not(:disabled):not(.readonly) .chip-icon {
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .composer-chip .chip-label {
@@ -126,37 +117,55 @@
   transform: rotate(180deg);
 }
 
-/* 浮层菜单（工作区 / 模型共用，支持 spring 动画） */
+/* 浮层菜单（工作区 / 模型共用，现代精致弹窗） */
 .composer-menu {
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
+  bottom: calc(100% + 14px);
+  left: -2px;
   z-index: 120;
-  min-width: 260px;
-  max-width: min(380px, 92vw);
-  max-height: 300px;
+  min-width: 290px;
+  max-width: min(440px, 92vw);
+  max-height: min(480px, 75vh);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
   padding: 6px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-solid);
-  border-radius: 8px;
-  box-shadow: var(--shadow-lg);
-  animation: composer-menu-in 0.18s var(--ease-spring) forwards;
+  background: var(--surface-elevated, #ffffff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 10px;
+  box-shadow:
+    0 12px 28px -4px rgba(0, 0, 0, 0.1),
+    0 8px 12px -6px rgba(0, 0, 0, 0.05);
+  animation: composer-menu-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   transform-origin: bottom left;
+}
+
+.composer-menu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.composer-menu::-webkit-scrollbar-thumb {
+  background: var(--border-solid, #e5e7eb);
+  border-radius: 4px;
+}
+
+.workspace-menu {
+  bottom: calc(100% + 14px);
+  left: -2px;
 }
 
 .model-menu {
   left: auto;
-  right: -10px;
-  bottom: calc(100% + 12px);
-  min-width: 280px;
+  right: -4px;
+  bottom: calc(100% + 10px);
+  min-width: 290px;
   transform-origin: bottom right;
 }
 
 @keyframes composer-menu-in {
   from {
     opacity: 0;
-    transform: scale(0.94) translateY(6px);
+    transform: scale(0.96) translateY(4px);
   }
 
   to {
@@ -166,50 +175,47 @@
 }
 
 .composer-menu-label {
-  padding: 6px 10px 4px;
+  padding: 6px 8px 3px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
 }
 
 .composer-menu-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border: none;
   border-radius: 6px;
   background: transparent;
   text-align: left;
   cursor: pointer;
   color: var(--text-primary);
-  transition: background var(--duration-fast) var(--ease-out-smooth),
-    transform var(--duration-fast) var(--ease-spring);
+  transition: background 0.12s ease;
 }
 
 .composer-menu-item:hover {
   background: var(--surface-hover);
-  transform: translateX(2px);
 }
 
 .composer-menu-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .composer-menu-item .menu-item-icon {
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--text-tertiary);
+  margin-top: 1.5px;
+  color: var(--text-secondary);
 }
 
 .composer-menu-item.active .menu-item-icon {
-  color: var(--accent);
+  color: var(--text-primary);
 }
 
 .composer-menu-item .menu-item-body {
@@ -217,16 +223,20 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .composer-menu-item .menu-item-title {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-menu-item.active .menu-item-title {
+  font-weight: 600;
 }
 
 .composer-menu-item .menu-item-sub {
@@ -235,25 +245,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.3;
 }
 
 .composer-menu-item .menu-item-check {
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--accent, #2563eb);
   margin-top: 2px;
 }
 
 .composer-menu-item.menu-browse {
-  color: var(--accent);
+  color: var(--text-primary);
 }
 
 .composer-menu-item.menu-browse .menu-item-icon,
 .composer-menu-item.menu-browse .menu-item-title {
-  color: var(--accent);
+  color: var(--text-primary);
 }
 
 .composer-menu-item.menu-browse:hover {
-  background: var(--accent-soft);
+  background: var(--surface-hover);
 }
 
 .composer-menu-divider {
@@ -328,6 +339,44 @@
   flex: 1;
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.composer-attach {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.composer-attach-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.composer-attach-btn:hover:not(:disabled),
+.composer-attach-btn.open {
+  background: var(--surface-hover);
+  border: 0;
+  color: var(--text-primary);
+}
+
+.composer-attach-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.attach-menu {
+  left: 0;
+  min-width: 200px;
 }
 
 .composer-hint {
@@ -493,22 +542,25 @@
 .model-chip {
   max-width: 220px;
   height: 28px;
-  padding: 0 10px 0 9px;
+  padding: 0 8px;
   font-size: 12px;
   border-radius: 6px;
-  border: 1px solid var(--border-solid);
-  background: var(--surface-hover);
+  border: 0;
+  background: transparent;
   color: var(--text-secondary);
   box-shadow: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .model-chip:hover:not(:disabled),
 .model-chip.open {
   background: var(--surface-hover);
-  border-color: var(--border-strong-solid);
+  border: 0;
   color: var(--text-primary);
   box-shadow: none;
   outline: none !important;

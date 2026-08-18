@@ -86,7 +86,7 @@ export interface TabState {
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
-export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows' | 'flow-canvas' | 'agents'
+export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows' | 'flow-canvas' | 'flow-run' | 'agents'
 
 export function emptyTabState(): TabState {
   return {
@@ -177,6 +177,29 @@ export function looksAbsolutePath(p: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(s)
 }
 
+export function normPathKey(p: string): string {
+  return p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/** 未绑定项目的闲聊工作区（~/.vesprism/scratch）。 */
+export const $scratchCwd = atom('')
+
+export function isScratchCwd(p: string, scratch = $scratchCwd.get()): boolean {
+  const a = normPathKey(p)
+  if (!a) return false
+  const b = normPathKey(scratch)
+  if (b && a === b) return true
+  return a.endsWith('/.vesprism/scratch')
+}
+
+export function workspaceLabel(p: string): string {
+  if (!p.trim()) return '闲聊'
+  if (isScratchCwd(p)) return '闲聊'
+  const key = p.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  const parts = key.split('/').filter(Boolean)
+  return parts[parts.length - 1] || key || '闲聊'
+}
+
 /**
  * 解析当前应用应使用的工作区绝对路径。
  * 专用面板 Tab 可能未写入 cwd，切换后 $workspaceCwd 会变成空串，需从其它 tab / 选项兜底。
@@ -195,6 +218,8 @@ export function resolveWorkspaceCwd(): string {
   for (const c of candidates) {
     if (looksAbsolutePath(c)) return c
   }
+  const scratch = $scratchCwd.get().trim()
+  if (looksAbsolutePath(scratch)) return scratch
   return candidates[0] || ''
 }
 
@@ -615,6 +640,53 @@ export function bumpGitHeadRevision() {
 export const $goalInfo = atom<GoalInfoDto | null>(null)
 /** 工作流运行进度（活跃 tab 投影；key=runId） */
 export const $workflows = atom<Record<string, WorkflowInfoDto>>({})
+const RECENT_WORKFLOWS_KEY = 'vesprism.recent_workflows.v1'
+
+function loadInitialRecentWorkflows(): Record<string, WorkflowInfoDto> {
+  try {
+    if (typeof localStorage === 'undefined') return {}
+    const raw = localStorage.getItem(RECENT_WORKFLOWS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, WorkflowInfoDto>
+    }
+  } catch (e) {
+    console.warn('[store] 读取试跑历史失败:', e)
+  }
+  return {}
+}
+
+function persistRecentWorkflows(val: Record<string, WorkflowInfoDto>): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    // 保留最近 50 条试跑记录，避免数据无限膨胀
+    const entries = Object.entries(val)
+    const trimmed = entries.length > 50 ? Object.fromEntries(entries.slice(-50)) : val
+    localStorage.setItem(RECENT_WORKFLOWS_KEY, JSON.stringify(trimmed))
+  } catch (e) {
+    console.warn('[store] 持久化试跑历史失败:', e)
+  }
+}
+
+/** 试跑详情面板：全局最近 workflow 运行（跨 tab 合并，key=runId，新覆盖旧，自动落盘持久化）。 */
+export const $recentWorkflows = atom<Record<string, WorkflowInfoDto>>(loadInitialRecentWorkflows())
+
+export function upsertRecentWorkflow(w: WorkflowInfoDto): void {
+  if (!w?.runId) return
+  const next = { ...$recentWorkflows.get(), [w.runId]: w }
+  $recentWorkflows.set(next)
+  persistRecentWorkflows(next)
+}
+
+export function clearRecentWorkflows(): void {
+  $recentWorkflows.set({})
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(RECENT_WORKFLOWS_KEY)
+    }
+  } catch {}
+}
 /** 客户端终端运行态（活跃 tab 投影；key=terminalId） */
 export const $terminals = atom<Record<string, TerminalRuntime>>({})
 /** 会话区内嵌侧栏：同一时间只开一块。 */

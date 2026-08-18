@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useStore } from '@nanostores/react'
 import { $subagents, $workflows, pushToast } from '../store'
+import type { SubagentRuntime } from '../types'
+import type { WorkflowInfoDto } from '../lib/composition'
 import { openSubagentTab, refreshSubagentTabMessages } from '../lib/openSubagentTab'
 import {
   RESULT_EXPAND_MAX,
@@ -19,15 +21,27 @@ import {
 } from '../lib/subagentRunTree'
 
 /** 会话区三层树：run → phase → 子代理。有 workflow 才画；散装 spawn 见顶栏目录。 */
-export function SubagentRunTree() {
-  const workflows = useStore($workflows)
-  const subagents = useStore($subagents)
-  const forest = buildRunForest(Object.values(workflows), subagents)
+export function SubagentRunTree({
+  workflows,
+  subagents,
+  readonly = false,
+}: {
+  /** 传入则用传入数据（试跑详情面板）；缺省用活跃 tab 投影 */
+  workflows?: WorkflowInfoDto[]
+  subagents?: SubagentRuntime[]
+  /** 只读：隐藏「打开」子会话按钮（试跑详情面板用，避免误导成可聊天） */
+  readonly?: boolean
+} = {}) {
+  const storeWorkflows = useStore($workflows)
+  const storeSubagents = useStore($subagents)
+  const list = workflows ?? Object.values(storeWorkflows)
+  const subs = subagents ?? storeSubagents
+  const forest = buildRunForest(list, subs)
   if (forest.length === 0) return null
   return (
     <div className="st-list" role="region" aria-label="子代理">
       {forest.map((tree) => (
-        <RunView key={tree.runId} tree={tree} />
+        <RunView key={tree.runId} tree={tree} readonly={readonly} />
       ))}
     </div>
   )
@@ -68,7 +82,7 @@ function capabilityClass(mode: string): string {
   }
 }
 
-function RunView({ tree }: { tree: RunTree }) {
+function RunView({ tree, readonly }: { tree: RunTree; readonly: boolean }) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null)
   const shown = userOpen ?? tree.runRequiresExpansion
   return (
@@ -95,7 +109,7 @@ function RunView({ tree }: { tree: RunTree }) {
           {tree.phases.length === 0 ? (
             <span className="st-empty">暂无子代理</span>
           ) : (
-            tree.phases.map((p) => <PhaseView key={p.key || p.title} phase={p} />)
+            tree.phases.map((p) => <PhaseView key={p.key || p.title} phase={p} readonly={readonly} />)
           )}
         </div>
       ) : null}
@@ -104,7 +118,7 @@ function RunView({ tree }: { tree: RunTree }) {
   )
 }
 
-function PhaseView({ phase }: { phase: PhaseGroup }) {
+function PhaseView({ phase, readonly }: { phase: PhaseGroup; readonly: boolean }) {
   const requires = phaseRequiresExpansion(phase)
   const [userOpen, setUserOpen] = useState<boolean | null>(null)
   const shown = userOpen ?? requires
@@ -129,7 +143,7 @@ function PhaseView({ phase }: { phase: PhaseGroup }) {
       {shown ? (
         <div className="st-members">
           {phase.members.map((m) => (
-            <MemberRowView key={m.agentId} m={m} />
+            <MemberRowView key={m.agentId} m={m} readonly={readonly} />
           ))}
         </div>
       ) : null}
@@ -137,7 +151,7 @@ function PhaseView({ phase }: { phase: PhaseGroup }) {
   )
 }
 
-function MemberRowView({ m }: { m: MemberRow }) {
+function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
   const [opening, setOpening] = useState(false)
   const [bodyOpen, setBodyOpen] = useState(false)
   const preview = m.output ? workflowResultHeadline(m.output) : ''
@@ -194,8 +208,9 @@ function MemberRowView({ m }: { m: MemberRow }) {
             className="st-action"
             disabled={opening}
             onClick={() => void onOpen()}
+            title="查看该子代理完整交互与工具调用对话流"
           >
-            {opening ? '…' : '打开'}
+            {opening ? '…' : readonly ? '对话' : '打开'}
           </button>
         ) : null}
       </div>

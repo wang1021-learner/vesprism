@@ -11,6 +11,9 @@ import type { ModelInfo, SessionPhase } from '../types'
 import { REASONING_LEVELS } from '../types'
 import { generateId } from '../lib/generateId'
 import { useComposerAssist } from './ComposerAssist'
+import { $scratchCwd, isScratchCwd, workspaceLabel } from '../store'
+import { useStore } from '@nanostores/react'
+import type { PromptAttach } from '../bridge'
 
 export interface ComposerHandle {
   focus: () => void
@@ -50,8 +53,15 @@ interface ComposerProps {
   onSwitchReasoningEffort: (effort: string) => void
   onSelectWorkspace: (cwd: string) => void
   onBrowseWorkspace: () => void
-  onSend: (text?: string) => void
+  onSend: (text?: string, attachments?: PromptAttach[]) => void
   onCancel: () => void
+}
+
+type AttachChip = {
+  id: string
+  kind: 'file' | 'folder'
+  path: string
+  name: string
 }
 
 function formatTokenK(n: number): string {
@@ -64,10 +74,8 @@ function formatTokenK(n: number): string {
 }
 
 function formatWorkspaceLabel(p: string): string {
-  if (!p) return '选择工作区'
-  const normalized = p.replace(/\\/g, '/').replace(/\/+$/, '')
-  const parts = normalized.split('/')
-  return parts[parts.length - 1] || normalized
+  if (!p || isScratchCwd(p)) return '闲聊'
+  return workspaceLabel(p)
 }
 
 function normPath(p: string): string {
@@ -177,6 +185,14 @@ function CheckIcon() {
   )
 }
 
+function PlusIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 function FileTextIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -261,9 +277,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     }
   }, [setInput])
 
+  const scratch = useStore($scratchCwd)
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
+  const [attachChips, setAttachChips] = useState<AttachChip[]>([])
+  const attachMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -271,7 +291,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   // 点击外部关闭下拉
   useEffect(() => {
-    if (!wsOpen && !modelOpen) return
+    if (!wsOpen && !modelOpen && !attachOpen) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (wsOpen && wsPickerRef.current && !wsPickerRef.current.contains(t)) {
@@ -280,11 +300,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (modelOpen && modelPickerRef.current && !modelPickerRef.current.contains(t)) {
         setModelOpen(false)
       }
+      if (attachOpen && attachMenuRef.current && !attachMenuRef.current.contains(t)) {
+        setAttachOpen(false)
+      }
     }
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') {
         setWsOpen(false)
         setModelOpen(false)
+        setAttachOpen(false)
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -293,7 +317,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [wsOpen, modelOpen])
+  }, [wsOpen, modelOpen, attachOpen])
 
   const selectedModel = useMemo(
     () => models.find((x) => x.id === selectedModelId),
@@ -360,11 +384,52 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return pasted || typed
   }
 
+  const pushAttach = (kind: 'file' | 'folder', path: string) => {
+    const p = path.trim()
+    if (!p) return
+    const name = p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
+    setAttachChips((prev) =>
+      prev.some((a) => a.path === p)
+        ? prev
+        : [...prev, { id: generateId('att_'), kind, path: p, name }],
+    )
+  }
+
+  const pickFiles = async () => {
+    setAttachOpen(false)
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({ multiple: true, title: '选择要附上的文件' })
+      const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
+      for (const p of paths) {
+        if (typeof p === 'string') pushAttach('file', p)
+      }
+    } catch (e) {
+      console.warn('选择文件失败', e)
+    }
+  }
+
+  const pickFolder = async () => {
+    setAttachOpen(false)
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({ directory: true, title: '选择要附上的文件夹' })
+      if (typeof selected === 'string') pushAttach('folder', selected)
+    } catch (e) {
+      console.warn('选择文件夹失败', e)
+    }
+  }
+
   const handleSend = () => {
     const finalText = buildFinalText()
-    if (!finalText) return
-    onSend(finalText)
+    const attachments: PromptAttach[] = attachChips.map((a) => ({
+      kind: a.kind,
+      path: a.path,
+    }))
+    if (!finalText && attachments.length === 0) return
+    onSend(finalText, attachments)
     setPasteBlocks([])
+    setAttachChips([])
   }
 
   const assist = useComposerAssist(input, setInput, workspaceCwd)
@@ -376,13 +441,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (assist.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (canSend && (input.trim() || pasteBlocks.length > 0)) handleSend()
+      if (canSend && (input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)) handleSend()
     }
   }
 
-  const canSubmit = canSend && (!!input.trim() || pasteBlocks.length > 0)
+  const canSubmit =
+    canSend && (!!input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)
+  const casual = isScratchCwd(workspaceCwd)
   const wsLabel = formatWorkspaceLabel(workspaceCwd)
   const currentWsKey = normPath(workspaceCwd)
+  const projectOptions = workspaceOptions.filter((cwd) => !isScratchCwd(cwd))
 
   return (
     <footer className="composer-container">
@@ -395,7 +463,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <button
                   type="button"
                   className={`composer-chip workspace-chip${wsOpen ? ' open' : ''}`}
-                  title={`当前工作目录\n${workspaceCwd || '未设置'}\n\n点击切换`}
+                  title={
+                    casual
+                      ? '闲聊：未绑定项目，可先说话或点 + 附上文件\n点此选择项目'
+                      : `当前项目\n${workspaceCwd}\n\n点击切换`
+                  }
                   aria-expanded={wsOpen}
                   onClick={() => {
                     setModelOpen(false)
@@ -410,8 +482,35 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 </button>
                 {wsOpen && (
                   <div className="composer-menu workspace-menu" role="listbox">
-                    <div className="composer-menu-label">工作区</div>
-                    {workspaceOptions.map((cwd) => {
+                    <div className="composer-menu-label">会话位置</div>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={casual}
+                      className={`composer-menu-item${casual ? ' active' : ''}`}
+                      title={scratch || '闲聊'}
+                      onClick={() => {
+                        setWsOpen(false)
+                        onSelectWorkspace(scratch || '')
+                      }}
+                    >
+                      <span className="menu-item-icon">
+                        <FolderIcon />
+                      </span>
+                      <span className="menu-item-body">
+                        <span className="menu-item-title">闲聊</span>
+                        <span className="menu-item-sub">不绑定项目，先说话或附上文件</span>
+                      </span>
+                      {casual && (
+                        <span className="menu-item-check">
+                          <CheckIcon />
+                        </span>
+                      )}
+                    </button>
+                    {projectOptions.length > 0 && (
+                      <div className="composer-menu-label">最近项目</div>
+                    )}
+                    {projectOptions.map((cwd) => {
                       const active = normPath(cwd) === currentWsKey
                       return (
                         <button
@@ -454,7 +553,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                         <BrowseIcon />
                       </span>
                       <span className="menu-item-body">
-                        <span className="menu-item-title">浏览其他文件夹…</span>
+                        <span className="menu-item-title">打开项目文件夹…</span>
                       </span>
                     </button>
                   </div>
@@ -463,7 +562,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             ) : (
               <div
                 className="composer-chip workspace-chip readonly"
-                title={`当前工作目录\n${workspaceCwd || '未设置'}\n\n有对话内容时请从侧栏打开对应会话，或新建后再切换`}
+                title={
+                  casual
+                    ? '闲聊（本会话已开始，换项目请新建对话）'
+                    : `当前项目\n${workspaceCwd || '未设置'}\n\n有对话内容时请从侧栏打开对应会话，或新建后再切换`
+                }
               >
                 <span className="chip-icon">
                   <FolderIcon />
@@ -475,8 +578,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </div>
 
         {/* placeholder 固定；New chat 静默重建时不提示「创建中」 */}
-        {pasteBlocks.length > 0 && (
+        {(pasteBlocks.length > 0 || attachChips.length > 0) && (
           <div className="paste-blocks">
+            {attachChips.map((a) => (
+              <div key={a.id} className="paste-block-card">
+                <div className="paste-block-icon">
+                  {a.kind === 'folder' ? <FolderIcon /> : <FileTextIcon />}
+                </div>
+                <div className="paste-block-info">
+                  <div className="paste-block-title" title={a.path}>
+                    {a.name}
+                  </div>
+                  <div className="paste-block-meta">{a.kind === 'folder' ? '文件夹' : '文件'}</div>
+                </div>
+                <button
+                  type="button"
+                  className="paste-block-remove"
+                  onClick={() =>
+                    setAttachChips((prev) => prev.filter((x) => x.id !== a.id))
+                  }
+                  aria-label="移除附件"
+                  title="移除此附件"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
             {pasteBlocks.map((b) => {
               const rawFirstLine = b.text.trim().split('\n')[0]?.trim() || '剪贴板文本'
               const title = rawFirstLine.length > 24 ? `${rawFirstLine.slice(0, 24)}…` : rawFirstLine
@@ -511,7 +638,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ref={textareaRef}
           value={input}
           rows={1}
-          placeholder="输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件"
+          placeholder={
+            casual
+              ? '随便问问，或点 + 附上文件… 改代码请先选项目'
+              : '输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件'
+          }
           disabled={isGenerating}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -520,6 +651,51 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         {assist.menu}
         <div className="composer-toolbar">
           <div className="toolbar-left">
+            <div className="composer-attach" ref={attachMenuRef}>
+              <button
+                type="button"
+                className={`composer-attach-btn${attachOpen ? ' open' : ''}`}
+                disabled={isGenerating}
+                title="附上文件或文件夹（不切换项目）"
+                aria-label="附上文件或文件夹"
+                aria-expanded={attachOpen}
+                onClick={() => {
+                  setWsOpen(false)
+                  setModelOpen(false)
+                  setAttachOpen((v) => !v)
+                }}
+              >
+                <PlusIcon />
+              </button>
+              {attachOpen && (
+                <div className="composer-menu attach-menu" role="menu">
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    onClick={() => void pickFiles()}
+                  >
+                    <span className="menu-item-icon">
+                      <FileTextIcon />
+                    </span>
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">添加文件…</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    onClick={() => void pickFolder()}
+                  >
+                    <span className="menu-item-icon">
+                      <FolderIcon />
+                    </span>
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">添加文件夹…</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
             <span className="composer-hint">
               {isGenerating
                 ? '生成中 · 点右侧方块可中断 · Esc 失焦'

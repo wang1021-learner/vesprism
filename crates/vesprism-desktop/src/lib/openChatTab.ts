@@ -16,6 +16,7 @@ import {
   resolveNewTabModel,
   resolveWorkspaceCwd,
   switchTab,
+  $scratchCwd,
   type UtilityKind,
 } from '../store'
 import { openTab, setCurrentModel, startSession } from '../bridge'
@@ -34,7 +35,7 @@ export type OpenChatTabOpts = {
 export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | null> {
   const title = (opts.title || '').trim()
   const utilityKind = opts.utilityKind ?? null
-  const cwd = resolveWorkspaceCwd()
+  const cwd = resolveWorkspaceCwd() || $scratchCwd.get()
 
   // 专用面板：同类型已打开则直接切过去（并补全缺失的 cwd）
   if (utilityKind) {
@@ -51,7 +52,7 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
 
   if (!cwd || !looksAbsolutePath(cwd)) {
     patchActiveTab({
-      error: '工作区路径无效（不是绝对路径）。请在设置中选择工作区后再试。',
+      error: '无法创建会话：闲聊目录不可用。',
     })
     return null
   }

@@ -14,6 +14,9 @@ import {
   emptyTabState,
   $workspaceCwd,
   $workspaceOptions,
+  $scratchCwd,
+  isScratchCwd,
+  workspaceLabel,
   findNormalChatTab,
   findTabByUtilityKind,
   getTabState,
@@ -243,6 +246,20 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
   })
 
+  it('isScratchCwd / workspaceLabel 识别闲聊目录', () => {
+    $scratchCwd.set('C:\\Users\\me\\.vesprism\\scratch')
+    expect(isScratchCwd('C:/Users/me/.vesprism/scratch')).toBe(true)
+    expect(isScratchCwd('C:\\Users\\me\\.vesprism\\scratch\\')).toBe(true)
+    expect(isScratchCwd('D:\\repo')).toBe(false)
+    $scratchCwd.set('')
+    expect(isScratchCwd('C:\\Users\\me\\.vesprism\\scratch')).toBe(true)
+    $scratchCwd.set('C:\\Users\\me\\.vesprism\\scratch')
+    expect(workspaceLabel('C:\\Users\\me\\.vesprism\\scratch')).toBe('闲聊')
+    expect(workspaceLabel('D:\\repo\\app')).toBe('app')
+    expect(workspaceLabel('')).toBe('闲聊')
+    $scratchCwd.set('')
+  })
+
   it('looksAbsolutePath / resolveWorkspaceCwd 兜底空投影', () => {
     expect(looksAbsolutePath('')).toBe(false)
     expect(looksAbsolutePath('relative')).toBe(false)
@@ -320,3 +337,35 @@ describe('Tab 活动灯', () => {
     )
   })
 })
+
+describe('最近试跑历史持久化 ($recentWorkflows)', () => {
+  it('支持 upsert 并持久化到 localStorage', async () => {
+    const { $recentWorkflows, upsertRecentWorkflow, clearRecentWorkflows } = await import('./store')
+    clearRecentWorkflows()
+    expect(Object.keys($recentWorkflows.get()).length).toBe(0)
+
+    upsertRecentWorkflow({
+      runId: 'run-1',
+      name: '测试工作流',
+      status: 'complete',
+      objective: '测试目标',
+      revision: 1,
+      foreground: true,
+      phases: [{ title: '阶段 1', state: 'done' }],
+      currentPhase: 'done',
+      agentsUsed: 1,
+      agentsReserved: 1,
+      agentUsageIncomplete: false,
+      elapsedMs: 1200,
+      activeAgents: 0,
+      agents: [],
+    })
+
+    expect($recentWorkflows.get()['run-1']).toBeDefined()
+    expect($recentWorkflows.get()['run-1'].name).toBe('测试工作流')
+
+    clearRecentWorkflows()
+    expect(Object.keys($recentWorkflows.get()).length).toBe(0)
+  })
+})
+

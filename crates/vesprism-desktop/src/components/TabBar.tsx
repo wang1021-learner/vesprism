@@ -1,5 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { useState } from 'react'
+import { IconAdjustmentsHorizontal } from '@tabler/icons-react'
 import {
   $activeTabId,
   $compositionOpen,
@@ -25,6 +26,7 @@ function formatTabTitle(raw: string | undefined | null): string {
 export function TabBar() {
   const tabs = useStore($tabs)
   const activeId = useStore($activeTabId)
+  const compOpen = useStore($compositionOpen)
   const [busy, setBusy] = useState(false)
 
   const onNewTab = async () => {
@@ -91,6 +93,24 @@ export function TabBar() {
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" />
                   </svg>
+                </button>
+              )}
+              {!st?.utilityKind && (
+                <button
+                  type="button"
+                  className={`tabbar-comp-btn${compOpen && t.id === activeId ? ' is-active' : ''}`}
+                  title="会话配置（工具/权限/流程）"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (t.id !== activeId) {
+                      switchTab(t.id)
+                      $compositionOpen.set(true)
+                    } else {
+                      $compositionOpen.set(!compOpen)
+                    }
+                  }}
+                >
+                  <IconAdjustmentsHorizontal size={13} stroke={1.75} aria-hidden />
                 </button>
               )}
               <button

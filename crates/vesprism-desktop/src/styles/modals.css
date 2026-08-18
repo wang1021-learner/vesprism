@@ -85,14 +85,9 @@
   align-items: center;
   gap: 8px;
   padding: 12px 12px 12px 14px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-solid, #e5e7eb);
   flex-shrink: 0;
   min-width: 0;
-}
-
-.command-palette-header:focus-within {
-  /* 输入焦点时整行轻提示，避免输入框蓝环撑破布局 */
-  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .command-palette-icon {
@@ -106,13 +101,23 @@
 .command-palette-input {
   flex: 1 1 0;
   min-width: 0;
-  border: none;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
   background: transparent;
   font-size: 14.5px;
   line-height: 1.4;
   color: var(--text-primary);
-  outline: none;
   padding: 4px 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.command-palette-input:focus,
+.command-palette-input:focus-visible {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .command-palette-input::placeholder {

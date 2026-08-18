@@ -29,7 +29,7 @@ import {
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
-  $preferredWorkspaceCwd, $securityPolicy,
+  $preferredWorkspaceCwd, $scratchCwd, $securityPolicy,
   createTab, getTabState, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast,
 } from './store'
@@ -40,10 +40,12 @@ import { WorkflowsPanel } from './components/WorkflowsPanel'
 
 const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
+const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, openTab, sendPrompt, setCurrentModel,
-  startSession, workspaceCwd, getSecurityPolicy,
+  startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
+  type PromptAttach,
 } from './bridge'
 import { generateId } from './lib/generateId'
 import { removeUserMessageByPromptId } from './lib/sessionTranscript'
@@ -186,7 +188,8 @@ async function bootstrap() {
     return
   }
   try {
-    const cwd = await workspaceCwd()
+    const [cwd, scratch] = await Promise.all([workspaceCwd(), scratchCwd()])
+    $scratchCwd.set(scratch)
     const settings = await getModelSettings()
     $models.set(settings.models)
     const configDefault =
@@ -279,6 +282,13 @@ function AppMainBody() {
       </Suspense>
     )
   }
+  if (kind === 'flow-run') {
+    return (
+      <Suspense fallback={<div className="run-detail-loading">加载试跑详情…</div>}>
+        <RunDetailPanel />
+      </Suspense>
+    )
+  }
   if (kind === 'agents') {
     return (
       <Suspense fallback={<div className="agents-panel-loading">加载 Agent 编制…</div>}>
@@ -338,15 +348,20 @@ function AppComposer() {
   const cwd = useStore($workspaceCwd)
   const wsOptions = useStore($workspaceOptions)
   const messages = useStore($messages)
-  const canSend = ready && !generating && input.trim().length > 0
+  const canSend = ready && !generating
   const canSwitchWs = ready && !generating && !messages.some((m) => m.role === 'user')
 
-  const onSend = useCallback(async (text?: string) => {
+  const onSend = useCallback(async (text?: string, attachments?: PromptAttach[]) => {
     // 读 atom 最新值，避免 useCallback 闭包捕获旧 input
     const msg = (text ?? $composerInput.get()).trim()
-    if (!msg) return
+    const attach = attachments?.filter((a) => a.path.trim()) ?? []
+    if (!msg && attach.length === 0) return
     // 与 bridge / 引擎 meta.promptId 对齐；generateId 兼容无 randomUUID 的 WebView
     const promptId = generateId('p_')
+    const names = attach.map((a) => a.path.replace(/\\/g, '/').split('/').pop() || a.path)
+    const display = attach.length
+      ? `${msg}${msg ? '\n\n' : ''}[附件] ${names.join('、')}`
+      : msg
     patchActiveTab({ composerInput: '' })
     // 乐观 UI：立刻插入用户气泡，不依赖 user_text_chunk 回显时机
     patchActiveTab({
@@ -355,14 +370,14 @@ function AppComposer() {
         {
           id: generateId('msg_'),
           role: 'user' as const,
-          text: msg,
+          text: display,
           promptId,
         },
       ],
     })
     try {
       patchActiveTab({ status: 'generating', error: '' })
-      await sendPrompt($activeTabId.get(), msg, promptId)
+      await sendPrompt($activeTabId.get(), msg, promptId, attach)
     } catch (e) {
       // invoke 失败：撤回乐观气泡并还原输入，避免「空列表 / 幽灵消息」
       patchActiveTab({
@@ -478,7 +493,7 @@ function AppComposer() {
       onSwitchReasoningEffort={onSwitchReasoningEffort}
       onSelectWorkspace={(c) => void onSelectWorkspace(c)}
       onBrowseWorkspace={() => void onBrowseWorkspace()}
-      onSend={(t) => void onSend(t)}
+      onSend={(t, a) => void onSend(t, a)}
       onCancel={() => void onCancel()}
     />
   )

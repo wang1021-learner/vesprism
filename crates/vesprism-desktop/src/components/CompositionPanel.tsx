@@ -17,10 +17,9 @@ import {
   type Policy,
 } from '../lib/composition'
 
-type Section = 'model' | 'tools' | 'permissions' | 'flows'
+type Section = 'tools' | 'permissions' | 'flows'
 
 const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'model', label: '模型' },
   { id: 'tools', label: '工具' },
   { id: 'permissions', label: '权限' },
   { id: 'flows', label: '流程' },
@@ -44,7 +43,7 @@ function CompositionPanelInner() {
   const tabId = useStore($activeTabId)
   const sessionId = useStore($activeSessionId)
   const cwd = useStore($workspaceCwd)
-  const [section, setSection] = useState<Section>('model')
+  const [section, setSection] = useState<Section>('tools')
   const [draft, setDraft] = useState<CompositionData>(emptyComposition)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -117,7 +116,7 @@ function CompositionPanelInner() {
         <header className="comp-head">
           <span className="comp-title">会话组装单</span>
           <span className="comp-subtitle">
-            会话级热生效：模型 · 工具停用 · 权限 · 流程。人设 / 技能 / MCP / 插件由工作台 Agent 资产承载（YAML 组装单兼容读取）
+            会话级热生效：工具停用 · 权限 · 流程。人设 / 技能 / MCP / 插件由工作台 Agent 资产承载（YAML 组装单兼容读取）
           </span>
           <button type="button" className="comp-close" onClick={close} title="关闭">
             ✕
@@ -177,37 +176,6 @@ function SectionBody({
   patch: (p: Partial<CompositionData>) => void
 }) {
   switch (section) {
-    case 'model':
-      return (
-        <>
-          <label className="comp-field">
-            <span className="comp-label">模型（会话级热切换）</span>
-            <input
-              className="comp-input"
-              value={draft.model.name ?? ''}
-              placeholder="留空 = 不动当前模型"
-              onChange={(e) => patch({ model: { ...draft.model, name: e.target.value || null } })}
-            />
-          </label>
-          <label className="comp-field">
-            <span className="comp-label">推理强度</span>
-            <select
-              className="comp-input"
-              value={draft.model.reasoning_effort ?? ''}
-              onChange={(e) =>
-                patch({ model: { ...draft.model, reasoning_effort: e.target.value || null } })
-              }
-            >
-              <option value="">跟随默认</option>
-              {['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-        </>
-      )
     case 'tools':
       return (
         <label className="comp-field">

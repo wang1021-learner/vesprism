@@ -27,6 +27,7 @@ import {
   findNormalChatTab,
   findTabBySessionId,
   getTabState,
+  isBlankNewChat,
   looksAbsolutePath,
   patchActiveTab,
   patchTab,
@@ -36,6 +37,8 @@ import {
   switchTab,
   $workspaceCwd,
   $preferredWorkspaceCwd,
+  $scratchCwd,
+  isScratchCwd,
   type ChatSummary,
 } from '../store'
 import { clearSessionAllowed } from '../lib/permissionMemory'
@@ -67,10 +70,35 @@ import {
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
 import { reconcileRunningSubagents } from '../lib/reconcileRunningSubagents'
+import {
+  getWorkbenchBinding,
+  isToolSession,
+  listWorkbenchBindings,
+  listWorkbenchSessions,
+  type WorkbenchBinding,
+} from '../workbench/bindings'
+import { requestAgentsFocus } from '../workbench/agents/focus'
+import { requestFlowFocus } from '../workbench/flow/focus'
 
 
 /** FTS 搜索结果行（可带 snippet） */
 type SearchHit = ChatSummary & { snippet?: string }
+
+/** 有产物绑定的干活会话：直接跳对应工作台面板（画布/编制）并定位，不经过聊天区。 */
+async function openBoundWorkbenchWithBinding(binding: WorkbenchBinding): Promise<void> {
+  const artifacts = [...binding.artifacts].reverse()
+  const flow = artifacts.find((item) => item.kind === 'flow')
+  if (flow) {
+    requestFlowFocus(flow.id)
+    await openChatTab({ title: '流程画布', utilityKind: 'flow-canvas' })
+    return
+  }
+  const agent = artifacts.find((item) => item.kind === 'agent')
+  if (agent) {
+    requestAgentsFocus(agent.id)
+    await openChatTab({ title: 'Agent 编制', utilityKind: 'agents' })
+  }
+}
 
 /** 磁盘投影 → ChatMessage（工具字段与实时 ToolCallInfo 对齐，不再靠标题猜 kind） */
 function hydrateDisplayMessage(m: {
@@ -313,9 +341,15 @@ function normalizeCwdKey(cwd: string | undefined): string {
   return (cwd || '').trim().replace(/\\/g, '/').replace(/\/+$/, '') || '(未知工作空间)'
 }
 
+/** 工作台分组（有产物绑定的画布/编制干活会话）专用 key，不参与 cwd 分组。 */
+const WORKBENCH_GROUP_KEY = '__workbench__'
+/** 闲聊分组（scratch cwd，未绑定项目）专用 key。 */
+const CASUAL_GROUP_KEY = '__casual__'
+
 function workspaceDisplayName(cwd: string): string {
   const key = normalizeCwdKey(cwd)
   if (key === '(未知工作空间)') return key
+  if (isScratchCwd(cwd)) return '闲聊'
   const parts = key.split('/').filter(Boolean)
   return parts[parts.length - 1] || key
 }
@@ -342,6 +376,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const cwd = useStore($workspaceCwd)
   /** 主工作区：侧栏置顶/默认展开；勿用当前 Tab cwd（点历史会误把整组拖到最上面） */
   const preferredCwd = useStore($preferredWorkspaceCwd)
+  const scratchCwd = useStore($scratchCwd)
 
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set())
   const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null)
@@ -357,10 +392,28 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const [renameError, setRenameError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<ChatSummary | null>(null)
   const [busy, setBusy] = useState(false)
+  const [workbenchChats, setWorkbenchChats] = useState<ChatSummary[]>([])
+  const [workbenchBindings, setWorkbenchBindings] = useState<Record<string, WorkbenchBinding>>({})
 
   const listRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchGenRef = useRef(0)
+
+  const refreshWorkbenchChats = useCallback(async () => {
+    try {
+      const list = await listWorkbenchSessions(300)
+      setWorkbenchChats(
+        list.map((c) => ({
+          id: c.id,
+          title: c.title || '工作台会话',
+          cwd: c.cwd,
+          updatedAt: c.updated_at,
+        })),
+      )
+    } catch (e) {
+      console.warn('刷新工作台会话失败', e)
+    }
+  }, [])
 
   const refreshChats = useCallback(async (workspace?: string) => {
     // 用主工作区做「当前优先」排序参数；列表本身含全部 cwd 的会话
@@ -368,27 +421,77 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       workspace ||
       $preferredWorkspaceCwd.get() ||
       $workspaceCwd.get()
-    if (!w) return
     try {
-      const list = await listSessions(w, 300)
-      $chats.set(
-        list.map((c) => ({
-          id: c.id,
-          title: c.title || '新对话',
-          cwd: c.cwd,
-          updatedAt: c.updated_at,
-        })),
-      )
+      const [list] = await Promise.all([
+        w ? listSessions(w, 300) : Promise.resolve(null),
+        refreshWorkbenchChats(),
+      ])
+      if (list) {
+        $chats.set(
+          list.map((c) => ({
+            id: c.id,
+            title: c.title || '新对话',
+            cwd: c.cwd,
+            updatedAt: c.updated_at,
+          })),
+        )
+      }
     } catch (e) {
       console.warn('刷新会话列表失败', e)
     }
-  }, [])
+  }, [refreshWorkbenchChats])
 
   // 仅主工作区变化时刷新列表；切 Tab / 打开其它 cwd 历史不重排侧栏
   useEffect(() => {
     if (!preferredCwd) return
     void refreshChats(preferredCwd)
   }, [preferredCwd, refreshChats])
+
+  useEffect(() => {
+    void refreshWorkbenchChats()
+  }, [refreshWorkbenchChats])
+
+  useEffect(() => {
+    let cancelled = false
+      ; (async () => {
+        try {
+          const ids = [
+            ...chats.map((chat) => chat.id),
+            ...workbenchChats.map((chat) => chat.id),
+          ]
+          const bindings = await listWorkbenchBindings(ids)
+          if (cancelled) return
+          setWorkbenchBindings(
+            Object.fromEntries(bindings.map((binding) => [binding.session_id, binding])),
+          )
+        } catch {
+          if (!cancelled) setWorkbenchBindings({})
+        }
+      })()
+    return () => {
+      cancelled = true
+    }
+  }, [chats, workbenchChats])
+
+  useEffect(() => {
+    const onChanged = (event: Event) => {
+      const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId?.trim()
+      if (!sessionId) return
+      void refreshWorkbenchChats()
+      void getWorkbenchBinding(sessionId)
+        .then((binding) => {
+          setWorkbenchBindings((prev) => {
+            const next = { ...prev }
+            if (binding) next[sessionId] = binding
+            else delete next[sessionId]
+            return next
+          })
+        })
+        .catch(() => { })
+    }
+    window.addEventListener('vesprism:workbench-binding-changed', onChanged)
+    return () => window.removeEventListener('vesprism:workbench-binding-changed', onChanged)
+  }, [refreshWorkbenchChats])
 
   useEffect(() => {
     if (!menuOpenChatId) return
@@ -468,13 +571,45 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const workspaceGroups = useMemo((): WorkspaceGroup[] => {
     // 置顶 = 主工作区（设置/Composer 切换），不是当前 Tab 打开的历史会话 cwd
     const pinKey = normalizeCwdKey(preferredCwd || cwd)
+    // 工作台会话走独立列表，不和主聊天混；主列表里若还有绑定残留也归过去。
+    const workbenchIds = new Set(workbenchChats.map((c) => c.id))
+    const casual: ChatSummary[] = []
     const byWs = new Map<string, ChatSummary[]>()
     for (const c of chats) {
+      if (workbenchIds.has(c.id) || workbenchBindings[c.id]?.artifacts?.length) {
+        continue
+      }
+      if (isScratchCwd(c.cwd, scratchCwd)) {
+        casual.push(c)
+        continue
+      }
       const key = normalizeCwdKey(c.cwd)
       if (!byWs.has(key)) byWs.set(key, [])
       byWs.get(key)!.push(c)
     }
     const groups: WorkspaceGroup[] = []
+    if (workbenchChats.length > 0) {
+      groups.push({
+        cwdKey: WORKBENCH_GROUP_KEY,
+        label: '工作台',
+        fullPath: '',
+        isCurrent: true,
+        chats: [...workbenchChats].sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        ),
+      })
+    }
+    if (casual.length > 0) {
+      groups.push({
+        cwdKey: CASUAL_GROUP_KEY,
+        label: '闲聊',
+        fullPath: scratchCwd || '',
+        isCurrent: true,
+        chats: [...casual].sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        ),
+      })
+    }
     for (const [key, list] of byWs) {
       const sorted = [...list].sort(
         (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -488,11 +623,18 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       })
     }
     groups.sort((a, b) => {
-      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
+      const rank = (g: WorkspaceGroup) => {
+        if (g.cwdKey === WORKBENCH_GROUP_KEY) return 0
+        if (g.cwdKey === CASUAL_GROUP_KEY) return 1
+        if (g.isCurrent) return 2
+        return 3
+      }
+      const d = rank(a) - rank(b)
+      if (d !== 0) return d
       return a.label.localeCompare(b.label, 'zh')
     })
     return groups
-  }, [chats, preferredCwd, cwd])
+  }, [chats, workbenchChats, preferredCwd, cwd, scratchCwd, workbenchBindings])
 
   const toggleWorkspace = (ws: WorkspaceGroup) => {
     setCollapsedWorkspaces((prev) => {
@@ -525,6 +667,27 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const onSelectChat = useCallback(async (id: string, sessionCwd?: string) => {
     setMenuOpenChatId(null)
 
+    // 有产物绑定的干活会话：直接跳工作台面板（画布/编制）并定位，
+    // 不先切聊天区再跳（避免「闪到主聊天又闪到工作台」）。
+    let bound: WorkbenchBinding | null = null
+    try {
+      bound = await getWorkbenchBinding(id)
+    } catch {
+      bound = null
+    }
+    if (bound && bound.artifacts.length > 0) {
+      await openBoundWorkbenchWithBinding(bound)
+      return
+    }
+    try {
+      if (await isToolSession(id)) {
+        await openChatTab({ title: '流程画布', utilityKind: 'flow-canvas' })
+        return
+      }
+    } catch {
+      /* 索引不可用时按普通历史打开 */
+    }
+
     // 已打开：直接切换（phase 保持该 Tab 原状态，ready 则无绿闪）
     const existing = findTabBySessionId(id)
     if (existing) {
@@ -545,13 +708,12 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     const activeId = $activeTabId.get()
     const active = activeId ? getTabState(activeId) : undefined
     const reuseBlank =
-      activeId &&
-      active &&
-      !active.utilityKind &&
-      !active.chatId &&
-      !active.sessionId &&
-      active.messages.length === 0 &&
-      active.phase !== 'loading'
+      Boolean(activeId) &&
+      Boolean(active) &&
+      isBlankNewChat(active!) &&
+      active!.phase !== 'loading' &&
+      active!.phase !== 'restarting' &&
+      active!.status !== 'generating'
 
     let myTab = activeId
     let createdNew = false
@@ -664,11 +826,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const onNewChat = useCallback(async () => {
     setMenuOpenChatId(null)
 
-    const workCwd = resolveWorkspaceCwd()
+    const workCwd = resolveWorkspaceCwd() || $scratchCwd.get()
     if (!workCwd || !looksAbsolutePath(workCwd)) {
       patchActiveTab({
-        error:
-          '工作区路径无效（Path is not absolute）。请先在设置中选择绝对路径工作区，再新建对话。',
+        error: '无法创建会话：闲聊目录不可用。',
       })
       return
     }
@@ -680,18 +841,17 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
     const activeId = $activeTabId.get()
     const activeState = activeId ? getTabState(activeId) : undefined
+    const isBlank = activeState ? isBlankNewChat(activeState) : false
 
-    // 当前 Tab 在加载历史 / 生成中 / 专用面板：新开空白对话 Tab，不阻塞、不冲掉当前页
+    // 当前 Tab 非空白普通对话（加载历史 / 生成中 / 有消息 / 专用面板）：新开空白对话 Tab
     const shouldOpenFreshTab =
       !activeId ||
       !activeState ||
-      Boolean(activeState.utilityKind) ||
+      !isBlank ||
       activeState.phase === 'loading' ||
       activeState.phase === 'restarting' ||
       activeState.phase === 'booting' ||
-      activeState.status === 'generating' ||
-      Boolean(activeState.chatId || activeState.sessionId) ||
-      activeState.messages.length > 0
+      activeState.status === 'generating'
 
     if (shouldOpenFreshTab) {
       // 优先复用已有空白普通对话
@@ -700,8 +860,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         blank &&
         blank !== activeId &&
         getTabState(blank) &&
-        !getTabState(blank)?.chatId &&
-        (getTabState(blank)?.messages.length ?? 0) === 0
+        isBlankNewChat(getTabState(blank)!)
       ) {
         switchTab(blank)
         await refreshChats()
@@ -986,12 +1145,18 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         return (
           <div
             key={ws.cwdKey}
-            className={`sidebar-workspace${ws.isCurrent ? ' is-current' : ''}${folded ? ' is-collapsed' : ''}`}
+            className={`sidebar-workspace${ws.isCurrent ? ' is-current' : ''}${folded ? ' is-collapsed' : ''}${ws.cwdKey === CASUAL_GROUP_KEY ? ' is-casual' : ''}${ws.cwdKey === WORKBENCH_GROUP_KEY ? ' is-workbench' : ''}`}
           >
             <button
               type="button"
               className="sidebar-workspace-title"
-              title={ws.fullPath}
+              title={
+                ws.cwdKey === CASUAL_GROUP_KEY
+                  ? '未绑定项目的会话'
+                  : ws.cwdKey === WORKBENCH_GROUP_KEY
+                    ? '画布 / 编制干活会话'
+                    : ws.fullPath
+              }
               aria-expanded={!folded}
               onClick={() => toggleWorkspace(ws)}
             >
@@ -1005,6 +1170,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                   <ChatRow
                     key={chat.id}
                     chat={chat}
+                    binding={workbenchBindings[chat.id]}
                     isActive={chat.id === activeChatId}
                     menuOpen={menuOpenChatId === chat.id}
                     onSelect={() => void onSelectChat(chat.id, chat.cwd)}
@@ -1036,11 +1202,20 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     </div>
   )
 
-  /** 展开态 / peek 共用：顶栏 → 新建 → 能力格 → 会话 → 设置 */
+  /** 展开态 / peek 共用：顶栏（新对话 + 搜索/收起） → 能力入口 → 会话 → 设置 */
   const renderExpandedPanel = () => (
     <>
-      <div className="sidebar-header">
-        <div className="sidebar-actions">
+      <div className="sidebar-top-bar">
+        <button
+          type="button"
+          className="sidebar-compose-new"
+          onClick={() => void onNewChat()}
+          title="新建对话"
+        >
+          <PlusIcon />
+          <span>新对话</span>
+        </button>
+        <div className="sidebar-top-actions">
           <button
             type="button"
             className="sidebar-icon-btn"
@@ -1061,10 +1236,6 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       </div>
 
       <div className="sidebar-compose">
-        <button type="button" className="sidebar-compose-new" onClick={() => void onNewChat()}>
-          <PlusIcon />
-          <span>新对话</span>
-        </button>
         {renderUtilityGrid()}
       </div>
 
@@ -1403,6 +1574,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
 function ChatRow({
   chat,
+  binding,
   isActive,
   menuOpen,
   onSelect,
@@ -1411,6 +1583,7 @@ function ChatRow({
   onDelete,
 }: {
   chat: ChatSummary
+  binding?: WorkbenchBinding
   isActive: boolean
   menuOpen: boolean
   onSelect: () => void
@@ -1420,15 +1593,25 @@ function ChatRow({
 }) {
   const runningByParent = useStore($runningByParent)
   const runningCount = runningByParent[chat.id] ?? 0
+  const artifacts = binding?.artifacts ?? []
+  const flowCount = artifacts.filter((item) => item.kind === 'flow').length
+  const agentCount = artifacts.filter((item) => item.kind === 'agent').length
+  const hasWorkbenchArtifacts = flowCount > 0 || agentCount > 0
   return (
     <div className={`recent-item-container${isActive ? ' active' : ''}`}>
       <button type="button" className="recent-item" onClick={onSelect}>
         <span className="recent-title" title={chat.title}>
           {chat.title}
         </span>
+        {hasWorkbenchArtifacts && (
+          <span className="recent-artifacts" aria-label="工作台产物">
+            {flowCount > 0 && <span className="recent-artifact-pill" title={`${flowCount} 个流程`}>⑂ {flowCount}</span>}
+            {agentCount > 0 && <span className="recent-artifact-pill" title={`${agentCount} 个员工`}>✦ {agentCount}</span>}
+          </span>
+        )}
         {runningCount > 0 && (
           <span className="recent-running-badge" title={`${runningCount} 个子代理运行中`}>
-            {runningCount} 运行
+            ● {runningCount}
           </span>
         )}
       </button>

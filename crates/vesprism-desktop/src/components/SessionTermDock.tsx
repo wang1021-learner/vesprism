@@ -1,6 +1,11 @@
 import { lazy, Suspense, useCallback } from 'react'
 import { useStore } from '@nanostores/react'
 import {
+  IconHierarchy2,
+  IconTerminal2,
+  IconClockPlay,
+} from '@tabler/icons-react'
+import {
   $activeTabId,
   $backgroundTasks,
   $ptyAlive,
@@ -23,10 +28,14 @@ const TerminalPane = lazy(() =>
   import('./TerminalPane').then((m) => ({ default: m.TerminalPane })),
 )
 
-const PANELS: { kind: SessionDockKind; label: string }[] = [
-  { kind: 'subagents', label: '子代理' },
-  { kind: 'terminal', label: '终端' },
-  { kind: 'bgTasks', label: '后台任务' },
+const PANELS: {
+  kind: SessionDockKind
+  label: string
+  icon: React.ComponentType<{ size?: number | string; stroke?: number; className?: string }>
+}[] = [
+  { kind: 'subagents', label: '子代理', icon: IconHierarchy2 },
+  { kind: 'terminal', label: '终端', icon: IconTerminal2 },
+  { kind: 'bgTasks', label: '后台任务', icon: IconClockPlay },
 ]
 
 const MIN_W = 220
@@ -118,18 +127,22 @@ export function SessionTermDock() {
         </aside>
       ) : null}
       <nav className="session-term-rail" aria-label="会话侧栏">
-        {PANELS.map((p) => (
-          <button
-            key={p.kind}
-            type="button"
-            className={`session-term-toggle${kind === p.kind ? ' is-active' : ''}${live[p.kind] ? ' is-running' : ''}`}
-            aria-expanded={kind === p.kind}
-            title={kind === p.kind ? `收起${p.label}` : `打开${p.label}`}
-            onClick={() => toggleSessionDock(p.kind)}
-          >
-            <span className="session-term-toggle-label">{p.label}</span>
-          </button>
-        ))}
+        {PANELS.map((p) => {
+          const Icon = p.icon
+          return (
+            <button
+              key={p.kind}
+              type="button"
+              className={`session-term-toggle${kind === p.kind ? ' is-active' : ''}${live[p.kind] ? ' is-running' : ''}`}
+              aria-expanded={kind === p.kind}
+              title={kind === p.kind ? `收起 ${p.label}` : p.label}
+              onClick={() => toggleSessionDock(p.kind)}
+            >
+              <Icon size={18} stroke={1.75} aria-hidden />
+              {live[p.kind] && <span className="session-term-toggle-dot" aria-hidden />}
+            </button>
+          )
+        })}
       </nav>
     </div>
   )

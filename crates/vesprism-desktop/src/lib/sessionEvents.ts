@@ -19,12 +19,14 @@ import {
   trackSubagentRunning,
   untrackSubagentRunning,
   upsertSubagent,
+  upsertRecentWorkflow,
   bumpGitHeadRevision,
   setBackgroundTask,
 } from '../store'
 import { loadSession, respondPermission, setCurrentModel, startSession } from '../bridge'
 import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './sessionOpen'
 import { refreshSubagentTabMessages } from './openSubagentTab'
+import { markToolSession } from '../workbench/bindings'
 import { parsePermissionDescription } from '../types'
 import type { SessionStatus } from '../types'
 import {
@@ -318,13 +320,16 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       patchTab(tabId, { sandboxCwd: '', sandboxOrigin: '' })
       break
     case 'session_id_changed':
-      // 只更新引擎 sessionId；chatId 保留侧栏历史 id，避免 findTabBySessionId 对不上、重复开 Tab
+      // 只更新引擎 sessionId；chatId 保留侧栏历史 id（空白新对话保持 chatId 为空，使 isBlankNewChat 持续成立）
       if (ev.session_id) {
         const prev = getTabState(tabId)
         patchTab(tabId, {
           sessionId: ev.session_id,
-          chatId: prev?.chatId?.trim() ? prev.chatId : ev.session_id,
         })
+        // 工具面板（画布/编制等）会话不进主聊天历史；绑过产物的进侧栏「工作台」
+        if (prev?.utilityKind) {
+          void markToolSession(ev.session_id).catch(() => {})
+        }
       }
       break
     case 'goal_updated': {
@@ -340,6 +345,8 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         patchTab(tabId, {
           workflows: { ...prev, [ev.workflow.runId]: ev.workflow },
         })
+        // jike: 试跑详情面板（共用，显示最近一次）的全局数据源。
+        upsertRecentWorkflow(ev.workflow)
       }
       break
     }

@@ -8,6 +8,7 @@ import {
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
   $settingsOpen,
+  isScratchCwd,
   type ChatSummary,
 } from '../../store'
 import { searchSessions } from '../../bridge'
@@ -44,6 +45,7 @@ function normalizeCwdKey(cwd: string | undefined): string {
 function workspaceDisplayName(cwd: string): string {
   const key = normalizeCwdKey(cwd)
   if (key === '(未知工作空间)') return key
+  if (isScratchCwd(cwd)) return '闲聊'
   const parts = key.split('/').filter(Boolean)
   return parts[parts.length - 1] || key
 }

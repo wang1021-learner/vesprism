@@ -33,6 +33,12 @@ export const restartTab = (tabId: string) => invoke('restart_tab', { tabId })
 // ── 工作区 ──
 export const workspaceCwd = () => invoke<string>('workspace_cwd')
 export const setWorkspaceCwd = (cwd: string) => invoke<string>('set_workspace_cwd', { cwd })
+export const scratchCwd = () => invoke<string>('scratch_cwd')
+
+export type PromptAttach = {
+  kind: 'file' | 'folder' | 'image'
+  path: string
+}
 
 export type SecurityPolicyDto = {
   execution_policy: string
@@ -66,8 +72,18 @@ export const syncSandboxToOrigin = (tabId: string) =>
 
 // ── 会话 ──
 export const startSession = (tabId: string, cwd: string) => invoke('start_session', { tabId, cwd })
-export const sendPrompt = (tabId: string, text: string, promptId?: string) =>
-  invoke('send_prompt', { tabId, text, promptId: promptId ?? crypto.randomUUID() })
+export const sendPrompt = (
+  tabId: string,
+  text: string,
+  promptId?: string,
+  attachments?: PromptAttach[],
+) =>
+  invoke('send_prompt', {
+    tabId,
+    text,
+    promptId: promptId ?? crypto.randomUUID(),
+    attachments: attachments?.length ? attachments : null,
+  })
 export const cancelTurn = (tabId: string) => invoke('cancel_turn', { tabId })
 export const restartSession = (tabId: string, cwd: string) => invoke('restart_session', { tabId, cwd })
 

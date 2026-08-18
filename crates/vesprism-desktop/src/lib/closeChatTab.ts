@@ -78,7 +78,7 @@ async function refreshLastTabSession(id: string, cwd: string): Promise<void> {
     patchTab(id, {
       phase: 'ready',
       status: 'idle',
-      error: '工作区路径无效。请在设置中选择工作区后再试。',
+      error: '无法重建会话：闲聊目录不可用。',
     })
     return
   }

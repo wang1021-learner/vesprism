@@ -40,6 +40,22 @@ export function currentLoadGen(tabId?: string): number {
   return loadGens.get(tabId ?? $activeTabId.get()) ?? 0
 }
 
+/** restart/start 后等 session_id_changed 写入 tab，避免读到旧 id。 */
+export async function waitTabSessionId(
+  tabId: string,
+  prevId?: string,
+  timeoutMs = 4000,
+): Promise<string> {
+  const started = Date.now()
+  const prev = (prevId ?? '').trim()
+  while (Date.now() - started < timeoutMs) {
+    const sid = (getTabState(tabId)?.sessionId || '').trim()
+    if (sid && sid !== prev) return sid
+    await new Promise((r) => setTimeout(r, 40))
+  }
+  return (getTabState(tabId)?.sessionId || '').trim()
+}
+
 export function isAttachingRuntime(tabId?: string): boolean {
   return attachingTabs.get(tabId ?? $activeTabId.get()) ?? false
 }

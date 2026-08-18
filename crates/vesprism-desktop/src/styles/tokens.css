@@ -139,19 +139,23 @@
 html, body, #root { margin: 0; height: 100%; overflow: hidden; }
 
 :focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
-  transition: box-shadow var(--duration-fast) var(--ease-out-smooth);
+  outline: 2px solid var(--accent-glow, rgba(0, 0, 0, 0.12));
+  outline-offset: 1px;
 }
 
-/* 全站闪切：无过渡、无循环动效 */
-*,
-*::before,
-*::after {
-  animation: none !important;
-  animation-duration: 0s !important;
-  animation-iteration-count: 1 !important;
-  transition: none !important;
-  transition-duration: 0s !important;
-  scroll-behavior: auto !important;
+input,
+textarea,
+select,
+button {
+  outline: none;
+}
+
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: none !important;
+  box-shadow: none;
 }
