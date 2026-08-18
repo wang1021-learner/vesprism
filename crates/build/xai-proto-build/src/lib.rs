@@ -160,7 +160,8 @@ impl XaiProtoBuilder {
                 return Err(anyhow::anyhow!("protoc command failed"));
             }
 
-            let dep_content = fs::read_to_string(&dep_file).context("failed to read dependency file")?;
+            let dep_content =
+                fs::read_to_string(&dep_file).context("failed to read dependency file")?;
             let mut lines = dep_content.lines();
             let first_line = lines.next().context("dependency file is empty")?;
             let filename_with_colon = "desc.pbbin:";

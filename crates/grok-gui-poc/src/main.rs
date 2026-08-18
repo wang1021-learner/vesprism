@@ -101,9 +101,13 @@ async fn run() -> anyhow::Result<()> {
                                                         ),
                                                         Ok(r) => println!(
                                                             "--- 强制撤销仍失败: {} ---\n",
-                                                            r.error.unwrap_or_else(|| "未知错误".into())
+                                                            r.error.unwrap_or_else(
+                                                                || "未知错误".into()
+                                                            )
                                                         ),
-                                                        Err(e) => println!("--- 撤销出错: {} ---\n", e),
+                                                        Err(e) => {
+                                                            println!("--- 撤销出错: {} ---\n", e)
+                                                        }
                                                     }
                                                 } else {
                                                     println!("--- 已取消强制撤销 ---\n");
@@ -134,7 +138,9 @@ async fn run() -> anyhow::Result<()> {
             continue;
         }
 
-        session.send_prompt(line, format!("poc-{}", uuid::Uuid::new_v4())).await?;
+        session
+            .send_prompt(line, format!("poc-{}", uuid::Uuid::new_v4()))
+            .await?;
         print!("AI: ");
         std::io::stdout().flush().ok();
 

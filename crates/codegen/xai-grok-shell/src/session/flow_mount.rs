@@ -32,7 +32,9 @@ pub(crate) enum FlowMountError {
 
 /// 解析 `_meta["x.ai/flows"]`。
 /// `Ok(None)` = 键不存在（热更新时保持原值）；`Ok(Some(ids))` = 覆盖（空数组=卸掉全部）。
-pub(crate) fn parse_flows_meta(meta: Option<&Value>) -> Result<Option<Vec<String>>, FlowMountError> {
+pub(crate) fn parse_flows_meta(
+    meta: Option<&Value>,
+) -> Result<Option<Vec<String>>, FlowMountError> {
     let Some(meta) = meta.and_then(|v| v.as_object()) else {
         return Ok(None);
     };
@@ -75,7 +77,10 @@ pub(crate) fn flow_id_from_tool_name(name: &str) -> Option<&str> {
         .filter(|id| !id.is_empty() && xai_workflow::is_valid_workflow_name(id))
 }
 
-pub(crate) fn assert_no_tool_collision(id: &str, existing: &[String]) -> Result<(), FlowMountError> {
+pub(crate) fn assert_no_tool_collision(
+    id: &str,
+    existing: &[String],
+) -> Result<(), FlowMountError> {
     let name = flow_tool_name(id);
     if existing.iter().any(|n| n == &name || n == id) {
         return Err(FlowMountError::NameCollision(name));
@@ -119,9 +124,7 @@ pub(crate) fn resolve_mountable_ids(
 
 pub(crate) async fn run_flow_tool(
     cwd: &str,
-    manager: std::sync::Arc<
-        tokio::sync::Mutex<crate::session::workflow::manager::WorkflowManager>,
-    >,
+    manager: std::sync::Arc<tokio::sync::Mutex<crate::session::workflow::manager::WorkflowManager>>,
     mounted: &[String],
     inflight: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     id: &str,
@@ -166,11 +169,9 @@ pub(crate) async fn run_flow_tool(
     };
     let launched = manager.lock().await.launch(resolved, spec);
     let outcome = match launched {
-        Ok((_run_id, rx)) => rx
-            .await
-            .unwrap_or(xai_workflow::WorkflowOutcome::Failed {
-                error: "workflow outcome channel closed".into(),
-            }),
+        Ok((_run_id, rx)) => rx.await.unwrap_or(xai_workflow::WorkflowOutcome::Failed {
+            error: "workflow outcome channel closed".into(),
+        }),
         Err(e) => {
             finish();
             return Err(xai_tool_runtime::ToolError::custom(
@@ -274,8 +275,7 @@ mod tests {
             Some(vec!["refund".into(), "notify-user".into()])
         );
         assert_eq!(
-            parse_flows_meta(Some(&json!({"x.ai/flows": []})))
-                .unwrap(),
+            parse_flows_meta(Some(&json!({"x.ai/flows": []}))).unwrap(),
             Some(vec![])
         );
         assert_eq!(

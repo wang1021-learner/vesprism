@@ -84,7 +84,12 @@ impl SessionActor {
             // Update identity for the newly selected model, then rewrite system head.
             // Without this, A→B mid-session keeps A's self-introduction label.
             if let Some(label) = system_prompt_label.as_ref() {
-                let prev = self.agent.borrow().prompt_context().system_prompt_label.clone();
+                let prev = self
+                    .agent
+                    .borrow()
+                    .prompt_context()
+                    .system_prompt_label
+                    .clone();
                 if prev != *label {
                     tracing::info!(
                         session_id = % self.session_info.id.0,

@@ -1496,7 +1496,9 @@ pub(crate) async fn spawn_session_actor(
         tool_overrides: std::cell::RefCell::new(None),
         mounted_flows: std::cell::RefCell::new(Vec::new()),
         resolved_mounted_flows: resolved_mounted_flows.clone(),
-        inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        inflight_flows: std::sync::Arc::new(
+            std::sync::Mutex::new(std::collections::HashSet::new()),
+        ),
         resolved_tool_overrides: resolved_tool_overrides.clone(),
         compactions_remaining: std::cell::Cell::new(sampling_config.compactions_remaining),
         compaction_at_tokens: std::cell::Cell::new(sampling_config.compaction_at_tokens),

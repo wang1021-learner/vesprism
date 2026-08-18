@@ -603,6 +603,8 @@ pub(crate) async fn run_shell_child(
             model: Some(effective_model_id.0.to_string()),
             resumed_from: request.resume_from.clone(),
             workflow_run_id: request.owner.workflow_run_id().map(str::to_string),
+            // jike: spawn 当下就把 deny 规则交给桌面，避免第一下工具抢在 WorkflowUpdated 之前。
+            permission_rules: request.runtime_overrides.permission_rules.clone(),
         },
         ctx.parent_cmd_tx.as_ref(),
     );

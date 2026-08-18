@@ -203,9 +203,11 @@ impl SessionActor {
     /// jike: 校验并挂载 flows。空列表卸掉全部。
     pub(crate) fn set_mounted_flows(&self, flows: Vec<String>) -> Result<(), String> {
         let cwd = std::path::Path::new(self.session_info.cwd.as_str());
-        crate::session::flow_mount::resolve_mountable_ids(cwd, &flows).map_err(|e| e.to_string())?;
+        crate::session::flow_mount::resolve_mountable_ids(cwd, &flows)
+            .map_err(|e| e.to_string())?;
         *self.mounted_flows.borrow_mut() = flows.clone();
-        self.resolved_mounted_flows.store(std::sync::Arc::new(flows));
+        self.resolved_mounted_flows
+            .store(std::sync::Arc::new(flows));
         Ok(())
     }
 
@@ -220,7 +222,8 @@ impl SessionActor {
         };
         let existing: Vec<String> = defs.iter().map(|d| d.function.name.clone()).collect();
         for contract in contracts {
-            if crate::session::flow_mount::assert_no_tool_collision(&contract.id, &existing).is_err()
+            if crate::session::flow_mount::assert_no_tool_collision(&contract.id, &existing)
+                .is_err()
             {
                 tracing::warn!(id = %contract.id, "skipping flow tool due to name collision");
                 continue;
@@ -1492,11 +1495,7 @@ fn resolve_configured_cutoff(
         disabled: seed_disabled,
     } = seed.unwrap_or_default();
     let (over_x, over_w, over_disabled) = base.map_or((None, None, Vec::new()), |b| {
-        (
-            b.x_search.clone(),
-            b.web_search.clone(),
-            b.disabled.clone(),
-        )
+        (b.x_search.clone(), b.web_search.clone(), b.disabled.clone())
     });
     ToolOverrides {
         x_search: prefer_non_empty(over_x, seed_x, XSearchOptions::is_empty),
@@ -1656,7 +1655,12 @@ mod configured_cutoff_tests {
     #[test]
     fn disabled_drops_official_function_names() {
         let disabled = ["run_terminal_command", "web_search"];
-        let names = ["run_terminal_command", "web_search", "read_file", "search_replace"];
+        let names = [
+            "run_terminal_command",
+            "web_search",
+            "read_file",
+            "search_replace",
+        ];
         let kept: Vec<&str> = names
             .into_iter()
             .filter(|n| !disabled.contains(n))

@@ -241,7 +241,9 @@ pub fn apply_child_tool_policy(
         if !disabled.is_empty() {
             definition.tool_config.tools.retain(|tool| {
                 let short = tool.id.rsplit(':').next().unwrap_or(&tool.id);
-                !disabled.iter().any(|d| *d == short || *d == tool.id.as_str())
+                !disabled
+                    .iter()
+                    .any(|d| *d == short || *d == tool.id.as_str())
             });
         }
     }

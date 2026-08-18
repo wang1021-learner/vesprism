@@ -77,15 +77,11 @@ pub(crate) const EMPTY_OLD_STRING_GUARD_SENTENCE: &str =
 /// search_replace 工具的输入参数。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchReplaceInput {
-    #[schemars(
-        description = "要修改的目标文件路径，支持工作区相对路径或绝对路径。"
-    )]
+    #[schemars(description = "要修改的目标文件路径，支持工作区相对路径或绝对路径。")]
     pub file_path: String,
     #[schemars(description = "要在文件中匹配并替换的目标原字符串（old_string）")]
     pub old_string: String,
-    #[schemars(
-        description = "替换后的新字符串（new_string，必须与 old_string 不同）"
-    )]
+    #[schemars(description = "替换后的新字符串（new_string，必须与 old_string 不同）")]
     pub new_string: String,
     #[serde(
         default,

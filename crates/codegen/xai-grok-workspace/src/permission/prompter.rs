@@ -570,7 +570,10 @@ impl AcpPrompter {
 
     /// 设置当前请求的安全预检发现（manager 在 `request` 前调用；请求间串行覆盖）。
     pub fn set_security_findings(&self, findings: Vec<String>) {
-        *self.current_findings.lock().unwrap_or_else(|e| e.into_inner()) = findings;
+        *self
+            .current_findings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = findings;
     }
 
     /// Route the permission prompt to chat over the server when `Some`;
@@ -662,7 +665,10 @@ impl AcpPrompter {
         meta.insert(
             "x.ai/security_findings".into(),
             serde_json::Value::Array(
-                findings.into_iter().map(serde_json::Value::String).collect(),
+                findings
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
             ),
         );
         Some(meta)

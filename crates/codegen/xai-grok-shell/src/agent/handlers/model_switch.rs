@@ -206,9 +206,8 @@ pub(crate) async fn apply(
         let cfg = agent.cfg.borrow();
         let models = agent.models_manager.models();
         // Prefer catalog id (session model id), then routing / API model slug.
-        let model = config::find_model_by_id(&models, model_id.0.as_ref()).or_else(|| {
-            config::find_model_by_id(&models, model_sampling.model.as_str())
-        });
+        let model = config::find_model_by_id(&models, model_id.0.as_ref())
+            .or_else(|| config::find_model_by_id(&models, model_sampling.model.as_str()));
         let threshold = crate::util::config::resolve_auto_compact_threshold_percent(
             &cfg,
             model_sampling.model.as_str(),

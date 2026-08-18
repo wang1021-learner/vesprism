@@ -572,9 +572,9 @@ impl SessionActor {
                             } else {
                                 None
                             };
-                            if let Some(id) =
-                                crate::session::flow_mount::flow_id_from_tool_name(&prepared.tool_name)
-                            {
+                            if let Some(id) = crate::session::flow_mount::flow_id_from_tool_name(
+                                &prepared.tool_name,
+                            ) {
                                 return crate::session::flow_mount::run_flow_tool(
                                     &flow_cwd,
                                     flow_manager,

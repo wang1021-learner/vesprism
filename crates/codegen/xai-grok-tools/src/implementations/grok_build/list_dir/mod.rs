@@ -23,9 +23,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListDirInput {
-    #[schemars(
-        description = "要列出内容的目录路径，支持工作区根目录相对路径或绝对路径。"
-    )]
+    #[schemars(description = "要列出内容的目录路径，支持工作区根目录相对路径或绝对路径。")]
     pub target_directory: String,
 }
 

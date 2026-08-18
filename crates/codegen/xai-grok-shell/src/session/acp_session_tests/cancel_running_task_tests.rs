@@ -154,8 +154,12 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 supports_backend_search: std::cell::Cell::new(false),
                 tool_overrides: std::cell::RefCell::new(None),
                 mounted_flows: std::cell::RefCell::new(Vec::new()),
-                resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
-                inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+                    Vec::new(),
+                )),
+                inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashSet::new(),
+                )),
                 resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
                 compactions_remaining: std::cell::Cell::new(None),
                 compaction_at_tokens: std::cell::Cell::new(None),
@@ -638,8 +642,12 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 supports_backend_search: std::cell::Cell::new(false),
                 tool_overrides: std::cell::RefCell::new(None),
                 mounted_flows: std::cell::RefCell::new(Vec::new()),
-                resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
-                inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+                    Vec::new(),
+                )),
+                inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashSet::new(),
+                )),
                 resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
                 compactions_remaining: std::cell::Cell::new(None),
                 compaction_at_tokens: std::cell::Cell::new(None),

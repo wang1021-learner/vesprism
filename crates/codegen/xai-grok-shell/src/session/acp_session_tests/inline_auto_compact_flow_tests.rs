@@ -106,7 +106,9 @@ async fn create_test_actor(
         tool_overrides: std::cell::RefCell::new(None),
         mounted_flows: std::cell::RefCell::new(Vec::new()),
         resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
-        inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        inflight_flows: std::sync::Arc::new(
+            std::sync::Mutex::new(std::collections::HashSet::new()),
+        ),
         resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         compactions_remaining: std::cell::Cell::new(None),
         compaction_at_tokens: std::cell::Cell::new(None),
@@ -562,7 +564,9 @@ async fn create_test_actor_with_memory(
         tool_overrides: std::cell::RefCell::new(None),
         mounted_flows: std::cell::RefCell::new(Vec::new()),
         resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
-        inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        inflight_flows: std::sync::Arc::new(
+            std::sync::Mutex::new(std::collections::HashSet::new()),
+        ),
         resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         compactions_remaining: std::cell::Cell::new(None),
         compaction_at_tokens: std::cell::Cell::new(None),
@@ -1361,9 +1365,13 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 telemetry_enabled: false,
                 supports_backend_search: std::cell::Cell::new(false),
                 tool_overrides: std::cell::RefCell::new(None),
-        mounted_flows: std::cell::RefCell::new(Vec::new()),
-        resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(Vec::new())),
-        inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                mounted_flows: std::cell::RefCell::new(Vec::new()),
+                resolved_mounted_flows: std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+                    Vec::new(),
+                )),
+                inflight_flows: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashSet::new(),
+                )),
                 resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
                 compactions_remaining: std::cell::Cell::new(None),
                 compaction_at_tokens: std::cell::Cell::new(None),

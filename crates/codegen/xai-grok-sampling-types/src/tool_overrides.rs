@@ -351,8 +351,7 @@ impl ToolOverridesUpdate {
             x_search: merge_field(x_search, base.x_search, XSearchOptions::is_empty),
             web_search: merge_field(web_search, base.web_search, WebSearchOptions::is_empty),
             // `disabled` 是 Vec（空=缺席）：三态折叠后回落到空向量。
-            disabled: merge_field(disabled, Some(base.disabled), Vec::is_empty)
-                .unwrap_or_default(),
+            disabled: merge_field(disabled, Some(base.disabled), Vec::is_empty).unwrap_or_default(),
         };
         (!next.is_empty()).then_some(next)
     }
@@ -505,11 +504,17 @@ mod disabled_tests {
 
     #[test]
     fn disabled_round_trips_and_counts_as_non_empty() {
-        let parsed =
-            ToolOverrides::parse(&json!({"disabled": ["bash", "search"]})).unwrap();
-        assert_eq!(parsed.disabled, vec!["bash".to_string(), "search".to_string()]);
+        let parsed = ToolOverrides::parse(&json!({"disabled": ["bash", "search"]})).unwrap();
+        assert_eq!(
+            parsed.disabled,
+            vec!["bash".to_string(), "search".to_string()]
+        );
         assert!(!parsed.is_empty());
-        assert!(ToolOverrides::parse(&json!({"disabled": []})).unwrap().is_empty());
+        assert!(
+            ToolOverrides::parse(&json!({"disabled": []}))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

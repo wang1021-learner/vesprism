@@ -45,19 +45,13 @@ pub enum OutputMode {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct GrepSearchInput {
-    #[schemars(
-        description = "要搜索的文件内容正则表达式模式 (rg --regexp)。"
-    )]
+    #[schemars(description = "要搜索的文件内容正则表达式模式 (rg --regexp)。")]
     pub pattern: String,
 
-    #[schemars(
-        description = "要在其中进行搜索的文件或目录路径。默认为当前工作区根路径。"
-    )]
+    #[schemars(description = "要在其中进行搜索的文件或目录路径。默认为当前工作区根路径。")]
     pub path: Option<String>,
 
-    #[schemars(
-        description = r#"用于过滤搜索文件的 Glob 匹配模式 (如 "*.js", "*.{ts,tsx}")。"#
-    )]
+    #[schemars(description = r#"用于过滤搜索文件的 Glob 匹配模式 (如 "*.js", "*.{ts,tsx}")。"#)]
     pub glob: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]

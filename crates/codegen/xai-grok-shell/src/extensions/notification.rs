@@ -711,6 +711,9 @@ pub enum SessionUpdate {
         resumed_from: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workflow_run_id: Option<String>,
+        /// // jike: 工作台 per-agent deny，随 spawn 下发，必须早于子会话第一下工具权限请求。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        permission_rules: Vec<String>,
     },
     /// Periodic progress update for a running subagent.
     ///
@@ -1649,6 +1652,7 @@ mod tests {
             model: None,
             resumed_from: None,
             workflow_run_id: None,
+            permission_rules: vec![],
         })
         .unwrap();
         let progress = serde_json::to_value(SessionUpdate::SubagentProgress {

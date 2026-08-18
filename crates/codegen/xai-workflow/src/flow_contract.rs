@@ -37,7 +37,9 @@ pub enum FlowContractError {
     Parse(String),
     #[error("{0} must be a non-empty string")]
     MissingField(&'static str),
-    #[error("flow id '{0}' is not a valid workflow name (1-64 lowercase letters, digits, single hyphens)")]
+    #[error(
+        "flow id '{0}' is not a valid workflow name (1-64 lowercase letters, digits, single hyphens)"
+    )]
     InvalidId(String),
     #[error("flow id '{id}' must match rhai/file name '{expected}'")]
     IdMismatch { id: String, expected: String },
@@ -118,11 +120,7 @@ fn validate_contract(c: &FlowContract) -> Result<(), FlowContractError> {
     Ok(())
 }
 
-fn require_nonempty(
-    field: &'static str,
-    value: &str,
-    max: usize,
-) -> Result<(), FlowContractError> {
+fn require_nonempty(field: &'static str, value: &str, max: usize) -> Result<(), FlowContractError> {
     if value.trim().is_empty() {
         return Err(FlowContractError::MissingField(field));
     }
@@ -147,7 +145,10 @@ fn require_schema_object(
         let type_ok = match ty {
             serde_json::Value::String(s) => !s.trim().is_empty(),
             serde_json::Value::Array(arr) => {
-                !arr.is_empty() && arr.iter().all(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+                !arr.is_empty()
+                    && arr
+                        .iter()
+                        .all(|v| v.as_str().is_some_and(|s| !s.is_empty()))
             }
             _ => false,
         };
@@ -205,7 +206,10 @@ output_schema: { type: object }
 "#,
         )
         .unwrap_err();
-        assert!(matches!(err, FlowContractError::MissingField("description")));
+        assert!(matches!(
+            err,
+            FlowContractError::MissingField("description")
+        ));
     }
 
     #[test]
@@ -221,7 +225,10 @@ output_schema: { type: object }
 "#,
         )
         .unwrap_err();
-        assert!(matches!(err, FlowContractError::InvalidSchema("input_schema")));
+        assert!(matches!(
+            err,
+            FlowContractError::InvalidSchema("input_schema")
+        ));
     }
 
     #[test]
@@ -251,7 +258,11 @@ nonesuch: true
     fn load_absent_sidecar_is_ok_none() {
         let dir = tempfile::tempdir().unwrap();
         let rhai = dir.path().join("refund.rhai");
-        std::fs::write(&rhai, "let meta = #{ name: \"refund\", description: \"d\" };\n").unwrap();
+        std::fs::write(
+            &rhai,
+            "let meta = #{ name: \"refund\", description: \"d\" };\n",
+        )
+        .unwrap();
         assert!(load_flow_contract(&rhai, "refund").unwrap().is_none());
     }
 

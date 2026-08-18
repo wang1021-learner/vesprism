@@ -174,7 +174,7 @@ pub fn detach_pre_exec_hook() -> fn() -> io::Result<()> {
 pub fn detach_command(cmd: &mut tokio::process::Command) {
     #[cfg(unix)]
     {
-        // 安全性：detach_from_tty 仅调用 setsid/setpgid，这两者均符合 POSIX 
+        // 安全性：detach_from_tty 仅调用 setsid/setpgid，这两者均符合 POSIX
         // 异步信号安全要求，满足 pre_exec 的安全契约。
         // SAFETY: every hook `detach_pre_exec_hook` can return is async-signal-safe,
         // and the env read that selects one happens here, before fork.
@@ -212,7 +212,7 @@ pub fn detach_std_command(cmd: &mut std::process::Command) {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        // 安全性：detach_from_tty 仅调用 setsid/setpgid，这两者均符合 POSIX 
+        // 安全性：detach_from_tty 仅调用 setsid/setpgid，这两者均符合 POSIX
         // 异步信号 safe 要求，满足 pre_exec 的安全契约。
         // SAFETY: every hook `detach_pre_exec_hook` can return is async-signal-safe,
         // and the env read that selects one happens here, before fork.
@@ -561,7 +561,9 @@ impl ProcessGroup {
             };
             if let Err(e) = result {
                 let _ = unsafe { CloseHandle(job) };
-                return Err(io::Error::other(format!("SetInformationJobObject 失败: {e}")));
+                return Err(io::Error::other(format!(
+                    "SetInformationJobObject 失败: {e}"
+                )));
             }
 
             Ok(Self {
@@ -604,7 +606,7 @@ impl ProcessGroup {
     }
 
     /// 通过原始 PID 关联一个已经生成的子进程。
-    /// 该子进程必须是其自身进程组/作业的组长（即通过 [`new_process_group`] (Unix `setpgid`) 
+    /// 该子进程必须是其自身进程组/作业的组长（即通过 [`new_process_group`] (Unix `setpgid`)
     /// 或 `detach_*` 助手 (Unix `setsid`) 生成的），否则 `kill` 可能会误向错误的进程组发信号。
     pub fn attach_pid(&mut self, pid: u32) -> io::Result<()> {
         #[cfg(unix)]
@@ -707,7 +709,7 @@ impl ProcessGroup {
 
     #[cfg(unix)]
     fn killpg_unix(&self, signal: nix::sys::signal::Signal) -> io::Result<()> {
-        // `leader` 在子进程注册前为 `None`，且 `ProcessGroupId` 在构建时已确保是 
+        // `leader` 在子进程注册前为 `None`，且 `ProcessGroupId` 在构建时已确保是
         // killpg 安全的（绝非 0/1/自身进程组），因此这里只会向真正的外部进程组发送信号。
         let Some(leader) = self.leader else {
             return Ok(());
@@ -855,7 +857,7 @@ static TUI_STDERR_FD: std::sync::OnceLock<std::os::unix::io::OwnedFd> = std::syn
 /// 将原生标准错误（fd 2）重定向到 `/dev/null`，使得 C 库直接写入 fd 2 的消息
 /// 不会与 TUI 的转义序列交织重叠。
 ///
-/// 在 macOS 上，当 fork 出的子进程无法关闭父进程的堆日志记录时，`libsystem_malloc` 会直接从 C代码向 fd 2 写入 
+/// 在 macOS 上，当 fork 出的子进程无法关闭父进程的堆日志记录时，`libsystem_malloc` 会直接从 C代码向 fd 2 写入
 /// `MallocStackLogging` 诊断信息（绕过了 Rust 的 `stderr()` 锁）。
 /// 该信息源自 Apple 开源的 `libmalloc` 中的 `turn_off_stack_logging()` 函数：
 /// <https://opensource.apple.com/source/libmalloc/>
@@ -1527,7 +1529,7 @@ mod tests {
     /// 在 Windows 上，包装了控制台句柄的 `File` 会使用 `WriteFile`
     /// （面向字节且与活动代码页相关），而非 `WriteConsoleW`（面向 UTF-16 且与代码页无关）。
     /// 本测试旨在验证其至少能够正常写入而不报错。
-    /// Windows 上的完整 Unicode 支持还需要调用 `SetConsoleOutputCP(65001)` 
+    /// Windows 上的完整 Unicode 支持还需要调用 `SetConsoleOutputCP(65001)`
     /// 或直接使用 `std::io::stderr()`（它内部使用 `WriteConsoleW`）。
     #[test]
     fn dup_tui_stderr_accepts_multibyte_utf8() {
@@ -1582,14 +1584,11 @@ mod tests {
 
         // 3. 第二次调用应该返回一个彼此独立的 fd。
         let tui2 = dup_tui_stderr().expect("second dup_tui_stderr");
-        assert_ne!(
-            tui.as_raw_fd(),
-            tui2.as_raw_fd(),
-            "每次调用应返回不同的 fd"
-        );
+        assert_ne!(tui.as_raw_fd(), tui2.as_raw_fd(), "每次调用应返回不同的 fd");
         drop(tui2);
         // 在第一个 fd 被 drop 之后，第一个 fd 依然能够正常工作。
-        tui.write_all(b"").expect("第一个 fd 在第二个 fd 被 drop 后仍应可用");
+        tui.write_all(b"")
+            .expect("第一个 fd 在第二个 fd 被 drop 后仍应可用");
 
         // 4. `restore_native_stderr` 应当能恢复原来的 fd 2。
         restore_native_stderr();
@@ -1630,10 +1629,7 @@ mod tests {
             .await
             .expect("child should exit within 5s of group kill")
             .expect("wait returns ok");
-        assert!(
-            !status.success(),
-            "被 kill 的子进程不应成功退出"
-        );
+        assert!(!status.success(), "被 kill 的子进程不应成功退出");
     }
 
     /// `kill()` 必须能够清理掉整个进程组 —— 包括组长在新组中派生出的子孙（子树）进程，
@@ -1668,10 +1664,7 @@ mod tests {
 
         let alive =
             |pid: i32| nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok();
-        assert!(
-            alive(gc_pid),
-            "子孙进程在 kill 之前应处于运行状态"
-        );
+        assert!(alive(gc_pid), "子孙进程在 kill 之前应处于运行状态");
 
         group.kill().expect("kill ProcessGroup");
 
@@ -1681,7 +1674,7 @@ mod tests {
             .expect("leader should exit within 5s of group kill")
             .expect("wait ok");
 
-        // 子孙进程（在同一个组内）也必须被 killpg 清理掉 —— 
+        // 子孙进程（在同一个组内）也必须被 killpg 清理掉 ——
         // 持续轮询直到其消失（孤儿进程 -> 托管给 init -> 被回收 -> 报错 ESRCH）。
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while alive(gc_pid) && std::time::Instant::now() < deadline {
@@ -1703,10 +1696,7 @@ mod tests {
             ProcessGroupId::new(0).is_err(),
             "pid 0 = 调用者自身进程组 — 必须拒绝"
         );
-        assert!(
-            ProcessGroupId::new(1).is_err(),
-            "pid 1 = init — 必须拒绝"
-        );
+        assert!(ProcessGroupId::new(1).is_err(), "pid 1 = init — 必须拒绝");
         let own = nix::unistd::getpgrp().as_raw() as u32;
         assert!(
             ProcessGroupId::new(own).is_err(),

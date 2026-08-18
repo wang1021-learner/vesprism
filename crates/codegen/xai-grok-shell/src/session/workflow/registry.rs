@@ -173,7 +173,9 @@ impl WorkflowRegistry {
         &self,
         id: &str,
     ) -> Result<&xai_workflow::FlowContract, MountContractError> {
-        let entry = self.resolve_entry(id).map_err(|e| MountContractError::Resolve(e.to_string()))?;
+        let entry = self
+            .resolve_entry(id)
+            .map_err(|e| MountContractError::Resolve(e.to_string()))?;
         if let Some(err) = &entry.contract_error {
             return Err(MountContractError::InvalidContract(err.clone()));
         }
@@ -700,13 +702,11 @@ fn load_sidecar_for(
     match xai_workflow::load_flow_contract(rhai_path, expected_id) {
         Ok(None) => (None, None),
         Ok(Some(contract)) => {
-            if let Err(e) =
-                super::schema_contract::compile_contract_schema(&contract.input_schema)
+            if let Err(e) = super::schema_contract::compile_contract_schema(&contract.input_schema)
             {
                 return (None, Some(format!("input_schema: {e}")));
             }
-            if let Err(e) =
-                super::schema_contract::compile_contract_schema(&contract.output_schema)
+            if let Err(e) = super::schema_contract::compile_contract_schema(&contract.output_schema)
             {
                 return (None, Some(format!("output_schema: {e}")));
             }
@@ -1038,10 +1038,7 @@ mod tests {
         assert!(listing.mountable);
         assert!(listing.contract_error.is_none());
         assert!(listing.missing_dependencies.is_empty());
-        assert_eq!(
-            registry.mountable_contract("refund").unwrap().id,
-            "refund"
-        );
+        assert_eq!(registry.mountable_contract("refund").unwrap().id, "refund");
     }
 
     #[test]
@@ -1090,7 +1087,13 @@ mod tests {
             .find(|l| l.name == "bad")
             .expect("bad listed");
         assert!(!listing.mountable);
-        assert!(listing.contract_error.as_ref().unwrap().contains("description"));
+        assert!(
+            listing
+                .contract_error
+                .as_ref()
+                .unwrap()
+                .contains("description")
+        );
         assert!(matches!(
             registry.mountable_contract("bad"),
             Err(MountContractError::InvalidContract(_))

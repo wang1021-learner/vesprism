@@ -51,10 +51,13 @@ pub(super) async fn run_one_turn_attempt(
     // SetMountedFlows 先于 Prompt 入队，actor 串行处理，子会话首轮就能看见 flow__。
     {
         let (tx, _rx) = oneshot::channel();
-        let _ = input.child_handle.cmd_tx.send(SessionCommand::SetMountedFlows {
-            flows: std::mem::take(&mut input.inherited_flows),
-            respond_to: Some(tx),
-        });
+        let _ = input
+            .child_handle
+            .cmd_tx
+            .send(SessionCommand::SetMountedFlows {
+                flows: std::mem::take(&mut input.inherited_flows),
+                respond_to: Some(tx),
+            });
     }
     let (prompt_tx, prompt_rx) = oneshot::channel::<SubagentPromptTurnResult>();
     let child_prompt_id = uuid::Uuid::now_v7().to_string();
