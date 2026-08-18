@@ -37,12 +37,14 @@ export interface AgentRecord {
   output_contract: string
   output_schema?: unknown | null
   agent_type?: string | null
+  skills?: string[]
   flows: string[]
 }
 
 export interface AgentListItem {
   id: string
   name: string
+  description?: string
   version: string
   model?: string | null
   capability?: AgentCapability | null
@@ -55,6 +57,10 @@ export interface AgentListItem {
   agent_type?: string | null
   outputSchema?: unknown | null
   output_schema?: unknown | null
+  skills?: string[]
+  systemPrompt?: string
+  system_prompt?: string
+  error?: string | null
 }
 
 export interface AgentDetail {
@@ -79,6 +85,7 @@ export function emptyAgent(id = '', name = ''): AgentRecord {
     output_contract: '',
     output_schema: null,
     agent_type: null,
+    skills: [],
     flows: [],
   }
 }

@@ -1,7 +1,8 @@
 /**
- * 流程画布（懒加载入口）。@xyflow/react 只在进入本 Tab 时下载。
+ * 流程画布（v2.0 架构升级）。
+ * 模块化解耦：FlowToolbar / NodeInspector / PublishFlowModal / PromoteAgentModal / WorkbenchDock。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Controls,
@@ -19,51 +20,68 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useStore } from '@nanostores/react'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { $activeTabId, $generating, $messages, $workflows, getTabState, patchTab, pushToast } from '../../store'
-import { sendPrompt } from '../../bridge'
+import {
+  IconChevronDown,
+  IconChevronUp,
+  IconGitBranch,
+  IconGitFork,
+  IconGitMerge,
+  IconHierarchy2,
+  IconPlayerPlay,
+  IconSearch,
+  IconSparkles,
+  IconSquareRoundedCheck,
+  IconTerminal2,
+  IconX,
+} from '@tabler/icons-react'
+import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
+import { restartSession, sendPrompt, workspaceCwd } from '../../bridge'
 import { openChatTab } from '../../lib/openChatTab'
 import {
   deleteFlow,
   exportFlow,
+  getAgent,
   getFlow,
   importFlow,
   listAgents,
   listFlows,
   saveAgent,
   saveFlow,
+  updateSessionFlows,
+  purgeRerunSidecars,
 } from '../bridge'
 import {
   AI_GRAPH_FAIL_MESSAGE,
+  FLOW_GENERATE_SYSTEM,
   NODE_LIBRARY,
-  buildGeneratePrompt,
+  buildDialoguePrompt,
   bumpVersion,
   collectPromptsMarkdown,
   compileInlinedRhai,
   compileToRhai,
   createDemoDraft,
-  graphJsonFromDraft,
   createNodeId,
   defaultParams,
   draftFromGraph,
   draftHasAbsolutePath,
-  fieldsToSchema,
   isValidFlowId,
+  layoutDraft,
   layoutGraph,
   parseGeneratedGraph,
-  validateFlowGraph,
-  slugifyFlowId,
   subgraphFrom,
-  summarizeInputSchema,
-  summarizeOutputSchema,
   type FlowDraft,
   type FlowGraphNode,
   type FlowListItem,
   type FlowNodeType,
-  type FlowRequirements,
   type FlowRunStep,
-  type ImportFlowResult,
-  type SchemaField,
+  type GraphSnap,
   type PresetResolve,
+  applySnap,
+  historyCap,
+  pushCapped,
+  saveHash,
+  takeSnap,
+  topologyHash,
 } from '../flow'
 import {
   AGENT_CAPABILITY_LABEL,
@@ -75,10 +93,24 @@ import {
   type AgentRecord,
 } from '../types'
 import { requestAgentsFocus } from '../agents/focus'
-import { noteGenerateProgress, type GenerateWait } from '../generateWait'
-import { SubagentRunTree } from '../../components/SubagentRunTree'
-import { TerminalList } from '../../components/TerminalList'
+import { $flowStaleEpoch, clearFlowStale, staleForFlow } from '../agents/stale'
+import { bindWorkbenchArtifact } from '../bindings'
+import { $flowFocusId, clearFlowFocus } from '../flow/focus'
+import { generateId } from '../../lib/generateId'
+import { waitTabSessionId } from '../../lib/sessionOpen'
+import {
+  getGenerateWait,
+  noteGenerateProgress,
+  setGenerateWait,
+} from '../generateWait'
+import { WorkbenchDock } from './workbench-dock'
+import { FlowCanvasContext } from './context'
 import { FlowNode, type FlowRfData } from './nodes'
+import { stripRfRuntime } from './rfRuntime'
+import { FlowToolbar } from './components/FlowToolbar'
+import { NodeInspector } from './components/NodeInspector'
+import { PublishFlowModal } from './components/PublishFlowModal'
+import { PromoteAgentModal } from './components/PromoteAgentModal'
 
 const flowNodeTypes = {
   start: FlowNode,
@@ -86,7 +118,25 @@ const flowNodeTypes = {
   tool: FlowNode,
   flow: FlowNode,
   branch: FlowNode,
+  parallel: FlowNode,
+  join: FlowNode,
   end: FlowNode,
+}
+
+function getAncestors(targetId: string, edges: Array<{ from: string; to: string }>): Set<string> {
+  const ancestors = new Set<string>()
+  const queue = [targetId]
+  while (queue.length > 0) {
+    const curr = queue.shift()!
+    const incoming = edges.filter((e) => e.to === curr)
+    for (const edge of incoming) {
+      if (!ancestors.has(edge.from)) {
+        ancestors.add(edge.from)
+        queue.push(edge.from)
+      }
+    }
+  }
+  return ancestors
 }
 
 type RfNode = Node<FlowRfData>
@@ -100,69 +150,120 @@ function ensurePositions(nodes: FlowDraft['nodes'], edges: FlowDraft['edges']): 
   })
 }
 
-function toRfNodes(draft: FlowDraft): RfNode[] {
+function execStatusOf(
+  step?: { status: string },
+): 'running' | 'done' | 'failed' | undefined {
+  const raw = step?.status
+  if (raw === 'completed' || raw === 'done') return 'done'
+  if (raw === 'running') return 'running'
+  if (raw === 'failed') return 'failed'
+  return undefined
+}
+
+function toRfNodes(
+  draft: FlowDraft,
+  stepOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
+): RfNode[] {
   return ensurePositions(draft.nodes, draft.edges).map((n) => ({
     id: n.id,
     type: n.type,
     position: n.position ?? { x: 80, y: 80 },
-    data: { ...n.params, nodeType: n.type },
+    data: {
+      ...n.params,
+      nodeType: n.type,
+      execStatus: execStatusOf(stepOutputs?.[n.id]),
+    },
   }))
+}
+
+function patchExecStatuses(
+  ns: RfNode[],
+  stepOutputs: Record<string, { output: unknown; status: string; timestamp: number }>,
+): RfNode[] {
+  let changed = false
+  const next = ns.map((n) => {
+    const status = execStatusOf(stepOutputs[n.id])
+    if (n.data.execStatus === status) return n
+    changed = true
+    return { ...n, data: { ...n.data, execStatus: status } }
+  })
+  return changed ? next : ns
 }
 
 function toRfEdges(draft: FlowDraft): RfEdge[] {
-  return draft.edges.map((e, i) => ({
-    id: e.id || `e-${e.from}-${e.to}-${i}`,
-    source: e.from,
-    target: e.to,
-    label: e.label,
-    sourceHandle: /fail/i.test(e.label || '') ? 'failure' : /success|ok|yes/i.test(e.label || '') ? 'success' : undefined,
-  }))
-}
-
-function fromRf(nodes: RfNode[], edges: RfEdge[], base: FlowDraft): FlowDraft {
-  const nextNodes: FlowGraphNode[] = nodes.map((n) => {
-    const { nodeType, ...rest } = n.data
+  return draft.edges.map((e, idx) => {
+    let edgeLabel = e.label
+    if (!edgeLabel && e.sourceHandle) {
+      if (e.sourceHandle === 'success') edgeLabel = '成功'
+      else if (e.sourceHandle === 'failure') edgeLabel = '失败'
+      else edgeLabel = e.sourceHandle
+    }
     return {
-      id: n.id,
-      type: (n.type as FlowNodeType) || nodeType,
-      position: n.position,
-      params: rest as FlowGraphNode['params'],
+      id: e.id || `e-${e.from}-${e.to}-${idx}`,
+      source: e.from,
+      target: e.to,
+      label: edgeLabel,
+      labelStyle: { fill: '#4b5563', fontSize: 10.5, fontWeight: 550 },
+      labelBgStyle: { fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1, rx: 4, ry: 4 },
+      labelBgPadding: [5, 2] as [number, number],
+      sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+      animated: false,
     }
   })
-  return {
-    ...base,
-    nodes: nextNodes,
-    edges: edges.map((e) => ({
-      id: e.id,
-      from: e.source,
-      to: e.target,
-      label: typeof e.label === 'string' ? e.label : undefined,
-    })),
-    input_schema: summarizeInputSchema(nextNodes),
-    output_schema: summarizeOutputSchema(nextNodes),
-    dirty: true,
-  }
 }
 
-function testKey(id: string): string {
-  return `vesprism.flow-test.${id}`
+function fromRf(ns: RfNode[], es: RfEdge[], base: FlowDraft): FlowDraft {
+  const nodes: FlowGraphNode[] = ns.map((n) => {
+    const raw = n.data as FlowRfData
+    const params = stripRfRuntime(raw as Record<string, unknown>)
+    return {
+      id: n.id,
+      type: raw.nodeType,
+      params,
+      position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
+    }
+  })
+  const edges = es.map((e) => ({
+    id: e.id,
+    from: e.source,
+    to: e.target,
+    label: typeof e.label === 'string' ? e.label : undefined,
+    sourceHandle: e.sourceHandle ?? undefined,
+    targetHandle: e.targetHandle ?? undefined,
+  }))
+  return { ...base, nodes, edges, dirty: true }
 }
 
-function agentNodeData(agent: AgentListItem): FlowRfData {
+function testKey(flowId: string): string {
+  return `vesprism.flow-test-input.${flowId}`
+}
+
+function agentNodeData(a: AgentListItem): FlowRfData {
   return {
-    ...defaultParams('agent'),
     nodeType: 'agent',
-    label: (agent.name || agent.id).trim(),
-    presetId: agent.id,
+    label: a.name || a.id,
+    presetId: a.id,
+    model: a.model,
+    prompt: '',
+    role: '',
   }
+}
+
+export function FlowCanvas() {
+  return (
+    <ReactFlowProvider>
+      <FlowCanvasInner />
+    </ReactFlowProvider>
+  )
 }
 
 function FlowCanvasInner() {
   const tabId = useStore($activeTabId)
   const generating = useStore($generating)
-  const messages = useStore($messages)
   const workflows = useStore($workflows)
-  const { screenToFlowPosition } = useReactFlow()
+  const focusFlowId = useStore($flowFocusId)
+  const { screenToFlowPosition, fitView } = useReactFlow()
 
   const [draft, setDraft] = useState<FlowDraft>(createDemoDraft)
   const [nodes, setNodes, onNodesChange] = useNodesState<RfNode>(toRfNodes(createDemoDraft()))
@@ -170,6 +271,7 @@ function FlowCanvasInner() {
   const [list, setList] = useState<FlowListItem[]>([])
   const [agents, setAgents] = useState<AgentListItem[]>([])
   const [dockOpen, setDockOpen] = useState(true)
+  const [mounted, setMounted] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
   const [pubDesc, setPubDesc] = useState('')
   const [pubVersion, setPubVersion] = useState('1')
@@ -180,22 +282,72 @@ function FlowCanvasInner() {
   const [aiError, setAiError] = useState('')
   const [testInput, setTestInput] = useState('{\n  "input": ""\n}')
   const [runSteps, setRunSteps] = useState<FlowRunStep[]>([])
+  const [stepOutputs, setStepOutputs] = useState<Record<string, { output: unknown; status: string; timestamp: number }>>({})
   const [replayOpen, setReplayOpen] = useState(false)
-  const [conflict, setConflict] = useState<Extract<ImportFlowResult, { status: 'conflict' }> | null>(null)
-  const [pendingZip, setPendingZip] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [paletteQuery, setPaletteQuery] = useState('')
   const [promoteOpen, setPromoteOpen] = useState(false)
   const [promoteId, setPromoteId] = useState('')
   const [promoteName, setPromoteName] = useState('')
   const [promoteDesc, setPromoteDesc] = useState('')
   const [promoteBusy, setPromoteBusy] = useState(false)
-  const [review, setReview] = useState<{
-    id: string
-    requirements: FlowRequirements
-    missingTools: string[]
-  } | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [searchIdx, setSearchIdx] = useState(0)
   const saveTimer = useRef<number>(0)
-  const aiWait = useRef<GenerateWait | null>(null)
+  const ephemeralRunId = useRef<string | null>(null)
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const lastSaveHash = useRef('')
+  const rhaiCache = useRef<{ key: string; rhai: string } | null>(null)
+
+  const matchedNodes = useMemo(() => {
+    const q = searchText.trim().toLowerCase()
+    if (!q) return []
+    return nodes.filter((n) => {
+      const label = String(n.data.label || '').toLowerCase()
+      const id = n.id.toLowerCase()
+      const role = String(n.data.role || '').toLowerCase()
+      const prompt = String(n.data.prompt || '').toLowerCase()
+      const cmd = String(n.data.command || '').toLowerCase()
+      const tool = String(n.data.toolName || '').toLowerCase()
+      return (
+        label.includes(q) ||
+        id.includes(q) ||
+        role.includes(q) ||
+        prompt.includes(q) ||
+        cmd.includes(q) ||
+        tool.includes(q)
+      )
+    })
+  }, [nodes, searchText])
+
+  const focusNode = useCallback(
+    (targetNode: RfNode) => {
+      setSelectedId(targetNode.id)
+      fitView({
+        nodes: [{ id: targetNode.id }],
+        duration: 350,
+        padding: 0.8,
+      })
+    },
+    [fitView],
+  )
+
+  const nextSearchResult = useCallback(() => {
+    if (matchedNodes.length === 0) return
+    const next = (searchIdx + 1) % matchedNodes.length
+    setSearchIdx(next)
+    focusNode(matchedNodes[next])
+  }, [focusNode, matchedNodes, searchIdx])
+
+  const prevSearchResult = useCallback(() => {
+    if (matchedNodes.length === 0) return
+    const prev = (searchIdx - 1 + matchedNodes.length) % matchedNodes.length
+    setSearchIdx(prev)
+    focusNode(matchedNodes[prev])
+  }, [focusNode, matchedNodes, searchIdx])
 
   useEffect(() => {
     if (!tabId) return
@@ -205,72 +357,178 @@ function FlowCanvasInner() {
     }
   }, [tabId])
 
-  const applyDraft = useCallback((next: FlowDraft, markDirty = true) => {
-    const d = { ...next, dirty: markDirty ? true : next.dirty }
-    setDraft(d)
-    setNodes(toRfNodes(d))
-    setEdges(toRfEdges(d))
-  }, [setNodes, setEdges])
+  const startRunRef = useRef<(nodeId?: string) => Promise<void>>(async () => {})
+  const historyRef = useRef<GraphSnap[]>([])
+  const futureRef = useRef<GraphSnap[]>([])
+
+  const pushHistory = useCallback((prev: FlowDraft) => {
+    pushCapped(historyRef.current, takeSnap(prev), historyCap(prev.nodes.length))
+    futureRef.current = []
+  }, [])
+
+  const onRunFromHere = useCallback((nodeId: string) => {
+    void startRunRef.current(nodeId)
+  }, [])
+
+  const onDeleteNodes = useCallback((ids: string[]) => {
+    const drop = new Set(ids.filter(Boolean))
+    if (drop.size === 0) return
+    setDraft((cur) => {
+      pushHistory(cur)
+      return cur
+    })
+    setNodes((ns) => {
+      const next = ns.filter((n) => !drop.has(n.id))
+      setEdges((es) => {
+        const nextEs = es.filter((e) => !drop.has(e.source) && !drop.has(e.target))
+        setDraft((d) => fromRf(next, nextEs, d))
+        return nextEs
+      })
+      return next
+    })
+    setSelectedId((cur) => (cur && drop.has(cur) ? null : cur))
+    setSelectedIds((cur) => cur.filter((id) => !drop.has(id)))
+    pushToast(drop.size > 1 ? `已删除 ${drop.size} 个节点` : '已删除节点', 'info')
+  }, [pushHistory, setEdges, setNodes])
+
+  const onDeleteNode = useCallback((nodeId: string) => {
+    onDeleteNodes([nodeId])
+  }, [onDeleteNodes])
+
+  const onDuplicate = useCallback(
+    (nodeId: string) => {
+      setDraft((cur) => {
+        pushHistory(cur)
+        return cur
+      })
+      setNodes((ns) => {
+        const target = ns.find((n) => n.id === nodeId)
+        if (!target) return ns
+        const id = createNodeId(target.data.nodeType)
+        const clone: RfNode = {
+          ...target,
+          id,
+          selected: true,
+          position: { x: target.position.x + 30, y: target.position.y + 30 },
+          data: {
+            ...target.data,
+            label: `${target.data.label || target.data.nodeType} 副本`,
+          },
+        }
+        const next = [...ns, clone]
+        setEdges((es) => {
+          setDraft((d) => fromRf(next, es, d))
+          return es
+        })
+        setSelectedId(id)
+        return next
+      })
+      pushToast('已创建节点副本', 'info')
+    },
+    [pushHistory, setEdges, setNodes],
+  )
+
+  const onDuplicateSelected = useCallback(() => {
+    const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
+    for (const id of ids) onDuplicate(id)
+  }, [onDuplicate, selectedId, selectedIds])
+
+  const onAutoLayout = useCallback(() => {
+    setDraft((curDraft) => {
+      const current = fromRf(nodes, edges, curDraft)
+      const laid = layoutDraft(current)
+      setNodes(toRfNodes(laid))
+      setEdges(toRfEdges(laid))
+      pushToast('已自动整理拓扑布局', 'success')
+      return laid
+    })
+  }, [edges, nodes, setEdges, setNodes])
+
+  const applyDraft = useCallback(
+    (next: FlowDraft, markDirty = true) => {
+      const d = { ...next, dirty: markDirty ? true : next.dirty }
+      setDraft(d)
+      setNodes(toRfNodes(d))
+      setEdges(toRfEdges(d))
+    },
+    [setEdges, setNodes],
+  )
+
+  useEffect(() => {
+    setNodes((ns) => patchExecStatuses(ns, stepOutputs))
+  }, [setNodes, stepOutputs])
+
+  const applyFlowRecord = useCallback(
+    (rec: Awaited<ReturnType<typeof getFlow>>, markDirty = false) => {
+      historyRef.current = []
+      futureRef.current = []
+      const savedTestInput = localStorage.getItem(testKey(rec.id))
+      if (savedTestInput) {
+        setTestInput(savedTestInput)
+      }
+      applyDraft(
+        {
+          id: rec.id,
+          name: rec.name,
+          description: rec.description,
+          version: rec.version,
+          published: rec.published,
+          dirty: markDirty,
+          input_schema: (rec.input_schema as FlowDraft['input_schema']) || {},
+          output_schema: (rec.output_schema as FlowDraft['output_schema']) || {},
+          nodes: Array.isArray(rec.nodes) ? (rec.nodes as FlowDraft['nodes']) : [],
+          edges: Array.isArray(rec.edges) ? (rec.edges as FlowDraft['edges']) : [],
+        },
+        markDirty,
+      )
+    },
+    [applyDraft],
+  )
 
   const reloadList = useCallback(async () => {
     try {
-      setList(await listFlows())
+      const items = await listFlows()
+      setList(items)
     } catch {
-      /* 未进桌面壳时忽略 */
+      /* 非桌面壳时降级 */
     }
+  }, [])
+
+  const reloadAgents = useCallback(async () => {
     try {
-      setAgents(await listAgents())
+      const items = await listAgents()
+      setAgents(items)
     } catch {
-      /* 工作台 Agent 目录为空或不在桌面壳 */
+      /* ignore */
     }
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      await reloadList()
-      const last = localStorage.getItem('vesprism.flow-canvas.lastId') || 'demo-linear'
+    void reloadList()
+    void reloadAgents()
+  }, [reloadList, reloadAgents])
+
+  useEffect(() => {
+    if (!focusFlowId) return
+    void (async () => {
       try {
-        const rec = await getFlow(last)
-        if (cancelled) return
-        const nodes = Array.isArray(rec.nodes) ? rec.nodes : []
-        const edges = Array.isArray(rec.edges) ? rec.edges : []
-        if (nodes.length === 0) {
-          applyDraft(createDemoDraft(), false)
-          return
-        }
-        applyDraft(
-          {
-            id: rec.id,
-            name: rec.name,
-            description: rec.description,
-            version: rec.version,
-            input_schema: rec.input_schema as FlowDraft['input_schema'],
-            output_schema: rec.output_schema as FlowDraft['output_schema'],
-            nodes: nodes as FlowDraft['nodes'],
-            edges: edges as FlowDraft['edges'],
-            published: rec.published,
-            dirty: false,
-          },
-          false,
-        )
-      } catch {
-        if (!cancelled) applyDraft(createDemoDraft(), false)
+        const rec = await getFlow(focusFlowId)
+        applyFlowRecord(rec, false)
+        clearFlowFocus(focusFlowId)
+      } catch (e) {
+        pushToast(`加载流程失败：${String(e)}`, 'error')
       }
     })()
-    return () => {
-      cancelled = true
-    }
-  }, [applyDraft, reloadList])
+  }, [focusFlowId, applyFlowRecord])
 
   const persist = useCallback(
-    async (d: FlowDraft, extra?: { publish?: boolean; stage?: boolean; rhai?: string }) => {
-      let rhai = extra?.rhai
-      if (!rhai && (extra?.publish || extra?.stage)) {
-        const graph = validateFlowGraph(graphJsonFromDraft(d))
-        if (!graph.ok) {
-          throw new Error('流程图不合法：非分支只能有 1 条出边，分支必须恰好 2 条')
-        }
+    async (d: FlowDraft, extra?: { publish?: boolean; stage?: boolean; bind?: boolean; ephemeral?: boolean }) => {
+      let rhai: string | null = null
+      if (extra?.publish || extra?.stage) {
+        const topo = topologyHash(d)
+        if (rhaiCache.current?.key === topo) {
+          rhai = rhaiCache.current.rhai
+        } else {
         const catalog: Record<string, { nodes: FlowDraft['nodes']; edges: FlowDraft['edges'] }> = {}
         for (const it of list) {
           if (it.id === d.id) continue
@@ -288,8 +546,21 @@ function FlowCanvasInner() {
         }
         const presets: Record<string, PresetResolve> = {}
         try {
-          for (const a of await listAgents()) {
+          const agents = await listAgents()
+          for (const a of agents) {
+            let systemPrompt = a.systemPrompt || a.system_prompt || ''
+            if (!systemPrompt) {
+              try {
+                const detail = await getAgent(a.id)
+                systemPrompt = detail.systemPrompt || detail.system_prompt || ''
+              } catch {
+                /* ignore */
+              }
+            }
             presets[a.id] = {
+              name: a.name || a.id,
+              description: a.description || undefined,
+              systemPrompt: systemPrompt || undefined,
               model: a.model || undefined,
               agentType: (a.agentType || a.agent_type) || undefined,
               capability: a.capability ? AGENT_CAPABILITY_OFFICIAL[a.capability] : undefined,
@@ -297,14 +568,17 @@ function FlowCanvasInner() {
               outputSchema: (a.outputSchema ?? a.output_schema) ?? undefined,
               disabledTools: (a.disabledTools ?? a.disabled_tools) ?? [],
               permissionRules: (a.permissionRules ?? a.permission_rules) ?? [],
+              skills: a.skills || [],
             }
           }
         } catch {
-          /* 非桌面壳时按无 Agent 处理，缺 id 会在编译时报 */
+          /* ignore */
         }
         const compiled = compileInlinedRhai(d, catalog, (next) => compileToRhai(next, { presets }))
         if (!compiled.ok) throw new Error(compiled.error)
         rhai = compiled.rhai
+        rhaiCache.current = { key: topo, rhai }
+        }
       }
       const saved = await saveFlow({
         id: d.id,
@@ -317,39 +591,106 @@ function FlowCanvasInner() {
         edges: d.edges,
         publish: extra?.publish ?? false,
         stage: extra?.stage ?? false,
+        ephemeral: extra?.ephemeral ?? false,
         rhai,
         prompts: collectPromptsMarkdown(d),
       })
-      localStorage.setItem('vesprism.flow-canvas.lastId', saved.id)
-      setDraft((prev) => ({ ...prev, dirty: false, published: saved.published, version: saved.version }))
+      if (!extra?.ephemeral) {
+        localStorage.setItem('vesprism.flow-canvas.lastId', saved.id)
+      }
+      const shouldBind = extra?.bind !== false && !extra?.ephemeral
+      const st = tabId ? getTabState(tabId) : undefined
+      const sessionId = st?.sessionId || st?.chatId
+      if (shouldBind && sessionId) {
+        void bindWorkbenchArtifact(sessionId, { kind: 'flow', id: saved.id }, 'flow-canvas').catch(() => {})
+      }
+      lastSaveHash.current = saveHash(d)
+      setDraft((prev) => ({
+        ...prev,
+        dirty: prev.dirty && prev.nodes !== d.nodes,
+        published: saved.published,
+        version: saved.version,
+      }))
       await reloadList()
       return saved
     },
-    [list, reloadList],
+    [list, reloadList, tabId],
   )
 
   useEffect(() => {
     if (!draft.dirty) return
+    if (saveHash(draft) === lastSaveHash.current) return
     window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
-      void persist(draft).catch((e) => pushToast(`保存草稿失败：${String(e)}`, 'error'))
-    }, 700)
+      const latest = draftRef.current
+      if (!latest.dirty || saveHash(latest) === lastSaveHash.current) return
+      void persist(latest).catch((e) => pushToast(`保存草稿失败：${String(e)}`, 'error'))
+    }, 900)
     return () => window.clearTimeout(saveTimer.current)
   }, [draft, persist])
 
   const onConnect = useCallback(
     (c: Connection) => {
-      setEdges((eds) => addEdge({ ...c, label: c.sourceHandle === 'failure' ? 'failure' : c.sourceHandle === 'success' ? 'success' : undefined }, eds))
-      setDraft((d) => ({ ...d, dirty: true }))
+      setEdges((eds) => {
+        const nextEds = addEdge(
+          {
+            id: `e-${c.source}-${c.target}-${Date.now()}`,
+            source: c.source,
+            target: c.target,
+            label: c.sourceHandle === 'failure' ? 'failure' : c.sourceHandle === 'success' ? 'success' : undefined,
+            sourceHandle: c.sourceHandle ?? undefined,
+            targetHandle: c.targetHandle ?? undefined,
+            animated: false,
+          },
+          eds,
+        )
+        setNodes((curNodes) => {
+          setDraft((curDraft) => {
+            pushHistory(curDraft)
+            return fromRf(curNodes, nextEds, curDraft)
+          })
+          return curNodes
+        })
+        return nextEds
+      })
     },
-    [setEdges],
+    [pushHistory, setEdges, setNodes],
   )
 
-  const commitGraph = useCallback(
-    (ns: RfNode[], es: RfEdge[]) => {
-      setDraft((d) => fromRf(ns, es, d))
+  const commitGraph = useCallback((ns: RfNode[], es: RfEdge[]) => {
+    setDraft((d) => fromRf(ns, es, d))
+  }, [])
+
+  const addNode = useCallback(
+    (type: FlowNodeType, agent?: AgentListItem | null) => {
+      const nodeType: FlowNodeType = agent ? 'agent' : type
+      const id = createNodeId(nodeType)
+      const count = nodes.length
+      const offset = (count % 8) * 30
+      const pos = screenToFlowPosition
+        ? screenToFlowPosition({
+            x: window.innerWidth / 2 - 120 + offset,
+            y: window.innerHeight / 2 - 100 + offset,
+          })
+        : { x: 250 + offset, y: 150 + offset }
+      const node: RfNode = {
+        id,
+        type: nodeType,
+        position: pos,
+        data: agent ? agentNodeData(agent) : { ...defaultParams(nodeType), nodeType },
+      }
+      setNodes((ns) => {
+        const next = [...ns, node]
+        setEdges((es) => {
+          commitGraph(next, es)
+          return es
+        })
+        return next
+      })
+      setSelectedId(id)
+      pushToast(`已添加「${agent?.name || nodeType}」节点`, 'info')
     },
-    [],
+    [commitGraph, nodes.length, screenToFlowPosition, setEdges, setNodes],
   )
 
   const onDrop = useCallback(
@@ -360,7 +701,9 @@ function FlowCanvasInner() {
       const agent = agentId ? agents.find((a) => a.id === agentId) : null
       if (!type && !agent) return
       const nodeType: FlowNodeType = agent ? 'agent' : type
-      const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      const pos = screenToFlowPosition
+        ? screenToFlowPosition({ x: e.clientX, y: e.clientY })
+        : { x: e.clientX - 200, y: e.clientY - 100 }
       const id = createNodeId(nodeType)
       const node: RfNode = {
         id,
@@ -376,6 +719,7 @@ function FlowCanvasInner() {
         })
         return next
       })
+      setSelectedId(id)
     },
     [agents, commitGraph, screenToFlowPosition, setEdges, setNodes],
   )
@@ -412,23 +756,57 @@ function FlowCanvasInner() {
       return
     }
     try {
-      current.input_schema = JSON.parse(pubIn)
-      current.output_schema = JSON.parse(pubOut)
-    } catch {
-      pushToast('输入/输出 Schema 不是合法 JSON', 'error')
-      return
-    }
-    try {
-      await persist({ ...current, description: pubDesc.trim(), version: pubVersion }, { publish: true })
+      await persist(current, { publish: true })
+      clearFlowStale(current.id)
       setDraft((d) => ({ ...d, description: pubDesc.trim(), version: pubVersion, published: true, dirty: false }))
       setPublishOpen(false)
-      pushToast('已发布', 'success')
+      pushToast('已发布，运行时将使用当前编制权限', 'success')
     } catch (e) {
       pushToast(String(e), 'error')
     }
   }
 
-  const startRun = async (fromNodeId?: string) => {
+  const onMountToSession = async () => {
+    if (!tabId) {
+      pushToast('未找到活动会话 Tab', 'error')
+      return
+    }
+    try {
+      const current = fromRf(nodes, edges, draft)
+      await persist(current, { stage: true })
+      await updateSessionFlows(tabId, [current.id])
+      setMounted(true)
+      pushToast(`已成功热挂载 /${current.id} 至当前会话`, 'success')
+    } catch (e) {
+      pushToast(`挂载失败: ${String(e)}`, 'error')
+    }
+  }
+
+  const startRun = async (
+    fromNodeId?: string,
+    overrideOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
+  ) => {
+    try {
+      const activeCwd = await workspaceCwd()
+      const currentTab = tabId ? getTabState(tabId) : undefined
+      if (tabId && currentTab && activeCwd && currentTab.cwd !== activeCwd) {
+        try {
+          const prevSid = currentTab.sessionId
+          await restartSession(tabId, activeCwd)
+          const newSid = await waitTabSessionId(tabId, prevSid)
+          patchTab(tabId, { cwd: activeCwd, chatId: newSid || undefined, sessionId: newSid || undefined })
+          if (newSid) {
+            void bindWorkbenchArtifact(newSid, { kind: 'flow', id: draft.id }, 'flow-canvas').catch(() => {})
+          }
+          pushToast(`已同步重锚执行目录至当前工作区`, 'info')
+        } catch (err) {
+          pushToast(`重锚工作区失败，试跑仍将在旧目录执行：${String(err)}`, 'error')
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
     let current = fromRf(nodes, edges, draft)
     if (fromNodeId) {
       const sub = subgraphFrom(current.nodes, current.edges, fromNodeId)
@@ -457,6 +835,25 @@ function FlowCanvasInner() {
       pushToast('测试输入不是合法 JSON', 'error')
       return
     }
+
+    const effectiveOutputs = overrideOutputs ?? stepOutputs
+    if (fromNodeId) {
+      const ancestors = getAncestors(fromNodeId, draft.edges)
+      const ancestorContext: Record<string, unknown> = {}
+      for (const ancId of ancestors) {
+        if (effectiveOutputs[ancId]?.output !== undefined) {
+          ancestorContext[ancId] = effectiveOutputs[ancId].output
+        }
+      }
+      if (typeof input === 'object' && input !== null) {
+        input = {
+          ...ancestorContext,
+          ...(input as Record<string, unknown>),
+          _rerun_node: fromNodeId,
+        }
+      }
+    }
+
     const steps: FlowRunStep[] = current.nodes.map((n) => ({
       nodeId: n.id,
       label: String((n.params as { label?: string }).label || n.id),
@@ -467,7 +864,12 @@ function FlowCanvasInner() {
     setReplayOpen(true)
     setDockOpen(true)
     try {
-      await persist(current, { stage: true })
+      await persist(current, {
+        stage: true,
+        bind: !fromNodeId,
+        ephemeral: Boolean(fromNodeId),
+      })
+      if (fromNodeId) ephemeralRunId.current = current.id
       const arg = Object.keys(input as object).length ? ` ${JSON.stringify(input)}` : ''
       await sendPrompt(tabId, `/${fromNodeId ? current.id : draft.id}${arg}`)
       setRunSteps((prev) => prev.map((s) => (s.type === 'start' ? { ...s, status: 'running', startedAt: Date.now() } : s)))
@@ -475,6 +877,24 @@ function FlowCanvasInner() {
     } catch (e) {
       pushToast(`试跑失败：${String(e)}`, 'error')
     }
+  }
+  startRunRef.current = startRun
+
+  const onRerunFromMock = async (nodeId: string, mockOutput: unknown) => {
+    const updatedOutputs: Record<string, { output: unknown; status: string; timestamp: number }> = {
+      ...stepOutputs,
+      [nodeId]: { output: mockOutput, status: 'completed', timestamp: Date.now() },
+    }
+    setStepOutputs(updatedOutputs)
+    const current = fromRf(nodes, edges, draft)
+    const outgoingEdges = current.edges.filter((e) => e.from === nodeId)
+    if (outgoingEdges.length === 0) {
+      pushToast('该节点没有下游节点可供继续执行', 'info')
+      return
+    }
+    const nextNodeId = outgoingEdges[0].to
+    pushToast(`已注入 Mock 值，正从下游节点「${nextNodeId}」继续执行`, 'success')
+    await startRun(nextNodeId, updatedOutputs)
   }
 
   useEffect(() => {
@@ -493,10 +913,26 @@ function FlowCanvasInner() {
               : phase.state === 'failed'
                 ? 'failed'
                 : s.status
-        return { ...s, status, output: latest.lastEventDetail || s.output }
+        const output = latest.lastEventDetail || s.output
+        if (phase.state === 'completed' && output !== undefined) {
+          setStepOutputs((cur) => ({
+            ...cur,
+            [s.nodeId]: { output, status: 'completed', timestamp: Date.now() },
+          }))
+        }
+        return { ...s, status, output }
       }),
     )
   }, [workflows, runSteps.length])
+
+  useEffect(() => {
+    const id = ephemeralRunId.current
+    if (!id || runSteps.length === 0) return
+    const done = runSteps.every((s) => s.status === 'completed' || s.status === 'failed')
+    if (!done) return
+    ephemeralRunId.current = null
+    void purgeRerunSidecars().catch(() => {})
+  }, [runSteps])
 
   const doExport = async () => {
     const current = fromRf(nodes, edges, draft)
@@ -514,123 +950,116 @@ function FlowCanvasInner() {
       const path = await exportFlow(current.id, dest)
       pushToast(`已导出 ${path}`, 'success')
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(`导出失败：${String(e)}`, 'error')
     }
   }
 
-  const finishImport = async (zip: string, mode?: string) => {
+  const doImport = async (conflictMode?: string | null) => {
     try {
-      const r = await importFlow(zip, mode)
-      if (r.status === 'conflict') {
-        setPendingZip(zip)
-        setConflict(r)
-        return
+      let zipPath = ''
+      if (!conflictMode) {
+        const selected = await open({
+          filters: [{ name: '流程包', extensions: ['zip'] }],
+          multiple: false,
+        })
+        if (!selected || typeof selected !== 'string') return
+        zipPath = selected
       }
-      if (r.status === 'missing_deps') {
-        pushToast(`缺少依赖流程：${r.missing.join(', ')}`, 'error')
-        return
+      const res = await importFlow(zipPath, conflictMode)
+      if (res.status === 'ok') {
+        pushToast(`导入成功：${res.id} v${res.version}`, 'success')
+        await reloadList()
+        const rec = await getFlow(res.id)
+        applyFlowRecord(rec, false)
+        const missing = res.missing_tools || res.missingTools || []
+        if (missing.length > 0) {
+          pushToast(`导入提示：缺少依赖工具 ${missing.join(', ')}`, 'info')
+        }
+      } else if (res.status === 'conflict') {
+        pushToast(`导入冲突：已有版本 v${res.existing_version}，包内版本 v${res.incoming_version}`, 'error')
+      } else if (res.status === 'missing_deps') {
+        pushToast(`导入失败：缺少依赖流程 ${res.missing.join(', ')}`, 'error')
       }
-      if (r.status === 'cancelled') return
-      setConflict(null)
-      setPendingZip('')
-      const missingTools = (r.missingTools ?? r.missing_tools ?? []).map(String)
-      const requirements = r.requirements ?? { models: [], tools: [] }
-      if (missingTools.length > 0 || requirements.models.length > 0) {
-        setReview({ id: r.id, requirements, missingTools })
-      }
-      const rec = await getFlow(r.id)
-      applyDraft(
-        {
-          id: rec.id,
-          name: rec.name,
-          description: rec.description,
-          version: rec.version,
-          input_schema: rec.input_schema as FlowDraft['input_schema'],
-          output_schema: rec.output_schema as FlowDraft['output_schema'],
-          nodes: rec.nodes as FlowDraft['nodes'],
-          edges: rec.edges as FlowDraft['edges'],
-          published: true,
-          dirty: false,
-        },
-        false,
-      )
-      pushToast(`已导入 ${r.id}`, 'success')
-      await reloadList()
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(`导入失败：${String(e)}`, 'error')
     }
-  }
-
-  const doImport = async () => {
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: '流程包', extensions: ['zip'] }],
-    })
-    if (!picked || Array.isArray(picked)) return
-    await finishImport(picked)
   }
 
   const doCopy = () => {
     const current = fromRf(nodes, edges, draft)
-    const id = `${slugifyFlowId(current.id)}-copy`
-    applyDraft({ ...current, id, name: `${current.name} 副本`, published: false, dirty: true, version: '1' })
-    pushToast(`已复制为 ${id}`, 'success')
+    const base = current.id.replace(/-copy(-\d+)?$/, '')
+    const rand = Math.random().toString(36).slice(2, 6)
+    const newId = `${base}-copy-${rand}`
+    const copy: FlowDraft = {
+      ...current,
+      id: newId,
+      name: `${current.name} (副本)`,
+      version: '1',
+      published: false,
+      dirty: true,
+    }
+    applyDraft(copy, true)
+    pushToast(`已复制为 ${newId}`, 'success')
   }
 
   const doDelete = async () => {
-    if (!window.confirm(`删除流程 ${draft.id}？草稿与已发布包都会移除。`)) return
+    if (!draft.id) return
+    const id = draft.id
     try {
-      await deleteFlow(draft.id)
-      applyDraft(createDemoDraft(), false)
-      pushToast('已删除', 'success')
+      await deleteFlow(id)
+      pushToast(`已删除流程 ${id}`, 'success')
       await reloadList()
+      const demo = createDemoDraft()
+      applyDraft(demo, true)
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(`删除失败：${String(e)}`, 'error')
     }
   }
 
   const openPromote = () => {
-    if (!selected || selected.data.nodeType !== 'agent') return
-    const data = selected.data as { label?: string; role?: string; prompt?: string }
-    const label = String(data.label ?? '').trim()
-    const role = String(data.role ?? '').trim()
-    setPromoteId(slugifyAgentId(label || role || 'trial-agent'))
-    setPromoteName(label || role || '新 Agent')
-    setPromoteDesc([role, data.prompt].filter((s) => s && String(s).trim()).join('\n'))
+    if (!selected) return
+    const currentName = String(selected.data.label || '').trim() || '新 Agent'
+    const genId = slugifyAgentId(currentName) || `agent-${Date.now().toString(36).slice(2, 6)}`
+    setPromoteName(currentName)
+    setPromoteId(genId)
+    setPromoteDesc(String((selected.data as { role?: string }).role || '').trim())
     setPromoteOpen(true)
   }
 
   const doPromote = async () => {
-    const id = promoteId.trim()
-    const name = promoteName.trim()
-    if (!isValidAgentId(id)) {
-      pushToast('Agent id 不合法（1-64 位小写字母、数字、单连字符）', 'error')
+    if (!selected || !promoteId.trim() || !promoteName.trim()) return
+    const rawId = promoteId.trim()
+    if (!isValidAgentId(rawId)) {
+      pushToast('Agent ID 不合法：请用 1-64 位小写字母、数字、单连字符', 'error')
       return
     }
-    if (!name) {
-      pushToast('Agent 显示名不能为空', 'error')
-      return
+    const d = selected.data as {
+      role?: string
+      prompt?: string
+      model?: string
+      agentType?: string
     }
-    if (agents.some((a) => a.id === id)) {
-      pushToast(`工号「${id}」已存在，请换一个或去编制面板改源`, 'error')
-      return
-    }
-    const data = selected?.data as { role?: string; prompt?: string } | undefined
-    const sections = [data?.role, data?.prompt, promoteDesc.trim()]
-      .filter((s): s is string => Boolean(s && s.trim()))
-      .map((s) => s.trim())
-    const agent: AgentRecord = {
-      ...emptyAgent(id, name),
-      description: promoteDesc.trim(),
-      persona: { label: name, sections },
+    const record: AgentRecord = {
+      ...emptyAgent(rawId),
+      name: promoteName.trim(),
+      description: promoteDesc.trim() || d.role || '',
+      model: d.model || '',
+      agent_type: d.agentType || '',
+      persona: {
+        label: d.role || null,
+        sections: d.prompt ? [d.prompt] : [],
+      },
     }
     setPromoteBusy(true)
     try {
-      await saveAgent(agent, sections.join('\n\n'))
+      const saved = await saveAgent(record, d.prompt || undefined)
+      await reloadAgents()
+      patchSelected({
+        presetId: saved.id,
+        label: saved.name || saved.id,
+      })
       setPromoteOpen(false)
-      if (selected) patchSelected({ presetId: id })
-      await reloadList()
-      pushToast(`已升格为 Agent「${id}」，本节点已冻结引用`, 'success')
+      pushToast(`已成功升格为 Agent「${saved.name}」(${saved.id})`, 'success')
     } catch (e) {
       pushToast(`升格失败：${String(e)}`, 'error')
     } finally {
@@ -649,367 +1078,254 @@ function FlowCanvasInner() {
     void openChatTab({ title: 'Agent 编制', utilityKind: 'agents' })
   }
 
-  const onGenerate = async () => {
+  const onSendChat = async () => {
     const text = aiText.trim()
-    if (!text || !tabId) return
+    if (!text || !tabId || aiBusy || generating) return
+    setAiText('')
     setAiBusy(true)
     setAiError('')
-    const before = getTabState(tabId)?.messages.length ?? messages.length
-    aiWait.current = { before, started: false }
+    const before = getTabState(tabId)?.messages.length ?? 0
+    const promptId = generateId('p_')
+    setGenerateWait({ tabId, before, promptId, started: false })
     try {
-      await sendPrompt(tabId, buildGeneratePrompt(text))
+      await sendPrompt(tabId, buildDialoguePrompt(text, { name: draft.name, id: draft.id }), promptId)
     } catch (e) {
-      aiWait.current = null
+      setGenerateWait(null)
       setAiBusy(false)
+      setAiText(text)
       setAiError(String(e))
-      pushToast(AI_GRAPH_FAIL_MESSAGE, 'error')
+      pushToast(`发送失败：${String(e)}`, 'error')
     }
   }
 
   useEffect(() => {
-    const wait = aiWait.current
-    const step = noteGenerateProgress(wait, aiBusy, generating)
-    if (step === 'started' && wait) wait.started = true
-    if (step !== 'finish' || !wait) return
-    const added = messages.slice(wait.before).filter((m) => m.role === 'assistant').slice(-1)[0]
-    aiWait.current = null
-    setAiBusy(false)
-    if (!added?.text) {
-      setAiError(AI_GRAPH_FAIL_MESSAGE)
-      pushToast(AI_GRAPH_FAIL_MESSAGE, 'error')
-      return
-    }
-    const parsed = parseGeneratedGraph(added.text)
-    if (!parsed.ok) {
-      setAiError(parsed.error)
-      pushToast(parsed.error, 'error')
-      return
-    }
-    const next = draftFromGraph(parsed.graph, {
-      id: draft.id,
-      name: draft.name,
-      description: draft.description,
-      version: draft.version,
-    })
-    applyDraft(next, true)
-    setAiText('')
-    pushToast('已生成草稿（未发布）', 'success')
-  }, [aiBusy, generating, messages, applyDraft, draft.id, draft.name, draft.description, draft.version])
+    if (getGenerateWait() && !aiBusy) setAiBusy(true)
+  }, [aiBusy])
 
-  const saveTestCase = () => {
-    localStorage.setItem(testKey(draft.id), testInput)
-    pushToast('已保存测试用例', 'success')
+  useEffect(() => {
+    const wait = getGenerateWait()
+    if (!wait) return
+    const tabSt = getTabState(wait.tabId)
+    const tabGenerating = tabSt?.status === 'generating'
+    const curTabMsgs = tabSt?.messages ?? []
+    const hasNew = curTabMsgs.slice(wait.before).some((m) => m.role === 'assistant')
+    let step = noteGenerateProgress(wait, true, tabGenerating)
+    if (step === 'started') wait.started = true
+    if (step !== 'finish' && !tabGenerating && hasNew) step = 'finish'
+    if (step !== 'finish') return
+    const added =
+      curTabMsgs
+        .slice(wait.before)
+        .filter((m) => m.role === 'assistant' && (!wait.promptId || m.promptId === wait.promptId || !m.promptId))
+        .slice(-1)[0] ?? curTabMsgs.slice(wait.before).filter((m) => m.role === 'assistant').slice(-1)[0]
+    setGenerateWait(null)
+    setAiBusy(false)
+    if (!added?.text) return
+    const parsed = parseGeneratedGraph(added.text)
+    if (parsed.ok) {
+      const next = draftFromGraph(parsed.graph, {
+        id: draft.id,
+        name: draft.name,
+        description: draft.description,
+        version: draft.version,
+      })
+      applyDraft(next, true)
+      pushToast('已更新画布拓扑', 'success')
+      return
+    }
+    if (/```(?:json)?\s*\{/i.test(added.text) || (added.text.includes('"nodes"') && added.text.includes('"edges"'))) {
+      const msg = parsed.error || AI_GRAPH_FAIL_MESSAGE
+      setAiError(msg)
+      pushToast(msg, 'error')
+    }
+  }, [aiBusy, generating, applyDraft, draft.id, draft.name, draft.description, draft.version])
+
+  const onRetryStrict = async () => {
+    if (!tabId || aiBusy || generating) return
+    setAiBusy(true)
+    setAiError('')
+    const before = getTabState(tabId)?.messages.length ?? 0
+    const promptId = generateId('p_')
+    setGenerateWait({ tabId, before, promptId, started: false })
+    try {
+      await sendPrompt(
+        tabId,
+        `请严格根据当前用户意图与需求，只输出一个合法且闭合的 \`\`\`json 流程拓扑对象，必须包含 nodes 和 edges，禁止输出任何其他解释文字。\n${FLOW_GENERATE_SYSTEM}`,
+        promptId,
+      )
+    } catch (e) {
+      setGenerateWait(null)
+      setAiBusy(false)
+      setAiError(String(e))
+      pushToast(`重试失败：${String(e)}`, 'error')
+    }
   }
 
   useEffect(() => {
     const saved = localStorage.getItem(testKey(draft.id))
-    if (saved) setTestInput(saved)
+    setTestInput(saved || '{\n  "input": ""\n}')
   }, [draft.id])
 
-  const canPublish = pubDesc.trim().length > 0
-
-  const inspector = selected ? (
-    <aside className="flow-inspector" aria-label="节点属性">
-      <h3>{selected.data.nodeType} 属性配置</h3>
-      <label className="flow-field">
-        <span>显示名称</span>
-        <input
-          placeholder="如：代码分析、生成测试、提交审核"
-          value={String(selected.data.label ?? '')}
-          onChange={(e) => patchSelected({ label: e.target.value })}
-        />
-      </label>
-      {selected.data.nodeType === 'start' && (
-        <label className="flow-field">
-          <span>输入字段声明（格式：name:type，多个用逗号隔开）</span>
-          <input
-            placeholder="如：input:string, file_path:string"
-            value={((selected.data as { fields?: SchemaField[] }).fields ?? [])
-              .map((f) => `${f.name}:${f.type}`)
-              .join(', ')}
-            onChange={(e) => {
-              const fields: SchemaField[] = e.target.value
-                .split(',')
-                .map((x) => x.trim())
-                .filter(Boolean)
-                .map((x) => {
-                  const [name, type] = x.split(':').map((s) => s.trim())
-                  const t = (['string', 'number', 'boolean', 'object', 'array'] as const).includes(type as never)
-                    ? (type as SchemaField['type'])
-                    : 'string'
-                  return { name, type: t, required: true }
-                })
-              patchSelected({ fields, inputSchema: fieldsToSchema(fields) } as Partial<FlowRfData>)
-            }}
-          />
-        </label>
-      )}
-      {selected.data.nodeType === 'agent' && (() => {
-        const presetId = String((selected.data as { presetId?: string }).presetId ?? '').trim()
-        const bound = presetId ? agents.find((a) => a.id === presetId) : undefined
-        if (presetId) {
-          return (
-            <>
-              <p className="flow-field-hint">在编：节点只读引用编制，权限在「Agent 编制」改。</p>
-              <div className="flow-field">
-                <span>编制</span>
-                <strong>{bound ? `${bound.name} (${bound.id})` : presetId}</strong>
-                <span className="flow-field-hint">
-                  {bound?.version ? `v${bound.version}` : ''}
-                  {bound?.capability ? ` · ${AGENT_CAPABILITY_LABEL[bound.capability]}` : ' · 未设能力档'}
-                  {bound?.isolation ? ' · 隔离' : ''}
-                </span>
-              </div>
-              <button type="button" className="flow-btn" onClick={() => openBoundAgent(presetId)}>
-                打开编制
-              </button>
-              <button type="button" className="flow-btn" onClick={demoteToTrial}>
-                复制为试岗
-              </button>
-            </>
-          )
-        }
-        return (
-          <>
-            <label className="flow-field">
-              <span>角色说明（Role Definition）</span>
-              <textarea
-                rows={2}
-                placeholder="如：资深前端架构师，专注于组件复用与性能优化"
-                value={String((selected.data as { role?: string }).role ?? '')}
-                onChange={(e) => patchSelected({ role: e.target.value } as Partial<FlowRfData>)}
-              />
-            </label>
-            <label className="flow-field">
-              <span>任务提示词（Prompt / 指令要求）</span>
-              <textarea
-                rows={4}
-                placeholder="如：请仔细分析上一步传入的需求与代码，提炼核心变更逻辑与待办事项，给出清晰结构化的技术摘要。"
-                value={String((selected.data as { prompt?: string }).prompt ?? '')}
-                onChange={(e) => patchSelected({ prompt: e.target.value } as Partial<FlowRfData>)}
-              />
-            </label>
-            <label className="flow-field">
-              <span>执行模型（留空继承主会话模型）</span>
-              <input
-                placeholder="如：claude-3-7-sonnet, gpt-4o, deepseek-r1"
-                value={String((selected.data as { model?: string }).model ?? '')}
-                onChange={(e) => patchSelected({ model: e.target.value } as Partial<FlowRfData>)}
-              />
-            </label>
-            <label className="flow-field">
-              <span>引用 Agent</span>
-              <select
-                value=""
-                onChange={(e) => patchSelected({ presetId: e.target.value } as Partial<FlowRfData>)}
-              >
-                <option value="">试岗（不引用编制）</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name ? `${a.name} (${a.id})` : a.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="button" className="flow-btn primary" onClick={openPromote}>
-              ✦ 升格为 Agent
-            </button>
-          </>
-        )
-      })()}
-      {selected.data.nodeType === 'tool' && (
-        <>
-          <label className="flow-field">
-            <span>工具名称</span>
-            <input
-              placeholder="如：run_command, read_file, grep_search"
-              value={String((selected.data as { toolName?: string }).toolName ?? '')}
-              onChange={(e) => patchSelected({ toolName: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-          <label className="flow-field">
-            <span>执行命令</span>
-            <input
-              placeholder="如：cargo test --no-fail-fast, npm run build"
-              value={String((selected.data as { command?: string }).command ?? '')}
-              onChange={(e) => patchSelected({ command: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-        </>
-      )}
-      {selected.data.nodeType === 'flow' && (
-        <label className="flow-field">
-          <span>引用已发布流程 ID</span>
-          <input
-            placeholder="输入或下拉选择子流程 ID"
-            value={String((selected.data as { flowId?: string }).flowId ?? '')}
-            onChange={(e) => patchSelected({ flowId: e.target.value } as Partial<FlowRfData>)}
-            list="flow-id-options"
-          />
-        </label>
-      )}
-      {selected.data.nodeType === 'branch' && (
-        <>
-          <label className="flow-field">
-            <span>分支判定条件</span>
-            <select
-              value={String((selected.data as { condition?: string }).condition ?? 'success')}
-              onChange={(e) => patchSelected({ condition: e.target.value } as Partial<FlowRfData>)}
-            >
-              <option value="success">按成功 (Exit 0 / success)</option>
-              <option value="failure">按失败 (Error / failure)</option>
-              <option value="expression">自定义表达式</option>
-            </select>
-          </label>
-          <label className="flow-field">
-            <span>条件表达式</span>
-            <input
-              placeholder="如：prev.success 或 prev.output.status == 'ok'"
-              value={String((selected.data as { expression?: string }).expression ?? '')}
-              onChange={(e) => patchSelected({ expression: e.target.value } as Partial<FlowRfData>)}
-            />
-          </label>
-        </>
-      )}
-      {selected.data.nodeType !== 'start' && (
-        <button type="button" className="flow-btn" onClick={() => void startRun(selected.id)}>
-          从此节点重跑
-        </button>
-      )}
-    </aside>
-  ) : null
+  useEffect(() => {
+    if (!draft.id) return
+    localStorage.setItem(testKey(draft.id), testInput)
+  }, [draft.id, testInput])
 
   const idOptions = useMemo(
     () => list.filter((x) => x.published).map((x) => x.id),
     [list],
   )
 
+  const paletteQ = paletteQuery.trim().toLowerCase()
+  const filteredAgents = useMemo(
+    () =>
+      agents.filter((a) => {
+        if (!paletteQ) return true
+        return `${a.name || ''} ${a.id} ${a.model || ''}`.toLowerCase().includes(paletteQ)
+      }),
+    [agents, paletteQ],
+  )
+  const filteredLibrary = useMemo(
+    () =>
+      NODE_LIBRARY.filter((item) => {
+        if (!paletteQ) return true
+        return `${item.label} ${item.hint} ${item.type}`.toLowerCase().includes(paletteQ)
+      }),
+    [paletteQ],
+  )
+
   const PALETTE_META: Record<
     FlowNodeType,
-    { icon: string }
+    { icon: React.ReactNode }
   > = {
-    start: { icon: '▶' },
-    agent: { icon: '✦' },
-    tool: { icon: '⚙' },
-    flow: { icon: '⑂' },
-    branch: { icon: '⌥' },
-    end: { icon: '◼' },
+    start: { icon: <IconPlayerPlay size={18} stroke={2} /> },
+    agent: { icon: <IconSparkles size={18} stroke={2} /> },
+    tool: { icon: <IconTerminal2 size={18} stroke={2} /> },
+    flow: { icon: <IconHierarchy2 size={18} stroke={2} /> },
+    branch: { icon: <IconGitBranch size={18} stroke={2} /> },
+    parallel: { icon: <IconGitFork size={18} stroke={2} /> },
+    join: { icon: <IconGitMerge size={18} stroke={2} /> },
+    end: { icon: <IconSquareRoundedCheck size={18} stroke={2} /> },
   }
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        const current = fromRf(nodes, edges, draft)
+        void persist(current).then(() => {
+          pushToast('已保存流程草稿', 'success')
+        })
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        const tag = document.activeElement?.tagName.toLowerCase()
+        if (tag === 'input' || tag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable) {
+          return
+        }
+        e.preventDefault()
+        if (e.shiftKey) {
+          const next = futureRef.current.pop()
+          if (next) {
+            pushCapped(historyRef.current, takeSnap(draft), historyCap(draft.nodes.length))
+            applyDraft(applySnap(draft, next), true)
+            pushToast('已重做', 'info')
+          }
+        } else {
+          const prev = historyRef.current.pop()
+          if (prev) {
+            pushCapped(futureRef.current, takeSnap(draft), historyCap(draft.nodes.length))
+            applyDraft(applySnap(draft, prev), true)
+            pushToast('已撤销', 'info')
+          }
+        }
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        const tag = document.activeElement?.tagName.toLowerCase()
+        if (tag === 'input' || tag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable) {
+          return
+        }
+        e.preventDefault()
+        const next = futureRef.current.pop()
+        if (next) {
+          pushCapped(historyRef.current, takeSnap(draft), historyCap(draft.nodes.length))
+          applyDraft(applySnap(draft, next), true)
+          pushToast('已重做', 'info')
+        }
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setSearchOpen(true)
+        return
+      }
+      if (e.key === 'Escape') {
+        if (searchOpen) {
+          setSearchOpen(false)
+          setSearchText('')
+          return
+        }
+        setSelectedId(null)
+        return
+      }
+      const tag = document.activeElement?.tagName.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || (document.activeElement as HTMLElement)?.isContentEditable) {
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedIds.length || selectedId)) {
+        e.preventDefault()
+        onDeleteNodes(selectedIds.length ? selectedIds : selectedId ? [selectedId] : [])
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [applyDraft, draft, edges, nodes, onDeleteNodes, persist, searchOpen, selectedId, selectedIds])
+
+  useStore($flowStaleEpoch)
+  const stale = staleForFlow(draft.id)
 
   return (
     <div className="flow-canvas" role="region" aria-label="流程画布">
-      <header className="flow-toolbar">
-        <div className="flow-toolbar-name">
-          <div className="flow-title-wrapper">
-            <span className="flow-title-icon" aria-hidden>✦</span>
-            <input
-              value={draft.name}
-              aria-label="流程名"
-              placeholder="未命名流程"
-              className="flow-title-input"
-              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value, dirty: true }))}
-            />
-          </div>
-          {draft.dirty ? (
-            <span className="flow-dirty">
-              <span className="flow-dirty-dot" /> 未保存
-            </span>
-          ) : (
-            <span className="flow-clean">已保存</span>
-          )}
-          <span className="flow-ver">v{draft.version}</span>
-          <div className="flow-select-wrapper">
-            <select
-              className="flow-select"
-              value={draft.id}
-              aria-label="切换流程"
-              onChange={(e) => {
-                const id = e.target.value
-                if (id === draft.id) return
-                void getFlow(id)
-                  .then((rec) =>
-                    applyDraft(
-                      {
-                        id: rec.id,
-                        name: rec.name,
-                        description: rec.description,
-                        version: rec.version,
-                        input_schema: rec.input_schema as FlowDraft['input_schema'],
-                        output_schema: rec.output_schema as FlowDraft['output_schema'],
-                        nodes: rec.nodes as FlowDraft['nodes'],
-                        edges: rec.edges as FlowDraft['edges'],
-                        published: rec.published,
-                        dirty: false,
-                      },
-                      false,
-                    ),
-                  )
-                  .catch(() => pushToast('打开失败', 'error'))
-              }}
-            >
-              <option value={draft.id}>{draft.name} ({draft.id})</option>
-              {list
-                .filter((x) => x.id !== draft.id)
-                .map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name} ({x.id})
-                  </option>
-                ))}
-            </select>
-          </div>
+      {stale ? (
+        <div className="flow-stale-banner" role="status">
+          编制「{stale.agentId}」已更新，本流程已发布包仍是旧权限。请重新发布后再跑。
         </div>
-
-        <div className="flow-toolbar-actions">
-          <div className="flow-action-group primary-group">
-            <button type="button" className="flow-btn primary run-btn" onClick={() => void startRun()}>
-              <span>▶</span> 试跑
-            </button>
-            <button type="button" className="flow-btn publish-btn" onClick={openPublish}>
-              <span>✦</span> 发布
-            </button>
-          </div>
-
-          <div className="flow-action-divider" />
-
-          <div className="flow-action-group tool-group">
-            <button type="button" className="flow-btn icon-btn" title="导出流程" onClick={() => void doExport()}>
-              <span>↓</span> 导出
-            </button>
-            <button type="button" className="flow-btn icon-btn" title="导入流程" onClick={() => void doImport()}>
-              <span>↑</span> 导入
-            </button>
-            <button type="button" className="flow-btn icon-btn" title="复制副本" onClick={doCopy}>
-              <span>⎘</span> 复制
-            </button>
-            <button type="button" className="flow-btn danger icon-btn" title="删除流程" onClick={() => void doDelete()}>
-              <span>🗑</span>
-            </button>
-          </div>
-
-          <div className="flow-action-divider" />
-
-          <button
-            type="button"
-            className={`flow-btn dock-btn${dockOpen ? ' is-active' : ''}`}
-            onClick={() => setDockOpen((v) => !v)}
-            title={dockOpen ? '关闭试跑台' : '打开试跑台'}
-          >
-            <span className="flow-btn-icon">⚡</span> 试跑台
-          </button>
-        </div>
-      </header>
+      ) : null}
+      <FlowToolbar
+        draft={draft}
+        setDraft={setDraft}
+        dockOpen={dockOpen}
+        setDockOpen={setDockOpen}
+        mounted={mounted}
+        onMountToSession={onMountToSession}
+        onOpenPublish={openPublish}
+        onAutoLayout={onAutoLayout}
+        onExport={() => void doExport()}
+        onImport={() => void doImport()}
+        onCopy={doCopy}
+        onDelete={() => void doDelete()}
+        onRun={() => void startRun()}
+      />
 
       <div className="flow-body">
         <aside className="flow-palette" aria-label="节点库">
           <div className="flow-palette-header">
             <span className="flow-palette-title">节点库</span>
             <span className="flow-palette-sub">拖拽添加节点</span>
+            <input
+              className="flow-palette-search"
+              placeholder="搜索节点 / 员工"
+              value={paletteQuery}
+              onChange={(e) => setPaletteQuery(e.target.value)}
+              aria-label="搜索节点库"
+            />
           </div>
           <div className="flow-palette-list">
-            {agents.length > 0 && (
+            {filteredAgents.length > 0 && (
               <>
                 <div className="flow-palette-section">编制员工</div>
-                {agents.map((agent) => {
+                {filteredAgents.map((agent) => {
                   const label = agent.name || agent.id
                   const capability = agent.capability ? AGENT_CAPABILITY_LABEL[agent.capability] : '继承权限'
                   const hint = [capability, agent.model].filter(Boolean).join(' · ')
@@ -1019,7 +1335,9 @@ function FlowCanvasInner() {
                       type="button"
                       className="flow-palette-item flow-palette-agent"
                       draggable
-                      title={`${label} (${agent.id})`}
+                      title={`点击或拖拽添加：${label} (${agent.id})`}
+                      data-label={label}
+                      onClick={() => addNode('agent', agent)}
                       onDragStart={(e) => {
                         e.dataTransfer.setData('application/vesprism-agent', agent.id)
                         e.dataTransfer.effectAllowed = 'move'
@@ -1027,7 +1345,7 @@ function FlowCanvasInner() {
                     >
                       <div className="flow-palette-item-head">
                         <span className="flow-palette-item-icon">
-                          ✦
+                          <IconSparkles size={18} stroke={2} />
                         </span>
                         <strong className="flow-palette-item-label">{label}</strong>
                       </div>
@@ -1038,7 +1356,10 @@ function FlowCanvasInner() {
                 <div className="flow-palette-section flow-palette-section-muted">通用节点</div>
               </>
             )}
-            {NODE_LIBRARY.map((item) => {
+            {filteredAgents.length === 0 && filteredLibrary.length === 0 && (
+              <p className="flow-palette-empty">没有匹配的节点</p>
+            )}
+            {filteredLibrary.map((item) => {
               const meta = PALETTE_META[item.type]
               return (
                 <button
@@ -1046,15 +1367,16 @@ function FlowCanvasInner() {
                   type="button"
                   className="flow-palette-item"
                   draggable
+                  title={`点击或拖拽添加：${item.label} — ${item.hint}`}
+                  data-label={item.label}
+                  onClick={() => addNode(item.type)}
                   onDragStart={(e) => {
                     e.dataTransfer.setData('application/vesprism-node', item.type)
                     e.dataTransfer.effectAllowed = 'move'
                   }}
                 >
                   <div className="flow-palette-item-head">
-                    <span className="flow-palette-item-icon">
-                      {meta.icon}
-                    </span>
+                    <span className="flow-palette-item-icon">{meta.icon}</span>
                     <strong className="flow-palette-item-label">{item.label}</strong>
                   </div>
                   <span className="flow-palette-item-hint">{item.hint}</span>
@@ -1066,131 +1388,156 @@ function FlowCanvasInner() {
 
         <div className="flow-stage">
           <div className="flow-stage-canvas">
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              onNodeDragStop={() => commitGraph(nodes, edges)}
-              onSelectionChange={({ nodes: ns }) => setSelectedId(ns[0]?.id ?? null)}
-              onDrop={onDrop}
-              onDragOver={(e) => {
-                e.preventDefault()
-                e.dataTransfer.dropEffect = 'move'
-              }}
-              nodeTypes={flowNodeTypes}
-              fitView
-              deleteKeyCode={['Backspace', 'Delete']}
-              proOptions={{ hideAttribution: true }}
-            >
-              <Background gap={20} size={1.2} color="var(--border-solid, #e5e7eb)" />
-              <MiniMap pannable zoomable />
-              <Controls />
-            </ReactFlow>
-          </div>
-          {inspector}
-          <div className="flow-ai-floating">
-            <div className="flow-ai-card">
-              <span className="flow-ai-sparkle" aria-hidden>✦</span>
-              <input
-                type="text"
-                className="flow-ai-input"
-                value={aiText}
-                disabled={aiBusy || generating}
-                placeholder="描述流程目标或分支逻辑，AI 自动生成拓扑连线..."
-                onChange={(e) => setAiText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    void onGenerate()
-                  }
+            <FlowCanvasContext.Provider value={{ onRunFromHere, onDuplicate, onDeleteNode }}>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeDragStop={() => commitGraph(nodes, edges)}
+                onSelectionChange={({ nodes: ns }) => {
+                  const ids = ns.map((n) => n.id)
+                  setSelectedIds(ids)
+                  setSelectedId(ids[0] ?? null)
                 }}
-              />
-              <button
-                type="button"
-                className="flow-ai-submit-btn"
-                disabled={aiBusy || generating || !aiText.trim()}
-                onClick={() => void onGenerate()}
+                onDrop={onDrop}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                }}
+                nodeTypes={flowNodeTypes}
+                fitView
+                onlyRenderVisibleElements
+                selectionOnDrag
+                deleteKeyCode={null}
+                proOptions={{ hideAttribution: true }}
+                minZoom={0.08}
               >
-                {aiBusy || generating ? (
-                  <span className="flow-ai-spin">↻ 生成中…</span>
-                ) : (
-                  <span>一键生成 ↵</span>
-                )}
-              </button>
-            </div>
-            {aiError ? <div className="flow-err">{aiError}</div> : null}
-          </div>
-        </div>
-
-        <aside className={`flow-dock${dockOpen ? '' : ' is-collapsed'}`} aria-label="试跑台">
-          {dockOpen && (
-            <div className="flow-dock-body scrollbar-dt">
-              <div className="flow-dock-section">
-                <div className="flow-dock-section-head">
-                  <span>测试输入 (JSON)</span>
-                  <button type="button" className="flow-dock-text-btn" onClick={saveTestCase} title="保存为当前流程默认测试输入">
-                    保存用例
-                  </button>
-                </div>
-                <textarea
-                  className="flow-json-textarea"
-                  value={testInput}
-                  onChange={(e) => setTestInput(e.target.value)}
-                  rows={6}
-                  spellCheck={false}
-                />
-              </div>
-
-              <div className="flow-dock-actions">
-                <button type="button" className="flow-btn primary flow-dock-run-btn" onClick={() => void startRun()}>
-                  <span>▶</span> 立即运行
+                <Background gap={20} size={1.2} color="var(--border-solid, #e5e7eb)" />
+                {nodes.length <= 80 ? <MiniMap pannable zoomable /> : null}
+                <Controls showFitView={false} showInteractive={false} />
+              </ReactFlow>
+            </FlowCanvasContext.Provider>
+            {selectedIds.length > 1 && (
+              <div className="flow-batch-bar" role="toolbar" aria-label="批量操作">
+                <span>已选 {selectedIds.length} 个节点</span>
+                <button type="button" className="flow-btn" onClick={onDuplicateSelected}>
+                  复制
                 </button>
                 <button
                   type="button"
-                  className={`flow-btn flow-dock-replay-toggle${replayOpen ? ' is-active' : ''}`}
-                  onClick={() => setReplayOpen((v) => !v)}
+                  className="flow-btn danger"
+                  onClick={() => onDeleteNodes(selectedIds)}
                 >
-                  <span>↻</span> {replayOpen ? '收起回放' : '回放记录'}
+                  删除
                 </button>
               </div>
+            )}
+            {searchOpen && (
+              <div className="flow-search-bar" role="search" aria-label="搜索节点">
+                <IconSearch size={14} className="flow-search-icon" />
+                <input
+                  autoFocus
+                  placeholder="搜索节点名称、角色、命令或 ID..."
+                  value={searchText}
+                  onChange={(e) => {
+                    setSearchText(e.target.value)
+                    setSearchIdx(0)
+                    const q = e.target.value.trim().toLowerCase()
+                    if (q) {
+                      const first = nodes.find((n) => {
+                        const label = String(n.data.label || '').toLowerCase()
+                        const id = n.id.toLowerCase()
+                        const role = String(n.data.role || '').toLowerCase()
+                        const prompt = String(n.data.prompt || '').toLowerCase()
+                        const cmd = String(n.data.command || '').toLowerCase()
+                        const tool = String(n.data.toolName || '').toLowerCase()
+                        return (
+                          label.includes(q) ||
+                          id.includes(q) ||
+                          role.includes(q) ||
+                          prompt.includes(q) ||
+                          cmd.includes(q) ||
+                          tool.includes(q)
+                        )
+                      })
+                      if (first) focusNode(first)
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      if (e.shiftKey) prevSearchResult()
+                      else nextSearchResult()
+                    }
+                  }}
+                />
+                {searchText.trim() && (
+                  <span className="flow-search-count">
+                    {matchedNodes.length > 0 ? `${searchIdx + 1}/${matchedNodes.length}` : '0 匹配'}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="flow-search-btn"
+                  title="上一个 (Shift+Enter)"
+                  disabled={matchedNodes.length <= 1}
+                  onClick={prevSearchResult}
+                >
+                  <IconChevronUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="flow-search-btn"
+                  title="下一个 (Enter)"
+                  disabled={matchedNodes.length <= 1}
+                  onClick={nextSearchResult}
+                >
+                  <IconChevronDown size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="flow-search-btn"
+                  title="关闭 (Esc)"
+                  onClick={() => {
+                    setSearchOpen(false)
+                    setSearchText('')
+                  }}
+                >
+                  <IconX size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+          <NodeInspector
+            selected={selected}
+            patchSelected={patchSelected}
+            agents={agents}
+            openBoundAgent={openBoundAgent}
+            demoteToTrial={demoteToTrial}
+            openPromote={openPromote}
+            onRerunFromNode={(nodeId) => void startRun(nodeId)}
+          />
+        </div>
 
-              <SubagentRunTree />
-              <TerminalList />
-
-              {replayOpen && (
-                <div className="flow-replay" aria-label="回放时间线">
-                  <div className="flow-replay-header">
-                    <span>执行历史与回放</span>
-                  </div>
-                  {runSteps.length === 0 ? (
-                    <div className="flow-replay-meta">尚无试跑记录</div>
-                  ) : (
-                    runSteps.map((s) => (
-                      <div key={s.nodeId} className={`flow-replay-item is-${s.status}`}>
-                        <div className="flow-replay-item-top">
-                          <span className="flow-replay-status-dot" />
-                          <strong className="flow-replay-label">{s.label}</strong>
-                          <span className="flow-replay-type">{s.type}</span>
-                          <span className="flow-replay-badge">{s.status}</span>
-                          <button
-                            type="button"
-                            className="flow-btn flow-replay-rerun"
-                            onClick={() => void startRun(s.nodeId)}
-                          >
-                            重跑
-                          </button>
-                        </div>
-                        {s.output ? <pre className="flow-replay-out">{s.output}</pre> : null}
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </aside>
+        <WorkbenchDock
+          dockOpen={dockOpen}
+          flowId={draft.id}
+          input={aiText}
+          setInput={setAiText}
+          busy={aiBusy || generating}
+          runSteps={runSteps}
+          replayOpen={replayOpen}
+          setReplayOpen={setReplayOpen}
+          onToggleDock={() => setDockOpen(false)}
+          onSendChat={onSendChat}
+          onRun={() => void startRun()}
+          onOpenDetails={() => void openChatTab({ title: '试跑详情', utilityKind: 'flow-run' })}
+          onRetryStrict={onRetryStrict}
+          onRerunFromMock={onRerunFromMock}
+          error={aiError}
+        />
       </div>
 
       <datalist id="flow-id-options">
@@ -1199,143 +1546,33 @@ function FlowCanvasInner() {
         ))}
       </datalist>
 
-      {publishOpen && (
-        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="发布流程">
-          <div className="flow-modal">
-            <h2>发布流程包</h2>
-            <label className="flow-field">
-              <span>流程名</span>
-              <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value, dirty: true }))} />
-            </label>
-            <label className="flow-field">
-              <span>id</span>
-              <input
-                value={draft.id}
-                onChange={(e) => setDraft((d) => ({ ...d, id: slugifyFlowId(e.target.value), dirty: true }))}
-              />
-            </label>
-            <label className="flow-field">
-              <span>给 agent 看的说明（必填）</span>
-              <textarea value={pubDesc} onChange={(e) => setPubDesc(e.target.value)} rows={4} />
-            </label>
-            <label className="flow-field">
-              <span>版本号</span>
-              <input value={pubVersion} onChange={(e) => setPubVersion(e.target.value)} />
-            </label>
-            <label className="flow-field">
-              <span>输入 Schema</span>
-              <textarea value={pubIn} onChange={(e) => setPubIn(e.target.value)} rows={4} />
-            </label>
-            <label className="flow-field">
-              <span>输出 Schema</span>
-              <textarea value={pubOut} onChange={(e) => setPubOut(e.target.value)} rows={4} />
-            </label>
-            <div className="flow-modal-actions">
-              <button type="button" className="flow-btn" onClick={() => setPublishOpen(false)}>
-                取消
-              </button>
-              <button type="button" className="flow-btn primary" disabled={!canPublish} onClick={() => void doPublish()}>
-                发布
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PublishFlowModal
+        open={publishOpen}
+        onClose={() => setPublishOpen(false)}
+        draft={draft}
+        setDraft={setDraft}
+        pubDesc={pubDesc}
+        setPubDesc={setPubDesc}
+        pubVersion={pubVersion}
+        setPubVersion={setPubVersion}
+        pubIn={pubIn}
+        pubOut={pubOut}
+        onPublish={() => void doPublish()}
+      />
 
-      {conflict && (
-        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="导入撞名">
-          <div className="flow-modal">
-            <h2>已存在 {conflict.id} v{conflict.existing_version}</h2>
-            <p>本次导入为 v{conflict.incoming_version}。覆盖 / 并存 / 取消？</p>
-            <div className="flow-modal-actions">
-              <button type="button" className="flow-btn" onClick={() => void finishImport(pendingZip, 'cancel')}>
-                取消
-              </button>
-              <button type="button" className="flow-btn" onClick={() => void finishImport(pendingZip, 'keep-both')}>
-                并存
-              </button>
-              <button type="button" className="flow-btn primary" onClick={() => void finishImport(pendingZip, 'overwrite')}>
-                覆盖
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {promoteOpen && (
-        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="升格为 Agent">
-          <div className="flow-modal">
-            <h2>✦ 升格为 Agent</h2>
-            <p className="flow-modal-hint">把当前试岗节点固化成编制员工。升格后节点冻结引用该 Agent，能力/隔离/停用工具从 Agent 资产来。</p>
-            <label className="flow-field">
-              <span>id（小写字母/数字/单连字符）</span>
-              <input value={promoteId} onChange={(e) => setPromoteId(slugifyAgentId(e.target.value))} />
-            </label>
-            <label className="flow-field">
-              <span>显示名</span>
-              <input value={promoteName} onChange={(e) => setPromoteName(e.target.value)} />
-            </label>
-            <label className="flow-field">
-              <span>说明（编进人设段落）</span>
-              <textarea value={promoteDesc} onChange={(e) => setPromoteDesc(e.target.value)} rows={4} />
-            </label>
-            <div className="flow-modal-actions">
-              <button type="button" className="flow-btn" onClick={() => setPromoteOpen(false)}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="flow-btn primary"
-                disabled={promoteBusy || !promoteId.trim() || !promoteName.trim()}
-                onClick={() => void doPromote()}
-              >
-                {promoteBusy ? '创建中…' : '升格'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {review && (
-        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="导入依赖检查">
-          <div className="flow-modal">
-            <h2>已导入 {review.id} — 依赖检查</h2>
-            {review.missingTools.length > 0 ? (
-              <div className="flow-req-block is-missing">
-                <strong>缺命令（硬约束，缺了可能跑不动）：</strong>
-                <p>{review.missingTools.join('、')}</p>
-                <p className="flow-req-hint">请在本机安装后再跑该流程。</p>
-              </div>
-            ) : null}
-            {review.requirements.tools.length > 0 ? (
-              <div className="flow-req-block">
-                <strong>依赖命令：</strong>
-                <p>{review.requirements.tools.join('、')}</p>
-              </div>
-            ) : null}
-            {review.requirements.models.length > 0 ? (
-              <div className="flow-req-block">
-                <strong>推荐模型（软约束，可映射到本机模型）：</strong>
-                <p>{review.requirements.models.join('、')}</p>
-                <p className="flow-req-hint">模型不匹配可忽略，会继承主会话模型。</p>
-              </div>
-            ) : null}
-            <div className="flow-modal-actions">
-              <button type="button" className="flow-btn primary" onClick={() => setReview(null)}>
-                知道了
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PromoteAgentModal
+        open={promoteOpen}
+        onClose={() => setPromoteOpen(false)}
+        promoteName={promoteName}
+        setPromoteName={setPromoteName}
+        promoteId={promoteId}
+        setPromoteId={setPromoteId}
+        promoteDesc={promoteDesc}
+        setPromoteDesc={setPromoteDesc}
+        promoteBusy={promoteBusy}
+        onPromote={() => void doPromote()}
+      />
     </div>
   )
 }
-
-export default function FlowCanvas() {
-  return (
-    <ReactFlowProvider>
-      <FlowCanvasInner />
-    </ReactFlowProvider>
-  )
-}
+export default FlowCanvas

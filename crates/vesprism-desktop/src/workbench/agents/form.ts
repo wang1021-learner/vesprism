@@ -24,6 +24,7 @@ export type AgentFormDraft = {
   capability: AgentCapability | ''
   isolation: boolean
   disabledToolsText: string
+  skillsText: string
   permissionRules: string[]
   systemPrompt: string
   /** 打开时的完整记录；保存时当基底，避免抹掉面板不编辑的字段。 */
@@ -39,6 +40,7 @@ export function emptyFormDraft(): AgentFormDraft {
     capability: '',
     isolation: false,
     disabledToolsText: '',
+    skillsText: '',
     permissionRules: [],
     systemPrompt: '',
   }
@@ -68,6 +70,7 @@ function cloneAgent(agent: AgentRecord): AgentRecord {
     ...agent,
     disabled_tools: [...(agent.disabled_tools ?? [])],
     permission_rules: [...(agent.permission_rules ?? [])],
+    skills: [...(agent.skills ?? [])],
     flows: [...(agent.flows ?? [])],
     persona: {
       label: agent.persona?.label ?? null,
@@ -85,6 +88,7 @@ export function draftFromAgent(agent: AgentRecord, systemPrompt: string): AgentF
     capability: agent.capability ?? '',
     isolation: agent.isolation,
     disabledToolsText: joinToolList(agent.disabled_tools),
+    skillsText: joinToolList(agent.skills ?? []),
     permissionRules: [...(agent.permission_rules ?? [])],
     systemPrompt,
     raw: cloneAgent(agent),
@@ -102,6 +106,7 @@ export function agentFromDraft(d: AgentFormDraft): AgentRecord {
     capability: d.capability || null,
     isolation: d.isolation,
     disabled_tools: splitToolList(d.disabledToolsText),
+    skills: splitToolList(d.skillsText),
     permission_rules: d.permissionRules.map((r) => r.trim()).filter(Boolean),
   }
 }

@@ -15,9 +15,11 @@ import { slugifyFlowId } from './types'
 export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[] = [
   { type: 'start', label: '起点', hint: '定义流程输入' },
   { type: 'agent', label: 'Agent', hint: '挂编制员工 / 试岗角色' },
-  { type: 'tool', label: '代办', hint: '让子代理代办一件事（命令/工具）' },
+  { type: 'tool', label: '工具', hint: '执行命令或工具调用' },
   { type: 'flow', label: '子流程', hint: '引用已发布流程' },
-  { type: 'branch', label: '分支', hint: '按条件分流' },
+  { type: 'branch', label: '分支', hint: '按条件多路分流' },
+  { type: 'parallel', label: '并行', hint: '并发执行多分支任务' },
+  { type: 'join', label: '汇聚', hint: '聚合多个分支的产物' },
   { type: 'end', label: '终点', hint: '定义流程输出' },
 ]
 
@@ -41,6 +43,10 @@ export function defaultParams(type: FlowNodeType): FlowGraphNode['params'] {
       return { label: '子流程', flowId: '', input: {} }
     case 'branch':
       return { label: '分支', condition: 'success', expression: '' }
+    case 'parallel':
+      return { label: '并行扇出', mode: 'all' }
+    case 'join':
+      return { label: '结果汇聚', mergeMode: 'merge_json' }
     case 'end':
       return { label: '终点', outputSchema: { type: 'object' } }
   }
@@ -135,13 +141,16 @@ export function collectDependencies(nodes: FlowGraphNode[]): string[] {
 /** 按拓扑分层自动排坐标（AI 生成图 / 导入无坐标时使用） */
 export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
   const outgoing = new Map<string, string[]>()
+  const incoming = new Map<string, string[]>()
   const indeg = new Map<string, number>()
   for (const n of graph.nodes) {
     outgoing.set(n.id, [])
+    incoming.set(n.id, [])
     indeg.set(n.id, 0)
   }
   for (const e of graph.edges) {
     outgoing.get(e.from)?.push(e.to)
+    incoming.get(e.to)?.push(e.from)
     indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
   }
   const layer = new Map<string, number>()
@@ -163,6 +172,11 @@ export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
       if (left === 0) queue.push(nxt)
     }
   }
+  for (const n of graph.nodes) {
+    if (!layer.has(n.id)) {
+      layer.set(n.id, 0)
+    }
+  }
   const buckets = new Map<number, string[]>()
   for (const n of graph.nodes) {
     const L = layer.get(n.id) ?? 0
@@ -170,16 +184,40 @@ export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
     list.push(n.id)
     buckets.set(L, list)
   }
+  const maxLayerSize = Math.max(...Array.from(buckets.values()).map((l) => l.length), 1)
   const pos = new Map<string, { x: number; y: number }>()
-  for (const [L, ids] of buckets) {
+  const sortedLayers = Array.from(buckets.keys()).sort((a, b) => a - b)
+  for (const L of sortedLayers) {
+    const ids = buckets.get(L)!
+    const layerOffset = ((maxLayerSize - ids.length) * ROW_H) / 2
     ids.forEach((id, i) => {
-      pos.set(id, { x: 80 + L * COL_W, y: 80 + i * ROW_H })
+      pos.set(id, {
+        x: 80 + L * COL_W,
+        y: 80 + layerOffset + i * ROW_H,
+      })
     })
   }
   return graph.nodes.map((n) => ({
     ...n,
     position: pos.get(n.id) ?? { x: 80, y: 80 },
   }))
+}
+
+export function layoutDraft(draft: FlowDraft): FlowDraft {
+  const g: FlowGraphJson = {
+    nodes: draft.nodes.map(({ id, type, params }) => ({ id, type, params })),
+    edges: draft.edges.map(({ from, to, label }) => ({ from, to, label })),
+  }
+  const laidOut = layoutGraph(g)
+  const posMap = new Map(laidOut.map((n) => [n.id, n.position]))
+  return {
+    ...draft,
+    dirty: true,
+    nodes: draft.nodes.map((n) => ({
+      ...n,
+      position: posMap.get(n.id) ?? n.position,
+    })),
+  }
 }
 
 export function graphJsonFromDraft(draft: FlowDraft): FlowGraphJson {
@@ -215,10 +253,11 @@ export function draftFromGraph(
 }
 
 export function bumpVersion(v: string): string {
-  const n = Number.parseInt(v, 10)
-  if (Number.isFinite(n) && n >= 0) return String(n + 1)
-  const m = v.match(/(\d+)(?!.*\d)/)
-  if (m) return v.slice(0, m.index) + String(Number(m[1]) + 1)
+  const m = v.match(/^(.*?)(\d+)([^\d]*)$/)
+  if (m) {
+    const nextNum = Number(m[2]) + 1
+    return `${m[1]}${nextNum}${m[3]}`
+  }
   return '1'
 }
 
@@ -245,6 +284,19 @@ export function subgraphFrom(
       if (e.from !== id || seen.has(e.to)) continue
       seen.add(e.to)
       queue.push(e.to)
+    }
+  }
+  // 子图里若有 join，把其它入边兄弟也拉进来，避免入度 < 2 校验失败。
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const n of nodes) {
+      if (n.type !== 'join' || !seen.has(n.id)) continue
+      for (const e of edges) {
+        if (e.to !== n.id || seen.has(e.from)) continue
+        seen.add(e.from)
+        grew = true
+      }
     }
   }
   return {

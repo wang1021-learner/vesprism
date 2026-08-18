@@ -7,6 +7,9 @@ import type { FlowDraft, FlowGraphEdge, FlowGraphNode } from './types'
 
 /** 发布时把工作台 Agent 收成官方 AgentOpts 能认的字段。 */
 export type PresetResolve = {
+  name?: string
+  description?: string
+  systemPrompt?: string
   model?: string
   agentType?: string
   /** 官方 capability_mode 字符串：read-only / read-write / execute / all */
@@ -19,8 +22,26 @@ export type PresetResolve = {
   disabledTools?: string[]
   /** per-agent deny 规则（`kind:glob` 或 `glob`），编译进 AgentOpts.permission_rules */
   permissionRules?: string[]
+  /** Agent 挂载的技能列表 */
+  skills?: string[]
 }
 export type CompileOpts = { presets?: Record<string, PresetResolve> }
+
+export function officialCapability(raw?: string | null): string | undefined {
+  if (!raw) return undefined
+  const key = raw.trim().toLowerCase().replace(/_/g, '-')
+  if (!key) return undefined
+  if (key === 'read-only' || key === 'readonly') return 'read-only'
+  if (key === 'read-write' || key === 'readwrite') return 'read-write'
+  if (key === 'execute') return 'execute'
+  if (key === 'all') return 'all'
+  return raw.trim()
+}
+
+function pushIsolation(opts: string[], isolation: boolean | undefined): void {
+  if (isolation === true) opts.push('isolation_worktree: true')
+  if (isolation === false) opts.push('isolation_worktree: false')
+}
 
 function esc(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, '\\n')
@@ -59,14 +80,25 @@ function incoming(edges: FlowGraphEdge[], id: string): FlowGraphEdge[] {
   return edges.filter((e) => e.to === id)
 }
 
-function agentPrompt(n: FlowGraphNode): string {
+function agentPrompt(n: FlowGraphNode, resolved?: PresetResolve): string {
   const p = n.params as { role?: string; prompt?: string }
   const parts: string[] = []
-  if (p.role) parts.push(p.role)
-  if (p.prompt) parts.push(p.prompt)
-  if (parts.length === 0) parts.push('根据上一步输出完成本节点任务，给出简洁结果。')
+  if (resolved?.systemPrompt?.trim()) {
+    parts.push(resolved.systemPrompt.trim())
+  } else if (resolved?.description?.trim()) {
+    parts.push(`【角色定位】：${resolved.description.trim()}`)
+  }
+  if (p.role?.trim() && !resolved?.systemPrompt?.includes(p.role.trim())) {
+    parts.push(`【职责】：${p.role.trim()}`)
+  }
+  if (p.prompt?.trim()) {
+    parts.push(p.prompt.trim())
+  }
+  if (parts.length === 0) {
+    parts.push('根据上一步输出完成本节点任务，给出简洁结果。')
+  }
   parts.push('输入（JSON）：')
-  return parts.join('\n')
+  return parts.join('\n\n')
 }
 
 function resolveAgentOpts(
@@ -79,37 +111,49 @@ function resolveAgentOpts(
     agentType?: string
     capability?: string
     isolation?: boolean
+    skills?: string[]
   }
   const presetId = p.presetId?.trim()
+  let name: string | undefined
+  let description: string | undefined
+  let systemPrompt: string | undefined
   let model = p.model?.trim()
   let agentType = p.agentType?.trim()
-  // 节点显式值 > Agent 源 > 缺省。capability/isolation/outputSchema/disabledTools 只从 Agent 源来。
-  let capability = p.capability?.trim()
-  let isolation = p.isolation ?? false
+  let capability = officialCapability(p.capability)
+  let isolation = p.isolation
   let outputSchema: unknown
   let disabledTools: string[] | undefined
   let permissionRules: string[] | undefined
+  let skills: string[] | undefined = p.skills
   if (presetId) {
     const resolved = presets[presetId]
     if (!resolved) {
       throw new Error(`Agent「${presetId}」不存在，无法编译节点 ${n.id}`)
     }
+    name = resolved.name
+    description = resolved.description
+    systemPrompt = resolved.systemPrompt
     if (!model) model = resolved.model?.trim()
     if (!agentType) agentType = resolved.agentType?.trim()
-    if (!capability) capability = resolved.capability?.trim()
-    isolation = isolation || resolved.isolation === true
+    if (!capability) capability = officialCapability(resolved.capability)
+    if (isolation === undefined) isolation = resolved.isolation
     if (resolved.outputSchema !== undefined) outputSchema = resolved.outputSchema
     if (resolved.disabledTools?.length) disabledTools = resolved.disabledTools
     if (resolved.permissionRules?.length) permissionRules = resolved.permissionRules
+    if (resolved.skills?.length && !skills?.length) skills = resolved.skills
   }
   return {
+    name,
+    description,
+    systemPrompt,
     model: model || undefined,
     agentType: agentType || undefined,
     capability: capability || undefined,
-    isolation: isolation || undefined,
+    isolation,
     outputSchema,
     disabledTools,
     permissionRules,
+    skills,
   }
 }
 
@@ -121,22 +165,27 @@ function emitAgentCall(
 ): string {
   const v = ident(n.id)
   const resolved = resolveAgentOpts(n, presets)
-  const prompt = agentPrompt(n)
+  let prompt = agentPrompt(n, resolved)
+  if (resolved.skills && resolved.skills.length > 0) {
+    prompt += `\n\n【可用技能 (Skills)】：${resolved.skills.join(', ')}`
+  }
   lines.push(`phase("${esc(phaseTitle(n))}");`)
   lines.push(`log("node ${esc(n.id)}");`)
   const opts: string[] = [`label: "${esc(n.id)}"`]
   if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
   if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
   if (resolved.capability) opts.push(`capability_mode: "${esc(resolved.capability)}"`)
-  if (resolved.isolation) opts.push(`isolation_worktree: true`)
+  pushIsolation(opts, resolved.isolation)
   if (resolved.outputSchema !== undefined) {
     opts.push(`output_schema: ${jsonToRhaiLiteral(resolved.outputSchema)}`)
   }
-  if (resolved.disabledTools && resolved.disabledTools.length > 0) {
-    opts.push(`disabled_tools: ${jsonToRhaiLiteral(resolved.disabledTools)}`)
+  if (resolved.disabledTools?.length) {
+    const list = resolved.disabledTools.map((t) => `"${esc(t)}"`).join(', ')
+    opts.push(`disabled_tools: [${list}]`)
   }
-  if (resolved.permissionRules && resolved.permissionRules.length > 0) {
-    opts.push(`permission_rules: ${jsonToRhaiLiteral(resolved.permissionRules)}`)
+  if (resolved.permissionRules?.length) {
+    const list = resolved.permissionRules.map((r) => `"${esc(r)}"`).join(', ')
+    opts.push(`permission_rules: [${list}]`)
   }
   lines.push(`let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ ${opts.join(', ')} });`)
   lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "agent failed" }); }`)
@@ -152,11 +201,78 @@ function emitToolCall(n: FlowGraphNode, prevVar: string, lines: string[]): strin
     ? `执行以下工具/命令并返回输出。命令：${cmd}；固定参数：${argsJson}；上一步输出：`
     : '根据上一步输出选择合适工具执行，并返回结果。上一步：'
   lines.push(`phase("${esc(phaseTitle(n))}");`)
-  lines.push(`log("node ${esc(n.id)}");`)
+  lines.push(`log("node ${esc(n.id)} tool");`)
   lines.push(
     `let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ label: "${esc(n.id)}", capability_mode: "execute" });`,
   )
   lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "tool failed" }); }`)
+  return v
+}
+
+function buildAgentJobMap(
+  n: FlowGraphNode,
+  prevVar: string,
+  presets: Record<string, PresetResolve>,
+): string {
+  if (n.type === 'agent') {
+    const resolved = resolveAgentOpts(n, presets)
+    let prompt = agentPrompt(n, resolved)
+    if (resolved.skills && resolved.skills.length > 0) {
+      prompt += `\n\n【可用技能 (Skills)】：${resolved.skills.join(', ')}`
+    }
+    const opts: string[] = [`prompt: "${esc(prompt)}" + json_encode(${prevVar})`, `label: "${esc(n.id)}"`]
+    if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
+    if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
+    if (resolved.capability) opts.push(`capability_mode: "${esc(resolved.capability)}"`)
+    pushIsolation(opts, resolved.isolation)
+    if (resolved.outputSchema !== undefined) {
+      opts.push(`output_schema: ${jsonToRhaiLiteral(resolved.outputSchema)}`)
+    }
+    if (resolved.disabledTools?.length) {
+      const list = resolved.disabledTools.map((t) => `"${esc(t)}"`).join(', ')
+      opts.push(`disabled_tools: [${list}]`)
+    }
+    if (resolved.permissionRules?.length) {
+      const list = resolved.permissionRules.map((r) => `"${esc(r)}"`).join(', ')
+      opts.push(`permission_rules: [${list}]`)
+    }
+    return `#{ ${opts.join(', ')} }`
+  } else if (n.type === 'tool') {
+    const p = n.params as { toolName?: string; command?: string; args?: Record<string, unknown> }
+    const cmd = (p.command || p.toolName || '').trim()
+    const argsJson = esc(JSON.stringify(p.args ?? {}))
+    const prompt = cmd
+      ? `执行以下工具/命令并返回输出。命令：${cmd}；固定参数：${argsJson}；上一步输出：`
+      : '根据上一步输出选择合适工具执行，并返回结果。上一步：'
+    return `#{ prompt: "${esc(prompt)}" + json_encode(${prevVar}), label: "${esc(n.id)}", capability_mode: "execute" }`
+  }
+  return `#{ prompt: "执行任务" + json_encode(${prevVar}), label: "${esc(n.id)}" }`
+}
+
+function emitJoinCall(n: FlowGraphNode, prevVar: string, lines: string[]): string {
+  const v = ident(n.id)
+  const p = n.params as { mergeMode?: string }
+  const mode = p.mergeMode || 'merge_json'
+  lines.push(`phase("${esc(phaseTitle(n))}");`)
+  lines.push(`log("node ${esc(n.id)} join (mode: ${esc(mode)})");`)
+  if (mode === 'list') {
+    lines.push(`let ${v} = ${prevVar};`)
+  } else if (mode === 'all_success') {
+    lines.push(`let ${v} = #{ ok: true, results: ${prevVar} };`)
+  } else {
+    lines.push(`let ${v} = #{};`)
+    lines.push(`if type_of(${prevVar}) == "array" {`)
+    lines.push(`    for item in ${prevVar} {`)
+    lines.push(`        if type_of(item) == "map" {`)
+    lines.push(`            let payload = item;`)
+    lines.push(`            if item.contains("output") && type_of(item.output) == "map" {`)
+    lines.push(`                payload = item.output;`)
+    lines.push(`            }`)
+    lines.push(`            for k in payload.keys() { ${v}[k] = payload[k]; }`)
+    lines.push(`        }`)
+    lines.push(`    }`)
+    lines.push(`} else { ${v} = ${prevVar}; }`)
+  }
   return v
 }
 
@@ -179,6 +295,10 @@ function emitNode(
       throw new Error(`节点 ${n.id} 仍是 flow，发布/试跑前必须内联`)
     case 'branch':
       return prevVar
+    case 'parallel':
+      return prevVar
+    case 'join':
+      return emitJoinCall(n, prevVar, lines)
   }
 }
 
@@ -205,35 +325,111 @@ function walk(
     return prevVar
   }
 
-  if (node.type === 'branch') {
-    const p = node.params as { condition?: string; expression?: string }
-    const cond =
-      p.condition === 'failure'
-        ? `!(${prevVar} != () && ${prevVar}.success)`
-        : p.condition === 'expression' && p.expression?.trim()
-          ? p.expression.trim()
-          : `${prevVar} != () && ${prevVar}.success`
-    const yes = outs.find((e) => /success|yes|true|ok|是/i.test(e.label || '')) ?? outs[0]
-    const no = outs.find((e) => e !== yes)
+  // ── 并行扇出节点 (Official Native Parallel) ──
+  if (node.type === 'parallel' || (outs.length > 1 && node.type !== 'branch')) {
+    const pVar = `par_${ident(node.id)}`
     lines.push(`phase("${esc(phaseTitle(node))}");`)
-    lines.push(`log("node ${esc(node.id)} branch");`)
-    lines.push(`if (${cond}) {`)
-    let last = prevVar
-    if (yes) last = walk(yes.to, prevVar, nodes, edges, lines, visiting, presets)
-    if (no) {
-      lines.push(`} else {`)
-      last = walk(no.to, prevVar, nodes, edges, lines, visiting, presets)
+    lines.push(`log("node ${esc(node.id)} parallel fan-out (${outs.length} branches)");`)
+    const branchNodes = outs.map((e) => nodes.get(e.to)).filter((n): n is FlowGraphNode => Boolean(n))
+    lines.push(`let ${pVar}_jobs = [];`)
+    for (const bNode of branchNodes) {
+      visiting.add(bNode.id)
+      const jobMap = buildAgentJobMap(bNode, prevVar, presets)
+      lines.push(`${pVar}_jobs.push(${jobMap});`)
     }
-    lines.push(`}`)
+    lines.push(`let ${pVar} = parallel(${pVar}_jobs);`)
+
+    // 寻找并发分支汇聚的下游目标（如 join 节点或 end 节点）
+    const downstreamIds = Array.from(
+      new Set(branchNodes.flatMap((bn) => outgoing(edges, bn.id).map((e) => e.to))),
+    )
+    if (downstreamIds.length === 1) {
+      const nextId = downstreamIds[0]
+      visiting.delete(currentId)
+      return walk(nextId, pVar, nodes, edges, lines, visiting, presets)
+    }
+    if (downstreamIds.length > 1) {
+      throw new Error(
+        `并行节点「${node.id}」的各个分支必须汇聚到同一个 join 结果汇聚网关（当前检测到不同下游: ${downstreamIds.join(', ')}）。如需多步流水线，请先封装为子流程。`,
+      )
+    }
     visiting.delete(currentId)
-    return last
+    return pVar
   }
 
-  if (outs.length !== 1) {
-    throw new Error(`节点 ${node.id} 必须恰好 1 条出边（v1 不并行）`)
+  // ── 多路条件分支节点 (Branch / Switch) ──
+  if (node.type === 'branch') {
+    const p = node.params as { condition?: string; expression?: string }
+    const branchResVar = `v_${ident(node.id)}_res`
+    lines.push(`phase("${esc(phaseTitle(node))}");`)
+    lines.push(`log("node ${esc(node.id)} branch");`)
+    lines.push(`let ${branchResVar} = ${prevVar};`)
+
+    const isBinarySuccessFailure =
+      outs.length === 2 &&
+      !outs.some(
+        (e) =>
+          e.label &&
+          !/^(success|yes|true|ok|是|failure|no|false|否)$/i.test(e.label.trim()),
+      )
+
+    if (isBinarySuccessFailure) {
+      const cond =
+        p.condition === 'failure'
+          ? `!(${prevVar} != () && ${prevVar}.success)`
+          : p.condition === 'expression' && p.expression?.trim()
+            ? p.expression.trim()
+            : `${prevVar} != () && ${prevVar}.success`
+      const yes =
+        outs.find((e) => /^(success|yes|true|ok|是)$/i.test((e.label || '').trim())) ??
+        outs[0]
+      const no = outs.find((e) => e !== yes)
+      lines.push(`if (${cond}) {`)
+      if (yes) {
+        const yesVar = walk(yes.to, prevVar, nodes, edges, lines, visiting, presets)
+        lines.push(`    ${branchResVar} = ${yesVar};`)
+      }
+      if (no) {
+        lines.push(`} else {`)
+        const noVar = walk(no.to, prevVar, nodes, edges, lines, visiting, presets)
+        lines.push(`    ${branchResVar} = ${noVar};`)
+      }
+      lines.push(`}`)
+      visiting.delete(currentId)
+      return branchResVar
+    } else {
+      for (let i = 0; i < outs.length; i++) {
+        const edge = outs[i]
+        const isLast = i === outs.length - 1
+        const lbl = edge.label ? esc(edge.label.trim()) : ''
+        const cond = lbl
+          ? `(${prevVar} != () && (` +
+            `(${prevVar}.output != () && (` +
+              `(type_of(${prevVar}.output) == "map" && (${prevVar}.output.branch == "${lbl}" || ${prevVar}.output.decision == "${lbl}" || ${prevVar}.output.status == "${lbl}")) || ` +
+              `(type_of(${prevVar}.output) == "string" && (${prevVar}.output == "${lbl}" || ${prevVar}.output.contains("${lbl}")))` +
+            `)) || ` +
+            `(${prevVar}.branch == "${lbl}") || (${prevVar} == "${lbl}")` +
+          `))`
+          : 'true'
+        if (i === 0) {
+          lines.push(`if (${cond}) {`)
+        } else if (isLast && !edge.label) {
+          lines.push(`} else {`)
+        } else {
+          lines.push(`} else if (${cond}) {`)
+        }
+        const armVar = walk(edge.to, prevVar, nodes, edges, lines, visiting, presets)
+        lines.push(`    ${branchResVar} = ${armVar};`)
+      }
+      lines.push(`}`)
+      visiting.delete(currentId)
+      return branchResVar
+    }
   }
+
   const produced = emitNode(node, prevVar, lines, presets)
-  const last = walk(outs[0].to, produced, nodes, edges, lines, visiting, presets)
+  const nextEdge = outs[0]
+  const last = nextEdge ? walk(nextEdge.to, produced, nodes, edges, lines, visiting, presets) : produced
   visiting.delete(currentId)
   return last
 }
@@ -241,7 +437,7 @@ function walk(
 export function compileToRhai(draft: FlowDraft, opts: CompileOpts = {}): string {
   const checked = validateFlowGraph(graphJsonFromDraft(draft))
   if (!checked.ok) {
-    throw new Error('流程图不合法：非分支节点只能有 1 条出边，分支必须恰好 2 条')
+    throw new Error(`流程图校验失败: ${checked.error}`)
   }
   if (draft.nodes.some((n) => n.type === 'flow')) {
     throw new Error('仍有未内联的 flow 节点，不能编译')

@@ -21,6 +21,7 @@ export type FlowSavePayload = {
   edges?: unknown
   publish?: boolean
   stage?: boolean
+  ephemeral?: boolean
   rhai?: string | null
   prompts?: string | null
 }
@@ -45,3 +46,9 @@ export const saveAgent = (agent: AgentRecord, systemPrompt?: string) =>
     payload: { agent, systemPrompt: systemPrompt ?? null },
   })
 export const deleteAgent = (id: string) => invoke('delete_agent', { id })
+
+export const updateSessionFlows = (tabId: string, flows: string[]) =>
+  invoke<void>('update_session_flows', { tabId, flows })
+
+export const purgeRerunSidecars = (except?: string | null) =>
+  invoke<number>('purge_rerun_sidecars', { except: except ?? null })

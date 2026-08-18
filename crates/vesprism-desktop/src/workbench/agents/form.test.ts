@@ -48,12 +48,14 @@ describe('Agent 编制表单', () => {
       isolation: true,
       disabled_tools: ['web_search'],
       permission_rules: ['edit:**/.env'],
+      skills: ['git-workflow', 'rust-test'],
       description: '只读审查',
     }
     const draft = draftFromAgent(rec, '你是只读审查员')
     expect(draft.capability).toBe('read_only')
     expect(draft.isolation).toBe(true)
     expect(draft.disabledToolsText).toBe('web_search')
+    expect(draft.skillsText).toBe('git-workflow, rust-test')
     expect(draft.permissionRules).toEqual(['edit:**/.env'])
     expect(draft.systemPrompt).toBe('你是只读审查员')
     const back = agentFromDraft(draft)
@@ -61,6 +63,7 @@ describe('Agent 编制表单', () => {
     expect(back.capability).toBe('read_only')
     expect(back.isolation).toBe(true)
     expect(back.disabled_tools).toEqual(['web_search'])
+    expect(back.skills).toEqual(['git-workflow', 'rust-test'])
     expect(back.permission_rules).toEqual(['edit:**/.env'])
   })
 

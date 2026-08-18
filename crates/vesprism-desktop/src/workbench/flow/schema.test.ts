@@ -12,7 +12,80 @@ describe('validateFlowGraph', () => {
     }
   })
 
-  it('拒绝非 branch 多出边、branch 不是恰好 2 出边、start-end 无连线', () => {
+  it('接受 parallel 扇出与 join 汇聚，以及多路 branch', () => {
+    const parallelGraph = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'par', type: 'parallel', params: {} },
+        { id: 'a1', type: 'agent', params: {} },
+        { id: 'a2', type: 'agent', params: {} },
+        { id: 'j', type: 'join', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'par' },
+        { from: 'par', to: 'a1' },
+        { from: 'par', to: 'a2' },
+        { from: 'a1', to: 'j' },
+        { from: 'a2', to: 'j' },
+        { from: 'j', to: 'e' },
+      ],
+    }
+    const r = validateFlowGraph(parallelGraph)
+    expect(r.ok).toBe(true)
+
+    const multiBranch = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'br', type: 'branch', params: {} },
+        { id: 'x', type: 'agent', params: {} },
+        { id: 'y', type: 'agent', params: {} },
+        { id: 'z', type: 'agent', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'br' },
+        { from: 'br', to: 'x', label: 'opt1' },
+        { from: 'br', to: 'y', label: 'opt2' },
+        { from: 'br', to: 'z', label: 'opt3' },
+        { from: 'x', to: 'e' },
+        { from: 'y', to: 'e' },
+        { from: 'z', to: 'e' },
+      ],
+    }
+    const r2 = validateFlowGraph(multiBranch)
+    expect(r2.ok).toBe(true)
+  })
+
+  it('拒绝 parallel 嵌套串行复杂子链，给出友好提示', () => {
+    const complexParallel = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'par', type: 'parallel', params: {} },
+        { id: 'a1', type: 'agent', params: {} },
+        { id: 'a1_sub', type: 'agent', params: {} }, // 嵌套串行子节点
+        { id: 'a2', type: 'agent', params: {} },
+        { id: 'j', type: 'join', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'par' },
+        { from: 'par', to: 'a1' },
+        { from: 'a1', to: 'a1_sub' }, // 违规：未直接连到 join
+        { from: 'a1_sub', to: 'j' },
+        { from: 'par', to: 'a2' },
+        { from: 'a2', to: 'j' },
+        { from: 'j', to: 'e' },
+      ],
+    }
+    const r = validateFlowGraph(complexParallel)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).toContain('需直接连入汇聚网关 (join)')
+    }
+  })
+
+  it('拒绝非 branch/parallel 多出边、join 入度不足 2、start-end 无连线', () => {
     const extraOut = {
       nodes: [
         { id: 's', type: 'start', params: {} },
@@ -26,23 +99,15 @@ describe('validateFlowGraph', () => {
         { from: 'a', to: 'e' },
       ],
     }
-    const branch3 = {
+    const joinOnly1In = {
       nodes: [
         { id: 's', type: 'start', params: {} },
-        { id: 'br', type: 'branch', params: {} },
-        { id: 'x', type: 'agent', params: {} },
-        { id: 'y', type: 'agent', params: {} },
-        { id: 'z', type: 'agent', params: {} },
+        { id: 'j', type: 'join', params: {} },
         { id: 'e', type: 'end', params: {} },
       ],
       edges: [
-        { from: 's', to: 'br' },
-        { from: 'br', to: 'x', label: 'success' },
-        { from: 'br', to: 'y', label: 'failure' },
-        { from: 'br', to: 'z' },
-        { from: 'x', to: 'e' },
-        { from: 'y', to: 'e' },
-        { from: 'z', to: 'e' },
+        { from: 's', to: 'j' },
+        { from: 'j', to: 'e' },
       ],
     }
     const disconnected = {
@@ -52,7 +117,7 @@ describe('validateFlowGraph', () => {
       ],
       edges: [],
     }
-    for (const item of [extraOut, branch3, disconnected]) {
+    for (const item of [extraOut, joinOnly1In, disconnected]) {
       const r = validateFlowGraph(item)
       expect(r.ok, JSON.stringify(item)).toBe(false)
     }

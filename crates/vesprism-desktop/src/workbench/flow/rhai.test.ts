@@ -89,6 +89,23 @@ describe('compileToRhai', () => {
     expect(rhai).toContain('permission_rules: ["edit:**/.env", "web_*"]')
   })
 
+  it('节点显式 read_only / isolation:false 覆盖 Agent 源', () => {
+    const d = createDemoDraft()
+    Object.assign(d.nodes[1].params, {
+      presetId: 'auditor',
+      capability: 'read_only',
+      isolation: false,
+    })
+    const rhai = compileToRhai(d, {
+      presets: {
+        auditor: { capability: 'all', isolation: true },
+      },
+    })
+    expect(rhai).toContain('capability_mode: "read-only"')
+    expect(rhai).toContain('isolation_worktree: false')
+    expect(rhai).not.toContain('isolation_worktree: true')
+  })
+
   it('无 capability/isolation/outputSchema/disabledTools/permissionRules 时，不输出这些字段', () => {
     const rhai = compileToRhai(createDemoDraft())
     expect(rhai).not.toContain('capability_mode: "read-only"')
@@ -98,10 +115,110 @@ describe('compileToRhai', () => {
     expect(rhai).not.toContain('permission_rules:')
   })
 
+  it('Agent 具备 skills 时，将其正确注入到提示词中下发', () => {
+    const draft = createDemoDraft()
+    ;(draft.nodes[1].params as { presetId?: string }).presetId = 'code-reviewer'
+    const rhaiWithPreset = compileToRhai(draft, {
+      presets: {
+        'code-reviewer': {
+          skills: ['git-workflow', 'security-audit'],
+        },
+      },
+    })
+    expect(rhaiWithPreset).toContain('【可用技能 (Skills)】：git-workflow, security-audit')
+  })
+
+  it('Agent 具备 systemPrompt / description 时，将其正确注入到提示词中下发', () => {
+    const draft = createDemoDraft()
+    ;(draft.nodes[1].params as { presetId?: string }).presetId = 'security-expert'
+    const rhai = compileToRhai(draft, {
+      presets: {
+        'security-expert': {
+          name: '安全专家',
+          description: '专项审查安全漏洞',
+          systemPrompt: '你是资深安全专家，负责审查所有外部输入与越权漏洞。',
+        },
+      },
+    })
+    expect(rhai).toContain('你是资深安全专家，负责审查所有外部输入与越权漏洞。')
+  })
+
   it('草稿含绝对路径时被检测', () => {
     const d = createDemoDraft()
     expect(draftHasAbsolutePath(d)).toBeNull()
     ;(d.nodes[1].params as { prompt?: string }).prompt = 'read C:\\\\Users\\\\me\\\\secret.txt'
     expect(draftHasAbsolutePath(d)).toMatch(/绝对路径/)
+  })
+
+  it('正确编译官方原生 parallel() 并发扇出与 join 汇聚节点', () => {
+    const draft: FlowDraft = {
+      id: 'parallel-flow',
+      name: '并行流程',
+      description: '并行执行多任务并聚合结果',
+      version: '1',
+      input_schema: { type: 'object' },
+      output_schema: { type: 'object' },
+      nodes: [
+        { id: 's', type: 'start', params: { label: '起点' } },
+        { id: 'par', type: 'parallel', params: { label: '分发' } },
+        { id: 'task1', type: 'agent', params: { label: '任务1', prompt: '执行任务1' } },
+        { id: 'task2', type: 'agent', params: { label: '任务2', prompt: '执行任务2' } },
+        { id: 'j', type: 'join', params: { label: '聚合', mergeMode: 'merge_json' } },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'par' },
+        { from: 'par', to: 'task1' },
+        { from: 'par', to: 'task2' },
+        { from: 'task1', to: 'j' },
+        { from: 'task2', to: 'j' },
+        { from: 'j', to: 'e' },
+      ],
+    }
+    const rhai = compileToRhai(draft)
+    expect(rhai).toContain('parallel fan-out (2 branches)')
+    expect(rhai).toContain('let par_par_jobs = [];')
+    expect(rhai).toContain('par_par_jobs.push(')
+    expect(rhai).toContain('let par_par = parallel(par_par_jobs);')
+    expect(rhai).toContain('join (mode: merge_json)')
+    expect(rhai).toContain('complete(')
+  })
+
+  it('正确编译基于 prev.output 的多路条件分支路由 (N-Way Routing)', () => {
+    const draft: FlowDraft = {
+      id: 'multi-branch-flow',
+      name: '多路分支流程',
+      description: '基于 Agent output 进行 N 路分流',
+      version: '1',
+      input_schema: { type: 'object' },
+      output_schema: { type: 'object' },
+      nodes: [
+        { id: 's', type: 'start', params: { label: '起点' } },
+        { id: 'evaluator', type: 'agent', params: { label: '评审员', prompt: '评估代码' } },
+        { id: 'b', type: 'branch', params: { label: '多路分流' } },
+        { id: 'pass', type: 'agent', params: { label: '直接发布', prompt: '发布' } },
+        { id: 'review', type: 'agent', params: { label: '人工复审', prompt: '复审' } },
+        { id: 'reject', type: 'agent', params: { label: '打回修改', prompt: '打回' } },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'evaluator' },
+        { from: 'evaluator', to: 'b' },
+        { from: 'b', to: 'pass', label: '通过' },
+        { from: 'b', to: 'review', label: '待复审' },
+        { from: 'b', to: 'reject', label: '拒绝' },
+        { from: 'pass', to: 'e' },
+        { from: 'review', to: 'e' },
+        { from: 'reject', to: 'e' },
+      ],
+    }
+    const rhai = compileToRhai(draft)
+    expect(rhai).toContain('if (')
+    expect(rhai).toContain('.output.branch == "通过"')
+    expect(rhai).toContain('.output.contains("通过")')
+    expect(rhai).toContain('} else if (')
+    expect(rhai).toContain('.output.branch == "待复审"')
+    expect(rhai).toContain('.output.branch == "拒绝"')
+    expect(rhai).toContain('complete(')
   })
 })

@@ -4,7 +4,16 @@
  * 坐标永不进包；flow 节点在发布时内联，包内不再引用其他流程。
  */
 
-export const FLOW_NODE_TYPES = ['start', 'agent', 'tool', 'flow', 'branch', 'end'] as const
+export const FLOW_NODE_TYPES = [
+  'start',
+  'agent',
+  'tool',
+  'flow',
+  'branch',
+  'parallel',
+  'join',
+  'end',
+] as const
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number]
 
 export type JsonSchema = Record<string, unknown>
@@ -53,6 +62,16 @@ export interface BranchParams {
   expression?: string
 }
 
+export interface ParallelParams {
+  label?: string
+  mode?: 'all' | 'race'
+}
+
+export interface JoinParams {
+  label?: string
+  mergeMode?: 'merge_json' | 'list' | 'all_success'
+}
+
 export interface EndParams {
   label?: string
   outputSchema?: JsonSchema
@@ -64,6 +83,8 @@ export type FlowNodeParams =
   | ToolParams
   | FlowRefParams
   | BranchParams
+  | ParallelParams
+  | JoinParams
   | EndParams
 
 export interface FlowGraphNode {
@@ -79,12 +100,20 @@ export interface FlowGraphEdge {
   from: string
   to: string
   label?: string
+  sourceHandle?: string
+  targetHandle?: string
 }
 
 /** AI / 流程包 graph.json 契约（无坐标） */
 export interface FlowGraphJson {
   nodes: Array<{ id: string; type: FlowNodeType; params: FlowNodeParams }>
-  edges: Array<{ from: string; to: string; label?: string }>
+  edges: Array<{
+    from: string
+    to: string
+    label?: string
+    sourceHandle?: string
+    targetHandle?: string
+  }>
 }
 
 export interface FlowDraft {

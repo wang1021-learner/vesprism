@@ -2,12 +2,15 @@
  * Agent 编制：工作台一等公民。左侧列表，右侧表单，写回 agents/<id>/。
  */
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { pushToast } from '../../store'
-import { deleteAgent, getAgent, listAgents, saveAgent } from '../bridge'
+import { deleteAgent, getAgent, listAgents, saveFlow, saveAgent } from '../bridge'
 import type { AgentListItem } from '../types'
+import type { FlowRecord } from '../flow'
 import { AGENT_CAPABILITY_LABEL } from '../types'
 import { $agentsFocusId, clearAgentsFocus } from './focus'
+import { findFlowsUsingAgent } from './refs'
+import { markFlowsStale } from './stale'
 import {
   CAPABILITY_OPTIONS,
   agentFromDraft,
@@ -27,6 +30,12 @@ export default function AgentsPanel() {
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [focusFailed, setFocusFailed] = useState<string | null>(null)
+  const [usedByFlows, setUsedByFlows] = useState<Array<{ id: string; name: string }>>([])
+  const [deletionConflict, setDeletionConflict] = useState<{
+    agentId: string
+    flows: Array<{ id: string; name: string }>
+    detailedFlows: FlowRecord[]
+  } | null>(null)
 
   const reload = useCallback(async () => {
     try {
@@ -40,22 +49,43 @@ export default function AgentsPanel() {
     void reload()
   }, [reload])
 
+  const loadTokenRef = useRef(0)
+
   const loadOne = useCallback(async (id: string): Promise<boolean> => {
+    const token = ++loadTokenRef.current
     setLoading(true)
-    setCreating(false)
     try {
       const detail = await getAgent(id)
+      if (token !== loadTokenRef.current) return false
       const prompt = detail.systemPrompt ?? detail.system_prompt ?? ''
+      setCreating(false)
       setDraft(draftFromAgent(detail.agent, prompt))
       setSelectedId(id)
       setFocusFailed(null)
+
+      try {
+        const matched = await findFlowsUsingAgent(id)
+        if (token === loadTokenRef.current) {
+          setUsedByFlows(matched.map((f) => ({ id: f.id, name: f.name })))
+        }
+      } catch {
+        if (token === loadTokenRef.current) {
+          setUsedByFlows([])
+        }
+      }
+
       return true
     } catch (e) {
-      pushToast(`读取 Agent 失败：${String(e)}`, 'error')
-      setFocusFailed(id)
+      if (token === loadTokenRef.current) {
+        pushToast(`读取 Agent 失败：${String(e)}`, 'error')
+        setFocusFailed(id)
+        setSelectedId(id)
+      }
       return false
     } finally {
-      setLoading(false)
+      if (token === loadTokenRef.current) {
+        setLoading(false)
+      }
     }
   }, [])
 
@@ -67,9 +97,11 @@ export default function AgentsPanel() {
   }, [focusId, loadOne])
 
   const onNew = () => {
+    loadTokenRef.current++
     setCreating(true)
     setSelectedId(null)
     setDraft(emptyFormDraft())
+    setUsedByFlows([])
   }
 
   const patch = (p: Partial<AgentFormDraft>) => setDraft((d) => ({ ...d, ...p }))
@@ -87,11 +119,25 @@ export default function AgentsPanel() {
     setBusy(true)
     try {
       const saved = await saveAgent(agentFromDraft(draft), draft.systemPrompt)
-      pushToast(`已保存 Agent「${saved.id}」`, 'success')
       setCreating(false)
       setSelectedId(saved.id)
       setDraft(draftFromAgent(saved, draft.systemPrompt))
       await reload()
+      const refs = await findFlowsUsingAgent(saved.id)
+      setUsedByFlows(refs.map((f) => ({ id: f.id, name: f.name })))
+      const published = refs.filter((f) => f.published)
+      if (published.length > 0) {
+        markFlowsStale(
+          saved.id,
+          published.map((f) => ({ id: f.id, name: f.name })),
+        )
+        pushToast(
+          `已保存「${saved.id}」。${published.length} 个已发布流程仍用旧权限，请到画布重新发布：${published.map((f) => f.name).join('、')}`,
+          'info',
+        )
+      } else {
+        pushToast(`已保存 Agent「${saved.id}」`, 'success')
+      }
     } catch (e) {
       pushToast(`保存失败：${String(e)}`, 'error')
     } finally {
@@ -112,7 +158,28 @@ export default function AgentsPanel() {
   const onDelete = async () => {
     const id = selectedId
     if (!id) return
-    if (!window.confirm(`删除 Agent「${id}」？引用它的流程下次编译会失败。`)) return
+    setBusy(true)
+    try {
+      const refs = await findFlowsUsingAgent(id)
+      const dependentFlows = refs.map((f) => ({ id: f.id, name: f.name }))
+      const detailedFlows = refs.map((f) => f.record)
+      if (dependentFlows.length > 0) {
+        setDeletionConflict({ agentId: id, flows: dependentFlows, detailedFlows })
+        setBusy(false)
+        return
+      }
+      if (!window.confirm(`确认删除 Agent 编制「${id}」？`)) {
+        setBusy(false)
+        return
+      }
+      await performDelete(id)
+    } catch (e) {
+      pushToast(`检查依赖失败：${String(e)}`, 'error')
+      setBusy(false)
+    }
+  }
+
+  const performDelete = async (id: string) => {
     setBusy(true)
     try {
       await deleteAgent(id)
@@ -120,10 +187,64 @@ export default function AgentsPanel() {
       setSelectedId(null)
       setCreating(false)
       setDraft(emptyFormDraft())
+      setDeletionConflict(null)
       await reload()
     } catch (e) {
       pushToast(`删除失败：${String(e)}`, 'error')
     } finally {
+      setBusy(false)
+    }
+  }
+
+  const onDemoteAndDelete = async () => {
+    if (!deletionConflict) return
+    const { agentId, detailedFlows } = deletionConflict
+    setBusy(true)
+    try {
+      let fallbackName = draft.name
+      let fallbackPrompt = draft.systemPrompt
+      let fallbackModel = draft.raw?.model
+      try {
+        const agDetail = await getAgent(agentId)
+        fallbackName = agDetail.agent.name || fallbackName
+        fallbackPrompt = agDetail.systemPrompt ?? agDetail.system_prompt ?? fallbackPrompt
+        fallbackModel = agDetail.agent.model ?? fallbackModel
+      } catch {
+        /* ignore */
+      }
+
+      for (const flow of detailedFlows) {
+        if (!Array.isArray(flow.nodes)) continue
+        const updatedNodes = flow.nodes.map((n) => {
+          if ((n.params as { presetId?: string }).presetId === agentId) {
+            return {
+              ...n,
+              params: {
+                ...n.params,
+                presetId: '',
+                role: (n.params as { role?: string }).role || fallbackName || '',
+                prompt: (n.params as { prompt?: string }).prompt || fallbackPrompt || '',
+                model: (n.params as { model?: string }).model || fallbackModel || '',
+              },
+            }
+          }
+          return n
+        })
+        await saveFlow({
+          id: flow.id,
+          name: flow.name,
+          description: flow.description,
+          version: flow.version,
+          input_schema: flow.input_schema,
+          output_schema: flow.output_schema,
+          nodes: updatedNodes,
+          edges: flow.edges,
+        })
+      }
+      pushToast(`已将 ${detailedFlows.length} 个流程中的节点解绑并降级为试岗`, 'info')
+      await performDelete(agentId)
+    } catch (e) {
+      pushToast(`降级解绑失败: ${String(e)}`, 'error')
       setBusy(false)
     }
   }
@@ -148,14 +269,26 @@ export default function AgentsPanel() {
               <li key={a.id}>
                 <button
                   type="button"
-                  className={`agents-item${selectedId === a.id && !creating ? ' is-active' : ''}`}
-                  onClick={() => void loadOne(a.id)}
+                  className={`agents-item${selectedId === a.id && !creating ? ' is-active' : ''}${a.error ? ' is-corrupt' : ''}`}
+                  onClick={() => {
+                    if (a.error) {
+                      pushToast(`Agent 档案损坏：${a.error}`, 'error')
+                    }
+                    void loadOne(a.id)
+                  }}
+                  title={a.error ? `档案损坏：${a.error}` : undefined}
                 >
                   <span className="agents-item-name">{a.name || a.id}</span>
                   <span className="agents-item-meta">
-                    {a.id}
-                    {a.capability ? ` · ${AGENT_CAPABILITY_LABEL[a.capability]}` : ''}
-                    {a.isolation ? ' · 隔离' : ''}
+                    {a.error ? (
+                      <span className="agents-badge-err">⚠️ 档案损坏</span>
+                    ) : (
+                      <>
+                        {a.id}
+                        {a.capability ? ` · ${AGENT_CAPABILITY_LABEL[a.capability]}` : ''}
+                        {a.isolation ? ' · 隔离' : ''}
+                      </>
+                    )}
                   </span>
                 </button>
               </li>
@@ -243,6 +376,14 @@ export default function AgentsPanel() {
                 placeholder="如：web_search, grep"
               />
             </label>
+            <label className="agents-field">
+              <span>挂载技能（Skills 列表，逗号分隔）</span>
+              <input
+                value={draft.skillsText}
+                onChange={(e) => patch({ skillsText: e.target.value })}
+                placeholder="如：git-workflow, rust-test, code-review"
+              />
+            </label>
             <div className="agents-field">
               <span>deny 规则（kind:glob，如 edit:**/.env）</span>
               <div className="agents-rules">
@@ -281,6 +422,40 @@ export default function AgentsPanel() {
               </div>
             </div>
 
+            {selectedId && !creating && (
+              <div className="agents-field">
+                <span>引用此编制的流程 ({usedByFlows.length})</span>
+                {usedByFlows.length === 0 ? (
+                  <div className="agents-hint" style={{ padding: '4px 0', color: 'var(--text-tertiary, #9ca3af)', fontSize: '11.5px' }}>
+                    暂无流程引用此 Agent（独立编制）。
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                    {usedByFlows.map((f) => (
+                      <span
+                        key={f.id}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          background: 'var(--surface-muted, #f3f4f6)',
+                          border: '1px solid var(--border-solid, #e5e7eb)',
+                          fontSize: '11px',
+                          fontWeight: 550,
+                          color: 'var(--brand-primary, #4f46e5)',
+                        }}
+                        title={`流程 ID: ${f.id}`}
+                      >
+                        🔗 {f.name} <span style={{ color: 'var(--text-tertiary, #9ca3af)', fontWeight: 400 }}>({f.id})</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <h3 className="agents-section">人设</h3>
             <label className="agents-field">
               <span>system-prompt.md</span>
@@ -309,6 +484,52 @@ export default function AgentsPanel() {
           </>
         )}
       </section>
+
+      {deletionConflict && (
+        <div className="flow-modal-back" role="dialog" aria-modal="true" aria-label="删除依赖保护">
+          <div className="flow-modal" style={{ maxWidth: '440px' }}>
+            <h2 style={{ color: '#dc2626' }}>⚠️ 依赖保护警告</h2>
+            <p className="flow-field-hint" style={{ color: 'var(--text-primary, #111827)' }}>
+              Agent 编制「<strong>{deletionConflict.agentId}</strong>」当前正被以下 <strong>{deletionConflict.flows.length}</strong> 个流程引用：
+            </p>
+            <div
+              style={{
+                maxHeight: '140px',
+                overflowY: 'auto',
+                background: 'var(--surface-muted, #f3f4f6)',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                margin: '8px 0 12px',
+              }}
+            >
+              {deletionConflict.flows.map((f) => (
+                <div key={f.id} style={{ fontSize: '12px', padding: '3px 0' }}>
+                  • <strong>{f.name}</strong> <span style={{ color: '#6b7280' }}>({f.id})</span>
+                </div>
+              ))}
+            </div>
+            <p className="flow-field-hint">
+              如果直接强行删除，这些流程下次打开或编译时将会报错中断。建议选择「转为试岗并删除编制」，自动将人设保存在节点本地。
+            </p>
+            <div className="flow-modal-actions" style={{ marginTop: '16px', gap: '8px' }}>
+              <button type="button" className="flow-btn" onClick={() => setDeletionConflict(null)}>
+                取消
+              </button>
+              <button type="button" className="flow-btn primary" onClick={onDemoteAndDelete} disabled={busy}>
+                转为试岗并删除
+              </button>
+              <button
+                type="button"
+                className="flow-btn danger"
+                onClick={() => performDelete(deletionConflict.agentId)}
+                disabled={busy}
+              >
+                强行删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
