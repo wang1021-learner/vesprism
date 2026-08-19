@@ -36,9 +36,11 @@
   width: min(1080px, 96vw);
   height: min(820px, 92vh);
   background: var(--surface-elevated);
-  border-radius: 6px;
+  border-radius: 12px;
   border: 1px solid var(--border-solid);
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    0 20px 45px -10px rgba(0, 0, 0, 0.18),
+    0 0 1px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -97,7 +99,7 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 18px 22px 14px;
+  padding: 18px 24px 14px;
   border-bottom: 1px solid var(--border-solid);
   flex-shrink: 0;
   background: var(--surface-elevated);
@@ -117,13 +119,6 @@
   color: var(--text-tertiary);
 }
 
-.settings-shell-header h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
 .settings-layout {
   display: flex;
   flex: 1;
@@ -131,38 +126,37 @@
 }
 
 .settings-nav {
-  width: 148px;
+  width: 170px;
   flex-shrink: 0;
   border-right: 1px solid var(--border-solid);
-  background: #fafafa;
+  background: var(--surface-muted, #f8f9fa);
   padding: 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .settings-nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
-.settings-nav-icon {
-  font-size: 11px;
-  opacity: 0.7;
-  width: 1em;
-  text-align: center;
+.settings-nav-svg {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color 0.12s ease;
 }
 
 .settings-nav-item:hover {
@@ -170,11 +164,21 @@
   color: var(--text-primary);
 }
 
+.settings-nav-item:hover .settings-nav-svg {
+  color: var(--text-primary);
+}
+
 .settings-nav-item.active {
-  background: var(--surface-elevated);
+  background: var(--surface-elevated, #ffffff);
   color: var(--text-primary);
   font-weight: 600;
-  box-shadow: 0 0 0 1px var(--border-solid);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.settings-nav-item.active .settings-nav-svg {
+  color: var(--accent, #2563eb);
 }
 
 .settings-panel {
@@ -187,7 +191,7 @@
 }
 
 .settings-panel-inner {
-  padding: 20px 24px;
+  padding: 22px 28px;
   overflow-y: auto;
   flex: 1;
 }

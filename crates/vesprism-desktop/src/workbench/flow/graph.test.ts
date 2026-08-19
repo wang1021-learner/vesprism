@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyFlowPatch,
   bumpVersion,
+  createDemoDraft,
   layoutDraft,
   layoutGraph,
   subgraphFrom,
@@ -98,5 +100,21 @@ describe('graph topological layout & utilities', () => {
     const sub = subgraphFrom(nodes, edges, 'a')
     expect(sub.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'end', 'j'])
     expect(sub.edges.filter((e) => e.to === 'j')).toHaveLength(2)
+  })
+})
+
+describe('applyFlowPatch', () => {
+  it('浅合并 params 并保住原坐标', () => {
+    const draft = createDemoDraft()
+    const x = draft.nodes[1].position?.x
+    const r = applyFlowPatch(draft, {
+      update_nodes: [{ id: 'agent-1', params: { role: '安全审计员' } }],
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const agent = r.draft.nodes.find((n) => n.id === 'agent-1')
+    expect((agent?.params as { role?: string }).role).toBe('安全审计员')
+    expect((agent?.params as { prompt?: string }).prompt).toBeTruthy()
+    expect(agent?.position?.x).toBe(x)
   })
 })

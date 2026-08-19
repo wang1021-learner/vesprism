@@ -21,7 +21,7 @@ function emptyGroup(): HookGroup {
 }
 
 export function HooksSettings({
-  saving,
+  saving: _saving,
   setSaving,
   onToast,
   bindSave,
@@ -186,21 +186,13 @@ export function HooksSettings({
         </section>
       ))}
 
-      <div className="settings-row">
+      <div className="settings-row" style={{ marginTop: 8 }}>
         <button
           type="button"
           className="btn-secondary"
           onClick={() => setGroups((prev) => [...prev, emptyGroup()])}
         >
-          添加 PreToolUse 组
-        </button>
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={saving}
-          onClick={() => void save()}
-        >
-          保存 Hooks
+          + 添加 PreToolUse 组
         </button>
       </div>
     </div>

@@ -1,61 +1,143 @@
-/** 给模型的流程图生成提示词模板。AI 只能改草稿，不能发布。 */
+/** 画布图契约：英文 TS 类型。每个会话只在首轮完整下发。 */
 
-export const FLOW_GENERATE_SYSTEM = `你是 Vesprism 流程画布的图生成器。用户用一句话描述流程，你只输出一个 JSON 对象，不要解释、不要 Markdown 围栏以外的文字。推荐只输出裸 JSON。
+export const FLOW_GENERATE_SYSTEM = `Prefer a single \`\`\`json fence. You may write at most 1–2 short sentences of design rationale, then the JSON. No long essays.
 
-节点类型（八类，type 必须是以下之一）：
-- start    起点：定义流程输入。params.fields 为 [{name, type, required?}]，type 为 string/number/boolean/object/array。
-- agent    Agent：挂一份工作台 Agent。params: {label?, presetId?, role?, model?, prompt?}。presetId 是 Agent id。
-- tool     工具：调用工具或运行命令。params: {label?, toolName?, command?, args?}。
-- flow     子流程：引用另一个已发布流程。params: {label?, flowId?, input?}。
-- branch   分支：按条件多路分流。params: {label?, condition: "success"|"failure"|"expression", expression?}。
-- parallel 并行扇出：将任务分发给多个并发分支。params: {label?, mode: "all"|"race"}。多条出边指向并发子分支。
-- join     结果汇聚：等待并发子分支执行完毕并聚合结果。params: {label?, mergeMode: "merge_json"|"list"|"all_success"}。至少 2 条入边，1 条出边。
-- end      终点：定义流程输出。params: {outputSchema?}。
+Write label/role/prompt and edge label in the SAME language as the user message.
+Keep id/type in the machine vocabulary below.
+Always use semantic kebab-case ids: {type}-{purpose}, e.g. start-main, agent-code-reviewer, tool-lint, branch-check, join-results, end-report.
+Never use random suffixes (node-a8f, agent-x7k). Never rename existing ids in a patch.
+No coordinates, no absolute paths, do not publish, do not write the agent library.
+At least one start and one end. Edge from/to must exist. from !== to.
+Constraints:
+- All nodes must be connected (no orphans; every node reachable from start, and start can reach end).
+- Graph must be a DAG (no cycles).
+- Never reference undefined node IDs in edges.
 
-输出格式（严格）：
-{
-  "nodes": [{"id": "string", "type": "start|agent|tool|flow|branch|parallel|join|end", "params": {}}],
-  "edges": [{"from": "node-id", "to": "node-id", "label": "可选"}]
+interface FlowGraph {
+  nodes: Array<
+    | { id: string; type: "start"; params: { label?: string; fields?: Array<{ name: string; type: "string"|"number"|"boolean"|"object"|"array"; required?: boolean }> } }
+    | { id: string; type: "agent"; params: { label?: string; role?: string; prompt?: string; presetId?: string; model?: string } }
+    | { id: string; type: "tool"; params: { label?: string; toolName?: string; command?: string; args?: Record<string, unknown> } }
+    | { id: string; type: "flow"; params: { label?: string; flowId?: string; input?: Record<string, unknown> } }
+    | { id: string; type: "branch"; params: { label?: string; condition: "success"|"failure"|"expression"; expression?: string } }
+    | { id: string; type: "parallel"; params: { label?: string; mode?: "all"|"race" } }
+    | { id: string; type: "join"; params: { label?: string; mergeMode?: "merge_json"|"list"|"all_success" } }
+    | { id: string; type: "end"; params: { label?: string; outputSchema?: Record<string, unknown> } }
+  >;
+  edges: Array<{ from: string; to: string; label?: string }>;
 }
 
-约束（违反则整图作废）：
-1. 每个 node.id 唯一、非空；type 只能是上述八类。
-2. 每条边的 from / to 必须是已声明的节点 id，且 from ≠ to。
-3. 至少各有一个 start 和一个 end。
-4. branch 可以有多条出边；parallel 支持多条并发扇出边；join 汇聚所有分支。
-5. 不要输出坐标、不要输出绝对路径、不要自动发布。
-6. id 用小写字母、数字、连字符，例如 start-1、agent-summarize、join-1。`
+interface FlowPatch {
+  patch: {
+    update_nodes?: Array<{ id: string; params: Record<string, unknown> }>;
+    add_nodes?: FlowGraph["nodes"];
+    remove_nodes?: string[];
+    add_edges?: FlowGraph["edges"];
+    remove_edges?: Array<{ from: string; to: string }>;
+  };
+}
+
+If the canvas already has a graph and the user asks for a local change, emit FlowPatch.
+If they ask to regenerate or the canvas is empty, emit FlowGraph.
+params on update_nodes are shallow-merged; omitted keys stay.
+
+Example parallel pattern (copy the shape, not the ids, unless they fit):
+{"nodes":[{"id":"start-main","type":"start","params":{}},{"id":"parallel-scan","type":"parallel","params":{}},{"id":"agent-left","type":"agent","params":{}},{"id":"agent-right","type":"agent","params":{}},{"id":"join-results","type":"join","params":{}},{"id":"end-report","type":"end","params":{}}],"edges":[{"from":"start-main","to":"parallel-scan"},{"from":"parallel-scan","to":"agent-left"},{"from":"parallel-scan","to":"agent-right"},{"from":"agent-left","to":"join-results"},{"from":"agent-right","to":"join-results"},{"from":"join-results","to":"end-report"}]}`
+
+export function summarizeTopology(nodeIds: string[]): string {
+  return nodeIds.map((id) => id.trim()).filter(Boolean).join('  ')
+}
+
+export function canvasContextAnchor(
+  meta: { name: string; id: string },
+  nodeIds?: string[],
+): string {
+  const head = `[Canvas Context: Flow "${meta.name}" (id: ${meta.id})]`
+  const topo = summarizeTopology(nodeIds ?? [])
+  return topo ? `${head}\nCurrent Topology: ${topo}` : head
+}
+
+export const FLOW_RETRY_STRICT = `Emit only a closed JSON FlowGraph or FlowPatch. No other text.
+${FLOW_GENERATE_SYSTEM}`
+
+export const FLOW_HEAL_MARKER = 'Your previous graph had a validation error:'
+
+export function buildHealPrompt(error: string): string {
+  const reason = error.trim() || 'invalid graph'
+  return `${FLOW_HEAL_MARKER} ${reason} Fix it and re-emit only a valid FlowGraph or FlowPatch JSON object.`
+}
+
+export const FLOW_PARALLEL_SKELETON = {
+  nodes: [
+    { id: 'start-main', type: 'start', params: {} },
+    { id: 'parallel-scan', type: 'parallel', params: {} },
+    { id: 'agent-left', type: 'agent', params: {} },
+    { id: 'agent-right', type: 'agent', params: {} },
+    { id: 'join-results', type: 'join', params: {} },
+    { id: 'end-report', type: 'end', params: {} },
+  ],
+  edges: [
+    { from: 'start-main', to: 'parallel-scan' },
+    { from: 'parallel-scan', to: 'agent-left' },
+    { from: 'parallel-scan', to: 'agent-right' },
+    { from: 'agent-left', to: 'join-results' },
+    { from: 'agent-right', to: 'join-results' },
+    { from: 'join-results', to: 'end-report' },
+  ],
+} as const
+
+const primedSessions = new Set<string>()
+
+export function isCanvasContractPrimed(sessionId?: string | null): boolean {
+  const id = (sessionId ?? '').trim()
+  return Boolean(id && primedSessions.has(id))
+}
+
+export function markCanvasContractPrimed(sessionId?: string | null): void {
+  const id = (sessionId ?? '').trim()
+  if (id) primedSessions.add(id)
+}
 
 export function buildGeneratePrompt(userText: string): string {
   const need = userText.trim()
-  return `生成流程图：${need}
+  return `Generate a flow graph: ${need}
 
 ${FLOW_GENERATE_SYSTEM}
 
-用户需求：
+User:
 ${need}
 `
 }
 
-/**
- * 对话式协作 prompt：发送 = AI 对话。AI 可以正常聊天，
- * 只在用户要求生成/修改流程时输出 ```json 围栏拓扑，前端解析后应用到画布。
- */
 export function buildDialoguePrompt(
   userText: string,
   meta: { name: string; id: string },
+  opts?: { primed?: boolean; nodeIds?: string[] },
 ): string {
   const need = userText.trim()
-  return `你是这个流程画布的 AI 协作助手。当前流程「${meta.name}」（${meta.id}）已经画在画布上。
-你可以：
-1. 正常聊天：回答用户问题、讨论流程设计、解释某个节点、分析上次试跑结果；
-2. 生成/修改流程图：当用户要求「生成/修改/重画」流程时，只输出一个 \`\`\`json 围栏，内含完整拓扑 JSON（格式见下），前端会自动解析并应用到画布。
+  const graph = canvasContextAnchor(meta, opts?.nodeIds)
+  const query = need || '(see attachments)'
+  if (opts?.primed) {
+    return `<current_graph>
+${graph}
+</current_graph>
+<user_query>
+${query}
+</user_query>`
+  }
+  return `<instructions>
+You are the Vesprism flow-canvas orchestrator for flow "${meta.name}" (${meta.id}).
+Attachments and @paths are project source — read them via tools, do not expect them inlined here.
+You may: chat; emit a FlowGraph to create/redraw; emit a FlowPatch for a local edit; draft agent node role/prompt/label (do not write the agent library).
+Do not emit JSON unless the user wants a graph change.
+A graph change may start with 1–2 short sentences, then one json fence.
 
-拓扑格式与约束：
 ${FLOW_GENERATE_SYSTEM}
-
-非生成请求不要输出 \`\`\`json 围栏，正常回复文字即可。
-
-用户：${need}
-`
+</instructions>
+<current_graph>
+${graph}
+</current_graph>
+<user_query>
+${query}
+</user_query>`
 }

@@ -80,25 +80,29 @@ function incoming(edges: FlowGraphEdge[], id: string): FlowGraphEdge[] {
   return edges.filter((e) => e.to === id)
 }
 
-function agentPrompt(n: FlowGraphNode, resolved?: PresetResolve): string {
+function agentTaskLiteral(n: FlowGraphNode, prevVar: string, resolved?: PresetResolve): string {
   const p = n.params as { role?: string; prompt?: string }
-  const parts: string[] = []
-  if (resolved?.systemPrompt?.trim()) {
-    parts.push(resolved.systemPrompt.trim())
-  } else if (resolved?.description?.trim()) {
-    parts.push(`【角色定位】：${resolved.description.trim()}`)
-  }
-  if (p.role?.trim() && !resolved?.systemPrompt?.includes(p.role.trim())) {
-    parts.push(`【职责】：${p.role.trim()}`)
-  }
-  if (p.prompt?.trim()) {
-    parts.push(p.prompt.trim())
-  }
-  if (parts.length === 0) {
-    parts.push('根据上一步输出完成本节点任务，给出简洁结果。')
-  }
-  parts.push('输入（JSON）：')
-  return parts.join('\n\n')
+  const fields: string[] = [`node_id: ${jsonToRhaiLiteral(n.id)}`]
+  const persona = resolved?.systemPrompt?.trim() || resolved?.description?.trim()
+  if (persona) fields.push(`persona: ${jsonToRhaiLiteral(persona)}`)
+  if (p.role?.trim()) fields.push(`role: ${jsonToRhaiLiteral(p.role.trim())}`)
+  if (p.prompt?.trim()) fields.push(`prompt: ${jsonToRhaiLiteral(p.prompt.trim())}`)
+  if (resolved?.skills?.length) fields.push(`skills: ${jsonToRhaiLiteral(resolved.skills)}`)
+  fields.push(`input: ${prevVar}`)
+  return `#{ ${fields.join(', ')} }`
+}
+
+function toolTaskLiteral(
+  n: FlowGraphNode,
+  prevVar: string,
+  p: { toolName?: string; command?: string; args?: Record<string, unknown> },
+): string {
+  const cmd = (p.command || p.toolName || '').trim()
+  const fields: string[] = [`node_id: ${jsonToRhaiLiteral(n.id)}`, `kind: "tool"`]
+  if (cmd) fields.push(`command: ${jsonToRhaiLiteral(cmd)}`)
+  if (p.args && Object.keys(p.args).length > 0) fields.push(`args: ${jsonToRhaiLiteral(p.args)}`)
+  fields.push(`input: ${prevVar}`)
+  return `#{ ${fields.join(', ')} }`
 }
 
 function resolveAgentOpts(
@@ -165,10 +169,7 @@ function emitAgentCall(
 ): string {
   const v = ident(n.id)
   const resolved = resolveAgentOpts(n, presets)
-  let prompt = agentPrompt(n, resolved)
-  if (resolved.skills && resolved.skills.length > 0) {
-    prompt += `\n\n【可用技能 (Skills)】：${resolved.skills.join(', ')}`
-  }
+  const task = agentTaskLiteral(n, prevVar, resolved)
   lines.push(`phase("${esc(phaseTitle(n))}");`)
   lines.push(`log("node ${esc(n.id)}");`)
   const opts: string[] = [`label: "${esc(n.id)}"`]
@@ -187,7 +188,7 @@ function emitAgentCall(
     const list = resolved.permissionRules.map((r) => `"${esc(r)}"`).join(', ')
     opts.push(`permission_rules: [${list}]`)
   }
-  lines.push(`let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ ${opts.join(', ')} });`)
+  lines.push(`let ${v} = agent(json_encode(${task}), #{ ${opts.join(', ')} });`)
   lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "agent failed" }); }`)
   return v
 }
@@ -195,15 +196,11 @@ function emitAgentCall(
 function emitToolCall(n: FlowGraphNode, prevVar: string, lines: string[]): string {
   const v = ident(n.id)
   const p = n.params as { toolName?: string; command?: string; args?: Record<string, unknown> }
-  const cmd = (p.command || p.toolName || '').trim()
-  const argsJson = esc(JSON.stringify(p.args ?? {}))
-  const prompt = cmd
-    ? `执行以下工具/命令并返回输出。命令：${cmd}；固定参数：${argsJson}；上一步输出：`
-    : '根据上一步输出选择合适工具执行，并返回结果。上一步：'
+  const task = toolTaskLiteral(n, prevVar, p)
   lines.push(`phase("${esc(phaseTitle(n))}");`)
   lines.push(`log("node ${esc(n.id)} tool");`)
   lines.push(
-    `let ${v} = agent("${esc(prompt)}" + json_encode(${prevVar}), #{ label: "${esc(n.id)}", capability_mode: "execute" });`,
+    `let ${v} = agent(json_encode(${task}), #{ label: "${esc(n.id)}", capability_mode: "execute" });`,
   )
   lines.push(`if ${v} == () || !${v}.success { complete(#{ ok: false, node: "${esc(n.id)}", error: "tool failed" }); }`)
   return v
@@ -216,11 +213,8 @@ function buildAgentJobMap(
 ): string {
   if (n.type === 'agent') {
     const resolved = resolveAgentOpts(n, presets)
-    let prompt = agentPrompt(n, resolved)
-    if (resolved.skills && resolved.skills.length > 0) {
-      prompt += `\n\n【可用技能 (Skills)】：${resolved.skills.join(', ')}`
-    }
-    const opts: string[] = [`prompt: "${esc(prompt)}" + json_encode(${prevVar})`, `label: "${esc(n.id)}"`]
+    const task = agentTaskLiteral(n, prevVar, resolved)
+    const opts: string[] = [`prompt: json_encode(${task})`, `label: "${esc(n.id)}"`]
     if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
     if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
     if (resolved.capability) opts.push(`capability_mode: "${esc(resolved.capability)}"`)
@@ -239,14 +233,10 @@ function buildAgentJobMap(
     return `#{ ${opts.join(', ')} }`
   } else if (n.type === 'tool') {
     const p = n.params as { toolName?: string; command?: string; args?: Record<string, unknown> }
-    const cmd = (p.command || p.toolName || '').trim()
-    const argsJson = esc(JSON.stringify(p.args ?? {}))
-    const prompt = cmd
-      ? `执行以下工具/命令并返回输出。命令：${cmd}；固定参数：${argsJson}；上一步输出：`
-      : '根据上一步输出选择合适工具执行，并返回结果。上一步：'
-    return `#{ prompt: "${esc(prompt)}" + json_encode(${prevVar}), label: "${esc(n.id)}", capability_mode: "execute" }`
+    const task = toolTaskLiteral(n, prevVar, p)
+    return `#{ prompt: json_encode(${task}), label: "${esc(n.id)}", capability_mode: "execute" }`
   }
-  return `#{ prompt: "执行任务" + json_encode(${prevVar}), label: "${esc(n.id)}" }`
+  return `#{ prompt: json_encode(#{ node_id: ${jsonToRhaiLiteral(n.id)}, input: ${prevVar} }), label: "${esc(n.id)}" }`
 }
 
 function emitJoinCall(n: FlowGraphNode, prevVar: string, lines: string[]): string {

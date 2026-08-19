@@ -254,10 +254,8 @@ function mergeUserTextChunk(
         copy[i] = { ...m, text }
         return copy
       }
-      // 增量分片（无乐观时）：拼到尾部
-      const copy = messages.slice()
-      copy[i] = { ...m, text: m.text + text }
-      return copy
+      // 乐观全文已发出，回显是说明书包装（画布 dialogue prompt）时不要粘到气泡上
+      return messages
     }
   }
 

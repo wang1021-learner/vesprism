@@ -405,9 +405,10 @@ export function SettingsModal() {
               className={`settings-nav-item${tab === 'general' ? ' active' : ''}`}
               onClick={() => setTab('general')}
             >
-              <span className="settings-nav-icon" aria-hidden>
-                ◎
-              </span>
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
               通用
             </button>
             <button
@@ -415,9 +416,9 @@ export function SettingsModal() {
               className={`settings-nav-item${tab === 'models' ? ' active' : ''}`}
               onClick={() => setTab('models')}
             >
-              <span className="settings-nav-icon" aria-hidden>
-                ◆
-              </span>
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+              </svg>
               模型
             </button>
             <button
@@ -425,9 +426,9 @@ export function SettingsModal() {
               className={`settings-nav-item${tab === 'security' ? ' active' : ''}`}
               onClick={() => setTab('security')}
             >
-              <span className="settings-nav-icon" aria-hidden>
-                ▣
-              </span>
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
               安全
             </button>
             <button
@@ -435,9 +436,11 @@ export function SettingsModal() {
               className={`settings-nav-item${tab === 'engine' ? ' active' : ''}`}
               onClick={() => setTab('engine')}
             >
-              <span className="settings-nav-icon" aria-hidden>
-                ◇
-              </span>
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+                <rect x="9" y="9" width="6" height="6" />
+                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
+              </svg>
               引擎
             </button>
             <button
@@ -445,9 +448,12 @@ export function SettingsModal() {
               className={`settings-nav-item${tab === 'hooks' ? ' active' : ''}`}
               onClick={() => setTab('hooks')}
             >
-              <span className="settings-nav-icon" aria-hidden>
-                ⌘
-              </span>
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <line x1="6" y1="3" x2="6" y2="15" />
+                <circle cx="18" cy="6" r="3" />
+                <circle cx="6" cy="18" r="3" />
+                <path d="M18 9a9 9 0 0 1-9 9" />
+              </svg>
               Hooks
             </button>
           </nav>

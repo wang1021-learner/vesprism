@@ -13,6 +13,19 @@
   gap: 8px;
 }
 
+.composer-container.is-dock {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px 10px;
+}
+
+.composer-container.is-dock .toolbar-right {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .composer-queue {
   display: flex;
   align-items: flex-start;

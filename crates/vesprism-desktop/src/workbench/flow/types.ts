@@ -116,6 +116,15 @@ export interface FlowGraphJson {
   }>
 }
 
+/** 模型局部改图。update_nodes.params 与现有 params 浅合并。 */
+export interface FlowGraphPatch {
+  update_nodes?: Array<{ id: string; params: Record<string, unknown> }>
+  add_nodes?: FlowGraphJson['nodes']
+  remove_nodes?: string[]
+  add_edges?: FlowGraphJson['edges']
+  remove_edges?: Array<{ from: string; to: string }>
+}
+
 export interface FlowDraft {
   id: string
   name: string

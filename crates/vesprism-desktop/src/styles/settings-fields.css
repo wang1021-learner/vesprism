@@ -39,18 +39,42 @@
 }
 
 .settings-card {
-  max-width: 560px;
-  padding: 18px 20px;
-  border: 1px solid var(--border-solid);
-  border-radius: 6px;
-  background: var(--surface-elevated);
+  max-width: 680px;
+  width: 100%;
+  padding: 18px 22px;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-elevated, #ffffff);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  margin-bottom: 16px;
+}
+
+.settings-card:last-child {
+  margin-bottom: 0;
 }
 
 .settings-card-title {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.settings-card-desc {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.settings-card-desc code {
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-muted, #f3f4f6);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
 }
 
 .settings-check {
@@ -58,26 +82,32 @@
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  color: var(--text-primary);
   margin: 8px 0 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-check input[type="checkbox"] {
+  cursor: pointer;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  accent-color: var(--accent, #2563eb);
 }
 
 .settings-textarea {
   min-height: 72px;
   resize: vertical;
-  font-family: inherit;
+  font-family: var(--font-mono, monospace);
+  font-size: 12.5px;
+  line-height: 1.4;
 }
 
 .settings-hook-handler {
   margin: 10px 0;
   padding: 8px 0;
   border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
-}
-
-.settings-card-desc {
-  margin: 0 0 14px;
-  font-size: 13px;
-  color: var(--text-tertiary);
-  line-height: 1.45;
 }
 
 .settings-mono {
@@ -140,9 +170,10 @@
 .settings-label {
   display: block;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  margin-bottom: 4px;
+  font-weight: 550;
+  color: var(--text-secondary);
+  margin-top: 10px;
+  margin-bottom: 5px;
 }
 
 .settings-row {
@@ -163,16 +194,21 @@
   flex: 1;
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--border-strong-solid);
+  border: 1px solid var(--border-solid, #e5e7eb);
   border-radius: 6px;
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-primary);
+  background: var(--surface-elevated, #ffffff);
   outline: none;
+  transition:
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .settings-input:focus {
-  border-color: var(--ink-deep);
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
 }
 
 .settings-input:disabled {

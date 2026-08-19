@@ -94,6 +94,19 @@ describe('applyTranscriptEvent', () => {
     expect(msgs[0].text).toBe('你好')
   })
 
+  it('画布说明书回显不覆盖乐观原话', () => {
+    const optimistic = user('分析 src/auth/', 'p_wrap')
+    const wrapped =
+      '你是这个流程画布的编排助手（第二主聊天）。\n用户：分析 src/auth/'
+    const msgs = applyTranscriptEvent([optimistic], {
+      type: 'user_text_chunk',
+      text: wrapped,
+      prompt_id: 'p_wrap',
+    })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].text).toBe('分析 src/auth/')
+  })
+
   it('tool_call 插入工具行', () => {
     const msgs = applyTranscriptEvent([], {
       type: 'tool_call',

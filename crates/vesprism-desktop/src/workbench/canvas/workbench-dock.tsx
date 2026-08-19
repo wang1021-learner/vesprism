@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { $messages } from '../../store'
 import type { ChatMessage } from '../../types'
 import { visibleCanvasMessages } from './visibleMessages'
+import { CanvasComposer } from './CanvasComposer'
 
 type FlowRunStepLike = {
   nodeId: string
@@ -44,14 +45,12 @@ export type WorkbenchDockProps = {
   messages?: ChatMessage[]
   dockOpen: boolean
   flowId: string
-  input: string
-  setInput: (v: string) => void
-  busy: boolean
+  flowName: string
+  nodeIds?: string[]
   runSteps: FlowRunStepLike[]
   replayOpen: boolean
   setReplayOpen: (v: boolean) => void
   onToggleDock: () => void
-  onSendChat: () => void
   onRun: () => void
   onOpenDetails?: () => void
   onRetryStrict?: () => void
@@ -63,14 +62,12 @@ export function WorkbenchDock({
   messages,
   dockOpen,
   flowId,
-  input,
-  setInput,
-  busy,
+  flowName,
+  nodeIds,
   runSteps,
   replayOpen,
   setReplayOpen,
   onToggleDock,
-  onSendChat,
   onRun,
   onOpenDetails,
   onRetryStrict,
@@ -256,7 +253,7 @@ export function WorkbenchDock({
         {chatOpen && (
           <div className="wb-convo-list scrollbar-dt" ref={scrollRef} role="log" aria-label="对话记录">
             {chatMessages.length === 0 ? (
-              <p className="wb-empty">输入框默认就是普通聊天，Enter 直接发送。</p>
+              <p className="wb-empty">和主聊天一样：+ 附文件/文件夹，@ 引用路径。读完项目后会把流程画到画布上。</p>
             ) : (
               chatMessages.map((message, index) => (
                 <MessageRow key={message.id || `${message.role}-${index}`} message={message} />
@@ -267,33 +264,7 @@ export function WorkbenchDock({
       </section>
 
       <div className="wb-input-area">
-        <div className="wb-input-row">
-          <input
-            type="text"
-            className="wb-input"
-            value={input}
-            disabled={busy}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                if (input.trim()) onSendChat()
-              }
-            }}
-          />
-          <button type="button" className="wb-btn primary" disabled={busy || !input.trim()} onClick={onSendChat}>
-            发送
-          </button>
-          <button
-            type="button"
-            className="wb-btn"
-            title="打开测试输入并运行当前流程"
-            disabled={busy}
-            onClick={onRun}
-          >
-            ▶ 试跑
-          </button>
-        </div>
+        <CanvasComposer flowName={flowName} flowId={flowId} nodeIds={nodeIds} onRun={onRun} />
         {error ? (
           <div className="wb-err">
             <span>{error}</span>

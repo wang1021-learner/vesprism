@@ -34,8 +34,16 @@ import {
   IconTerminal2,
   IconX,
 } from '@tabler/icons-react'
-import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
-import { restartSession, sendPrompt, workspaceCwd } from '../../bridge'
+import { $activeTabId, $generating, $messages, $workflows, getTabState, patchTab, pushToast } from '../../store'
+import { sendPrompt } from '../../bridge'
+import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
+import {
+  consumeCanvasGraph,
+  expectCanvasGraph,
+  isCanvasHeal,
+  isPendingCanvasGraph,
+  markCanvasHeal,
+} from '../generateWait'
 import { openChatTab } from '../../lib/openChatTab'
 import {
   deleteFlow,
@@ -52,9 +60,12 @@ import {
 } from '../bridge'
 import {
   AI_GRAPH_FAIL_MESSAGE,
-  FLOW_GENERATE_SYSTEM,
+  FLOW_RETRY_STRICT,
+  buildHealPrompt,
   NODE_LIBRARY,
-  buildDialoguePrompt,
+  applyFlowPatch,
+  looksLikeCanvasGraphJson,
+  parseCanvasModelOutput,
   bumpVersion,
   collectPromptsMarkdown,
   compileInlinedRhai,
@@ -67,7 +78,6 @@ import {
   isValidFlowId,
   layoutDraft,
   layoutGraph,
-  parseGeneratedGraph,
   subgraphFrom,
   type FlowDraft,
   type FlowGraphNode,
@@ -96,13 +106,6 @@ import { requestAgentsFocus } from '../agents/focus'
 import { $flowStaleEpoch, clearFlowStale, staleForFlow } from '../agents/stale'
 import { bindWorkbenchArtifact } from '../bindings'
 import { $flowFocusId, clearFlowFocus } from '../flow/focus'
-import { generateId } from '../../lib/generateId'
-import { waitTabSessionId } from '../../lib/sessionOpen'
-import {
-  getGenerateWait,
-  noteGenerateProgress,
-  setGenerateWait,
-} from '../generateWait'
 import { WorkbenchDock } from './workbench-dock'
 import { FlowCanvasContext } from './context'
 import { FlowNode, type FlowRfData } from './nodes'
@@ -261,6 +264,7 @@ export function FlowCanvas() {
 function FlowCanvasInner() {
   const tabId = useStore($activeTabId)
   const generating = useStore($generating)
+  const messages = useStore($messages)
   const workflows = useStore($workflows)
   const focusFlowId = useStore($flowFocusId)
   const { screenToFlowPosition, fitView } = useReactFlow()
@@ -277,9 +281,9 @@ function FlowCanvasInner() {
   const [pubVersion, setPubVersion] = useState('1')
   const [pubIn, setPubIn] = useState('')
   const [pubOut, setPubOut] = useState('')
-  const [aiText, setAiText] = useState('')
-  const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
+  const [diffGlow, setDiffGlow] = useState<Record<string, 'add' | 'update'>>({})
+  const glowTimerRef = useRef(0)
   const [testInput, setTestInput] = useState('{\n  "input": ""\n}')
   const [runSteps, setRunSteps] = useState<FlowRunStep[]>([])
   const [stepOutputs, setStepOutputs] = useState<Record<string, { output: unknown; status: string; timestamp: number }>>({})
@@ -453,6 +457,27 @@ function FlowCanvasInner() {
     },
     [setEdges, setNodes],
   )
+
+  const flashDiff = useCallback((next: Record<string, 'add' | 'update'>) => {
+    setDiffGlow(next)
+    window.clearTimeout(glowTimerRef.current)
+    glowTimerRef.current = window.setTimeout(() => setDiffGlow({}), 2500)
+  }, [])
+
+  useEffect(() => () => window.clearTimeout(glowTimerRef.current), [])
+
+  useEffect(() => {
+    setNodes((ns) => {
+      let changed = false
+      const next = ns.map((n) => {
+        const g = diffGlow[n.id]
+        if (n.data.diffGlow === g) return n
+        changed = true
+        return { ...n, data: { ...n.data, diffGlow: g } }
+      })
+      return changed ? next : ns
+    })
+  }, [diffGlow, setNodes])
 
   useEffect(() => {
     setNodes((ns) => patchExecStatuses(ns, stepOutputs))
@@ -786,30 +811,7 @@ function FlowCanvasInner() {
     fromNodeId?: string,
     overrideOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
   ) => {
-    try {
-      const activeCwd = await workspaceCwd()
-      const currentTab = tabId ? getTabState(tabId) : undefined
-      if (tabId && currentTab && activeCwd && currentTab.cwd !== activeCwd) {
-        try {
-          const prevSid = currentTab.sessionId
-          await restartSession(tabId, activeCwd, {
-            modelId: currentTab.modelId,
-            reasoningEffort: currentTab.reasoningEffort,
-          })
-          const newSid = await waitTabSessionId(tabId, prevSid)
-          patchTab(tabId, { cwd: activeCwd, chatId: newSid || undefined, sessionId: newSid || undefined })
-          if (newSid) {
-            void bindWorkbenchArtifact(newSid, { kind: 'flow', id: draft.id }, 'flow-canvas').catch(() => {})
-          }
-          pushToast(`已同步重锚执行目录至当前工作区`, 'info')
-        } catch (err) {
-          pushToast(`重锚工作区失败，试跑仍将在旧目录执行：${String(err)}`, 'error')
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-
+    // 试跑只走本 Tab 开会话时的 cwd，禁止用全局 workspace_cwd 把画布拽到主聊天项目。
     let current = fromRf(nodes, edges, draft)
     if (fromNodeId) {
       const sub = subgraphFrom(current.nodes, current.edges, fromNodeId)
@@ -1100,87 +1102,78 @@ function FlowCanvasInner() {
     void openChatTab({ title: 'Agent 编制', utilityKind: 'agents' })
   }
 
-  const onSendChat = async () => {
-    const text = aiText.trim()
-    if (!text || !tabId || aiBusy || generating) return
-    setAiText('')
-    setAiBusy(true)
-    setAiError('')
-    const before = getTabState(tabId)?.messages.length ?? 0
-    const promptId = generateId('p_')
-    setGenerateWait({ tabId, before, promptId, started: false })
-    try {
-      await sendPrompt(tabId, buildDialoguePrompt(text, { name: draft.name, id: draft.id }), promptId)
-    } catch (e) {
-      setGenerateWait(null)
-      setAiBusy(false)
-      setAiText(text)
-      setAiError(String(e))
-      pushToast(`发送失败：${String(e)}`, 'error')
-    }
-  }
-
   useEffect(() => {
-    if (getGenerateWait() && !aiBusy) setAiBusy(true)
-  }, [aiBusy])
-
-  useEffect(() => {
-    const wait = getGenerateWait()
-    if (!wait) return
-    const tabSt = getTabState(wait.tabId)
-    const tabGenerating = tabSt?.status === 'generating'
-    const curTabMsgs = tabSt?.messages ?? []
-    const hasNew = curTabMsgs.slice(wait.before).some((m) => m.role === 'assistant')
-    let step = noteGenerateProgress(wait, true, tabGenerating)
-    if (step === 'started') wait.started = true
-    if (step !== 'finish' && !tabGenerating && hasNew) step = 'finish'
-    if (step !== 'finish') return
-    const added =
-      curTabMsgs
-        .slice(wait.before)
-        .filter((m) => m.role === 'assistant' && (!wait.promptId || m.promptId === wait.promptId || !m.promptId))
-        .slice(-1)[0] ?? curTabMsgs.slice(wait.before).filter((m) => m.role === 'assistant').slice(-1)[0]
-    setGenerateWait(null)
-    setAiBusy(false)
-    if (!added?.text) return
-    const parsed = parseGeneratedGraph(added.text)
-    if (parsed.ok) {
-      const next = draftFromGraph(parsed.graph, {
-        id: draft.id,
-        name: draft.name,
-        description: draft.description,
-        version: draft.version,
-      })
-      applyDraft(next, true)
-      pushToast('已更新画布拓扑', 'success')
-      return
+    const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.text)
+    const inflight = generating ? last?.promptId : undefined
+    for (const m of messages) {
+      if (m.role !== 'assistant' || !m.text || !m.promptId) continue
+      if (!isPendingCanvasGraph(m.promptId)) continue
+      if (inflight && m.promptId === inflight) continue
+      consumeCanvasGraph(m.promptId)
+      const parsed = parseCanvasModelOutput(m.text)
+      const healed = isCanvasHeal(m.promptId)
+      const noteOk = (kind: 'graph' | 'patch') => {
+        setAiError('')
+        pushToast(
+          healed ? '已自动修正拓扑' : kind === 'patch' ? '已按补丁更新画布' : '已更新画布拓扑',
+          'success',
+        )
+      }
+      const healOrToast = (err: string) => {
+        if (healed) {
+          setAiError(err)
+          pushToast(err, 'error')
+          return
+        }
+        void sendSessionPrompt({ hidden: true, wireText: buildHealPrompt(err) }).then((hid) => {
+          if (hid) {
+            markCanvasHeal(hid)
+            expectCanvasGraph(hid)
+            return
+          }
+          setAiError(err)
+          pushToast(err, 'error')
+        })
+      }
+      if (parsed.ok && parsed.kind === 'graph') {
+        const next = draftFromGraph(parsed.graph, {
+          id: draft.id,
+          name: draft.name,
+          description: draft.description,
+          version: draft.version,
+        })
+        applyDraft(next, true)
+        noteOk('graph')
+        continue
+      }
+      if (parsed.ok && parsed.kind === 'patch') {
+        const next = applyFlowPatch(draft, parsed.patch)
+        if (next.ok) {
+          applyDraft(next.draft, true)
+          const glow: Record<string, 'add' | 'update'> = {}
+          for (const n of parsed.patch.add_nodes ?? []) glow[n.id] = 'add'
+          for (const n of parsed.patch.update_nodes ?? []) glow[n.id] = 'update'
+          if (Object.keys(glow).length) flashDiff(glow)
+          noteOk('patch')
+        } else {
+          healOrToast(next.error)
+        }
+        continue
+      }
+      if (looksLikeCanvasGraphJson(m.text)) {
+        healOrToast(parsed.ok ? AI_GRAPH_FAIL_MESSAGE : parsed.error || AI_GRAPH_FAIL_MESSAGE)
+      }
     }
-    if (/```(?:json)?\s*\{/i.test(added.text) || (added.text.includes('"nodes"') && added.text.includes('"edges"'))) {
-      const msg = parsed.error || AI_GRAPH_FAIL_MESSAGE
-      setAiError(msg)
-      pushToast(msg, 'error')
-    }
-  }, [aiBusy, generating, applyDraft, draft.id, draft.name, draft.description, draft.version])
+  }, [messages, generating, applyDraft, flashDiff, draft])
 
   const onRetryStrict = async () => {
-    if (!tabId || aiBusy || generating) return
-    setAiBusy(true)
+    if (!tabId || generating) return
     setAiError('')
-    const before = getTabState(tabId)?.messages.length ?? 0
-    const promptId = generateId('p_')
-    setGenerateWait({ tabId, before, promptId, started: false })
-    try {
-      await sendPrompt(
-        tabId,
-        `请严格根据当前用户意图与需求，只输出一个合法且闭合的 \`\`\`json 流程拓扑对象，必须包含 nodes 和 edges，禁止输出任何其他解释文字。\n${FLOW_GENERATE_SYSTEM}`,
-        promptId,
-      )
-    } catch (e) {
-      setGenerateWait(null)
-      setAiBusy(false)
-      setAiError(String(e))
-      pushToast(`重试失败：${String(e)}`, 'error')
-    }
+    const promptId = await sendSessionPrompt({
+      text: '强制纯 JSON 重试',
+      wireText: FLOW_RETRY_STRICT,
+    })
+    if (promptId) expectCanvasGraph(promptId)
   }
 
   useEffect(() => {
@@ -1546,14 +1539,12 @@ function FlowCanvasInner() {
         <WorkbenchDock
           dockOpen={dockOpen}
           flowId={draft.id}
-          input={aiText}
-          setInput={setAiText}
-          busy={aiBusy || generating}
+          flowName={draft.name}
+          nodeIds={draft.nodes.map((n) => n.id)}
           runSteps={runSteps}
           replayOpen={replayOpen}
           setReplayOpen={setReplayOpen}
           onToggleDock={() => setDockOpen(false)}
-          onSendChat={onSendChat}
           onRun={() => void startRun()}
           onOpenDetails={() => void openChatTab({ title: '试跑详情', utilityKind: 'flow-run' })}
           onRetryStrict={onRetryStrict}

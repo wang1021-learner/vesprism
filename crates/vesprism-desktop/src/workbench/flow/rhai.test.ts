@@ -125,7 +125,7 @@ describe('compileToRhai', () => {
         },
       },
     })
-    expect(rhaiWithPreset).toContain('【可用技能 (Skills)】：git-workflow, security-audit')
+    expect(rhaiWithPreset).toContain('skills: ["git-workflow", "security-audit"]')
   })
 
   it('Agent 具备 systemPrompt / description 时，将其正确注入到提示词中下发', () => {

@@ -196,7 +196,10 @@ pub fn mark_legacy_canvas_sessions() -> Result<(), String> {
              SELECT id FROM threads
              WHERE title LIKE '生成流程图：%'
                 OR title LIKE '你是 Vesprism 流程画布%'
-                OR title LIKE '你是这个流程画布%'",
+                OR title LIKE '你是这个流程画布%'
+                OR title LIKE 'You are the Vesprism flow-canvas%'
+                OR title LIKE 'Generate a flow graph:%'
+                OR title LIKE 'interface FlowGraph%'",
             [],
         )
         .map_err(|e| e.to_string())?;

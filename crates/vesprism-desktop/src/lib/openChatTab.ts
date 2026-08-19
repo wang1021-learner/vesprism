@@ -14,7 +14,7 @@ import {
   patchActiveTab,
   patchTab,
   resolveNewTabModel,
-  resolveWorkspaceCwd,
+  resolveNewTabCwd,
   switchTab,
   $scratchCwd,
   type UtilityKind,
@@ -35,9 +35,9 @@ export type OpenChatTabOpts = {
 export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | null> {
   const title = (opts.title || '').trim()
   const utilityKind = opts.utilityKind ?? null
-  const cwd = resolveWorkspaceCwd() || $scratchCwd.get()
+  const cwd = resolveNewTabCwd() || $scratchCwd.get()
 
-  // 专用面板：同类型已打开则直接切过去（并补全缺失的 cwd）
+  // 专用面板：同类型已打开则直接切过去。已有 cwd 一律不动，避免主聊天换仓把画布拽走。
   if (utilityKind) {
     const existing = findTabByUtilityKind(utilityKind)
     if (existing) {

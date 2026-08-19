@@ -4,6 +4,7 @@
 import {
   FLOW_NODE_TYPES,
   type FlowGraphJson,
+  type FlowGraphPatch,
   type FlowNodeParams,
   type FlowNodeType,
 } from './types'
@@ -197,7 +198,71 @@ export function validateFlowGraph(input: unknown): SchemaResult {
     }
   }
 
+  const dagErr = findDagErrors(nodes, edges)
+  if (dagErr) return { ok: false, error: dagErr }
+
   return { ok: true, graph: { nodes, edges } }
+}
+
+function findDagErrors(
+  nodes: FlowGraphJson['nodes'],
+  edges: FlowGraphJson['edges'],
+): string | null {
+  const outgoing = new Map<string, string[]>()
+  for (const n of nodes) outgoing.set(n.id, [])
+  for (const e of edges) outgoing.get(e.from)?.push(e.to)
+
+  const starts = nodes.filter((n) => n.type === 'start').map((n) => n.id)
+  const ends = new Set(nodes.filter((n) => n.type === 'end').map((n) => n.id))
+  const seen = new Set<string>()
+  const stack = [...starts]
+  while (stack.length) {
+    const id = stack.pop()!
+    if (seen.has(id)) continue
+    seen.add(id)
+    for (const nxt of outgoing.get(id) ?? []) stack.push(nxt)
+  }
+  const orphan = nodes.find((n) => !seen.has(n.id))
+  if (orphan) return `孤岛节点：${orphan.id} 无法从 start 到达`
+
+  const visiting = new Set<string>()
+  const done = new Set<string>()
+  const cycleFrom = (id: string): string | null => {
+    if (done.has(id)) return null
+    if (visiting.has(id)) return `图中存在环（途经 ${id}），必须是 DAG`
+    visiting.add(id)
+    for (const nxt of outgoing.get(id) ?? []) {
+      const hit = cycleFrom(nxt)
+      if (hit) return hit
+    }
+    visiting.delete(id)
+    done.add(id)
+    return null
+  }
+  for (const s of starts) {
+    const hit = cycleFrom(s)
+    if (hit) return hit
+  }
+
+  const canReachEnd = new Set<string>()
+  const walkEnd = (id: string): boolean => {
+    if (canReachEnd.has(id)) return true
+    if (ends.has(id)) {
+      canReachEnd.add(id)
+      return true
+    }
+    let ok = false
+    for (const nxt of outgoing.get(id) ?? []) {
+      if (walkEnd(nxt)) ok = true
+    }
+    if (ok) canReachEnd.add(id)
+    return ok
+  }
+  for (const s of starts) walkEnd(s)
+  const dead = nodes.find((n) => seen.has(n.id) && !canReachEnd.has(n.id))
+  if (dead) return `节点 ${dead.id} 无法走到 end`
+
+  return null
 }
 
 /** 解析模型回复：抽 JSON + 严格校验。失败统一文案。 */
@@ -205,4 +270,92 @@ export function parseGeneratedGraph(text: string): SchemaResult {
   const parsed = extractJsonObject(text)
   if (parsed == null) return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
   return validateFlowGraph(parsed)
+}
+
+export type CanvasModelOk =
+  | { ok: true; kind: 'graph'; graph: FlowGraphJson }
+  | { ok: true; kind: 'patch'; patch: FlowGraphPatch }
+export type CanvasModelResult = CanvasModelOk | SchemaErr
+
+function asStringList(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  return v.map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean)
+}
+
+function parsePatch(raw: unknown): FlowGraphPatch | null {
+  if (!isRecord(raw)) return null
+  const src = isRecord(raw.patch) ? raw.patch : raw
+  const patch: FlowGraphPatch = {}
+  if (Array.isArray(src.update_nodes)) {
+    const update_nodes: NonNullable<FlowGraphPatch['update_nodes']> = []
+    for (const item of src.update_nodes) {
+      if (!isRecord(item)) return null
+      const id = typeof item.id === 'string' ? item.id.trim() : ''
+      if (!id || !isRecord(item.params)) return null
+      update_nodes.push({ id, params: item.params })
+    }
+    patch.update_nodes = update_nodes
+  }
+  if (Array.isArray(src.add_nodes)) {
+    const add_nodes: NonNullable<FlowGraphPatch['add_nodes']> = []
+    for (const item of src.add_nodes) {
+      if (!isRecord(item)) return null
+      const id = typeof item.id === 'string' ? item.id.trim() : ''
+      if (!id || !isNodeType(item.type)) return null
+      add_nodes.push({ id, type: item.type, params: asParams(item.params) })
+    }
+    patch.add_nodes = add_nodes
+  }
+  const remove_nodes = asStringList(src.remove_nodes)
+  if (remove_nodes) patch.remove_nodes = remove_nodes
+  if (Array.isArray(src.add_edges)) {
+    const add_edges: NonNullable<FlowGraphPatch['add_edges']> = []
+    for (const item of src.add_edges) {
+      if (!isRecord(item)) return null
+      const from = typeof item.from === 'string' ? item.from.trim() : ''
+      const to = typeof item.to === 'string' ? item.to.trim() : ''
+      if (!from || !to) return null
+      const label = typeof item.label === 'string' ? item.label : undefined
+      add_edges.push(label ? { from, to, label } : { from, to })
+    }
+    patch.add_edges = add_edges
+  }
+  if (Array.isArray(src.remove_edges)) {
+    const remove_edges: NonNullable<FlowGraphPatch['remove_edges']> = []
+    for (const item of src.remove_edges) {
+      if (!isRecord(item)) return null
+      const from = typeof item.from === 'string' ? item.from.trim() : ''
+      const to = typeof item.to === 'string' ? item.to.trim() : ''
+      if (!from || !to) return null
+      remove_edges.push({ from, to })
+    }
+    patch.remove_edges = remove_edges
+  }
+  const keys = Object.keys(patch)
+  return keys.length > 0 ? patch : null
+}
+
+export function looksLikeCanvasGraphJson(text: string): boolean {
+  const t = text || ''
+  return (
+    /```(?:json)?\s*\{/i.test(t) ||
+    (t.includes('"nodes"') && t.includes('"edges"')) ||
+    t.includes('"patch"') ||
+    t.includes('"update_nodes"') ||
+    t.includes('"add_nodes"')
+  )
+}
+
+/** 全量图或局部 patch。含 patch 键时优先当 patch，避免和带 nodes 的混图打架。 */
+export function parseCanvasModelOutput(text: string): CanvasModelResult {
+  const parsed = extractJsonObject(text)
+  if (parsed == null) return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
+  if (isRecord(parsed) && (isRecord(parsed.patch) || parsed.update_nodes || parsed.add_nodes || parsed.remove_nodes)) {
+    const patch = parsePatch(parsed)
+    if (!patch) return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
+    return { ok: true, kind: 'patch', patch }
+  }
+  const graph = validateFlowGraph(parsed)
+  if (!graph.ok) return graph
+  return { ok: true, kind: 'graph', graph: graph.graph }
 }

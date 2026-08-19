@@ -89,6 +89,7 @@ function FlowNodeView({ id, data, selected }: NodeProps<FlowRfNode>) {
   const fields = (data as { fields?: { name: string; type: string }[] }).fields
 
   const execStatus = (data as { execStatus?: 'running' | 'done' | 'failed' }).execStatus
+  const diffGlow = (data as { diffGlow?: 'add' | 'update' }).diffGlow
   const execDuration = (data as { execDuration?: number }).execDuration
   const durationStr = execDuration ? `${(execDuration / 1000).toFixed(1)}s` : ''
 
@@ -97,7 +98,11 @@ function FlowNodeView({ id, data, selected }: NodeProps<FlowRfNode>) {
   const handleDelete = () => ctx.onDeleteNode?.(id)
 
   return (
-    <div className={`flow-node ${meta.cls}${selected ? ' is-selected' : ''}${execStatus ? ` is-${execStatus}` : ''}`}>
+    <div
+      className={`flow-node ${meta.cls}${selected ? ' is-selected' : ''}${execStatus ? ` is-${execStatus}` : ''}${
+        diffGlow === 'add' ? ' is-diff-add' : diffGlow === 'update' ? ' is-diff-update' : ''
+      }`}
+    >
       <div className="flow-node-actions" aria-hidden>
         {data.nodeType !== 'start' && (
           <button

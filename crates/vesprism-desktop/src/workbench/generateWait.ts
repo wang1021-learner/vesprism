@@ -28,3 +28,31 @@ export function noteGenerateProgress(
   if (!wait.started) return 'ignore'
   return 'finish'
 }
+
+/** 画布发出去的 prompt：只有这些回复才允许改拓扑，避免切 Tab 回来把历史图盖上草稿。 */
+const pendingCanvasGraphs = new Set<string>()
+
+export function expectCanvasGraph(promptId: string): void {
+  const id = promptId.trim()
+  if (id) pendingCanvasGraphs.add(id)
+}
+
+export function consumeCanvasGraph(promptId: string): boolean {
+  return pendingCanvasGraphs.delete(promptId)
+}
+
+export function isPendingCanvasGraph(promptId: string | undefined): boolean {
+  return Boolean(promptId && pendingCanvasGraphs.has(promptId))
+}
+
+/** 某次失败已经静默自愈过；该自愈回合的 promptId 记在这里。 */
+const canvasHealPrompts = new Set<string>()
+
+export function markCanvasHeal(promptId: string): void {
+  const id = promptId.trim()
+  if (id) canvasHealPrompts.add(id)
+}
+
+export function isCanvasHeal(promptId: string | undefined): boolean {
+  return Boolean(promptId && canvasHealPrompts.has(promptId))
+}

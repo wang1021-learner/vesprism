@@ -56,16 +56,18 @@ export function useComposerAssist(
   input: string,
   setInput: (v: string) => void,
   cwd: string,
+  opts?: { enableSlash?: boolean },
 ) {
+  const enableSlash = opts?.enableSlash !== false
   const [files, setFiles] = useState<string[]>([])
   const [active, setActive] = useState(0)
 
   const mode = useMemo(() => {
-    if (/^\/[^\s]*$/.test(input)) return 'slash' as const
+    if (enableSlash && /^\/[^\s]*$/.test(input)) return 'slash' as const
     const at = input.lastIndexOf('@')
     if (at >= 0 && !input.slice(at).includes(' ')) return 'at' as const
     return null
-  }, [input])
+  }, [input, enableSlash])
 
   const query = useMemo(() => {
     if (mode === 'slash') return input.slice(1).toLowerCase()

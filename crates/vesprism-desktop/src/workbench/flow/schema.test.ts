@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { AI_GRAPH_FAIL_MESSAGE, parseGeneratedGraph, validateFlowGraph } from './schema'
+import {
+  AI_GRAPH_FAIL_MESSAGE,
+  parseCanvasModelOutput,
+  parseGeneratedGraph,
+  validateFlowGraph,
+} from './schema'
 import { createDemoDraft, graphJsonFromDraft, layoutGraph } from './graph'
 
 describe('validateFlowGraph', () => {
@@ -166,6 +171,53 @@ describe('validateFlowGraph', () => {
       '好的，这是图：\n```json\n{"nodes":[{"id":"s","type":"start","params":{}},{"id":"e","type":"end","params":{}}],"edges":[{"from":"s","to":"e"}]}\n```',
     )
     expect(ok.ok).toBe(true)
+  })
+
+  it('拒绝环和从 start 走不到的孤岛', () => {
+    const cyclic = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'br', type: 'branch', params: {} },
+        { id: 'a', type: 'agent', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'br' },
+        { from: 'br', to: 'a', label: 'loop' },
+        { from: 'br', to: 'e', label: 'done' },
+        { from: 'a', to: 'br' },
+      ],
+    }
+    expect(validateFlowGraph(cyclic).ok).toBe(false)
+
+    const orphan = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'a', type: 'agent', params: {} },
+        { id: 'ghost', type: 'agent', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'a' },
+        { from: 'a', to: 'e' },
+        { from: 'ghost', to: 'e' },
+      ],
+    }
+    const r = validateFlowGraph(orphan)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/孤岛|ghost/)
+  })
+})
+
+describe('parseCanvasModelOutput', () => {
+  it('识别局部 patch', () => {
+    const r = parseCanvasModelOutput(
+      '```json\n{"patch":{"update_nodes":[{"id":"agent-1","params":{"role":"安全审计员"}}]}}\n```',
+    )
+    expect(r.ok).toBe(true)
+    if (r.ok && r.kind === 'patch') {
+      expect(r.patch.update_nodes?.[0].params.role).toBe('安全审计员')
+    }
   })
 })
 

@@ -16,7 +16,7 @@ function parseDomainLines(text: string): string[] {
 }
 
 export function EngineSettings({
-  saving,
+  saving: _saving,
   setSaving,
   onToast,
   bindSave,
@@ -238,15 +238,6 @@ export function EngineSettings({
           </button>
         </div>
       </section>
-
-      <button
-        type="button"
-        className="btn-primary"
-        disabled={saving}
-        onClick={() => void save()}
-      >
-        保存引擎设置
-      </button>
     </div>
   )
 }

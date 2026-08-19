@@ -6,11 +6,13 @@ import type {
   FlowGraphEdge,
   FlowGraphJson,
   FlowGraphNode,
+  FlowGraphPatch,
   FlowNodeType,
   JsonSchema,
   SchemaField,
 } from './types'
 import { slugifyFlowId } from './types'
+import { AI_GRAPH_FAIL_MESSAGE, validateFlowGraph } from './schema'
 
 export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[] = [
   { type: 'start', label: '起点', hint: '定义流程输入' },
@@ -249,6 +251,74 @@ export function draftFromGraph(
     })),
     dirty: true,
     published: false,
+  }
+}
+
+export function applyFlowPatch(
+  draft: FlowDraft,
+  patch: FlowGraphPatch,
+): { ok: true; draft: FlowDraft } | { ok: false; error: string } {
+  const removed = new Set((patch.remove_nodes ?? []).map((id) => id.trim()).filter(Boolean))
+  let nodes = draft.nodes.filter((n) => !removed.has(n.id))
+  let edges = draft.edges.filter((e) => !removed.has(e.from) && !removed.has(e.to))
+
+  for (const upd of patch.update_nodes ?? []) {
+    const i = nodes.findIndex((n) => n.id === upd.id)
+    if (i < 0) return { ok: false, error: `patch 找不到节点 ${upd.id}` }
+    nodes[i] = {
+      ...nodes[i],
+      params: { ...nodes[i].params, ...upd.params },
+    }
+  }
+
+  const existing = new Set(nodes.map((n) => n.id))
+  for (const add of patch.add_nodes ?? []) {
+    if (existing.has(add.id)) return { ok: false, error: `patch 重复节点 ${add.id}` }
+    existing.add(add.id)
+    nodes = [...nodes, { id: add.id, type: add.type, params: add.params }]
+  }
+
+  const edgeKey = (e: { from: string; to: string }) => `${e.from}\0${e.to}`
+  const drop = new Set((patch.remove_edges ?? []).map(edgeKey))
+  if (drop.size) edges = edges.filter((e) => !drop.has(edgeKey(e)))
+
+  for (const add of patch.add_edges ?? []) {
+    edges = [...edges, { from: add.from, to: add.to, label: add.label }]
+  }
+
+  const checked = validateFlowGraph({
+    nodes: nodes.map(({ id, type, params }) => ({ id, type, params })),
+    edges: edges.map(({ from, to, label }) => (label ? { from, to, label } : { from, to })),
+  })
+  if (!checked.ok) return { ok: false, error: checked.error || AI_GRAPH_FAIL_MESSAGE }
+
+  const laid = layoutGraph(checked.graph)
+  const fresh = new Set((patch.add_nodes ?? []).map((n) => n.id))
+  const posById = new Map(laid.map((n) => [n.id, n.position]))
+  const nextNodes: FlowGraphNode[] = checked.graph.nodes.map((n) => {
+    const prev = nodes.find((p) => p.id === n.id)
+    const keep = prev?.position && !fresh.has(n.id)
+    return {
+      ...n,
+      position: keep ? prev!.position : (posById.get(n.id) ?? { x: 80, y: 80 }),
+    }
+  })
+
+  return {
+    ok: true,
+    draft: {
+      ...draft,
+      nodes: nextNodes,
+      edges: checked.graph.edges.map((e, i) => ({
+        id: `e-${e.from}-${e.to}-${i}`,
+        from: e.from,
+        to: e.to,
+        label: e.label,
+      })),
+      input_schema: summarizeInputSchema(nextNodes),
+      output_schema: summarizeOutputSchema(nextNodes),
+      dirty: true,
+    },
   }
 }
 

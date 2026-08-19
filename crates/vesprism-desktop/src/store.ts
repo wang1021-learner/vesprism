@@ -233,6 +233,25 @@ export function resolveWorkspaceCwd(): string {
   return candidates[0] || ''
 }
 
+/** 只认该 Tab 自己记下的 cwd，不借全局 config、也不借别的 Tab。 */
+export function tabWorkspaceCwd(tabId?: string): string {
+  const id = (tabId ?? $activeTabId.get()).trim()
+  if (!id) return ''
+  return (tabStates.get(id)?.cwd ?? '').trim()
+}
+
+/**
+ * 新开会话 / 专用面板第一次落盘用的目录。
+ * 当前 Tab → 用户主工作区 → 再兜底。避免画布去捡另一个对话的仓库。
+ */
+export function resolveNewTabCwd(): string {
+  const own = tabWorkspaceCwd()
+  if (looksAbsolutePath(own)) return own
+  const preferred = $preferredWorkspaceCwd.get().trim()
+  if (looksAbsolutePath(preferred)) return preferred
+  return resolveWorkspaceCwd()
+}
+
 /**
  * 找普通对话 Tab：优先「空白新会话」（无 chatId、无消息），否则任意非 utility 的 Tab。
  * 侧栏 New chat 在专用面板里应切回这类 Tab，而不是把面板改成对话。

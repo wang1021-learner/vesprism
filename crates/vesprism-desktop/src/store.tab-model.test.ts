@@ -27,8 +27,11 @@ import {
   resetTabToNewChat,
   resetTabsForTests,
   resolveNewTabModel,
+  resolveNewTabCwd,
   resolveWorkspaceCwd,
   switchTab,
+  tabWorkspaceCwd,
+  $preferredWorkspaceCwd,
 } from './store'
 import type { ModelInfo } from './types'
 
@@ -77,6 +80,9 @@ beforeEach(() => {
   $settingsDefaultModelId.set('model-a')
   $defaultModelId.set('')
   $reasoningEffort.set('medium')
+  $preferredWorkspaceCwd.set('')
+  $workspaceCwd.set('')
+  $workspaceOptions.set([])
 })
 
 describe('Tab 模型分片', () => {
@@ -278,6 +284,21 @@ describe('Tab 活动灯', () => {
     switchTab('tab-util')
     // 投影为空时仍能从其它 tab 取绝对路径
     expect(resolveWorkspaceCwd()).toBe('D:\\repo\\app')
+    // 画布 / 专用面板只认自己的 cwd，不能借隔壁对话的仓库
+    expect(tabWorkspaceCwd('tab-util')).toBe('')
+    expect(tabWorkspaceCwd('tab-chat')).toBe('D:\\repo\\app')
+  })
+
+  it('resolveNewTabCwd 用当前 Tab，不把画布拽到别的仓库', () => {
+    $preferredWorkspaceCwd.set('D:\\preferred')
+    createTab('tab-canvas', { utilityKind: 'flow-canvas', cwd: 'D:\\canvas-repo' })
+    createTab('tab-chat', { cwd: 'D:\\chat-repo' })
+    switchTab('tab-canvas')
+    expect(resolveNewTabCwd()).toBe('D:\\canvas-repo')
+    expect(tabWorkspaceCwd()).toBe('D:\\canvas-repo')
+    switchTab('tab-chat')
+    expect(resolveNewTabCwd()).toBe('D:\\chat-repo')
+    $preferredWorkspaceCwd.set('')
   })
 
   it('findNormalChatTab 优先空白普通对话', () => {

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react'
 import type { ModelInfo, SessionPhase } from '../types'
 import { REASONING_LEVELS } from '../types'
@@ -58,6 +59,12 @@ interface ComposerProps {
   onSend: (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => void
   onRemoveQueued?: (id: string, version: number) => void
   onCancel: () => void
+  /** 画布第二主聊天关掉 /goal /sandbox，避免和试跑 `/流程id` 撞车 */
+  enableSlash?: boolean
+  placeholder?: string
+  /** dock：铺满工作栏，不显示底部免责声明 */
+  variant?: 'default' | 'dock'
+  extraActions?: ReactNode
 }
 
 type AttachChip = {
@@ -239,6 +246,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onSend,
     onRemoveQueued,
     onCancel,
+    enableSlash = true,
+    placeholder,
+    variant = 'default',
+    extraActions,
   }: ComposerProps,
   ref,
 ) {
@@ -451,7 +462,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setAttachChips([])
   }
 
-  const assist = useComposerAssist(input, setInput, workspaceCwd)
+  const assist = useComposerAssist(input, setInput, workspaceCwd, { enableSlash })
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229) {
@@ -474,7 +485,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const projectOptions = workspaceOptions.filter((cwd) => !isScratchCwd(cwd))
 
   return (
-    <footer className="composer-container">
+    <footer className={`composer-container${variant === 'dock' ? ' is-dock' : ''}`}>
       {queuedPrompts.length > 0 ? (
         <div className="composer-queue" aria-label="排队中的消息">
           <span className="composer-queue-label">排队 {queuedPrompts.length}</span>
@@ -502,7 +513,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </div>
       ) : null}
       <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
-        {/* 工作区芯片：可切换时下拉；不可切换时只读展示 */}
+        {variant !== 'dock' ? (
         <div className="composer-meta-row">
           <div className="composer-meta-left" ref={wsPickerRef}>
             {canSwitchWorkspace ? (
@@ -623,6 +634,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             )}
           </div>
         </div>
+        ) : null}
 
         {/* placeholder 固定；New chat 静默重建时不提示「创建中」 */}
         {(pasteBlocks.length > 0 || attachChips.length > 0) && (
@@ -686,11 +698,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           value={input}
           rows={1}
           placeholder={
-            casual
-              ? '随便问问，或点 + 附上文件… 改代码请先选项目'
-              : isGenerating
+            placeholder
+              ? isGenerating
                 ? '生成中也可继续输入，Enter 排队…'
-                : '输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件'
+                : placeholder
+              : casual
+                ? '随便问问，或点 + 附上文件… 改代码请先选项目'
+                : isGenerating
+                  ? '生成中也可继续输入，Enter 排队…'
+                  : '输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件'
           }
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -861,6 +877,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               </div>
             )}
 
+            {extraActions}
             {/* 中断：始终展示，仅生成中可点 */}
             <button
               type="button"
@@ -891,11 +908,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </div>
       </div>
 
-      <div className="composer-below">
-        <div className="composer-below-center">
-          <p className="disclaimer-text">AI 可能会出错，请核对重要信息</p>
+      {variant !== 'dock' ? (
+        <div className="composer-below">
+          <div className="composer-below-center">
+            <p className="disclaimer-text">AI 可能会出错，请核对重要信息</p>
+          </div>
         </div>
-      </div>
+      ) : null}
     </footer>
   )
 })

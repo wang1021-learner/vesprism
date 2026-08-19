@@ -43,12 +43,11 @@ const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
-  interjectPrompt, listenSessionEvents, openTab, removeQueuedPrompt, sendPrompt, setCurrentModel,
+  listenSessionEvents, openTab, removeQueuedPrompt, setCurrentModel,
   startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
   type PromptAttach,
 } from './bridge'
-import { generateId } from './lib/generateId'
-import { removeUserMessageByPromptId } from './lib/sessionTranscript'
+import { sendSessionPrompt } from './lib/sendSessionPrompt'
 import { handleSessionEvent } from './lib/sessionEvents'
 import { policyFromDto } from './lib/executionPolicy'
 
@@ -350,66 +349,7 @@ function AppComposer() {
     attachments?: PromptAttach[],
     mode?: 'queue' | 'interject',
   ) => {
-    const msg = (text ?? $composerInput.get()).trim()
-    const attach = attachments?.filter((a) => a.path.trim()) ?? []
-    if (!msg && attach.length === 0) return
-    const wasGenerating = $generating.get()
-    const interject = mode === 'interject' && wasGenerating
-    const promptId = generateId('p_')
-    const names = attach.map((a) => a.path.replace(/\\/g, '/').split('/').pop() || a.path)
-    const display = attach.length
-      ? `${msg}${msg ? '\n\n' : ''}[附件] ${names.join('、')}`
-      : msg
-    const tabId = $activeTabId.get()
-    patchActiveTab({ composerInput: '' })
-
-    if (wasGenerating && !interject) {
-      const prev = $queuedPrompts.get()
-      patchActiveTab({
-        queuedPrompts: [
-          ...prev,
-          { id: promptId, version: 0, text: display, position: prev.length },
-        ],
-        error: '',
-      })
-      try {
-        await sendPrompt(tabId, msg, promptId, attach)
-      } catch (e) {
-        patchActiveTab({
-          queuedPrompts: $queuedPrompts.get().filter((q) => q.id !== promptId),
-          composerInput: msg,
-          error: String(e),
-        })
-      }
-      return
-    }
-
-    patchActiveTab({
-      messages: [
-        ...$messages.get(),
-        {
-          id: generateId('msg_'),
-          role: 'user' as const,
-          text: display,
-          promptId,
-        },
-      ],
-    })
-    try {
-      patchActiveTab({ status: 'generating', error: '' })
-      if (interject) {
-        await interjectPrompt(tabId, msg, promptId, attach)
-      } else {
-        await sendPrompt(tabId, msg, promptId, attach)
-      }
-    } catch (e) {
-      patchActiveTab({
-        messages: removeUserMessageByPromptId($messages.get(), promptId),
-        composerInput: msg,
-        error: String(e),
-        status: wasGenerating ? 'generating' : 'idle',
-      })
-    }
+    await sendSessionPrompt({ text, attachments, mode })
   }, [])
 
   const onRemoveQueued = useCallback(async (id: string, version: number) => {
