@@ -14,6 +14,7 @@ import { useComposerAssist } from './ComposerAssist'
 import { $scratchCwd, isScratchCwd, workspaceLabel } from '../store'
 import { useStore } from '@nanostores/react'
 import type { PromptAttach } from '../bridge'
+import type { QueuedPrompt } from '../store'
 
 export interface ComposerHandle {
   focus: () => void
@@ -53,7 +54,9 @@ interface ComposerProps {
   onSwitchReasoningEffort: (effort: string) => void
   onSelectWorkspace: (cwd: string) => void
   onBrowseWorkspace: () => void
-  onSend: (text?: string, attachments?: PromptAttach[]) => void
+  queuedPrompts?: QueuedPrompt[]
+  onSend: (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => void
+  onRemoveQueued?: (id: string, version: number) => void
   onCancel: () => void
 }
 
@@ -232,7 +235,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onSwitchReasoningEffort,
     onSelectWorkspace,
     onBrowseWorkspace,
+    queuedPrompts = [],
     onSend,
+    onRemoveQueued,
     onCancel,
   }: ComposerProps,
   ref,
@@ -432,6 +437,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setAttachChips([])
   }
 
+  const handleInterject = () => {
+    if (!canSend) return
+    const extra = pasteBlocks.map((b) => b.text).join('\n\n')
+    const finalText = [input.trim(), extra].filter(Boolean).join('\n\n')
+    const attachments: PromptAttach[] = attachChips.map((a) => ({
+      kind: a.kind,
+      path: a.path,
+    }))
+    if (!finalText && attachments.length === 0) return
+    onSend(finalText, attachments, 'interject')
+    setPasteBlocks([])
+    setAttachChips([])
+  }
+
   const assist = useComposerAssist(input, setInput, workspaceCwd)
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -441,7 +460,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (assist.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (canSend && (input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)) handleSend()
+      if (!canSend || !(input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)) return
+      if (isGenerating && (e.ctrlKey || e.metaKey)) handleInterject()
+      else handleSend()
     }
   }
 
@@ -454,6 +475,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   return (
     <footer className="composer-container">
+      {queuedPrompts.length > 0 ? (
+        <div className="composer-queue" aria-label="排队中的消息">
+          <span className="composer-queue-label">排队 {queuedPrompts.length}</span>
+          <ul className="composer-queue-list">
+            {queuedPrompts.map((q, i) => (
+              <li key={q.id} className="composer-queue-item">
+                <span className="composer-queue-idx">{i + 1}</span>
+                <span className="composer-queue-text" title={q.text}>
+                  {q.text.trim() || '（附件）'}
+                </span>
+                {onRemoveQueued ? (
+                  <button
+                    type="button"
+                    className="composer-queue-remove"
+                    title="取消排队"
+                    aria-label="取消排队"
+                    onClick={() => onRemoveQueued(q.id, q.version)}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
         {/* 工作区芯片：可切换时下拉；不可切换时只读展示 */}
         <div className="composer-meta-row">
@@ -641,9 +688,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           placeholder={
             casual
               ? '随便问问，或点 + 附上文件… 改代码请先选项目'
-              : '输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件'
+              : isGenerating
+                ? '生成中也可继续输入，Enter 排队…'
+                : '输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件'
           }
-          disabled={isGenerating}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
@@ -655,7 +703,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <button
                 type="button"
                 className={`composer-attach-btn${attachOpen ? ' open' : ''}`}
-                disabled={isGenerating}
                 title="附上文件或文件夹（不切换项目）"
                 aria-label="附上文件或文件夹"
                 aria-expanded={attachOpen}
@@ -698,7 +745,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </div>
             <span className="composer-hint">
               {isGenerating
-                ? '生成中 · 点右侧方块可中断 · Esc 失焦'
+                ? '生成中 · Enter 排队 · Ctrl+Enter 插话'
                 : sessionPhase === 'failed'
                   ? '会话未就绪，可新建或重试'
                   : sessionPhase === 'loading' ||
@@ -830,7 +877,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               type="button"
               className={`btn-circle btn-send${canSubmit ? ' ready' : ''}`}
               disabled={!canSubmit}
-              title="发送消息 (Enter)"
+              title={
+                isGenerating
+                  ? '排队到本轮结束后发送 (Enter)；Ctrl+Enter 立刻插话'
+                  : '发送消息 (Enter)'
+              }
               aria-label="发送消息"
               onClick={handleSend}
             >

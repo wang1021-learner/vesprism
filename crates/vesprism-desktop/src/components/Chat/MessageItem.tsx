@@ -5,6 +5,7 @@ import { $activeTabId, $backgroundTasks, $permission, openRewind, pushToast, rem
 import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { forkCurrentSession } from '../../lib/forkSession'
+import { writingToolLabel } from '../../lib/writingToolLabel'
 import { killTask } from '../../bridge'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
@@ -686,7 +687,7 @@ function toolHeadline(tool: ToolCallData, live = false): string {
   const detail = tool.detail?.trim() || ''
   const preview = tool.preview?.trim() || ''
   if (live && !detail && !preview) {
-    return '正在生成参数…'
+    return writingToolLabel(tool.title, tool.kind) || '正在生成参数…'
   }
   const short =
     detail.length > 72 ? `${detail.slice(0, 70)}…` : detail

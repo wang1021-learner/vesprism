@@ -19,7 +19,7 @@ import {
   $scratchCwd,
   type UtilityKind,
 } from '../store'
-import { openTab, setCurrentModel, startSession } from '../bridge'
+import { openTab, startSession } from '../bridge'
 
 export type OpenChatTabOpts = {
   /** Tab 标题（技能 / 工具 / MCP / 自动化任务 / 流程画布 / 空=新对话） */
@@ -70,16 +70,12 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       cwd,
     })
     switchTab(tabId)
-    await startSession(tabId, cwd)
+    await startSession(tabId, cwd, {
+      modelId: model.modelId,
+      reasoningEffort: model.reasoningEffort,
+    })
     // 启动期间用户可能已关掉这个 tab，不要把错误写到当前活跃页
     if (!hasTab(tabId)) return null
-    if (model.modelId) {
-      try {
-        await setCurrentModel(tabId, model.modelId, model.reasoningEffort)
-      } catch {
-        /* 模型应用失败不阻断新会话 */
-      }
-    }
     if (!hasTab(tabId)) return null
     patchTab(tabId, {
       phase: 'ready',

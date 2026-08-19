@@ -792,7 +792,10 @@ function FlowCanvasInner() {
       if (tabId && currentTab && activeCwd && currentTab.cwd !== activeCwd) {
         try {
           const prevSid = currentTab.sessionId
-          await restartSession(tabId, activeCwd)
+          await restartSession(tabId, activeCwd, {
+            modelId: currentTab.modelId,
+            reasoningEffort: currentTab.reasoningEffort,
+          })
           const newSid = await waitTabSessionId(tabId, prevSid)
           patchTab(tabId, { cwd: activeCwd, chatId: newSid || undefined, sessionId: newSid || undefined })
           if (newSid) {
@@ -934,7 +937,7 @@ function FlowCanvasInner() {
     void purgeRerunSidecars().catch(() => {})
   }, [runSteps])
 
-  const doExport = async () => {
+  const doExport = async (format: 'zip' | 'yaml' | 'json' | 'rhai' = 'zip') => {
     const current = fromRf(nodes, edges, draft)
     if (!current.description.trim()) {
       pushToast('导出前请先填写「给 agent 看的说明」并发布', 'error')
@@ -942,9 +945,23 @@ function FlowCanvasInner() {
     }
     try {
       await persist(current, { publish: true })
+      let defaultPath = `${current.id}.zip`
+      let filters = [{ name: '流程包 (*.zip)', extensions: ['zip'] }]
+
+      if (format === 'yaml') {
+        defaultPath = `${current.id}.flow.yaml`
+        filters = [{ name: 'DSL 契约文件 (*.flow.yaml)', extensions: ['yaml', 'yml'] }]
+      } else if (format === 'json') {
+        defaultPath = `${current.id}.flow.json`
+        filters = [{ name: '流程图谱数据 (*.json)', extensions: ['json'] }]
+      } else if (format === 'rhai') {
+        defaultPath = `${current.id}.rhai`
+        filters = [{ name: '执行脚本 (*.rhai)', extensions: ['rhai'] }]
+      }
+
       const dest = await save({
-        defaultPath: `${current.id}.zip`,
-        filters: [{ name: '流程包', extensions: ['zip'] }],
+        defaultPath,
+        filters,
       })
       if (!dest) return
       const path = await exportFlow(current.id, dest)
@@ -956,16 +973,21 @@ function FlowCanvasInner() {
 
   const doImport = async (conflictMode?: string | null) => {
     try {
-      let zipPath = ''
+      let selectedPath = ''
       if (!conflictMode) {
         const selected = await open({
-          filters: [{ name: '流程包', extensions: ['zip'] }],
+          filters: [
+            {
+              name: '流程文件 (*.zip, *.yaml, *.json)',
+              extensions: ['zip', 'yaml', 'yml', 'json'],
+            },
+          ],
           multiple: false,
         })
         if (!selected || typeof selected !== 'string') return
-        zipPath = selected
+        selectedPath = selected
       }
-      const res = await importFlow(zipPath, conflictMode)
+      const res = await importFlow(selectedPath, conflictMode)
       if (res.status === 'ok') {
         pushToast(`导入成功：${res.id} v${res.version}`, 'success')
         await reloadList()
@@ -1301,7 +1323,7 @@ function FlowCanvasInner() {
         onMountToSession={onMountToSession}
         onOpenPublish={openPublish}
         onAutoLayout={onAutoLayout}
-        onExport={() => void doExport()}
+        onExport={(fmt) => void doExport(fmt)}
         onImport={() => void doImport()}
         onCopy={doCopy}
         onDelete={() => void doDelete()}

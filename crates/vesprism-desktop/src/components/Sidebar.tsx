@@ -53,7 +53,6 @@ import {
   renameSession,
   restartSession,
   searchSessions,
-  setCurrentModel,
   startSession,
 } from '../bridge'
 import {
@@ -782,6 +781,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       }
 
       beginAttachRuntime(myTab)
+      // 不传 tab 上的默认 effort，避免盖掉该历史会话自己记住的思考强度
       await loadSession(myTab, id, workCwd)
       // 启动对账：恢复该会话仍在运行的子 agent（重启/重连场景，官方 x.ai/subagent/list_running）
       void reconcileRunningSubagents(myTab)
@@ -892,25 +892,18 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         cwd: workCwd,
       })
 
-      try {
-        await restartSession(tabId, workCwd)
-      } catch {
-        await startSession(tabId, workCwd)
-      }
-
       const modelId = $defaultModelId.get().trim()
-      if (modelId) {
-        const entry = $models.get().find((m) => m.id === modelId)
-        const effort = entry?.supports_reasoning_effort
-          ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
-          : undefined
-        try {
-          await setCurrentModel(tabId, modelId, effort)
-          if (effort) $reasoningEffort.set(effort)
-        } catch (e) {
-          console.warn('新会话同步模型失败', e)
-        }
+      const entry = $models.get().find((m) => m.id === modelId)
+      const effort = entry?.supports_reasoning_effort
+        ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
+        : $reasoningEffort.get() || undefined
+      const spawn = { modelId: modelId || undefined, reasoningEffort: effort }
+      try {
+        await restartSession(tabId, workCwd, spawn)
+      } catch {
+        await startSession(tabId, workCwd, spawn)
       }
+      if (effort) $reasoningEffort.set(effort)
 
       patchTab(tabId, { phase: 'ready', status: 'idle', error: '' })
       await refreshChats()
@@ -945,10 +938,13 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       invalidateSessionMessages(chat.id)
       if (chat.id === activeChatId) {
         patchActiveTab({ messages: [], chatId: '' })
+        const tabId = $activeTabId.get()
+        const st = getTabState(tabId)
+        const spawn = { modelId: st?.modelId, reasoningEffort: st?.reasoningEffort }
         try {
-          await restartSession($activeTabId.get(), cwd)
+          await restartSession(tabId, cwd, spawn)
         } catch {
-          await startSession($activeTabId.get(), cwd)
+          await startSession(tabId, cwd, spawn)
         }
       }
       setConfirmDelete(null)

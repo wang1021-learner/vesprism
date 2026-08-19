@@ -83,6 +83,15 @@ export interface TabState {
   workflows: Record<string, WorkflowInfoDto>
   /** 客户端终端运行态（key=terminalId；ACP 终端能力） */
   terminals: Record<string, TerminalRuntime>
+  /** 官方 prompt 队列（尚未开跑的 follow-up） */
+  queuedPrompts: QueuedPrompt[]
+}
+
+export type QueuedPrompt = {
+  id: string
+  version: number
+  text: string
+  position: number
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
@@ -111,6 +120,7 @@ export function emptyTabState(): TabState {
     goal: null,
     workflows: {},
     terminals: {},
+    queuedPrompts: [],
   }
 }
 
@@ -131,7 +141,7 @@ export function deriveTabActivity(s: TabState): TabActivity {
   if (s.permission || s.userQuestion) return 'permission'
   const hasRunningSubagent = s.subagents.some((a) => a.status === 'running')
   // 不把 loading / restarting / initializing 算作 working，避免切会话、开历史时绿灯闪一下
-  if (hasRunningSubagent || s.status === 'generating') {
+  if (hasRunningSubagent || s.status === 'generating' || s.queuedPrompts.length > 0) {
     return 'working'
   }
   return 'idle'
@@ -337,6 +347,7 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('goal' in patch) $goalInfo.set(patch.goal ?? null)
   if ('workflows' in patch) $workflows.set(patch.workflows ?? {})
   if ('terminals' in patch) $terminals.set(patch.terminals ?? {})
+  if ('queuedPrompts' in patch) $queuedPrompts.set(patch.queuedPrompts ?? [])
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -365,6 +376,7 @@ function projectTab(id: string): void {
     goal: s.goal,
     workflows: s.workflows,
     terminals: s.terminals,
+    queuedPrompts: s.queuedPrompts,
   })
 }
 
@@ -391,6 +403,7 @@ function resetProjection(): void {
     goal: null,
     workflows: {},
     terminals: {},
+    queuedPrompts: [],
   })
 }
 
@@ -439,6 +452,7 @@ function isRecyclableBlank(st: TabState): boolean {
   if (st.messages.length > 0) return false
   if (st.composerInput) return false
   if (st.status === 'generating') return false
+  if (st.queuedPrompts.length > 0) return false
   if (st.phase === 'loading' || st.phase === 'restarting' || st.phase === 'booting') {
     return false
   }
@@ -476,6 +490,7 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     phase: 'restarting',
     status: 'initializing',
     utilityKind: null,
+    queuedPrompts: [],
     ...(workCwd ? { cwd: workCwd } : {}),
   })
 }
@@ -503,6 +518,7 @@ export function switchTab(id: string): void {
 // ── 会话（投影） ──
 export const $activeSessionId = atom('')
 export const $messages = atom<ChatMessage[]>([])
+export const $queuedPrompts = atom<QueuedPrompt[]>([])
 export const $permission = atom<PermissionRequest | null>(null)
 /** 内嵌审批条是否在视口内（Permission.tsx 的 IntersectionObserver 维护；浮层兜底读它） */
 export const $permissionInlineVisible = atom(true)

@@ -29,6 +29,7 @@ tauri-plugin-dialog = "2"
 toml = { workspace = true }
 rusqlite = { version = "0.37", features = ["bundled"] }
 xai-grok-shell = { workspace = true }
+xai-fast-worktree = { path = "../../codegen/xai-fast-worktree", features = ["metadata"] }
 chrono = { workspace = true }
 zip = { workspace = true }
 serde_yaml = { workspace = true }

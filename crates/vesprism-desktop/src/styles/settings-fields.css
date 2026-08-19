@@ -53,6 +53,26 @@
   color: var(--text-primary);
 }
 
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin: 8px 0 4px;
+}
+
+.settings-textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.settings-hook-handler {
+  margin: 10px 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+}
+
 .settings-card-desc {
   margin: 0 0 14px;
   font-size: 13px;

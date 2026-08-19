@@ -1,4 +1,4 @@
-export type SettingsTab = 'general' | 'models' | 'security'
+export type SettingsTab = 'general' | 'models' | 'security' | 'engine' | 'hooks'
 
 export type ApiBackend = 'chat_completions' | 'responses' | 'messages'
 

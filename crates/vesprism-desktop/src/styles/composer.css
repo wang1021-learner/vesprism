@@ -13,6 +13,82 @@
   gap: 8px;
 }
 
+.composer-queue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.03));
+}
+
+.composer-queue-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-top: 3px;
+  white-space: nowrap;
+}
+
+.composer-queue-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.composer-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-queue-idx {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.composer-queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary, var(--text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-queue-remove {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.composer-queue-remove:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* meta-row is INSIDE the card */
 .composer-card>.composer-meta-row {
   margin-bottom: 8px;

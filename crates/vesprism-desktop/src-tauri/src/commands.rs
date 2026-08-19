@@ -418,12 +418,16 @@ pub fn sync_sandbox_to_origin(
 pub async fn start_session(
     tab_id: String,
     cwd: String,
+    model_id: Option<String>,
+    reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
     send_cmd(&state, &tab_id, |reply| ActorCommand::Start {
         cwd: agent_cwd,
         sandbox_origin,
+        model_id,
+        reasoning_effort,
         reply,
     })
     .await
@@ -452,6 +456,44 @@ pub async fn send_prompt(
     .await
 }
 
+/// 生成中立刻插话（官方 `x.ai/interject`），不进队列。
+#[tauri::command]
+pub async fn interject_prompt(
+    tab_id: String,
+    text: String,
+    prompt_id: String,
+    attachments: Option<Vec<grok_session::PromptAttach>>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let attachments = attachments.unwrap_or_default();
+    if text.trim().is_empty() && attachments.is_empty() {
+        return Err("消息不能为空".into());
+    }
+    send_cmd(&state, &tab_id, |reply| ActorCommand::InterjectPrompt {
+        text,
+        prompt_id,
+        attachments,
+        reply,
+    })
+    .await
+}
+
+/// 取消一条尚未开跑的排队消息。
+#[tauri::command]
+pub async fn remove_queued_prompt(
+    tab_id: String,
+    id: String,
+    expected_version: Option<u64>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::RemoveQueuedPrompt {
+        id,
+        expected_version: expected_version.unwrap_or(0),
+        reply,
+    })
+    .await
+}
+
 /// 取消当前生成轮次。
 #[tauri::command]
 pub async fn cancel_turn(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
@@ -463,12 +505,16 @@ pub async fn cancel_turn(tab_id: String, state: State<'_, AppState>) -> Result<(
 pub async fn restart_session(
     tab_id: String,
     cwd: String,
+    model_id: Option<String>,
+    reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
     send_cmd(&state, &tab_id, |reply| ActorCommand::Restart {
         cwd: agent_cwd,
         sandbox_origin,
+        model_id,
+        reasoning_effort,
         reply,
     })
     .await
@@ -1053,7 +1099,7 @@ fn norm_cwd_key(cwd: &str) -> String {
         .to_lowercase()
 }
 
-fn load_config_root() -> Result<toml::Value, String> {
+pub(crate) fn load_config_root() -> Result<toml::Value, String> {
     let path = desktop_config_path();
     if !path.exists() {
         return Ok(toml::Value::Table(toml::map::Map::new()));
@@ -1063,7 +1109,7 @@ fn load_config_root() -> Result<toml::Value, String> {
     toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))
 }
 
-fn write_config_root(root: &toml::Value) -> Result<(), String> {
+pub(crate) fn write_config_root(root: &toml::Value) -> Result<(), String> {
     let path = desktop_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
@@ -1985,12 +2031,14 @@ pub async fn load_session(
     session_id: String,
     cwd: String,
     restore_code: Option<bool>,
+    reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     send_cmd(&state, &tab_id, |reply| ActorCommand::LoadSession {
         session_id,
         cwd,
         restore_code,
+        reasoning_effort,
         reply,
     })
     .await

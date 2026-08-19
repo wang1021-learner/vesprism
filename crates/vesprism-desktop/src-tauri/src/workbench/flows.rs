@@ -854,6 +854,46 @@ pub fn export_flow(id: String, dest_path: String) -> Result<String, String> {
     if rec.description.trim().is_empty() {
         return Err("导出需要「给 agent 看的说明」，请先发布或补全说明".into());
     }
+
+    let dest = PathBuf::from(&dest_path);
+    if let Some(parent) = dest.parent() {
+        mkdir(parent)?;
+    }
+
+    let path_lower = dest_path.to_lowercase();
+    if path_lower.ends_with(".yaml") || path_lower.ends_with(".yml") {
+        let meta = FlowYaml {
+            id: rec.id.clone(),
+            name: rec.name.clone(),
+            description: rec.description.clone(),
+            input_schema: rec.input_schema.clone(),
+            output_schema: rec.output_schema.clone(),
+            version: rec.version.clone(),
+            dependencies: rec.dependencies.clone(),
+        };
+        let yaml = write_yaml(&meta)?;
+        fs::write(&dest, yaml).map_err(|e| format!("写入 YAML 失败: {e}"))?;
+        return Ok(dest.display().to_string());
+    }
+
+    if path_lower.ends_with(".json") {
+        let json_str = serde_json::to_string_pretty(&rec)
+            .map_err(|e| format!("序列化 Flow JSON 失败: {e}"))?;
+        fs::write(&dest, json_str).map_err(|e| format!("写入 JSON 失败: {e}"))?;
+        return Ok(dest.display().to_string());
+    }
+
+    if path_lower.ends_with(".rhai") {
+        let rhai = rec
+            .rhai
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| "导出缺少 flow.rhai，请先发布".to_string())?;
+        fs::write(&dest, rhai).map_err(|e| format!("写入 Rhai 失败: {e}"))?;
+        return Ok(dest.display().to_string());
+    }
+
+    // 默认 .zip
     let rhai = rec
         .rhai
         .clone()
@@ -878,10 +918,6 @@ pub fn export_flow(id: String, dest_path: String) -> Result<String, String> {
         return Err("内部错误：契约仍含坐标字段".into());
     }
 
-    let dest = PathBuf::from(&dest_path);
-    if let Some(parent) = dest.parent() {
-        mkdir(parent)?;
-    }
     let file = fs::File::create(&dest).map_err(|e| format!("创建 zip 失败: {e}"))?;
     let mut zip = zip::ZipWriter::new(file);
     add_zip_file(&mut zip, &format!("{}.flow.yaml", rec.id), yaml.as_bytes())?;
@@ -914,6 +950,64 @@ pub fn import_flow(
     zip_path: String,
     conflict_mode: Option<String>,
 ) -> Result<ImportFlowResult, String> {
+    let path_lower = zip_path.to_lowercase();
+    if path_lower.ends_with(".json") {
+        let text = fs::read_to_string(&zip_path).map_err(|e| format!("读取 JSON 失败: {e}"))?;
+        let rec: FlowRecord =
+            serde_json::from_str(&text).map_err(|e| format!("解析 Flow JSON 失败: {e}"))?;
+        let save_req = SaveFlowRequest {
+            id: rec.id.clone(),
+            name: rec.name.clone(),
+            description: rec.description.clone(),
+            version: rec.version.clone(),
+            input_schema: rec.input_schema,
+            output_schema: rec.output_schema,
+            nodes: rec.nodes,
+            edges: rec.edges,
+            publish: rec.published,
+            stage: false,
+            ephemeral: false,
+            rhai: rec.rhai,
+            prompts: rec.prompts,
+        };
+        let _ = save_flow(save_req)?;
+        return Ok(ImportFlowResult::Ok {
+            id: rec.id,
+            version: rec.version,
+            requirements: Requirements::default(),
+            missing_tools: Vec::new(),
+        });
+    }
+
+    if path_lower.ends_with(".yaml") || path_lower.ends_with(".yml") {
+        let text = fs::read_to_string(&zip_path).map_err(|e| format!("读取 YAML 失败: {e}"))?;
+        let meta = parse_yaml(&text)?;
+        let id = ensure_id(&meta.id)?;
+        let save_req = SaveFlowRequest {
+            id: id.clone(),
+            name: meta.name.clone(),
+            description: meta.description.clone(),
+            version: meta.version.clone(),
+            input_schema: meta.input_schema,
+            output_schema: meta.output_schema,
+            nodes: serde_json::json!([]),
+            edges: serde_json::json!([]),
+            publish: false,
+            stage: false,
+            ephemeral: false,
+            rhai: None,
+            prompts: None,
+        };
+        let _ = save_flow(save_req)?;
+        return Ok(ImportFlowResult::Ok {
+            id,
+            version: meta.version,
+            requirements: Requirements::default(),
+            missing_tools: Vec::new(),
+        });
+    }
+
+    // 默认 .zip 压缩包
     let file = fs::File::open(&zip_path).map_err(|e| format!("打开 zip 失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("不是有效 zip: {e}"))?;
     if let Some(g) = read_zip_entry(&mut archive, "graph.json")? {
@@ -1079,5 +1173,11 @@ mod tests {
                 .to_string_lossy()
                 .contains("position")
         );
+    }
+
+    #[test]
+    fn test_slug_keep_both() {
+        assert_eq!(slug_keep_both("my_flow-v1.0"), "my-flow-v1-0");
+        assert_eq!(slug_keep_both("demo--test"), "demo-test");
     }
 }

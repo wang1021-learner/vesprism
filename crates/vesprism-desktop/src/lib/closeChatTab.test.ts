@@ -48,7 +48,7 @@ describe('closeChatTab', () => {
     expect(stopPty).not.toHaveBeenCalled()
   })
 
-  it('最后一个有内容的 tab：原地清空，不走 close+open', () => {
+  it('最后一个有内容的 tab：原地清空，不走 close+open', async () => {
     createTab('tab-1', {
       chatId: 'chat-1',
       chatTitle: '旧对话',
@@ -64,7 +64,12 @@ describe('closeChatTab', () => {
     expect($tabs.get()[0].title).toBe('')
     expect(closeTab).not.toHaveBeenCalled()
     expect(stopPty).toHaveBeenCalledWith('tab-1')
-    expect(restartSession).toHaveBeenCalledWith('tab-1', 'D:\\repo')
+    await vi.waitFor(() => {
+      expect(restartSession).toHaveBeenCalledWith('tab-1', 'D:\\repo', {
+        modelId: '',
+        reasoningEffort: 'medium',
+      })
+    })
   })
 
   it('非最后一个：立刻从列表移除，closeTab 后台调用', () => {

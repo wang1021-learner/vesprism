@@ -40,13 +40,28 @@ pub enum ActorCommand {
         cwd: String,
         /// 若有值：cwd 是隔离 worktree，此项为用户原工作区
         sandbox_origin: Option<String>,
+        model_id: Option<String>,
+        reasoning_effort: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    /// 发送用户消息。
+    /// 发送用户消息（本轮进行中则进官方队列）。
     SendPrompt {
         text: String,
         prompt_id: String,
         attachments: Vec<grok_session::PromptAttach>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 生成中立刻插话，不排队。
+    InterjectPrompt {
+        text: String,
+        prompt_id: String,
+        attachments: Vec<grok_session::PromptAttach>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 取消一条尚未开跑的排队消息。
+    RemoveQueuedPrompt {
+        id: String,
+        expected_version: u64,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 取消当前生成。
@@ -63,6 +78,8 @@ pub enum ActorCommand {
     Restart {
         cwd: String,
         sandbox_origin: Option<String>,
+        model_id: Option<String>,
+        reasoning_effort: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 恢复一个已有历史会话。
@@ -71,6 +88,7 @@ pub enum ActorCommand {
         cwd: String,
         /// 官方 `--restore-code` 等价：resume 时是否恢复代码快照
         restore_code: Option<bool>,
+        reasoning_effort: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
     /// 删除会话（若删的是当前会话，会先释放再开新会话）。
@@ -240,6 +258,11 @@ pub enum FrontendEvent {
     UserTextChunk {
         text: String,
         prompt_id: Option<String>,
+    },
+    QueueChanged {
+        entries: Vec<grok_session::QueuedPromptInfo>,
+        running_prompt_id: Option<String>,
+        running_text: Option<String>,
     },
     /// 本轮结束。
     TurnEnded {
@@ -558,6 +581,8 @@ async fn handle_command(
         ActorCommand::Start {
             cwd,
             sandbox_origin,
+            model_id,
+            reasoning_effort,
             reply,
         } => {
             if session.is_some() {
@@ -569,6 +594,8 @@ async fn handle_command(
                     pending_permissions,
                     cwd,
                     sandbox_origin,
+                    model_id,
+                    reasoning_effort,
                     reply,
                     true,
                 )
@@ -582,6 +609,8 @@ async fn handle_command(
                     pending_permissions,
                     cwd,
                     sandbox_origin,
+                    model_id,
+                    reasoning_effort,
                     reply,
                     false,
                 )
@@ -602,6 +631,43 @@ async fn handle_command(
                 .send_prompt_with_attachments(text, attachments, prompt_id)
                 .await
             {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::InterjectPrompt {
+            text,
+            prompt_id,
+            attachments,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.interject(text, attachments, prompt_id).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::RemoveQueuedPrompt {
+            id,
+            expected_version,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.remove_queued_prompt(&id, expected_version).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
@@ -1020,6 +1086,8 @@ async fn handle_command(
         ActorCommand::Restart {
             cwd,
             sandbox_origin,
+            model_id,
+            reasoning_effort,
             reply,
         } => {
             begin_fresh_session(
@@ -1030,6 +1098,8 @@ async fn handle_command(
                 pending_permissions,
                 cwd,
                 sandbox_origin,
+                model_id,
+                reasoning_effort,
                 reply,
                 true,
             )
@@ -1039,6 +1109,7 @@ async fn handle_command(
             session_id,
             cwd,
             restore_code,
+            reasoning_effort,
             reply,
         } => {
             // 切到历史会话前：若当前是空会话则删掉，避免列表残留
@@ -1057,7 +1128,13 @@ async fn handle_command(
                     status: SessionStatus::Initializing,
                 },
             );
-            match GrokSession::resume(session_id, cwd.clone(), restore_code).await {
+            match GrokSession::resume(
+                session_id,
+                cwd.clone(),
+                restore_code,
+                reasoning_effort.as_deref(),
+            )
+            .await {
                 Ok(mut s) => {
                     *status_rx = Some(s.subscribe_status());
                     let sid = s.session_id();
@@ -1146,6 +1223,8 @@ async fn handle_command(
                             pending_permissions,
                             cwd,
                             None,
+                            None,
+                            None,
                             reply,
                             false,
                         )
@@ -1164,6 +1243,8 @@ async fn handle_command(
                             status_rx,
                             pending_permissions,
                             cwd,
+                            None,
+                            None,
                             None,
                             reply,
                             false,
@@ -1197,6 +1278,8 @@ async fn begin_fresh_session(
     pending_permissions: &mut HashMap<u64, oneshot::Sender<String>>,
     cwd: String,
     sandbox_origin: Option<String>,
+    model_id: Option<String>,
+    reasoning_effort: Option<String>,
     reply: oneshot::Sender<Result<(), String>>,
     discard_blank_old: bool,
 ) {
@@ -1238,7 +1321,13 @@ async fn begin_fresh_session(
             .flatten()
             .map(|c| c.flows)
             .filter(|ids| !ids.is_empty());
-    match GrokSession::start_with_flows(cwd.clone(), seed_flows.unwrap_or_default()).await {
+    match GrokSession::start_spawned(
+        cwd.clone(),
+        seed_flows.unwrap_or_default(),
+        model_id.as_deref(),
+        reasoning_effort.as_deref(),
+    )
+    .await {
         Ok(s) => {
             *status_rx = Some(s.subscribe_status());
             let sid = s.session_id();
@@ -1415,6 +1504,21 @@ fn forward_event(
                 app,
                 tab_id,
                 FrontendEvent::UserTextChunk { text, prompt_id },
+            );
+        }
+        SessionEvent::QueueChanged {
+            entries,
+            running_prompt_id,
+            running_text,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::QueueChanged {
+                    entries,
+                    running_prompt_id,
+                    running_text,
+                },
             );
         }
         SessionEvent::TurnEnded {

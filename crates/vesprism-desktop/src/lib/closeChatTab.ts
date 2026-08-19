@@ -83,10 +83,12 @@ async function refreshLastTabSession(id: string, cwd: string): Promise<void> {
     return
   }
   try {
+    const st = getTabState(id)
+    const spawn = { modelId: st?.modelId, reasoningEffort: st?.reasoningEffort }
     try {
-      await restartSession(id, cwd)
+      await restartSession(id, cwd, spawn)
     } catch {
-      await startSession(id, cwd)
+      await startSession(id, cwd, spawn)
     }
     if (!hasTab(id)) return
     patchTab(id, { phase: 'ready', status: 'idle', error: '' })

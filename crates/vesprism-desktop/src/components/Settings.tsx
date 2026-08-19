@@ -4,7 +4,7 @@
  */
 import { useStore } from '@nanostores/react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   $activeTabId,
   $defaultModelId,
@@ -16,6 +16,7 @@ import {
   $preferredWorkspaceCwd,
   $securityPolicy,
   $sessionPolicyOverride,
+  getTabState,
   patchActiveTab,
 } from '../store'
 import {
@@ -46,6 +47,8 @@ import {
   textToHeaders,
   type SettingsTab,
 } from './settingsHelpers'
+import { EngineSettings } from './EngineSettings'
+import { HooksSettings } from './HooksSettings'
 
 function shortId(): string {
   return Math.random().toString(36).slice(2, 10)
@@ -82,6 +85,15 @@ export function SettingsModal() {
   const [internetAccess, setInternetAccess] = useState<InternetAccess>('ask')
   const [fileAccess, setFileAccess] = useState<FileAccess>('workspace-only')
   const [policyScope, setPolicyScope] = useState<'global' | 'workspace'>('global')
+
+  const engineSaveRef = useRef<(() => Promise<void>) | null>(null)
+  const hooksSaveRef = useRef<(() => Promise<void>) | null>(null)
+  const bindEngineSave = useCallback((fn: (() => Promise<void>) | null) => {
+    engineSaveRef.current = fn
+  }, [])
+  const bindHooksSave = useCallback((fn: (() => Promise<void>) | null) => {
+    hooksSaveRef.current = fn
+  }, [])
 
   const selectedModel = models.find((m) => m.id === selectedModelId)
   const isDraft = selectedModelId ? draftModelIds.includes(selectedModelId) : false
@@ -322,7 +334,11 @@ export function SettingsModal() {
         const tab = $activeTabId.get()
         if (tab && cwd) {
           try {
-            await restartSession(tab, cwd)
+            const st = getTabState(tab)
+            await restartSession(tab, cwd, {
+              modelId: st?.modelId,
+              reasoningEffort: st?.reasoningEffort,
+            })
           } catch (e) {
             setToast({ message: `策略已保存，但沙箱启动失败：${String(e)}`, type: 'error' })
             return
@@ -414,6 +430,26 @@ export function SettingsModal() {
               </span>
               安全
             </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'engine' ? ' active' : ''}`}
+              onClick={() => setTab('engine')}
+            >
+              <span className="settings-nav-icon" aria-hidden>
+                ◇
+              </span>
+              引擎
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'hooks' ? ' active' : ''}`}
+              onClick={() => setTab('hooks')}
+            >
+              <span className="settings-nav-icon" aria-hidden>
+                ⌘
+              </span>
+              Hooks
+            </button>
           </nav>
 
           <div className="settings-panel">
@@ -456,6 +492,30 @@ export function SettingsModal() {
                   )}
                 </section>
               </div>
+            )}
+
+            {tab === 'engine' && (
+              <EngineSettings
+                saving={savingSettings}
+                setSaving={setSavingSettings}
+                bindSave={bindEngineSave}
+                onToast={(message, type) => {
+                  setToast({ message, type })
+                  if (type === 'success') setTimeout(() => setToast(null), 1600)
+                }}
+              />
+            )}
+
+            {tab === 'hooks' && (
+              <HooksSettings
+                saving={savingSettings}
+                setSaving={setSavingSettings}
+                bindSave={bindHooksSave}
+                onToast={(message, type) => {
+                  setToast({ message, type })
+                  if (type === 'success') setTimeout(() => setToast(null), 1600)
+                }}
+              />
             )}
 
             {tab === 'security' && (
@@ -1238,7 +1298,31 @@ export function SettingsModal() {
             type="button"
             className="btn-primary"
             disabled={savingSettings}
-            onClick={() => void (tab === 'security' ? saveSecurity() : handleSave())}
+            onClick={() => {
+              if (tab === 'security') {
+                void saveSecurity()
+                return
+              }
+              if (tab === 'engine') {
+                const fn = engineSaveRef.current
+                if (!fn) {
+                  setToast({ message: '引擎设置尚未就绪', type: 'error' })
+                  return
+                }
+                void fn()
+                return
+              }
+              if (tab === 'hooks') {
+                const fn = hooksSaveRef.current
+                if (!fn) {
+                  setToast({ message: 'Hooks 设置尚未就绪', type: 'error' })
+                  return
+                }
+                void fn()
+                return
+              }
+              void handleSave()
+            }}
           >
             {savingSettings ? '保存中…' : '保存'}
           </button>

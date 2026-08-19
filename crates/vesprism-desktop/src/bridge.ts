@@ -71,7 +71,18 @@ export const syncSandboxToOrigin = (tabId: string) =>
   invoke<{ files: number; message: string }>('sync_sandbox_to_origin', { tabId })
 
 // ── 会话 ──
-export const startSession = (tabId: string, cwd: string) => invoke('start_session', { tabId, cwd })
+export type SessionSpawnOpts = {
+  modelId?: string | null
+  reasoningEffort?: string | null
+}
+
+export const startSession = (tabId: string, cwd: string, opts?: SessionSpawnOpts) =>
+  invoke('start_session', {
+    tabId,
+    cwd,
+    modelId: opts?.modelId ?? null,
+    reasoningEffort: opts?.reasoningEffort ?? null,
+  })
 export const sendPrompt = (
   tabId: string,
   text: string,
@@ -84,8 +95,32 @@ export const sendPrompt = (
     promptId: promptId ?? crypto.randomUUID(),
     attachments: attachments?.length ? attachments : null,
   })
+export const interjectPrompt = (
+  tabId: string,
+  text: string,
+  promptId?: string,
+  attachments?: PromptAttach[],
+) =>
+  invoke('interject_prompt', {
+    tabId,
+    text,
+    promptId: promptId ?? crypto.randomUUID(),
+    attachments: attachments?.length ? attachments : null,
+  })
+export const removeQueuedPrompt = (tabId: string, id: string, expectedVersion?: number) =>
+  invoke('remove_queued_prompt', {
+    tabId,
+    id,
+    expectedVersion: expectedVersion ?? 0,
+  })
 export const cancelTurn = (tabId: string) => invoke('cancel_turn', { tabId })
-export const restartSession = (tabId: string, cwd: string) => invoke('restart_session', { tabId, cwd })
+export const restartSession = (tabId: string, cwd: string, opts?: SessionSpawnOpts) =>
+  invoke('restart_session', {
+    tabId,
+    cwd,
+    modelId: opts?.modelId ?? null,
+    reasoningEffort: opts?.reasoningEffort ?? null,
+  })
 
 // ── 会话列表 (threads 索引；含 preview) ──
 export const listSessions = (cwd: string, limit?: number) =>
@@ -149,8 +184,16 @@ export const loadSession = (
   tabId: string,
   sessionId: string,
   cwd: string,
-  restoreCode?: boolean
-) => invoke('load_session', { tabId, sessionId, cwd, restoreCode })
+  restoreCode?: boolean,
+  reasoningEffort?: string | null,
+) =>
+  invoke('load_session', {
+    tabId,
+    sessionId,
+    cwd,
+    restoreCode,
+    reasoningEffort: reasoningEffort ?? null,
+  })
 export const forkSession = (tabId: string, cwd: string, newSessionId?: string) =>
   invoke<string>('fork_session', { tabId, cwd, newSessionId })
 
@@ -225,6 +268,56 @@ export const saveModelSettings = (defaultId: string, models: ModelInfo[]) =>
   invoke('save_model_settings', { defaultId, models })
 
 export const reloadModels = (tabId: string) => invoke('reload_models', { tabId })
+
+export type EnginePrefs = {
+  session_search: boolean
+  web_search_allowed: string[]
+  web_search_excluded: string[]
+  max_parallel_image_gen_calls: number
+  max_parallel_video_gen_calls: number
+}
+
+export const getEnginePrefs = () => invoke<EnginePrefs>('get_engine_prefs')
+export const setEnginePrefs = (prefs: EnginePrefs) =>
+  invoke<EnginePrefs>('set_engine_prefs', { prefs })
+
+export type WorktreeStatusInfo = {
+  home: string
+  total: number
+  alive: number
+  dead: number
+  db_bytes: number
+  available: boolean
+  note: string
+}
+
+export type WorktreeGcResult = {
+  removed: number
+  skipped_alive: number
+  dry_run: boolean
+  message: string
+}
+
+export const getWorktreeStatus = () => invoke<WorktreeStatusInfo>('get_worktree_status')
+export const gcDesktopWorktrees = (dryRun: boolean) =>
+  invoke<WorktreeGcResult>('gc_desktop_worktrees', { dryRun })
+
+export type HookHandler = {
+  handler_type: string
+  command: string
+  url: string
+  timeout: number | null
+}
+
+export type HookGroup = {
+  event: string
+  matcher: string
+  hooks: HookHandler[]
+}
+
+export const listConfigHooks = () => invoke<HookGroup[]>('list_config_hooks')
+export const setConfigHooks = (groups: HookGroup[]) =>
+  invoke<HookGroup[]>('set_config_hooks', { groups })
 
 // ── 权限 ──
 export const respondPermission = (tabId: string, requestId: number, optionId: string) =>
@@ -504,6 +597,10 @@ export interface SessionEventPayload {
   total_tokens?: number
   /** 会话标题更新（引擎 LLM 生成 / 手动改名） */
   title?: string
+  /** x.ai/queue/changed */
+  entries?: Array<{ id?: string; version?: number; text?: string; position?: number }>
+  running_prompt_id?: string | null
+  running_text?: string | null
   /** TabActor 重建次数（tab_recovering） / 连续 panic 次数（tab_failed） */
   attempt?: number
   attempts?: number

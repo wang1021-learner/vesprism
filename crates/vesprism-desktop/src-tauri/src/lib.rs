@@ -1,4 +1,5 @@
 mod commands;
+mod engine_prefs;
 mod pty;
 mod sandbox;
 mod session_index;
@@ -118,11 +119,19 @@ pub fn run() {
             commands::scratch_cwd,
             commands::get_security_policy,
             commands::set_security_policy,
+            engine_prefs::get_engine_prefs,
+            engine_prefs::set_engine_prefs,
+            engine_prefs::get_worktree_status,
+            engine_prefs::gc_desktop_worktrees,
+            engine_prefs::list_config_hooks,
+            engine_prefs::set_config_hooks,
             commands::enable_tab_sandbox,
             commands::get_sandbox_status,
             commands::sync_sandbox_to_origin,
             commands::start_session,
             commands::send_prompt,
+            commands::interject_prompt,
+            commands::remove_queued_prompt,
             commands::cancel_turn,
             commands::respond_permission,
             commands::respond_user_question,

@@ -59,6 +59,19 @@ pub enum SessionStatus {
     Ended,
 }
 
+/// 官方 prompt 队列里尚未开跑的一条。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedPromptInfo {
+    pub id: String,
+    #[serde(default)]
+    pub version: u64,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub position: usize,
+}
+
 /// 工具调用中的结构化 diff（来自 ACP `ToolCallContent::Diff`），供桌面侧栏高亮。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -260,6 +273,12 @@ pub enum SessionEvent {
         text: String,
         prompt_id: Option<String>,
     },
+    /// 官方 `x.ai/queue/changed`：未开跑的排队提示（running 不在 entries 里）。
+    QueueChanged {
+        entries: Vec<QueuedPromptInfo>,
+        running_prompt_id: Option<String>,
+        running_text: Option<String>,
+    },
     /// 本轮对话结束。
     TurnEnded {
         stop_reason: String,
@@ -424,6 +443,16 @@ impl std::fmt::Debug for SessionEvent {
                     text, prompt_id
                 )
             }
+            Self::QueueChanged {
+                entries,
+                running_prompt_id,
+                ..
+            } => write!(
+                f,
+                "QueueChanged {{ entries: {}, running: {:?} }}",
+                entries.len(),
+                running_prompt_id
+            ),
             Self::TurnEnded {
                 stop_reason,
                 prompt_id,
@@ -845,6 +874,45 @@ impl Client for GuiClient {
     async fn ext_notification(&self, args: ExtNotification) -> agent_client_protocol::Result<()> {
         match args.method.as_ref() {
             "x.ai/session_notification" => {}
+            "x.ai/queue/changed" => {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct QueueChangedParams {
+                    entries: Option<Vec<QueuedPromptInfo>>,
+                    running_prompt_id: Option<String>,
+                    running_text: Option<String>,
+                }
+                if let Ok(p) = serde_json::from_str::<QueueChangedParams>(args.params.get()) {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::QueueChanged {
+                            entries: p.entries.unwrap_or_default(),
+                            running_prompt_id: p.running_prompt_id,
+                            running_text: p.running_text,
+                        })
+                        .await;
+                }
+                return Ok(());
+            }
+            "x.ai/session/interjection" => {
+                // 官方插话广播。originator 用 interjectionId 核销乐观气泡。
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct InterjectionParams {
+                    text: String,
+                    interjection_id: Option<String>,
+                }
+                if let Ok(p) = serde_json::from_str::<InterjectionParams>(args.params.get()) {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::UserTextChunk {
+                            text: p.text,
+                            prompt_id: p.interjection_id,
+                        })
+                        .await;
+                }
+                return Ok(());
+            }
             "x.ai/git_head_changed" => {
                 // 官方 git HEAD 变化通知（分支切换等）；前端用于自动刷新右栏差异。
                 #[derive(serde::Deserialize)]
@@ -1820,6 +1888,35 @@ pub fn session_update_to_event(
     }
 }
 
+/// `session/new` `_meta`：流程挂载 + 官方 1.0.5 的 `modelId` / `reasoningEffort`。
+fn spawn_session_meta(
+    flows: Option<Vec<String>>,
+    model_id: Option<&str>,
+    reasoning_effort: Option<&str>,
+) -> Option<agent_client_protocol::Meta> {
+    let mut m = agent_client_protocol::Meta::new();
+    let mut any = false;
+    if let Some(ids) = flows.filter(|ids| !ids.is_empty()) {
+        m.insert(
+            "x.ai/flows".into(),
+            serde_json::Value::Array(ids.into_iter().map(serde_json::Value::String).collect()),
+        );
+        any = true;
+    }
+    if let Some(id) = model_id.map(str::trim).filter(|s| !s.is_empty()) {
+        m.insert("modelId".into(), serde_json::Value::String(id.to_string()));
+        any = true;
+    }
+    if let Some(effort) = reasoning_effort.map(str::trim).filter(|s| !s.is_empty()) {
+        m.insert(
+            "reasoningEffort".into(),
+            serde_json::Value::String(effort.to_ascii_lowercase()),
+        );
+        any = true;
+    }
+    any.then_some(m)
+}
+
 /// 会话句柄：GUI / REPL 只需要与此类型交互。
 pub struct GrokSession {
     connection: Arc<ClientSideConnection>,
@@ -1836,6 +1933,8 @@ pub struct GrokSession {
     tool_overrides: std::sync::Arc<std::sync::RwLock<Option<serde_json::Value>>>,
     /// 最近一次 set_model 的 id（仅 label 热更新时复用）。
     last_model_id: std::sync::Arc<std::sync::RwLock<Option<String>>>,
+    /// 尚未返回的 `session/prompt` 数。排队的第二条也算，避免上一轮结束时误置 Idle。
+    inflight_prompts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl GrokSession {
@@ -1898,7 +1997,7 @@ impl GrokSession {
     ///
     /// 必须在 `LocalSet` 中调用。
     pub async fn start(cwd: impl Into<String>) -> anyhow::Result<Self> {
-        Self::start_inner(cwd.into(), None).await
+        Self::start_inner(cwd.into(), None, None, None).await
     }
 
     /// 同 [`Self::start`]，并把 `flows` 写入 `session/new` 的 `_meta["x.ai/flows"]`。
@@ -1906,10 +2005,26 @@ impl GrokSession {
         cwd: impl Into<String>,
         flows: impl Into<Vec<String>>,
     ) -> anyhow::Result<Self> {
-        Self::start_inner(cwd.into(), Some(flows.into())).await
+        Self::start_inner(cwd.into(), Some(flows.into()), None, None).await
     }
 
-    async fn start_inner(cwd: String, flows: Option<Vec<String>>) -> anyhow::Result<Self> {
+    /// 同 [`Self::start_with_flows`]，并在 `session/new` `_meta` 写入官方
+    /// `modelId` / `reasoningEffort`，开局就对齐桌面当前模型与思考强度。
+    pub async fn start_spawned(
+        cwd: impl Into<String>,
+        flows: impl Into<Vec<String>>,
+        model_id: Option<&str>,
+        reasoning_effort: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        Self::start_inner(cwd.into(), Some(flows.into()), model_id, reasoning_effort).await
+    }
+
+    async fn start_inner(
+        cwd: String,
+        flows: Option<Vec<String>>,
+        model_id: Option<&str>,
+        reasoning_effort: Option<&str>,
+    ) -> anyhow::Result<Self> {
         // 从环境变量与配置目录加载合并后的有效配置。
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
@@ -1964,15 +2079,7 @@ impl GrokSession {
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
 
         let mut new_req = NewSessionRequest::new(cwd);
-        if let Some(flows) = flows.filter(|ids| !ids.is_empty()) {
-            // jike: session/new `_meta["x.ai/flows"]` → 引擎挂载 flow__<id>
-            let mut m = agent_client_protocol::Meta::new();
-            m.insert(
-                "x.ai/flows".into(),
-                serde_json::Value::Array(
-                    flows.into_iter().map(serde_json::Value::String).collect(),
-                ),
-            );
+        if let Some(m) = spawn_session_meta(flows, model_id, reasoning_effort) {
             new_req = new_req.meta(Some(m));
         }
         let session_response = connection.new_session(new_req).await?;
@@ -1990,6 +2097,7 @@ impl GrokSession {
             policy,
             tool_overrides: std::sync::Arc::new(std::sync::RwLock::new(None)),
             last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            inflight_prompts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -2000,6 +2108,7 @@ impl GrokSession {
         session_id: impl Into<SessionId>,
         cwd: impl Into<String>,
         restore_code: Option<bool>,
+        reasoning_effort: Option<&str>,
     ) -> anyhow::Result<Self> {
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
@@ -2048,11 +2157,23 @@ impl GrokSession {
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
         let load_session_id = session_id.clone();
         let mut load_req = LoadSessionRequest::new(load_session_id, cwd.into());
+        let mut m = agent_client_protocol::Meta::new();
+        let mut has_meta = false;
         if let Some(rc) = restore_code {
             // 官方 `--restore-code` 等价：resume 时是否恢复代码快照
             // （conversation-only 回滚后传 false，避免覆盖工作区改动）
-            let mut m = agent_client_protocol::Meta::new();
             m.insert("x.ai/restore_code".into(), serde_json::Value::Bool(rc));
+            has_meta = true;
+        }
+        if let Some(effort) = reasoning_effort.map(str::trim).filter(|s| !s.is_empty()) {
+            // 官方 1.0.5：load_session `_meta.reasoningEffort` 覆盖摘要里的档位
+            m.insert(
+                "reasoningEffort".into(),
+                serde_json::Value::String(effort.to_ascii_lowercase()),
+            );
+            has_meta = true;
+        }
+        if has_meta {
             load_req = load_req.meta(Some(m));
         }
         connection.load_session(load_req).await?;
@@ -2067,6 +2188,7 @@ impl GrokSession {
             policy,
             tool_overrides: std::sync::Arc::new(std::sync::RwLock::new(None)),
             last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            inflight_prompts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -2081,6 +2203,7 @@ impl GrokSession {
     }
 
     /// jike: 文本 + 官方 ACP 附件块（Image / Resource / ResourceLink）。
+    /// 本轮已在跑时官方会把这次 `session/prompt` 排进队列，等当前回合结束后再开。
     pub async fn send_prompt_with_attachments(
         &self,
         text: impl Into<String>,
@@ -2089,6 +2212,67 @@ impl GrokSession {
     ) -> anyhow::Result<()> {
         let blocks = build_prompt_blocks(&text.into(), &attachments)?;
         self.send_prompt_blocks(blocks, prompt_id).await
+    }
+
+    /// 生成中立刻插话（官方 `x.ai/interject`），不进队列。
+    pub async fn interject(
+        &self,
+        text: impl Into<String>,
+        attachments: Vec<PromptAttach>,
+        prompt_id: String,
+    ) -> anyhow::Result<()> {
+        let blocks = build_prompt_blocks(&text.into(), &attachments)?;
+        self.interject_blocks(blocks, prompt_id).await
+    }
+
+    /// 从官方队列去掉一条（`x.ai/queue/remove` 通知）。
+    pub async fn remove_queued_prompt(&self, id: &str, expected_version: u64) -> anyhow::Result<()> {
+        let params = serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "id": id,
+            "expectedVersion": expected_version,
+        });
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化 queue/remove 失败: {e}"))?;
+        self.connection
+            .ext_notification(ExtNotification::new("x.ai/queue/remove", raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("取消排队失败: {e:?}"))?;
+        Ok(())
+    }
+
+    /// 当前会话状态（最新值）。
+    pub fn status(&self) -> SessionStatus {
+        *self.status_tx.borrow()
+    }
+
+    /// 官方 `x.ai/interject`：生成中把用户消息塞进当前回合。
+    async fn interject_blocks(
+        &self,
+        blocks: Vec<ContentBlock>,
+        prompt_id: String,
+    ) -> anyhow::Result<()> {
+        let text = blocks
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text(t) => Some(t.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let params = serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "text": text,
+            "interjectionId": prompt_id,
+            "content": blocks,
+        });
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化 interject 参数失败: {e}"))?;
+        self.connection
+            .ext_method(ExtRequest::new("x.ai/interject", raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("插话失败: {e:?}"))?;
+        Ok(())
     }
 
     async fn send_prompt_blocks(
@@ -2107,8 +2291,11 @@ impl GrokSession {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
 
-        // 立刻切到 Generating，方便界面显示加载态并禁用输入。
+        // 立刻切到 Generating。排队的后续 prompt 也计入 inflight，避免上一轮结束误置 Idle。
+        self.inflight_prompts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _ = status_tx.send(SessionStatus::Generating);
+        let inflight = self.inflight_prompts.clone();
 
         let pid_for_task = prompt_id.clone();
         tokio::task::spawn_local(async move {
@@ -2143,8 +2330,9 @@ impl GrokSession {
                         .await;
                 }
             }
-            // 无论成功或失败都必须回到 Idle，避免界面永久锁在 Generating。
-            let _ = status_tx.send(SessionStatus::Idle);
+            if inflight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                let _ = status_tx.send(SessionStatus::Idle);
+            }
         });
         Ok(())
     }

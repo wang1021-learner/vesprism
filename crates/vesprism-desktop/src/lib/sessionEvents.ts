@@ -22,9 +22,11 @@ import {
   upsertRecentWorkflow,
   bumpGitHeadRevision,
   setBackgroundTask,
+  type QueuedPrompt,
 } from '../store'
 import { loadSession, respondPermission, setCurrentModel, startSession } from '../bridge'
 import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './sessionOpen'
+import { applyTranscriptEvent } from './sessionTranscript'
 import { refreshSubagentTabMessages } from './openSubagentTab'
 import { markToolSession } from '../workbench/bindings'
 import { parsePermissionDescription } from '../types'
@@ -49,8 +51,47 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
   if (pushTranscriptEvent(ev, tabId)) return
 
   switch (ev.type) {
+    case 'queue_changed': {
+      const server: QueuedPrompt[] = (ev.entries ?? [])
+        .filter((e): e is { id: string; version?: number; text?: string; position?: number } =>
+          Boolean(e.id),
+        )
+        .map((e) => ({
+          id: e.id,
+          version: e.version ?? 0,
+          text: e.text ?? '',
+          position: e.position ?? 0,
+        }))
+        .sort((a, b) => a.position - b.position)
+      const running = ev.running_prompt_id || undefined
+      const serverIds = new Set(server.map((e) => e.id))
+      // 官方广播可能晚于本地乐观插入：尚未出现在 entries 里的本地项先留着
+      const extras = (getTabState(tabId)?.queuedPrompts ?? []).filter(
+        (q) => !serverIds.has(q.id) && q.id !== running,
+      )
+      const entries = extras.length
+        ? [...server, ...extras.map((q, i) => ({ ...q, position: server.length + i }))]
+        : server
+      const stillBusy = Boolean(running) || entries.length > 0
+      const patch: Parameters<typeof patchTab>[1] = { queuedPrompts: entries }
+      if (stillBusy) patch.status = 'generating'
+      if (running && ev.running_text) {
+        const msgs = getTabState(tabId)?.messages ?? []
+        const already = msgs.some((m) => m.role === 'user' && m.promptId === running)
+        if (!already) {
+          patch.messages = applyTranscriptEvent(msgs, {
+            type: 'user_text_chunk',
+            text: ev.running_text,
+            prompt_id: running,
+          })
+        }
+      }
+      patchTab(tabId, patch)
+      break
+    }
     case 'turn_ended': {
-      // 旧回合（被中断）的迟到 turn_ended：不置 idle（新回合可能正在跑）
+      // 清本轮问卷/权限。迟到的旧回合不要动下一轮 UI。
+      // 队列空时显式 idle：不能只等 status_changed，后端漏发会让取消按钮一直亮着。
       const st = getTabState(tabId)
       const msgs = st?.messages ?? []
       let stale = false
@@ -62,14 +103,35 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           }
         }
       }
-      if (!stale) {
-        patchTab(tabId, { status: 'idle', permission: null, userQuestion: null })
+      if (stale) break
+      const queued = st?.queuedPrompts ?? []
+      patchTab(tabId, {
+        status: queued.length > 0 ? 'generating' : 'idle',
+        permission: null,
+        userQuestion: null,
+      })
+      break
+    }
+    case 'error': {
+      const st = getTabState(tabId)
+      const queued = st?.queuedPrompts ?? []
+      const lastUser = [...(st?.messages ?? [])].reverse().find((m) => m.role === 'user')
+      // 排队项被取消 / 上一轮失败时，官方会 error 那条 prompt_id；不要把整会话打成 idle
+      const otherStillGoing =
+        queued.length > 0 ||
+        (Boolean(ev.prompt_id) &&
+          Boolean(lastUser?.promptId) &&
+          lastUser!.promptId !== ev.prompt_id)
+      if (otherStillGoing) {
+        patchTab(tabId, {
+          queuedPrompts: queued.filter((q) => q.id !== ev.prompt_id),
+          status: 'generating',
+        })
+      } else {
+        patchTab(tabId, { error: ev.message || 'Unknown error', status: 'idle' })
       }
       break
     }
-    case 'error':
-      patchTab(tabId, { error: ev.message || 'Unknown error', status: 'idle' })
-      break
     case 'permission_request': {
       if (getTabState(tabId)?.phase === 'loading') break
       if (ev.request_id != null && ev.options?.length) {
@@ -451,10 +513,13 @@ async function replayTabAfterCrash(tabId: string) {
     if (st.sessionId) {
       // 走标准 attach 流程：历史回放期间吞 transcript 类事件
       beginAttachRuntime(tabId)
-      await loadSession(tabId, st.sessionId, cwd)
+      await loadSession(tabId, st.sessionId, cwd, undefined, st.reasoningEffort)
       finishAttachRuntime(tabId)
     } else {
-      await startSession(tabId, cwd)
+      await startSession(tabId, cwd, {
+        modelId: st.modelId,
+        reasoningEffort: st.reasoningEffort,
+      })
       patchTab(tabId, { phase: 'ready', status: 'idle' })
     }
     // 重放该 tab 自己记住的模型 / 推理档（不是全局默认）

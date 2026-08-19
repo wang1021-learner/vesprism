@@ -25,7 +25,7 @@ import { syncWindowTitle, titleForWindow } from './lib/windowTitle'
 import {
   $activeTabId, $tabs,
   $activeChatId, $chats, $composerInput,
-  $defaultModelId, $error, $generating, $messages, $models,
+  $defaultModelId, $error, $generating, $messages, $models, $queuedPrompts,
   $permission, $userQuestion, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
@@ -43,7 +43,7 @@ const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 import {
   cancelTurn, getModelSettings, isTauriRuntime, listSessions,
-  listenSessionEvents, openTab, sendPrompt, setCurrentModel,
+  interjectPrompt, listenSessionEvents, openTab, removeQueuedPrompt, sendPrompt, setCurrentModel,
   startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
   type PromptAttach,
 } from './bridge'
@@ -213,14 +213,7 @@ async function bootstrap() {
     // 注册 tab 分片并投影为当前 tab（cwd / 模型随 createTab 写入 map）
     createTab(tabId, { cwd, modelId, reasoningEffort })
     switchTab(tabId)
-    await startSession(tabId, cwd)
-    if (modelId) {
-      try {
-        await setCurrentModel(tabId, modelId, reasoningEffort)
-      } catch {
-        /* 会话尚未就绪时可忽略，Composer 切换会再试 */
-      }
-    }
+    await startSession(tabId, cwd, { modelId, reasoningEffort })
     patchActiveTab({ phase: 'ready', status: 'idle' })
   } catch (e) {
     patchActiveTab({ error: String(e) })
@@ -348,22 +341,49 @@ function AppComposer() {
   const cwd = useStore($workspaceCwd)
   const wsOptions = useStore($workspaceOptions)
   const messages = useStore($messages)
-  const canSend = ready && !generating
+  const queued = useStore($queuedPrompts)
+  const canSend = ready
   const canSwitchWs = ready && !generating && !messages.some((m) => m.role === 'user')
 
-  const onSend = useCallback(async (text?: string, attachments?: PromptAttach[]) => {
-    // 读 atom 最新值，避免 useCallback 闭包捕获旧 input
+  const onSend = useCallback(async (
+    text?: string,
+    attachments?: PromptAttach[],
+    mode?: 'queue' | 'interject',
+  ) => {
     const msg = (text ?? $composerInput.get()).trim()
     const attach = attachments?.filter((a) => a.path.trim()) ?? []
     if (!msg && attach.length === 0) return
-    // 与 bridge / 引擎 meta.promptId 对齐；generateId 兼容无 randomUUID 的 WebView
+    const wasGenerating = $generating.get()
+    const interject = mode === 'interject' && wasGenerating
     const promptId = generateId('p_')
     const names = attach.map((a) => a.path.replace(/\\/g, '/').split('/').pop() || a.path)
     const display = attach.length
       ? `${msg}${msg ? '\n\n' : ''}[附件] ${names.join('、')}`
       : msg
+    const tabId = $activeTabId.get()
     patchActiveTab({ composerInput: '' })
-    // 乐观 UI：立刻插入用户气泡，不依赖 user_text_chunk 回显时机
+
+    if (wasGenerating && !interject) {
+      const prev = $queuedPrompts.get()
+      patchActiveTab({
+        queuedPrompts: [
+          ...prev,
+          { id: promptId, version: 0, text: display, position: prev.length },
+        ],
+        error: '',
+      })
+      try {
+        await sendPrompt(tabId, msg, promptId, attach)
+      } catch (e) {
+        patchActiveTab({
+          queuedPrompts: $queuedPrompts.get().filter((q) => q.id !== promptId),
+          composerInput: msg,
+          error: String(e),
+        })
+      }
+      return
+    }
+
     patchActiveTab({
       messages: [
         ...$messages.get(),
@@ -377,22 +397,34 @@ function AppComposer() {
     })
     try {
       patchActiveTab({ status: 'generating', error: '' })
-      await sendPrompt($activeTabId.get(), msg, promptId, attach)
+      if (interject) {
+        await interjectPrompt(tabId, msg, promptId, attach)
+      } else {
+        await sendPrompt(tabId, msg, promptId, attach)
+      }
     } catch (e) {
-      // invoke 失败：撤回乐观气泡并还原输入，避免「空列表 / 幽灵消息」
       patchActiveTab({
         messages: removeUserMessageByPromptId($messages.get(), promptId),
         composerInput: msg,
         error: String(e),
-        status: 'idle',
+        status: wasGenerating ? 'generating' : 'idle',
       })
+    }
+  }, [])
+
+  const onRemoveQueued = useCallback(async (id: string, version: number) => {
+    const prev = $queuedPrompts.get()
+    patchActiveTab({ queuedPrompts: prev.filter((q) => q.id !== id) })
+    try {
+      await removeQueuedPrompt($activeTabId.get(), id, version)
+    } catch (e) {
+      patchActiveTab({ queuedPrompts: prev, error: String(e) })
     }
   }, [])
 
   const onCancel = useCallback(async () => {
     try {
       await cancelTurn($activeTabId.get())
-      patchActiveTab({ status: 'idle' })
     } catch (e) {
       patchActiveTab({ error: String(e) })
     }
@@ -452,7 +484,12 @@ function AppComposer() {
       } catch {
         /* 沿用当前策略 */
       }
-      await restartSession($activeTabId.get(), applied)
+      const tabId = $activeTabId.get()
+      const st = getTabState(tabId)
+      await restartSession(tabId, applied, {
+        modelId: st?.modelId,
+        reasoningEffort: st?.reasoningEffort,
+      })
       patchActiveTab({ phase: 'ready', status: 'idle' })
     } catch (e) {
       patchActiveTab({ error: String(e), phase: 'ready' })
@@ -493,7 +530,9 @@ function AppComposer() {
       onSwitchReasoningEffort={onSwitchReasoningEffort}
       onSelectWorkspace={(c) => void onSelectWorkspace(c)}
       onBrowseWorkspace={() => void onBrowseWorkspace()}
-      onSend={(t, a) => void onSend(t, a)}
+      queuedPrompts={queued}
+      onSend={(t, a, mode) => void onSend(t, a, mode)}
+      onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
       onCancel={() => void onCancel()}
     />
   )

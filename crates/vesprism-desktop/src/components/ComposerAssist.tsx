@@ -4,7 +4,14 @@
  * `@` 插入当前工作区文件 / 其它 Tab 标题
  */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
-import { $activeTabId, $sessionPolicyOverride, $tabs, $workspaceCwd, pushToast } from '../store'
+import {
+  $activeTabId,
+  $sessionPolicyOverride,
+  $tabs,
+  $workspaceCwd,
+  getTabState,
+  pushToast,
+} from '../store'
 import { enableTabSandbox, listDir, restartSession } from '../bridge'
 
 type Item = { id: string; label: string; hint: string; insert: string; run?: () => void }
@@ -29,7 +36,13 @@ const SLASH: Item[] = [
       void (async () => {
         try {
           if (tabId) await enableTabSandbox(tabId)
-          if (tabId && cwd) await restartSession(tabId, cwd)
+          if (tabId && cwd) {
+            const st = getTabState(tabId)
+            await restartSession(tabId, cwd, {
+              modelId: st?.modelId,
+              reasoningEffort: st?.reasoningEffort,
+            })
+          }
           pushToast('本会话已进入隔离 worktree，写文件不会动原仓库', 'info')
         } catch (e) {
           pushToast(`无法启动沙箱：${String(e)}`, 'error')
