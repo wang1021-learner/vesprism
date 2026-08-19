@@ -2850,11 +2850,14 @@ pub async fn delete_session(session_id: &str, cwd: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("创建 agent 配置失败: {}", e))?;
     let auth_manager = Arc::new(agent_config.create_auth_manager());
 
+    // 官方 1.0.4+：search_index 可选。桌面进程不常驻索引，删会话走 None；
+    // delete 内部仍会 evict_session，与 `grok sessions delete` CLI 一致。
     xai_grok_shell::session::persistence::delete_session_history(
         session_id,
         Some(cwd),
         false,
         auth_manager,
+        None,
     )
     .await
     .map_err(|e| anyhow::anyhow!("删除会话失败: {}", e))?;
@@ -2992,8 +2995,10 @@ pub async fn rename_session(session_id: &str, cwd: &str, title: &str) -> anyhow:
         .await
         .map_err(|e| anyhow::anyhow!("重命名失败: {e}"))?;
 
-    // 刷新本地会话搜索索引（与官方 rename 扩展一致）
+    // 官方 1.0.4+：无常驻 SearchIndexManager 时跳过；下次 search_sessions
+    // start_if_enabled 会回填标题。与 delete 的 None 策略一致。
     xai_grok_shell::session::storage::search::notify_session_updated(
+        None,
         &summary.info.id.to_string(),
         &summary.info.cwd,
     );

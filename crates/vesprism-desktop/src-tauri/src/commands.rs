@@ -2034,9 +2034,20 @@ pub async fn search_sessions(
         offset: 0,
         include_content: true,
     };
-    let resp = xai_grok_shell::session::storage::search::execute_search(&root, &req)
-        .await
-        .map_err(|e| format!("搜索失败: {e}"))?;
+    // 官方 1.0.4+：execute_search 需要 IndexDecision；与 `grok sessions search` 一样
+    // 在本命令里 start_if_enabled（受 GROK_SESSION_SEARCH / [features] session_search 门控）。
+    let raw_config = xai_grok_shell::config::load_effective_config()
+        .map_err(|e| format!("加载配置失败: {e}"))?;
+    let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)
+        .map_err(|e| format!("创建 agent 配置失败: {e}"))?;
+    let search = xai_grok_shell::session::storage::search::start_if_enabled(&agent_config);
+    let resp = xai_grok_shell::session::storage::search::execute_search(
+        xai_grok_shell::session::storage::search::IndexDecision::settled(&search),
+        &root,
+        &req,
+    )
+    .await
+    .map_err(|e| format!("搜索失败: {e}"))?;
 
     let results = resp
         .results

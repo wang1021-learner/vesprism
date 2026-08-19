@@ -1,4 +1,3 @@
-import React from 'react'
 import { slugifyAgentId } from '../../types'
 
 export interface PromoteAgentModalProps {
