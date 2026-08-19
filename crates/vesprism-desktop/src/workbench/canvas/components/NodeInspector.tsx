@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Node } from '@xyflow/react'
 import type { FlowRfData } from '../nodes'
 import type { AgentListItem } from '../../types'
@@ -48,7 +49,7 @@ function VariableChips({ onInsert }: { onInsert: (v: string) => void }) {
   )
 }
 
-export function NodeInspector({
+export const NodeInspector = memo(function NodeInspector({
   selected,
   patchSelected,
   agents,
@@ -298,4 +299,13 @@ export function NodeInspector({
       )}
     </aside>
   )
-}
+}, (prev, next) => (
+  prev.selected?.id === next.selected?.id &&
+  prev.selected?.data === next.selected?.data &&
+  prev.agents === next.agents &&
+  prev.patchSelected === next.patchSelected &&
+  prev.openBoundAgent === next.openBoundAgent &&
+  prev.demoteToTrial === next.demoteToTrial &&
+  prev.openPromote === next.openPromote &&
+  prev.onRerunFromNode === next.onRerunFromNode
+))

@@ -34,16 +34,11 @@ import {
   IconTerminal2,
   IconX,
 } from '@tabler/icons-react'
-import { $activeTabId, $generating, $messages, $workflows, getTabState, patchTab, pushToast } from '../../store'
+import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
 import { sendPrompt } from '../../bridge'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
-import {
-  consumeCanvasGraph,
-  expectCanvasGraph,
-  isCanvasHeal,
-  isPendingCanvasGraph,
-  markCanvasHeal,
-} from '../generateWait'
+import { expectCanvasGraph } from '../generateWait'
+import { CanvasGraphApplier } from './CanvasGraphApplier'
 import { openChatTab } from '../../lib/openChatTab'
 import {
   deleteFlow,
@@ -59,13 +54,8 @@ import {
   purgeRerunSidecars,
 } from '../bridge'
 import {
-  AI_GRAPH_FAIL_MESSAGE,
   FLOW_RETRY_STRICT,
-  buildHealPrompt,
   NODE_LIBRARY,
-  applyFlowPatch,
-  looksLikeCanvasGraphJson,
-  parseCanvasModelOutput,
   bumpVersion,
   collectPromptsMarkdown,
   compileInlinedRhai,
@@ -73,7 +63,6 @@ import {
   createDemoDraft,
   createNodeId,
   defaultParams,
-  draftFromGraph,
   draftHasAbsolutePath,
   isValidFlowId,
   layoutDraft,
@@ -263,11 +252,10 @@ export function FlowCanvas() {
 
 function FlowCanvasInner() {
   const tabId = useStore($activeTabId)
-  const generating = useStore($generating)
-  const messages = useStore($messages)
   const workflows = useStore($workflows)
   const focusFlowId = useStore($flowFocusId)
   const { screenToFlowPosition, fitView } = useReactFlow()
+  const [rfBusy, setRfBusy] = useState(false)
 
   const [draft, setDraft] = useState<FlowDraft>(createDemoDraft)
   const [nodes, setNodes, onNodesChange] = useNodesState<RfNode>(toRfNodes(createDemoDraft()))
@@ -303,6 +291,10 @@ function FlowCanvasInner() {
   const ephemeralRunId = useRef<string | null>(null)
   const draftRef = useRef(draft)
   draftRef.current = draft
+  const nodesRef = useRef(nodes)
+  const edgesRef = useRef(edges)
+  nodesRef.current = nodes
+  edgesRef.current = edges
   const lastSaveHash = useRef('')
   const rhaiCache = useRef<{ key: string; rhai: string } | null>(null)
 
@@ -356,10 +348,16 @@ function FlowCanvasInner() {
   useEffect(() => {
     if (!tabId) return
     const st = getTabState(tabId)
-    if (st?.utilityKind === 'flow-canvas' && st.chatTitle !== '流程画布') {
-      patchTab(tabId, { chatTitle: '流程画布' })
+    if (st?.utilityKind === 'flow-canvas') {
+      const current = (st.chatTitle || '').trim()
+      if (!current || current === '流程画布') {
+        const flowTitle = draft.name.trim() || '流程画布'
+        if (current !== flowTitle) {
+          patchTab(tabId, { chatTitle: flowTitle })
+        }
+      }
     }
-  }, [tabId])
+  }, [tabId, draft.name, draft.id])
 
   const startRunRef = useRef<(nodeId?: string) => Promise<void>>(async () => {})
   const historyRef = useRef<GraphSnap[]>([])
@@ -432,6 +430,12 @@ function FlowCanvasInner() {
     [pushHistory, setEdges, setNodes],
   )
 
+  const canvasCtx = useMemo(
+    () => ({ onRunFromHere, onDuplicate, onDeleteNode }),
+    [onRunFromHere, onDuplicate, onDeleteNode],
+  )
+  const dockNodeIds = useMemo(() => draft.nodes.map((n) => n.id), [draft.nodes])
+
   const onDuplicateSelected = useCallback(() => {
     const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
     for (const id of ids) onDuplicate(id)
@@ -439,14 +443,14 @@ function FlowCanvasInner() {
 
   const onAutoLayout = useCallback(() => {
     setDraft((curDraft) => {
-      const current = fromRf(nodes, edges, curDraft)
+      const current = fromRf(nodesRef.current, edgesRef.current, curDraft)
       const laid = layoutDraft(current)
       setNodes(toRfNodes(laid))
       setEdges(toRfEdges(laid))
       pushToast('已自动整理拓扑布局', 'success')
       return laid
     })
-  }, [edges, nodes, setEdges, setNodes])
+  }, [setEdges, setNodes])
 
   const applyDraft = useCallback(
     (next: FlowDraft, markDirty = true) => {
@@ -684,6 +688,30 @@ function FlowCanvasInner() {
 
   const commitGraph = useCallback((ns: RfNode[], es: RfEdge[]) => {
     setDraft((d) => fromRf(ns, es, d))
+  }, [])
+
+  const onNodeDragStart = useCallback(() => setRfBusy(true), [])
+  const onNodeDragStop = useCallback(() => {
+    setRfBusy(false)
+    commitGraph(nodesRef.current, edgesRef.current)
+  }, [commitGraph])
+  const onPaneMoveStart = useCallback(() => setRfBusy(true), [])
+  const onPaneMoveEnd = useCallback(() => setRfBusy(false), [])
+
+  const onRfSelectionChange = useCallback(({ nodes: ns }: { nodes: RfNode[] }) => {
+    const ids = ns.map((n) => n.id)
+    setSelectedIds((prev) =>
+      prev.length === ids.length && prev.every((id, i) => id === ids[i]) ? prev : ids,
+    )
+    setSelectedId((cur) => {
+      const next = ids[0] ?? null
+      return cur === next ? cur : next
+    })
+  }, [])
+
+  const onRfDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
   }, [])
 
   const addNode = useCallback(
@@ -1102,72 +1130,8 @@ function FlowCanvasInner() {
     void openChatTab({ title: 'Agent 编制', utilityKind: 'agents' })
   }
 
-  useEffect(() => {
-    const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.text)
-    const inflight = generating ? last?.promptId : undefined
-    for (const m of messages) {
-      if (m.role !== 'assistant' || !m.text || !m.promptId) continue
-      if (!isPendingCanvasGraph(m.promptId)) continue
-      if (inflight && m.promptId === inflight) continue
-      consumeCanvasGraph(m.promptId)
-      const parsed = parseCanvasModelOutput(m.text)
-      const healed = isCanvasHeal(m.promptId)
-      const noteOk = (kind: 'graph' | 'patch') => {
-        setAiError('')
-        pushToast(
-          healed ? '已自动修正拓扑' : kind === 'patch' ? '已按补丁更新画布' : '已更新画布拓扑',
-          'success',
-        )
-      }
-      const healOrToast = (err: string) => {
-        if (healed) {
-          setAiError(err)
-          pushToast(err, 'error')
-          return
-        }
-        void sendSessionPrompt({ hidden: true, wireText: buildHealPrompt(err) }).then((hid) => {
-          if (hid) {
-            markCanvasHeal(hid)
-            expectCanvasGraph(hid)
-            return
-          }
-          setAiError(err)
-          pushToast(err, 'error')
-        })
-      }
-      if (parsed.ok && parsed.kind === 'graph') {
-        const next = draftFromGraph(parsed.graph, {
-          id: draft.id,
-          name: draft.name,
-          description: draft.description,
-          version: draft.version,
-        })
-        applyDraft(next, true)
-        noteOk('graph')
-        continue
-      }
-      if (parsed.ok && parsed.kind === 'patch') {
-        const next = applyFlowPatch(draft, parsed.patch)
-        if (next.ok) {
-          applyDraft(next.draft, true)
-          const glow: Record<string, 'add' | 'update'> = {}
-          for (const n of parsed.patch.add_nodes ?? []) glow[n.id] = 'add'
-          for (const n of parsed.patch.update_nodes ?? []) glow[n.id] = 'update'
-          if (Object.keys(glow).length) flashDiff(glow)
-          noteOk('patch')
-        } else {
-          healOrToast(next.error)
-        }
-        continue
-      }
-      if (looksLikeCanvasGraphJson(m.text)) {
-        healOrToast(parsed.ok ? AI_GRAPH_FAIL_MESSAGE : parsed.error || AI_GRAPH_FAIL_MESSAGE)
-      }
-    }
-  }, [messages, generating, applyDraft, flashDiff, draft])
-
   const onRetryStrict = async () => {
-    if (!tabId || generating) return
+    if (!tabId || $generating.get()) return
     setAiError('')
     const promptId = await sendSessionPrompt({
       text: '强制纯 JSON 重试',
@@ -1300,6 +1264,56 @@ function FlowCanvasInner() {
   useStore($flowStaleEpoch)
   const stale = staleForFlow(draft.id)
 
+  const doExportRef = useRef(doExport)
+  doExportRef.current = doExport
+  const doImportRef = useRef(doImport)
+  doImportRef.current = doImport
+  const doDeleteRef = useRef(doDelete)
+  doDeleteRef.current = doDelete
+  const onMountToSessionRef = useRef(onMountToSession)
+  onMountToSessionRef.current = onMountToSession
+  const onRetryStrictRef = useRef(onRetryStrict)
+  onRetryStrictRef.current = onRetryStrict
+  const onRerunFromMockRef = useRef(onRerunFromMock)
+  onRerunFromMockRef.current = onRerunFromMock
+  const openPublishRef = useRef(openPublish)
+  openPublishRef.current = openPublish
+  const doCopyRef = useRef(doCopy)
+  doCopyRef.current = doCopy
+
+  const onToolbarExport = useCallback((fmt: 'zip' | 'yaml' | 'json' | 'rhai') => {
+    void doExportRef.current(fmt)
+  }, [])
+  const onToolbarImport = useCallback(() => {
+    void doImportRef.current()
+  }, [])
+  const onToolbarDelete = useCallback(() => {
+    void doDeleteRef.current()
+  }, [])
+  const onToolbarRun = useCallback(() => {
+    void startRunRef.current()
+  }, [])
+  const onToolbarMount = useCallback(() => {
+    void onMountToSessionRef.current()
+  }, [])
+  const onToolbarPublish = useCallback(() => {
+    openPublishRef.current()
+  }, [])
+  const onToolbarCopy = useCallback(() => {
+    doCopyRef.current()
+  }, [])
+  const onDockRun = onToolbarRun
+  const onDockRetry = useCallback(() => {
+    void onRetryStrictRef.current()
+  }, [])
+  const onDockRerunMock = useCallback((nodeId: string, mockOutput: unknown) => {
+    void onRerunFromMockRef.current(nodeId, mockOutput)
+  }, [])
+  const onDockDetails = useCallback(() => {
+    void openChatTab({ title: '试跑详情', utilityKind: 'flow-run' })
+  }, [])
+  const onDockClose = useCallback(() => setDockOpen(false), [])
+
   return (
     <div className="flow-canvas" role="region" aria-label="流程画布">
       {stale ? (
@@ -1313,28 +1327,55 @@ function FlowCanvasInner() {
         dockOpen={dockOpen}
         setDockOpen={setDockOpen}
         mounted={mounted}
-        onMountToSession={onMountToSession}
-        onOpenPublish={openPublish}
+        onMountToSession={onToolbarMount}
+        onOpenPublish={onToolbarPublish}
         onAutoLayout={onAutoLayout}
-        onExport={(fmt) => void doExport(fmt)}
-        onImport={() => void doImport()}
-        onCopy={doCopy}
-        onDelete={() => void doDelete()}
-        onRun={() => void startRun()}
+        onExport={onToolbarExport}
+        onImport={onToolbarImport}
+        onCopy={onToolbarCopy}
+        onDelete={onToolbarDelete}
+        onRun={onToolbarRun}
       />
 
       <div className="flow-body">
         <aside className="flow-palette" aria-label="节点库">
           <div className="flow-palette-header">
             <span className="flow-palette-title">节点库</span>
-            <span className="flow-palette-sub">拖拽添加节点</span>
-            <input
-              className="flow-palette-search"
-              placeholder="搜索节点 / 员工"
-              value={paletteQuery}
-              onChange={(e) => setPaletteQuery(e.target.value)}
-              aria-label="搜索节点库"
-            />
+            <div className="flow-palette-search-wrap">
+              <svg
+                className="flow-palette-search-icon"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                className="flow-palette-search"
+                placeholder="搜索..."
+                value={paletteQuery}
+                onChange={(e) => setPaletteQuery(e.target.value)}
+                aria-label="搜索节点库"
+              />
+              {paletteQuery && (
+                <button
+                  type="button"
+                  className="flow-palette-search-clear"
+                  onClick={() => setPaletteQuery('')}
+                  title="清空搜索"
+                  aria-label="清空搜索"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
           <div className="flow-palette-list">
             {filteredAgents.length > 0 && (
@@ -1402,35 +1443,44 @@ function FlowCanvasInner() {
         </aside>
 
         <div className="flow-stage">
+          <CanvasGraphApplier
+            draft={draft}
+            applyDraft={applyDraft}
+            flashDiff={flashDiff}
+            setAiError={setAiError}
+          />
           <div className="flow-stage-canvas">
-            <FlowCanvasContext.Provider value={{ onRunFromHere, onDuplicate, onDeleteNode }}>
+            <FlowCanvasContext.Provider value={canvasCtx}>
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
-                onNodeDragStop={() => commitGraph(nodes, edges)}
-                onSelectionChange={({ nodes: ns }) => {
-                  const ids = ns.map((n) => n.id)
-                  setSelectedIds(ids)
-                  setSelectedId(ids[0] ?? null)
-                }}
+                onNodeDragStart={onNodeDragStart}
+                onNodeDragStop={onNodeDragStop}
+                onMoveStart={onPaneMoveStart}
+                onMoveEnd={onPaneMoveEnd}
+                onSelectionChange={onRfSelectionChange}
                 onDrop={onDrop}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = 'move'
-                }}
+                onDragOver={onRfDragOver}
                 nodeTypes={flowNodeTypes}
+                noWheelClassName="nowheel"
                 fitView
                 onlyRenderVisibleElements
-                selectionOnDrag
+                panOnDrag
+                zoomOnScroll
+                zoomOnPinch
+                selectionOnDrag={false}
+                multiSelectionKeyCode="Shift"
+                selectionKeyCode="Shift"
                 deleteKeyCode={null}
                 proOptions={{ hideAttribution: true }}
                 minZoom={0.08}
+                elevateNodesOnSelect={false}
               >
                 <Background gap={20} size={1.2} color="var(--border-solid, #e5e7eb)" />
-                {nodes.length <= 80 ? <MiniMap pannable zoomable /> : null}
+                {!rfBusy && nodes.length <= 80 ? <MiniMap pannable zoomable /> : null}
                 <Controls showFitView={false} showInteractive={false} />
               </ReactFlow>
             </FlowCanvasContext.Provider>
@@ -1540,15 +1590,15 @@ function FlowCanvasInner() {
           dockOpen={dockOpen}
           flowId={draft.id}
           flowName={draft.name}
-          nodeIds={draft.nodes.map((n) => n.id)}
+          nodeIds={dockNodeIds}
           runSteps={runSteps}
           replayOpen={replayOpen}
           setReplayOpen={setReplayOpen}
-          onToggleDock={() => setDockOpen(false)}
-          onRun={() => void startRun()}
-          onOpenDetails={() => void openChatTab({ title: '试跑详情', utilityKind: 'flow-run' })}
-          onRetryStrict={onRetryStrict}
-          onRerunFromMock={onRerunFromMock}
+          onToggleDock={onDockClose}
+          onRun={onDockRun}
+          onOpenDetails={onDockDetails}
+          onRetryStrict={onDockRetry}
+          onRerunFromMock={onDockRerunMock}
           error={aiError}
         />
       </div>

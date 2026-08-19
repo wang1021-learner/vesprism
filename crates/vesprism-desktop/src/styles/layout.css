@@ -77,36 +77,75 @@
 }
 
 .app-error-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 8px 12px 0;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: 12.5px;
+  gap: 10px;
+  max-width: min(840px, calc(100% - 32px));
+  width: calc(100% - 32px);
+  margin: 0;
+  box-sizing: border-box;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-elevated, #ffffff) 88%, var(--danger-soft, #f8ecec));
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--danger-border, color-mix(in srgb, var(--danger, #ef4444) 24%, transparent));
+  color: var(--danger, #dc2626);
+  font-size: 13px;
   font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  animation: appErrorFloatIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: auto;
+}
+
+@keyframes appErrorFloatIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.app-error-icon {
+  flex-shrink: 0;
+  color: var(--danger, #ef4444);
 }
 
 .app-error-text {
   flex: 1;
   min-width: 0;
-  line-height: 1.4;
+  line-height: 1.45;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .app-error-dismiss {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
   color: inherit;
-  font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 0;
+  border-radius: 6px;
+  transition: background-color 0.12s ease, opacity 0.12s ease;
+  opacity: 0.8;
 }
 
 .app-error-dismiss:hover {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  opacity: 1;
+  background: color-mix(in srgb, var(--danger, #ef4444) 15%, transparent);
 }

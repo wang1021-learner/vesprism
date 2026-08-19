@@ -23,14 +23,16 @@ import {
   getTabState,
   tabWorkspaceCwd,
 } from '../../store'
-import { cancelTurn, removeQueuedPrompt, setCurrentModel, type PromptAttach } from '../../bridge'
+import { removeQueuedPrompt, setCurrentModel, type PromptAttach } from '../../bridge'
+import { cancelActiveTurn } from '../../lib/cancelActiveTurn'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
+import { generateId } from '../../lib/generateId'
 import {
   buildDialoguePrompt,
   isCanvasContractPrimed,
   markCanvasContractPrimed,
 } from '../flow/prompt'
-import { expectCanvasGraph } from '../generateWait'
+import { consumeCanvasGraph, expectCanvasGraph } from '../generateWait'
 
 export function CanvasComposer({
   flowName,
@@ -65,7 +67,9 @@ export function CanvasComposer({
       const userLine = msg || (names.length ? `[附件] ${names.join('、')}` : '')
       const sessionId = tabId ? getTabState(tabId)?.sessionId : ''
       const primed = isCanvasContractPrimed(sessionId)
-      const promptId = await sendSessionPrompt({
+      const promptId = generateId('p_')
+      expectCanvasGraph(promptId)
+      const sent = await sendSessionPrompt({
         text: msg,
         wireText: buildDialoguePrompt(
           userLine,
@@ -74,10 +78,12 @@ export function CanvasComposer({
         ),
         attachments,
         mode,
+        promptId,
       })
-      if (promptId) {
-        expectCanvasGraph(promptId)
+      if (sent) {
         markCanvasContractPrimed(sessionId)
+      } else {
+        consumeCanvasGraph(promptId)
       }
     },
     [flowName, flowId, tabId, nodeIds],
@@ -94,11 +100,7 @@ export function CanvasComposer({
   }, [])
 
   const onCancel = useCallback(async () => {
-    try {
-      await cancelTurn($activeTabId.get())
-    } catch (e) {
-      patchActiveTab({ error: String(e) })
-    }
+    await cancelActiveTurn()
   }, [])
 
   const onSwitchModel = useCallback((id: string) => {

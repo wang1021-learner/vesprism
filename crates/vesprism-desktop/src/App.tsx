@@ -42,12 +42,13 @@ const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 import {
-  cancelTurn, getModelSettings, isTauriRuntime, listSessions,
+  getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, openTab, removeQueuedPrompt, setCurrentModel,
   startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
   type PromptAttach,
 } from './bridge'
 import { sendSessionPrompt } from './lib/sendSessionPrompt'
+import { cancelActiveTurn } from './lib/cancelActiveTurn'
 import { handleSessionEvent } from './lib/sessionEvents'
 import { policyFromDto } from './lib/executionPolicy'
 
@@ -240,13 +241,31 @@ function AppError() {
   if (!err) return null
   return (
     <div className="app-error-bar" role="alert">
+      <svg
+        className="app-error-icon"
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
       <span className="app-error-text">{err}</span>
       <button
         type="button"
         className="app-error-dismiss"
+        title="关闭提示"
+        aria-label="关闭提示"
         onClick={() => patchActiveTab({ error: '' })}
       >
-        关闭
+        ✕
       </button>
     </div>
   )
@@ -362,12 +381,8 @@ function AppComposer() {
     }
   }, [])
 
-  const onCancel = useCallback(async () => {
-    try {
-      await cancelTurn($activeTabId.get())
-    } catch (e) {
-      patchActiveTab({ error: String(e) })
-    }
+  const onCancel = useCallback(() => {
+    void cancelActiveTurn()
   }, [])
 
   const onSwitchModel = useCallback((id: string) => {

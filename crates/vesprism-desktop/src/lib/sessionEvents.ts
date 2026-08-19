@@ -41,6 +41,7 @@ import {
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
 import { keepTail } from './terminalCards'
+import { cleanSessionTitle } from './sessionTitle'
 
 export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) {
   // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
@@ -316,11 +317,15 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       if (getTabState(tabId)?.phase === 'loading') break
       if (ev.status) patchTab(tabId, { status: ev.status as SessionStatus })
       break
-    case 'title_changed':
-      // 专用面板（流程画布等）标题固定，不被首条 prompt 改成系统提示词。
-      if (getTabState(tabId)?.utilityKind) break
-      if (ev.title) patchTab(tabId, { chatTitle: ev.title })
+    case 'title_changed': {
+      if (!ev.title) break
+      const kind = getTabState(tabId)?.utilityKind
+      // 技能/工具等面板标题固定；画布和编制跟侧栏会话记录走同一套清洗。
+      if (kind && kind !== 'flow-canvas' && kind !== 'agents') break
+      const title = cleanSessionTitle(ev.title, '')
+      if (title) patchTab(tabId, { chatTitle: title })
       break
+    }
     // 终态错误（后端已映射事件，前端此前无 UI）：置 error banner + toast
     case 'context_overflow':
     case 'rate_limit_exceeded':

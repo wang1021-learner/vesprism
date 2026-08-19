@@ -38,6 +38,21 @@ describe('turn_ended status', () => {
     expect(getTabState('tab-1')?.status).toBe('generating')
   })
 
+  it('画布 Tab 的 title_changed 洗成用户原话，与侧栏一致', () => {
+    resetTabsForTests()
+    createTab('tab-flow', {
+      utilityKind: 'flow-canvas',
+      chatTitle: '流程画布',
+    })
+    handleSessionEvent({
+      tab_id: 'tab-flow',
+      type: 'title_changed',
+      title:
+        '<user_query>\n<instructions>\nYou are the Vesprism flow-canvas orchestrator\n</instructions>\n<user_query>\n你根据他的agent配置一个agent\n</user_query>\n</user_query>',
+    })
+    expect(getTabState('tab-flow')?.chatTitle).toBe('你根据他的agent配置一个agent')
+  })
+
   it('迟到的旧回合：不改下一轮状态和权限条', () => {
     patchTab('tab-1', {
       status: 'generating',

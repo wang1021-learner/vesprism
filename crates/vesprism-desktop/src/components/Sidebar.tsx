@@ -68,6 +68,7 @@ import {
 } from '../lib/sessionOpen'
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
+import { openWorkbenchHistory } from '../lib/openWorkbenchSession'
 import { reconcileRunningSubagents } from '../lib/reconcileRunningSubagents'
 import {
   getWorkbenchBinding,
@@ -76,27 +77,24 @@ import {
   listWorkbenchSessions,
   type WorkbenchBinding,
 } from '../workbench/bindings'
-import { requestAgentsFocus } from '../workbench/agents/focus'
-import { requestFlowFocus } from '../workbench/flow/focus'
+
 
 
 /** FTS 搜索结果行（可带 snippet） */
 type SearchHit = ChatSummary & { snippet?: string }
 
-/** 有产物绑定的干活会话：直接跳对应工作台面板（画布/编制）并定位，不经过聊天区。 */
-async function openBoundWorkbenchWithBinding(binding: WorkbenchBinding): Promise<void> {
-  const artifacts = [...binding.artifacts].reverse()
-  const flow = artifacts.find((item) => item.kind === 'flow')
-  if (flow) {
-    requestFlowFocus(flow.id)
-    await openChatTab({ title: '流程画布', utilityKind: 'flow-canvas' })
-    return
-  }
-  const agent = artifacts.find((item) => item.kind === 'agent')
-  if (agent) {
-    requestAgentsFocus(agent.id)
-    await openChatTab({ title: 'Agent 编制', utilityKind: 'agents' })
-  }
+/** 工作台历史：定位产物，并把该会话聊天灌进画布/编制 Tab。 */
+async function openBoundWorkbenchWithBinding(
+  binding: WorkbenchBinding,
+  sessionTitle?: string,
+  sessionCwd?: string,
+): Promise<void> {
+  await openWorkbenchHistory({
+    sessionId: binding.session_id,
+    binding,
+    title: sessionTitle,
+    cwd: sessionCwd,
+  })
 }
 
 /** 磁盘投影 → ChatMessage（工具字段与实时 ToolCallInfo 对齐，不再靠标题猜 kind） */
@@ -675,12 +673,25 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       bound = null
     }
     if (bound && bound.artifacts.length > 0) {
-      await openBoundWorkbenchWithBinding(bound)
+      const listed =
+        workbenchChats.find((c) => c.id === id) || $chats.get().find((c) => c.id === id)
+      await openBoundWorkbenchWithBinding(
+        bound,
+        listed?.title?.trim() || '',
+        listed?.cwd || sessionCwd,
+      )
       return
     }
     try {
       if (await isToolSession(id)) {
-        await openChatTab({ title: '流程画布', utilityKind: 'flow-canvas' })
+        const listed =
+          workbenchChats.find((c) => c.id === id) || $chats.get().find((c) => c.id === id)
+        await openWorkbenchHistory({
+          sessionId: id,
+          binding: { session_id: id, artifacts: [], updated_at_ms: 0 },
+          title: listed?.title?.trim() || '流程画布',
+          cwd: listed?.cwd || sessionCwd,
+        })
         return
       }
     } catch {
@@ -816,7 +827,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         patchTab(myTab, { phase: 'ready', status: 'idle', error: err })
       }
     }
-  }, [cwd])
+  }, [cwd, workbenchChats])
 
   const handlePickSearchResult = (chat: SearchHit) => {
     closeSearch()

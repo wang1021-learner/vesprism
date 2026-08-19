@@ -32,6 +32,11 @@ describe('visibleCanvasMessages', () => {
         '<current_graph>\n[Canvas Context: Flow "鉴权流" (id: auth-flow)]\n</current_graph>\n<user_query>\n把第三个节点改成只读\n</user_query>',
       ),
     ).toBe('把第三个节点改成只读')
+    expect(
+      unwrapCanvasUserText(
+        '<user_query>\n<instructions>\nYou are the Vesprism flow-canvas orchestrator\n</instructions>\n<user_query>\n配置催收 Agent\n</user_query>\n</user_query>',
+      ),
+    ).toBe('配置催收 Agent')
   })
 
   it('图谱 JSON 回复收成一句', () => {
@@ -41,6 +46,33 @@ describe('visibleCanvasMessages', () => {
     ])
     expect(rows).toHaveLength(2)
     expect(rows[1].text).toBe('已根据对话更新画布。')
+  })
+
+  it('思考和工具行留在对话里', () => {
+    const rows = visibleCanvasMessages([
+      msg('user', '画一个外呼流程'),
+      {
+        id: 't1',
+        role: 'thought',
+        text: '用户要一个带分支的外呼流程，我先拆身份确认和挽留。',
+        thoughtTiming: { start: 1000, end: 4000 },
+      },
+      {
+        id: 'tool1',
+        role: 'tool',
+        text: '',
+        toolCall: {
+          toolCallId: 'c1',
+          kind: 'read',
+          status: 'completed',
+          title: 'read_file',
+          detail: 'agent.vue',
+          preview: '',
+        },
+      },
+      msg('assistant', '已根据对话更新画布。'),
+    ])
+    expect(rows.map((m) => m.role)).toEqual(['user', 'thought', 'tool', 'assistant'])
   })
 
   it('JSON 前的一两句设计说明留在工作栏', () => {

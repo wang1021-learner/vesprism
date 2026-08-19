@@ -31,10 +31,17 @@ export function noteGenerateProgress(
 
 /** 画布发出去的 prompt：只有这些回复才允许改拓扑，避免切 Tab 回来把历史图盖上草稿。 */
 const pendingCanvasGraphs = new Set<string>()
+let lastExpectedCanvasGraph = ''
 
 export function expectCanvasGraph(promptId: string): void {
   const id = promptId.trim()
-  if (id) pendingCanvasGraphs.add(id)
+  if (!id) return
+  pendingCanvasGraphs.add(id)
+  lastExpectedCanvasGraph = id
+}
+
+export function latestExpectedCanvasGraph(): string {
+  return lastExpectedCanvasGraph
 }
 
 export function consumeCanvasGraph(promptId: string): boolean {
@@ -43,6 +50,21 @@ export function consumeCanvasGraph(promptId: string): boolean {
 
 export function isPendingCanvasGraph(promptId: string | undefined): boolean {
   return Boolean(promptId && pendingCanvasGraphs.has(promptId))
+}
+
+/** 自愈等没有用户气泡时，正文分片挂到当前待收图的 prompt。 */
+export function inheritCanvasPromptId(fallback?: string): string | undefined {
+  if (fallback && pendingCanvasGraphs.has(fallback)) return fallback
+  if (lastExpectedCanvasGraph && pendingCanvasGraphs.has(lastExpectedCanvasGraph)) {
+    return lastExpectedCanvasGraph
+  }
+  return fallback
+}
+
+export function resetCanvasGraphWaitForTests(): void {
+  pendingCanvasGraphs.clear()
+  lastExpectedCanvasGraph = ''
+  canvasHealPrompts.clear()
 }
 
 /** 某次失败已经静默自愈过；该自愈回合的 promptId 记在这里。 */

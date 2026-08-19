@@ -45,6 +45,15 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       if (cwd && looksAbsolutePath(cwd) && (!st?.cwd || !looksAbsolutePath(st.cwd))) {
         patchTab(existing, { cwd })
       }
+      if (
+        title &&
+        title !== '流程画布' &&
+        title !== 'Agent 编制' &&
+        (utilityKind === 'flow-canvas' || utilityKind === 'agents') &&
+        st?.chatTitle !== title
+      ) {
+        patchTab(existing, { chatTitle: title })
+      }
       switchTab(existing)
       return existing
     }

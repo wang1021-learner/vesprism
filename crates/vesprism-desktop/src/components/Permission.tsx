@@ -347,10 +347,17 @@ export function InlinePermissionBar({ permission }: { permission: PermissionRequ
 }
 
 /** 兜底浮层：内嵌条不在视口内时，在输入框上方提示并给同一组操作 */
-export function PendingApprovalFallback({ permission }: { permission: PermissionRequest | null }) {
+export function PendingApprovalFallback({
+  permission,
+  force,
+}: {
+  permission: PermissionRequest | null
+  /** 画布工作栏没有工具行，必须自己弹出审批条 */
+  force?: boolean
+}) {
   const inlineVisible = useStore($permissionInlineVisible)
   if (!permission) return null
-  if (inlineVisible) return null
+  if (!force && inlineVisible) return null
 
   const kindLabel =
     permission.kindLabel && permission.kindLabel !== '需要审批'

@@ -9,6 +9,7 @@ import type {
   ToolDiffData,
 } from '../types'
 import { generateId } from './generateId'
+import { inheritCanvasPromptId } from '../workbench/generateWait'
 
 /** 与后端 FrontendEvent / ToolCallInfo 对齐 */
 export type TranscriptEvent = {
@@ -113,12 +114,22 @@ export function applyTranscriptEvent(
     case 'agent_text_chunk': {
       const text = ev.text || ''
       if (!text) return messages
-      return appendRole(messages, 'assistant', text)
+      return appendRole(
+        messages,
+        'assistant',
+        text,
+        ev.prompt_id || inheritCanvasPromptId(lastUserPromptId(messages)),
+      )
     }
     case 'agent_thought_chunk': {
       const text = ev.text || ''
       if (!text) return messages
-      return appendRole(messages, 'thought', text)
+      return appendRole(
+        messages,
+        'thought',
+        text,
+        ev.prompt_id || inheritCanvasPromptId(lastUserPromptId(messages)),
+      )
     }
     case 'user_text_chunk': {
       const text = ev.text || ''
@@ -365,10 +376,32 @@ function mergeAdjacentTextRoles(messages: ChatMessage[]): ChatMessage[] {
   return out
 }
 
+export function lastUserPromptId(messages: ChatMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'user' && m.promptId) return m.promptId
+  }
+  return undefined
+}
+
+/** 助手气泡若没带 promptId，用它前面最近一条用户消息的。画布改图靠这个对齐 expectCanvasGraph。 */
+export function resolveAssistantPromptId(
+  messages: ChatMessage[],
+  index: number,
+): string | undefined {
+  const m = messages[index]
+  if (m?.promptId) return m.promptId
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i].role === 'user' && messages[i].promptId) return messages[i].promptId
+  }
+  return undefined
+}
+
 function appendRole(
   messages: ChatMessage[],
   role: 'assistant' | 'thought',
   text: string,
+  promptId?: string,
 ): ChatMessage[] {
   // 纯空白思考不建行
   if (role === 'thought' && !text.trim()) return messages
@@ -385,6 +418,7 @@ function appendRole(
         ...last,
         text: last.text + text,
         isStreaming: true,
+        ...(promptId && !last.promptId ? { promptId } : {}),
         ...(role === 'thought' && last.thoughtTiming
           ? { thoughtTiming: { ...last.thoughtTiming, end: undefined } }
           : role === 'thought'
@@ -404,6 +438,7 @@ function appendRole(
         ...last2,
         text: last2.text + text,
         isStreaming: true,
+        ...(promptId && !last2.promptId ? { promptId } : {}),
         ...(role === 'thought' && last2.thoughtTiming
           ? { thoughtTiming: { ...last2.thoughtTiming, end: undefined } }
           : role === 'thought'
@@ -420,6 +455,7 @@ function appendRole(
       role,
       text,
       isStreaming: true,
+      ...(promptId ? { promptId } : {}),
       ...(role === 'thought' ? { thoughtTiming: { start: now } } : {}),
     },
   ]

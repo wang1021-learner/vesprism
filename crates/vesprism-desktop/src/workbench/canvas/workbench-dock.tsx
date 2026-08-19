@@ -2,11 +2,12 @@
  * 画布工作栏：同一个会话区里收纳运行状态、对话记录和发送动作。
  */
 import { useStore } from '@nanostores/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { $messages } from '../../store'
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { $messages, $permission } from '../../store'
 import type { ChatMessage } from '../../types'
 import { visibleCanvasMessages } from './visibleMessages'
 import { CanvasComposer } from './CanvasComposer'
+import { PendingApprovalFallback } from '../../components/Permission'
 
 type FlowRunStepLike = {
   nodeId: string
@@ -19,13 +20,66 @@ function isRunMsg(text: string): boolean {
   return /^\//.test(text.trim())
 }
 
-function MessageRow({ message }: { message: ChatMessage }) {
+function formatThoughtDuration(timing?: { start: number; end?: number }): string | null {
+  if (!timing?.start || !timing.end || timing.end < timing.start) return null
+  const sec = (timing.end - timing.start) / 1000
+  if (sec < 0.05) return null
+  if (sec < 10) return `${sec.toFixed(1).replace(/\.0$/, '')}s`
+  return `${Math.round(sec)}s`
+}
+
+const ThoughtRow = memo(function ThoughtRow({ message }: { message: ChatMessage }) {
+  const streaming = Boolean(message.isStreaming)
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
+  const open = userOpen ?? streaming
+  const body = (message.text || '').trim()
+  const duration = formatThoughtDuration(streaming ? undefined : message.thoughtTiming)
+  const title = streaming
+    ? '思考中…'
+    : duration
+      ? `思考了 ${duration}`
+      : '思考'
+  return (
+    <div className={`wb-msg is-thought${streaming ? ' is-live' : ''}${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="wb-thought-toggle"
+        onClick={() => body && setUserOpen(!open)}
+        aria-expanded={open}
+        disabled={!body}
+      >
+        <span className={`wb-thought-label${streaming ? ' is-shimmer' : ''}`}>{title}</span>
+        {body ? <span className={`wb-thought-caret${open ? ' is-open' : ''}`}>›</span> : null}
+      </button>
+      {open && body ? <pre className="wb-thought-body">{body}</pre> : null}
+    </div>
+  )
+})
+
+const MessageRow = memo(function MessageRow({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     const isRun = isRunMsg(message.text)
     return (
       <div className={`wb-msg is-user${isRun ? ' is-run' : ''}`}>
         <span className="wb-msg-label">{isRun ? '试跑' : '你'}</span>
         <span className="wb-msg-text">{isRun ? message.text.trim().split('\n')[0] : message.text}</span>
+      </div>
+    )
+  }
+  if (message.role === 'thought') {
+    return <ThoughtRow message={message} />
+  }
+  if (message.role === 'tool') {
+    const tool = message.toolCall
+    const name = tool?.title || message.tool || '工具'
+    const status = tool?.status || ''
+    return (
+      <div className={`wb-msg is-tool is-${status || 'done'}`}>
+        <span className="wb-msg-label">工具</span>
+        <span className="wb-msg-text">
+          {name}
+          {status === 'in_progress' || status === 'pending' ? ' · 进行中' : ''}
+        </span>
       </div>
     )
   }
@@ -38,6 +92,78 @@ function MessageRow({ message }: { message: ChatMessage }) {
     )
   }
   return null
+})
+
+function stopWheel(e: React.WheelEvent) {
+  e.stopPropagation()
+}
+
+function DockChatList({
+  messages,
+  chatOpen,
+  setChatOpen,
+}: {
+  messages?: ChatMessage[]
+  chatOpen: boolean
+  setChatOpen: (v: boolean | ((c: boolean) => boolean)) => void
+}) {
+  const liveMessages = useStore($messages)
+  const resolvedMessages = messages ?? liveMessages
+  const chatMessages = useMemo(() => visibleCanvasMessages(resolvedMessages), [resolvedMessages])
+  const lastMsg = chatMessages[chatMessages.length - 1]
+  const lastMsgContent = lastMsg?.text ?? ''
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const isStickToBottomRef = useRef(true)
+
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    isStickToBottomRef.current = distanceToBottom < 48
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!chatOpen) return
+    const el = scrollRef.current
+    if (!el) return
+    if (isStickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [chatMessages.length, lastMsgContent, chatOpen])
+
+  return (
+    <section className={`wb-section wb-chat${chatOpen ? '' : ' is-collapsed'}`} aria-label="普通聊天">
+      <button
+        type="button"
+        className="wb-chat-head"
+        onClick={() => setChatOpen((v) => !v)}
+        aria-expanded={chatOpen}
+      >
+        <span className="wb-run-head-left">
+          <span className="wb-head-chevron">{chatOpen ? '▾' : '▸'}</span>
+          <span className="wb-head-title">对话协同</span>
+        </span>
+      </button>
+      {chatOpen && (
+        <div
+          className="wb-convo-list scrollbar-dt nowheel"
+          ref={scrollRef}
+          onScroll={handleScroll}
+          onWheel={stopWheel}
+          role="log"
+          aria-label="对话记录"
+        >
+          {chatMessages.length === 0 ? (
+            <p className="wb-empty">和主聊天一样：+ 附文件/文件夹，@ 引用路径。读完项目后会把流程画到画布上。</p>
+          ) : (
+            chatMessages.map((message, index) => (
+              <MessageRow key={message.id || `${message.role}-${index}`} message={message} />
+            ))
+          )}
+        </div>
+      )}
+    </section>
+  )
 }
 
 export type WorkbenchDockProps = {
@@ -58,7 +184,7 @@ export type WorkbenchDockProps = {
   error: string
 }
 
-export function WorkbenchDock({
+export const WorkbenchDock = memo(function WorkbenchDock({
   messages,
   dockOpen,
   flowId,
@@ -74,30 +200,25 @@ export function WorkbenchDock({
   onRerunFromMock,
   error,
 }: WorkbenchDockProps) {
-  const liveMessages = useStore($messages)
-  const resolvedMessages = messages ?? liveMessages
+  const permission = useStore($permission)
   const [runOpen, setRunOpen] = useState(true)
   const [chatOpen, setChatOpen] = useState(true)
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null)
   const [mockText, setMockText] = useState<string>('')
   const [editingMockId, setEditingMockId] = useState<string | null>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
   const completedCount = runSteps.filter((s) => s.status === 'completed').length
   const failed = runSteps.some((s) => s.status === 'failed')
   const running = runSteps.some((s) => s.status === 'running')
   const runStatus = failed ? '失败' : running ? '运行中' : runSteps.length > 0 ? '完成' : '待运行'
-  const chatMessages = useMemo(() => visibleCanvasMessages(resolvedMessages), [resolvedMessages])
-
-  useEffect(() => {
-    if (!dockOpen || !chatOpen) return
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages, dockOpen, chatOpen])
 
   if (!dockOpen) return null
 
   return (
-    <aside className="wb-dock wb-unified-dock" aria-label="工作栏">
+    <aside
+      className="wb-dock wb-unified-dock nowheel"
+      aria-label="工作栏"
+      onWheel={stopWheel}
+    >
       <div className="wb-head">
         <div className="wb-head-main">
           <span className="wb-title">工作栏</span>
@@ -238,32 +359,10 @@ export function WorkbenchDock({
         )}
       </section>
 
-      <section className={`wb-section wb-chat${chatOpen ? '' : ' is-collapsed'}`} aria-label="普通聊天">
-        <button
-          type="button"
-          className="wb-chat-head"
-          onClick={() => setChatOpen((v) => !v)}
-          aria-expanded={chatOpen}
-        >
-          <span className="wb-run-head-left">
-            <span className="wb-head-chevron">{chatOpen ? '▾' : '▸'}</span>
-            <span className="wb-head-title">对话协同</span>
-          </span>
-        </button>
-        {chatOpen && (
-          <div className="wb-convo-list scrollbar-dt" ref={scrollRef} role="log" aria-label="对话记录">
-            {chatMessages.length === 0 ? (
-              <p className="wb-empty">和主聊天一样：+ 附文件/文件夹，@ 引用路径。读完项目后会把流程画到画布上。</p>
-            ) : (
-              chatMessages.map((message, index) => (
-                <MessageRow key={message.id || `${message.role}-${index}`} message={message} />
-              ))
-            )}
-          </div>
-        )}
-      </section>
+      <DockChatList messages={messages} chatOpen={chatOpen} setChatOpen={setChatOpen} />
 
       <div className="wb-input-area">
+        <PendingApprovalFallback permission={permission} force />
         <CanvasComposer flowName={flowName} flowId={flowId} nodeIds={nodeIds} onRun={onRun} />
         {error ? (
           <div className="wb-err">
@@ -283,4 +382,4 @@ export function WorkbenchDock({
       </div>
     </aside>
   )
-}
+})

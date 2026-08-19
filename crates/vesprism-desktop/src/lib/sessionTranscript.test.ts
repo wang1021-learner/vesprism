@@ -7,6 +7,7 @@ import {
   formatAcceptedAnswersPreview,
   formatAskUserAnswerPreview,
   removeUserMessageByPromptId,
+  resolveAssistantPromptId,
   sealStreamingMessages,
 } from './sessionTranscript'
 import type { ChatMessage } from '../types'
@@ -38,6 +39,25 @@ describe('applyTranscriptEvent', () => {
     expect(msgs[0].role).toBe('assistant')
     expect(msgs[0].text).toBe('你好世界')
     expect(msgs[0].isStreaming).toBe(true)
+  })
+
+  it('助手气泡继承当前用户回合的 promptId，供画布改图对齐', () => {
+    let msgs: ChatMessage[] = [user('画一个外呼流程', 'p_flow')]
+    msgs = applyTranscriptEvent(msgs, { type: 'agent_text_chunk', text: '```json\n{' })
+    msgs = applyTranscriptEvent(msgs, { type: 'agent_text_chunk', text: '"nodes":[]}\n```' })
+    expect(msgs[1]?.role).toBe('assistant')
+    expect(msgs[1]?.promptId).toBe('p_flow')
+  })
+
+  it('resolveAssistantPromptId：助手没带 id 时回退到前面的用户回合', () => {
+    const msgs: ChatMessage[] = [
+      user('先问一句', 'p1'),
+      assistant('好'),
+      user('再画图', 'p2'),
+      assistant('{ "nodes": [] }'),
+    ]
+    expect(resolveAssistantPromptId(msgs, 3)).toBe('p2')
+    expect(resolveAssistantPromptId(msgs, 1)).toBe('p1')
   })
 
   it('极短思考夹在正文中间时，正文合并、噪声思考不残留', () => {

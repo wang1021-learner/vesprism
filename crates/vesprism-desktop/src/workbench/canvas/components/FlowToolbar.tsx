@@ -19,7 +19,7 @@ export interface FlowToolbarProps {
   onRun: () => void
 }
 
-export function FlowToolbar({
+export const FlowToolbar = React.memo(function FlowToolbar({
   draft,
   setDraft,
   dockOpen,
@@ -193,4 +193,4 @@ export function FlowToolbar({
       </div>
     </header>
   )
-}
+})

@@ -21,6 +21,8 @@ export type SendSessionPromptOpts = {
   mode?: 'queue' | 'interject'
   /** 画布自愈：发给引擎但不进用户气泡/队列 */
   hidden?: boolean
+  /** 预发 id，便于画布在 IPC 返回前就开始认图 */
+  promptId?: string
 }
 
 export async function sendSessionPrompt(
@@ -31,7 +33,7 @@ export async function sendSessionPrompt(
   if (!msg && attach.length === 0 && !opts.hidden) return null
   const wasGenerating = $generating.get()
   const interject = opts.mode === 'interject' && wasGenerating
-  const promptId = generateId('p_')
+  const promptId = (opts.promptId || '').trim() || generateId('p_')
   const names = attach.map((a) => a.path.replace(/\\/g, '/').split('/').pop() || a.path)
   const display = attach.length
     ? `${msg}${msg ? '\n\n' : ''}[附件] ${names.join('、')}`

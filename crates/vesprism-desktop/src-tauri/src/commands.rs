@@ -2177,14 +2177,100 @@ pub async fn get_session_messages(session_id: String) -> Result<Vec<DisplayMessa
 /// - `cwd` 用于当前工作空间排到前面
 /// - 空会话已过滤
 /// - `limit`：可选上限
+fn innermost_user_query(raw: &str) -> Option<String> {
+    let lower = raw.to_ascii_lowercase();
+    let start = lower.rfind("<user_query>")?;
+    let after = &raw[start + "<user_query>".len()..];
+    let after_lower = after.to_ascii_lowercase();
+    let inner = if let Some(end) = after_lower.find("</user_query>") {
+        after[..end].trim()
+    } else {
+        after.trim()
+    };
+    if inner.is_empty() || inner == "(see attachments)" {
+        None
+    } else {
+        Some(inner.to_string())
+    }
+}
+
+fn is_contract_noise(s: &str) -> bool {
+    let t = s.trim();
+    t.is_empty()
+        || t.starts_with('<')
+        || t.starts_with("You are the Vesprism")
+        || t.starts_with("你是这个流程画布")
+        || t.starts_with("你是 Vesprism")
+        || t.starts_with("interface FlowGraph")
+        || t.starts_with("Emit ONE JSON")
+        || t.starts_with("Prefer a single")
+}
+
+fn clean_session_title(raw: &str) -> String {
+    let mut t = raw.trim().to_string();
+    if t.is_empty() {
+        return "新对话".to_string();
+    }
+    if let Some(query) = innermost_user_query(&t) {
+        t = query;
+    }
+    if let Some(start) = t.find("<instructions>") {
+        if let Some(end) = t[start..].find("</instructions>") {
+            t.replace_range(start..start + end + "</instructions>".len(), "");
+        }
+    }
+    if let Some(start) = t.find("<current_graph>") {
+        if let Some(end) = t[start..].find("</current_graph>") {
+            t.replace_range(start..start + end + "</current_graph>".len(), "");
+        }
+    }
+    t = t.trim().to_string();
+    if let Some(rest) = t.strip_prefix("生成流程图：") {
+        let rest = rest.trim();
+        if !rest.is_empty() {
+            t = rest
+                .lines()
+                .next()
+                .unwrap_or(rest)
+                .trim()
+                .to_string();
+        }
+    }
+    if t.contains("流程画布") || t.contains("flow-canvas orchestrator") || t.contains("Vesprism 流程")
+    {
+        if let Some(idx) = t.find("用户：").or_else(|| t.find("User:")) {
+            let mark = if t[idx..].starts_with("用户：") {
+                "用户："
+            } else {
+                "User:"
+            };
+            let user_part = t[idx + mark.len()..].trim();
+            if !user_part.is_empty() {
+                t = user_part.to_string();
+            }
+        }
+    }
+    let line = t
+        .lines()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_string();
+    if is_contract_noise(&line) {
+        return "新对话".to_string();
+    }
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// 把官方 Summary 组装成本地索引行；list_sessions 全量重建与单条 upsert 共用同一份逻辑，避免两处字段映射各自漂移。
 pub(crate) fn thread_row_from_summary(
     s: &grok_session::Summary,
 ) -> crate::session_index::ThreadRow {
-    let title = s
+    let raw_title = s
         .display_title_opt()
         .or_else(|| grok_session::get_session_first_prompt(s))
         .unwrap_or_else(|| "新对话".to_string());
+    let title = clean_session_title(&raw_title);
     let preview: String = title.chars().take(80).collect();
     let active = s.last_active_at.unwrap_or(s.created_at);
     let dir = xai_grok_shell::session::persistence::find_session_dir_by_id(&s.info.id.to_string());

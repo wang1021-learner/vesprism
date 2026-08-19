@@ -2,6 +2,7 @@
  * 画布对话可见性：试跑、生成说明书、图谱 JSON 不当正经聊天气泡。
  */
 import type { ChatMessage } from '../../types'
+import { innermostUserQuery } from '../../lib/sessionTitle'
 
 const GENERATE_MARKERS = [
   '你是 Vesprism 流程画布的图生成器',
@@ -24,11 +25,8 @@ export function unwrapCanvasUserText(text: string): string | null {
     const first = t.split('\n')[0].replace(/^生成流程图：/, '').trim()
     return first || null
   }
-  const q = t.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/i)
-  if (q) {
-    const need = q[1].trim()
-    return !need || need === '(see attachments)' ? null : need
-  }
+  const q = innermostUserQuery(t)
+  if (q) return q
   const ctx = t.lastIndexOf('[Canvas Context: Flow ')
   if (ctx >= 0) {
     const head = t.slice(0, ctx).trim()
@@ -73,6 +71,19 @@ export function assistantGraphProse(text: string): string {
   return ''
 }
 
+function isNoiseThought(m: ChatMessage): boolean {
+  const t = (m.text || '').trim()
+  if (!t && !m.isStreaming) return true
+  if (m.isStreaming) return false
+  const ms =
+    m.thoughtTiming?.start && m.thoughtTiming?.end
+      ? m.thoughtTiming.end - m.thoughtTiming.start
+      : 0
+  if (ms > 0 && ms < 800 && t.length < 120) return true
+  if (ms === 0 && t.length < 40) return true
+  return false
+}
+
 export function visibleCanvasMessages(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = []
   for (const m of messages) {
@@ -80,6 +91,15 @@ export function visibleCanvasMessages(messages: ChatMessage[]): ChatMessage[] {
       const text = unwrapCanvasUserText(m.text)
       if (!text) continue
       out.push({ ...m, text })
+      continue
+    }
+    if (m.role === 'thought') {
+      if (isNoiseThought(m)) continue
+      out.push(m)
+      continue
+    }
+    if (m.role === 'tool' && (m.toolCall || m.tool || m.text)) {
+      out.push(m)
       continue
     }
     if (m.role === 'assistant' && m.text) {

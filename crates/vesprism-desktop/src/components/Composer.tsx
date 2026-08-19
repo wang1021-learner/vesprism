@@ -878,14 +878,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             )}
 
             {extraActions}
-            {/* 中断：始终展示，仅生成中可点 */}
+            {/* 中断：不用 disabled，避免点击穿透到 textarea */}
             <button
               type="button"
               className={`btn-circle btn-stop${isGenerating ? ' active' : ''}`}
-              disabled={!isGenerating}
+              aria-disabled={!isGenerating}
               title={isGenerating ? '停止生成' : '无生成任务'}
               aria-label="停止生成"
-              onClick={onCancel}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+              }}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (!isGenerating) return
+                onCancel()
+              }}
             >
               <StopIcon />
             </button>
