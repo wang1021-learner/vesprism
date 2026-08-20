@@ -517,6 +517,41 @@
   position: relative;
 }
 
+.flow-canvas .react-flow__panel.flow-canvas-composer-panel {
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  transform: none !important;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  z-index: 12;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+}
+
+.flow-canvas-composer {
+  width: 100%;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.flow-canvas-composer .wb-err {
+  width: min(92%, 800px);
+  margin: 0 auto 8px;
+}
+
+.flow-canvas-composer .perm-dock {
+  width: min(92%, 800px);
+  max-width: none;
+  margin: 0 auto 8px;
+}
+
 .flow-canvas .react-flow {
   background: var(--bg-canvas, #f8f9fa);
 }
@@ -1094,7 +1129,7 @@
 .flow-inspector {
   position: absolute;
   left: 58px;
-  bottom: 14px;
+  bottom: 148px;
   z-index: 25;
   width: 290px;
   max-height: 60%;
@@ -2430,6 +2465,10 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
 }
 
 .wb-replay-step {
@@ -2584,4 +2623,106 @@
 .flow-search-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* ──── 工作栏：输入搬走后，改成整栏侧栏而不是两张空卡片 ──── */
+.wb-dock.wb-unified-dock {
+  flex: 0 0 340px;
+  width: 340px;
+  background: #ffffff;
+  border-left: 1px solid #e5e7eb;
+  box-shadow: none;
+}
+
+.wb-unified-dock .wb-head {
+  min-height: 44px;
+  padding: 0 12px 0 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.wb-unified-dock .wb-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.wb-unified-dock .wb-head-meta {
+  font-size: 11px;
+}
+
+.wb-unified-dock .wb-section {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #ffffff;
+}
+
+.wb-unified-dock .wb-run-panel {
+  flex: 0 0 auto;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.wb-unified-dock .wb-run-head,
+.wb-unified-dock .wb-chat-head {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 14px;
+  background: #ffffff;
+  border-bottom: 0;
+  color: #111827;
+}
+
+.wb-unified-dock .wb-run-head:hover,
+.wb-unified-dock .wb-chat-head:hover {
+  background: #f8fafc;
+}
+
+.wb-unified-dock .wb-run-body {
+  padding: 0 14px 10px;
+  background: #ffffff;
+}
+
+.wb-unified-dock .wb-run-meta {
+  padding: 0 0 2px;
+  margin: 0;
+  border-bottom: 0;
+}
+
+.wb-unified-dock .wb-chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  background: #fafbfc;
+}
+
+.wb-unified-dock .wb-chat-head {
+  background: #ffffff;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.wb-unified-dock .wb-chat .wb-convo-list {
+  padding: 16px 14px 20px;
+}
+
+.wb-unified-dock .wb-empty {
+  margin: 36px auto 0;
+  max-width: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.wb-empty-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: #334155;
+}
+
+.wb-empty-hint {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #94a3b8;
 }

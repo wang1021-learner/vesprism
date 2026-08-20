@@ -26,6 +26,8 @@ export type OpenChatTabOpts = {
   title?: string
   /** 专用面板：mcp / tools / skills / workflows / flow-canvas / agents；普通对话省略 */
   utilityKind?: UtilityKind | null
+  /** 只开面板、不启引擎会话（试跑详情只读） */
+  skipSession?: boolean
 }
 
 /**
@@ -79,10 +81,12 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       cwd,
     })
     switchTab(tabId)
-    await startSession(tabId, cwd, {
-      modelId: model.modelId,
-      reasoningEffort: model.reasoningEffort,
-    })
+    if (!opts.skipSession && utilityKind !== 'flow-run') {
+      await startSession(tabId, cwd, {
+        modelId: model.modelId,
+        reasoningEffort: model.reasoningEffort,
+      })
+    }
     // 启动期间用户可能已关掉这个 tab，不要把错误写到当前活跃页
     if (!hasTab(tabId)) return null
     if (!hasTab(tabId)) return null

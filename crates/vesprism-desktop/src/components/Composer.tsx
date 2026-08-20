@@ -64,6 +64,8 @@ interface ComposerProps {
   placeholder?: string
   /** dock：铺满工作栏，不显示底部免责声明 */
   variant?: 'default' | 'dock'
+  /** 画布输入不展示工作区芯片 */
+  showWorkspace?: boolean
   extraActions?: ReactNode
 }
 
@@ -249,6 +251,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     enableSlash = true,
     placeholder,
     variant = 'default',
+    showWorkspace = true,
     extraActions,
   }: ComposerProps,
   ref,
@@ -513,7 +516,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </div>
       ) : null}
       <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
-        {variant !== 'dock' ? (
+        {variant !== 'dock' && showWorkspace ? (
         <div className="composer-meta-row">
           <div className="composer-meta-left" ref={wsPickerRef}>
             {canSwitchWorkspace ? (

@@ -15,6 +15,11 @@ import {
   latestExpectedCanvasGraph,
 } from '../generateWait'
 
+/** 试跑斜杠（/demo-linear）及其后的编排输出，不能拿来改画布。 */
+export function isFlowRunUserText(text: string): boolean {
+  return /^\/[A-Za-z][\w-]*(?:\s|\{|$)/.test((text || '').trim())
+}
+
 export function lastUserIndexForPrompt(messages: ChatMessage[], promptId: string): number {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'user' && messages[i].promptId === promptId) return i
@@ -46,6 +51,8 @@ export function pickCanvasApplyTargets(
     if (m.role !== 'assistant' || !m.text) continue
     const pid = resolveAssistantPromptId(messages, i)
     if (!pid || !isPendingCanvasGraph(pid)) continue
+    const userIdx = lastUserIndexForPrompt(messages, pid)
+    if (userIdx >= 0 && isFlowRunUserText(messages[userIdx].text)) continue
     lastByPid.set(pid, i)
   }
 
@@ -58,11 +65,15 @@ export function pickCanvasApplyTargets(
   if (!generating && live && isPendingCanvasGraph(live) && !lastByPid.has(live)) {
     const userIdx = lastUserIndexForPrompt(messages, live)
     if (userIdx >= 0) {
-      let lastA = -1
-      for (let i = userIdx + 1; i < messages.length; i++) {
-        if (messages[i].role === 'assistant' && messages[i].text) lastA = i
+      if (isFlowRunUserText(messages[userIdx].text)) {
+        /* 试跑回合不认图 */
+      } else {
+        let lastA = -1
+        for (let i = userIdx + 1; i < messages.length; i++) {
+          if (messages[i].role === 'assistant' && messages[i].text) lastA = i
+        }
+        if (lastA >= 0) out.push({ index: lastA, promptId: live })
       }
-      if (lastA >= 0) out.push({ index: lastA, promptId: live })
     } else if (isCanvasHeal(live) && lastIdx >= 0 && looksLikeCanvasGraphJson(messages[lastIdx].text)) {
       const lastPid = resolveAssistantPromptId(messages, lastIdx)
       if (!lastPid || lastPid === live) {

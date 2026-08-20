@@ -1,13 +1,11 @@
 /**
- * 画布工作栏：同一个会话区里收纳运行状态、对话记录和发送动作。
+ * 画布工作栏：运行状态与对话协同。输入框浮在画布底部。
  */
 import { useStore } from '@nanostores/react'
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { $messages, $permission } from '../../store'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { $messages } from '../../store'
 import type { ChatMessage } from '../../types'
 import { visibleCanvasMessages } from './visibleMessages'
-import { CanvasComposer } from './CanvasComposer'
-import { PendingApprovalFallback } from '../../components/Permission'
 
 type FlowRunStepLike = {
   nodeId: string
@@ -154,7 +152,14 @@ function DockChatList({
           aria-label="对话记录"
         >
           {chatMessages.length === 0 ? (
-            <p className="wb-empty">和主聊天一样：+ 附文件/文件夹，@ 引用路径。读完项目后会把流程画到画布上。</p>
+            <div className="wb-empty">
+              <span className="wb-empty-title">还没有对话</span>
+              <span className="wb-empty-hint">
+                在画布下方描述流程或 Agent。
+                <br />
+                + 附项目文件，@ 引用路径。
+              </span>
+            </div>
           ) : (
             chatMessages.map((message, index) => (
               <MessageRow key={message.id || `${message.role}-${index}`} message={message} />
@@ -171,38 +176,31 @@ export type WorkbenchDockProps = {
   messages?: ChatMessage[]
   dockOpen: boolean
   flowId: string
-  flowName: string
-  nodeIds?: string[]
   runSteps: FlowRunStepLike[]
   replayOpen: boolean
   setReplayOpen: (v: boolean) => void
   onToggleDock: () => void
-  onRun: () => void
   onOpenDetails?: () => void
-  onRetryStrict?: () => void
   onRerunFromMock?: (nodeId: string, mockOutput: unknown) => void
-  error: string
 }
 
 export const WorkbenchDock = memo(function WorkbenchDock({
   messages,
   dockOpen,
   flowId,
-  flowName,
-  nodeIds,
   runSteps,
   replayOpen,
   setReplayOpen,
   onToggleDock,
-  onRun,
   onOpenDetails,
-  onRetryStrict,
   onRerunFromMock,
-  error,
 }: WorkbenchDockProps) {
-  const permission = useStore($permission)
-  const [runOpen, setRunOpen] = useState(true)
+  const [runOpen, setRunOpen] = useState(runSteps.length > 0)
   const [chatOpen, setChatOpen] = useState(true)
+
+  useEffect(() => {
+    if (runSteps.length > 0) setRunOpen(true)
+  }, [runSteps.length])
   const [expandedStepId, setExpandedStepId] = useState<string | null>(null)
   const [mockText, setMockText] = useState<string>('')
   const [editingMockId, setEditingMockId] = useState<string | null>(null)
@@ -251,7 +249,7 @@ export const WorkbenchDock = memo(function WorkbenchDock({
           <div className="wb-run-body">
             <div className="wb-run-meta">
               <div className="wb-meta-left">
-                <span className="wb-meta-label">流程：</span>
+                <span className="wb-meta-label">流程</span>
                 <span className="wb-meta-flow">/{flowId || '未命名'}</span>
               </div>
               {onOpenDetails && (
@@ -267,10 +265,10 @@ export const WorkbenchDock = memo(function WorkbenchDock({
                   className="wb-replay-toggle"
                   onClick={() => setReplayOpen(!replayOpen)}
                 >
-                  <span>{replayOpen ? '▾' : '▸'} 执行链路与时空快照 ({completedCount}/${runSteps.length})</span>
+                  <span>{replayOpen ? '▾' : '▸'} 执行链路与时空快照 ({completedCount}/{runSteps.length})</span>
                 </button>
                 {replayOpen && (
-                  <div className="wb-replay-steps">
+                  <div className="wb-replay-steps scrollbar-dt">
                     {runSteps.map((s) => {
                       const isExpanded = expandedStepId === s.nodeId
                       const isEditingMock = editingMockId === s.nodeId
@@ -350,36 +348,12 @@ export const WorkbenchDock = memo(function WorkbenchDock({
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="wb-run-empty">
-                <span>尚未开始试跑。点击顶部「▶ 试跑」即可验证当前流程。</span>
-              </div>
-            )}
+            ) : null}
           </div>
         )}
       </section>
 
       <DockChatList messages={messages} chatOpen={chatOpen} setChatOpen={setChatOpen} />
-
-      <div className="wb-input-area">
-        <PendingApprovalFallback permission={permission} force />
-        <CanvasComposer flowName={flowName} flowId={flowId} nodeIds={nodeIds} onRun={onRun} />
-        {error ? (
-          <div className="wb-err">
-            <span>{error}</span>
-            {onRetryStrict && (
-              <button
-                type="button"
-                className="flow-btn primary"
-                style={{ marginLeft: 8, padding: '2px 8px', fontSize: 11 }}
-                onClick={onRetryStrict}
-              >
-                ↺ 强制纯 JSON 重试
-              </button>
-            )}
-          </div>
-        ) : null}
-      </div>
     </aside>
   )
 })

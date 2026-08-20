@@ -61,10 +61,14 @@ export function inheritCanvasPromptId(fallback?: string): string | undefined {
   return fallback
 }
 
-export function resetCanvasGraphWaitForTests(): void {
+export function resetCanvasGraphWait(): void {
   pendingCanvasGraphs.clear()
   lastExpectedCanvasGraph = ''
   canvasHealPrompts.clear()
+}
+
+export function resetCanvasGraphWaitForTests(): void {
+  resetCanvasGraphWait()
 }
 
 /** 某次失败已经静默自愈过；该自愈回合的 promptId 记在这里。 */

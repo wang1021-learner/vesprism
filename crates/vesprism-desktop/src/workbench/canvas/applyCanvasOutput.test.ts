@@ -45,6 +45,15 @@ describe('pickCanvasApplyTargets', () => {
     expect(messages[3].text).toContain('start-call')
   })
 
+  it('试跑斜杠回合不能拿来改画布', () => {
+    expectCanvasGraph('p_run')
+    const messages = [
+      u('/demo-linear {}', 'p_run'),
+      a(callJson, 'p_run'),
+    ]
+    expect(pickCanvasApplyTargets(messages, false)).toEqual([])
+  })
+
   it('自愈没有用户气泡时，不能拿会话第一份旧 JSON', () => {
     expectCanvasGraph('p_heal')
     markCanvasHeal('p_heal')

@@ -7,6 +7,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
@@ -37,7 +38,7 @@ import {
 import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
 import { sendPrompt } from '../../bridge'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
-import { expectCanvasGraph } from '../generateWait'
+import { expectCanvasGraph, resetCanvasGraphWait } from '../generateWait'
 import { CanvasGraphApplier } from './CanvasGraphApplier'
 import { openChatTab } from '../../lib/openChatTab'
 import {
@@ -96,6 +97,7 @@ import { $flowStaleEpoch, clearFlowStale, staleForFlow } from '../agents/stale'
 import { bindWorkbenchArtifact } from '../bindings'
 import { $flowFocusId, clearFlowFocus } from '../flow/focus'
 import { WorkbenchDock } from './workbench-dock'
+import { CanvasComposer } from './CanvasComposer'
 import { FlowCanvasContext } from './context'
 import { FlowNode, type FlowRfData } from './nodes'
 import { stripRfRuntime } from './rfRuntime'
@@ -358,6 +360,8 @@ function FlowCanvasInner() {
       }
     }
   }, [tabId, draft.name, draft.id])
+
+  useEffect(() => () => resetCanvasGraphWait(), [])
 
   const startRunRef = useRef<(nodeId?: string) => Promise<void>>(async () => {})
   const historyRef = useRef<GraphSnap[]>([])
@@ -840,6 +844,7 @@ function FlowCanvasInner() {
     overrideOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
   ) => {
     // 试跑只走本 Tab 开会话时的 cwd，禁止用全局 workspace_cwd 把画布拽到主聊天项目。
+    resetCanvasGraphWait()
     let current = fromRf(nodes, edges, draft)
     if (fromNodeId) {
       const sub = subgraphFrom(current.nodes, current.edges, fromNodeId)
@@ -1302,7 +1307,6 @@ function FlowCanvasInner() {
   const onToolbarCopy = useCallback(() => {
     doCopyRef.current()
   }, [])
-  const onDockRun = onToolbarRun
   const onDockRetry = useCallback(() => {
     void onRetryStrictRef.current()
   }, [])
@@ -1310,7 +1314,7 @@ function FlowCanvasInner() {
     void onRerunFromMockRef.current(nodeId, mockOutput)
   }, [])
   const onDockDetails = useCallback(() => {
-    void openChatTab({ title: '试跑详情', utilityKind: 'flow-run' })
+    void openChatTab({ title: '试跑详情', utilityKind: 'flow-run', skipSession: true })
   }, [])
   const onDockClose = useCallback(() => setDockOpen(false), [])
 
@@ -1480,8 +1484,22 @@ function FlowCanvasInner() {
                 elevateNodesOnSelect={false}
               >
                 <Background gap={20} size={1.2} color="var(--border-solid, #e5e7eb)" />
-                {!rfBusy && nodes.length <= 80 ? <MiniMap pannable zoomable /> : null}
+                {!rfBusy && nodes.length <= 80 ? (
+                  <MiniMap position="top-right" pannable zoomable />
+                ) : null}
                 <Controls showFitView={false} showInteractive={false} />
+                <Panel
+                  position="bottom-center"
+                  className="flow-canvas-composer-panel nowheel nopan nodrag"
+                >
+                  <CanvasComposer
+                    flowName={draft.name}
+                    flowId={draft.id}
+                    nodeIds={dockNodeIds}
+                    error={aiError}
+                    onRetryStrict={onDockRetry}
+                  />
+                </Panel>
               </ReactFlow>
             </FlowCanvasContext.Provider>
             {selectedIds.length > 1 && (
@@ -1589,17 +1607,12 @@ function FlowCanvasInner() {
         <WorkbenchDock
           dockOpen={dockOpen}
           flowId={draft.id}
-          flowName={draft.name}
-          nodeIds={dockNodeIds}
           runSteps={runSteps}
           replayOpen={replayOpen}
           setReplayOpen={setReplayOpen}
           onToggleDock={onDockClose}
-          onRun={onDockRun}
           onOpenDetails={onDockDetails}
-          onRetryStrict={onDockRetry}
           onRerunFromMock={onDockRerunMock}
-          error={aiError}
         />
       </div>
 

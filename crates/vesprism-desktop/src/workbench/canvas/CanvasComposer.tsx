@@ -1,15 +1,17 @@
 /**
  * 画布第二主聊天：同一套 Composer（附件 / @ / 多行 / 排队 / 插话 / 切模型）。
- * 工作区只读；关掉斜杠命令。发给引擎时包编排说明书。
+ * 浮在画布底部中间；工作区只读；关掉斜杠命令。发给引擎时包编排说明书。
  */
-import { useCallback } from 'react'
+import { memo, useCallback, type PointerEvent, type WheelEvent } from 'react'
 import { useStore } from '@nanostores/react'
 import { Composer } from '../../components/Composer'
+import { PendingApprovalFallback } from '../../components/Permission'
 import {
   $composerInput,
   $defaultModelId,
   $generating,
   $models,
+  $permission,
   $queuedPrompts,
   $reasoningEffort,
   $sessionPhase,
@@ -33,17 +35,28 @@ import {
   markCanvasContractPrimed,
 } from '../flow/prompt'
 import { consumeCanvasGraph, expectCanvasGraph } from '../generateWait'
+import { isFlowRunUserText } from './applyCanvasOutput'
 
-export function CanvasComposer({
+function stopCanvasWheel(e: WheelEvent) {
+  e.stopPropagation()
+}
+
+function stopCanvasPointer(e: PointerEvent) {
+  e.stopPropagation()
+}
+
+export const CanvasComposer = memo(function CanvasComposer({
   flowName,
   flowId,
   nodeIds,
-  onRun,
+  error,
+  onRetryStrict,
 }: {
   flowName: string
   flowId: string
   nodeIds?: string[]
-  onRun: () => void
+  error?: string
+  onRetryStrict?: () => void
 }) {
   const input = useStore($composerInput)
   const generating = useStore($generating)
@@ -57,6 +70,7 @@ export function CanvasComposer({
   const cwd = tabWorkspaceCwd(tabId) || projectedCwd
   const wsOptions = useStore($workspaceOptions)
   const queued = useStore($queuedPrompts)
+  const permission = useStore($permission)
 
   const onSend = useCallback(
     async (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => {
@@ -68,7 +82,8 @@ export function CanvasComposer({
       const sessionId = tabId ? getTabState(tabId)?.sessionId : ''
       const primed = isCanvasContractPrimed(sessionId)
       const promptId = generateId('p_')
-      expectCanvasGraph(promptId)
+      const expectGraph = !isFlowRunUserText(userLine)
+      if (expectGraph) expectCanvasGraph(promptId)
       const sent = await sendSessionPrompt({
         text: msg,
         wireText: buildDialoguePrompt(
@@ -82,7 +97,7 @@ export function CanvasComposer({
       })
       if (sent) {
         markCanvasContractPrimed(sessionId)
-      } else {
+      } else if (expectGraph) {
         consumeCanvasGraph(promptId)
       }
     },
@@ -138,41 +153,52 @@ export function CanvasComposer({
   }, [])
 
   return (
-    <Composer
-      variant="dock"
-      enableSlash={false}
-      placeholder="描述流程或 Agent，+ 附项目文件，@ 引用路径"
-      input={input}
-      setInput={(v) => patchActiveTab({ composerInput: v })}
-      canSend={ready}
-      engineGenerating={generating}
-      shellReady={ready}
-      sessionPhase={phase}
-      models={models}
-      selectedModelId={modelId}
-      reasoningEffort={effort}
-      workspaceCwd={cwd}
-      workspaceOptions={wsOptions}
-      canSwitchWorkspace={false}
-      onSwitchModel={onSwitchModel}
-      onSwitchReasoningEffort={onSwitchReasoningEffort}
-      onSelectWorkspace={() => {}}
-      onBrowseWorkspace={() => {}}
-      queuedPrompts={queued}
-      onSend={(t, a, mode) => void onSend(t, a, mode)}
-      onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
-      onCancel={() => void onCancel()}
-      extraActions={
-        <button
-          type="button"
-          className="wb-btn"
-          title="打开测试输入并运行当前流程"
-          disabled={generating}
-          onClick={onRun}
-        >
-          ▶ 试跑
-        </button>
-      }
-    />
+    <div
+      className="flow-canvas-composer nowheel nopan nodrag"
+      onWheel={stopCanvasWheel}
+      onPointerDown={stopCanvasPointer}
+    >
+      <PendingApprovalFallback permission={permission} force />
+      <Composer
+        enableSlash={false}
+        showWorkspace={false}
+        placeholder="输入消息…  + 附文件  @ 引用路径"
+        input={input}
+        setInput={(v) => patchActiveTab({ composerInput: v })}
+        canSend={ready}
+        engineGenerating={generating}
+        shellReady={ready}
+        sessionPhase={phase}
+        models={models}
+        selectedModelId={modelId}
+        reasoningEffort={effort}
+        workspaceCwd={cwd}
+        workspaceOptions={wsOptions}
+        canSwitchWorkspace={false}
+        onSwitchModel={onSwitchModel}
+        onSwitchReasoningEffort={onSwitchReasoningEffort}
+        onSelectWorkspace={() => {}}
+        onBrowseWorkspace={() => {}}
+        queuedPrompts={queued}
+        onSend={(t, a, mode) => void onSend(t, a, mode)}
+        onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
+        onCancel={() => void onCancel()}
+      />
+      {error ? (
+        <div className="wb-err">
+          <span>{error}</span>
+          {onRetryStrict && (
+            <button
+              type="button"
+              className="flow-btn primary"
+              style={{ marginLeft: 8, padding: '2px 8px', fontSize: 11 }}
+              onClick={onRetryStrict}
+            >
+              ↺ 强制纯 JSON 重试
+            </button>
+          )}
+        </div>
+      ) : null}
+    </div>
   )
-}
+})
