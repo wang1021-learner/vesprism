@@ -89,7 +89,6 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
     }
     // 启动期间用户可能已关掉这个 tab，不要把错误写到当前活跃页
     if (!hasTab(tabId)) return null
-    if (!hasTab(tabId)) return null
     patchTab(tabId, {
       phase: 'ready',
       status: 'idle',

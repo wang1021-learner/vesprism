@@ -218,7 +218,7 @@ export function evaluatePermission(
   if (policy.executionPolicy === 'proceed-in-sandbox') {
     return {
       action: 'sandbox',
-      reason: '沙箱模式：已在隔离 worktree 中自动放行',
+      reason: '副本模式：已在 git worktree 副本中自动放行（非进程沙箱）',
     }
   }
 

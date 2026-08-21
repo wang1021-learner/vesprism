@@ -109,6 +109,7 @@ function toToolData(t: NonNullable<TranscriptEvent['tool']>): ToolCallData {
 export function applyTranscriptEvent(
   messages: ChatMessage[],
   ev: TranscriptEvent,
+  bgTaskIds?: Set<string>,
 ): ChatMessage[] {
   switch (ev.type) {
     case 'agent_text_chunk': {
@@ -138,12 +139,12 @@ export function applyTranscriptEvent(
       // 引擎自动注入的 workflow 完成唤醒 prompt（origin=WorkflowCompleted）：
       // 只用于驱动主 agent 汇报结果，不展示为用户气泡
       if (pid && pid.startsWith('workflow-completed-')) return messages
-      const base = sealStreamingTail(messages)
+      const base = sealStreamingTail(messages, bgTaskIds)
       return mergeUserTextChunk(base, text, pid)
     }
     case 'tool_call': {
       if (!ev.tool) return messages
-      return upsertTool(sealStreamingTail(messages), toToolData(ev.tool))
+      return upsertTool(sealStreamingTail(messages, bgTaskIds), toToolData(ev.tool))
     }
     case 'tool_call_update': {
       if (!ev.update) return messages
@@ -152,7 +153,7 @@ export function applyTranscriptEvent(
     case 'user_question_request': {
       const toolCallId = ev.tool_call_id || `ask_${ev.request_id ?? generateId('ask_')}`
       const detail = formatAskUserDetail(ev.questions)
-      return upsertTool(sealStreamingTail(messages), {
+      return upsertTool(sealStreamingTail(messages, bgTaskIds), {
         toolCallId,
         kind: 'ask_user',
         status: 'pending',
@@ -465,6 +466,7 @@ function appendRole(
 export function sealStreamingMessages(
   messages: ChatMessage[],
   turnPromptId?: string | null,
+  bgTaskIds?: Set<string>,
 ): ChatMessage[] {
   // 回合归属：turn_ended 的 prompt_id 若与「最后一条 user 气泡」不一致，
   // 说明是旧回合（被中断）的迟到收尾——只 seal user 之前的内容，
@@ -479,25 +481,28 @@ export function sealStreamingMessages(
   if (lastUserIdx >= 0) {
     const lastUserPid = messages[lastUserIdx].promptId
     if (turnPromptId && lastUserPid && turnPromptId !== lastUserPid) {
-      const head = sealStreamingTail(messages.slice(0, lastUserIdx))
+      const head = sealStreamingTail(messages.slice(0, lastUserIdx), bgTaskIds)
       return mergeAdjacentTextRoles(
         dropTrailingNoiseThoughts([...head, ...messages.slice(lastUserIdx)]),
       )
     }
   }
-  return mergeAdjacentTextRoles(dropTrailingNoiseThoughts(sealStreamingTail(messages)))
+  return mergeAdjacentTextRoles(dropTrailingNoiseThoughts(sealStreamingTail(messages, bgTaskIds)))
 }
 
-function sealStreamingTail(messages: ChatMessage[]): ChatMessage[] {
+function sealStreamingTail(messages: ChatMessage[], bgTaskIds?: Set<string>): ChatMessage[] {
   if (messages.length === 0) return messages
   let changed = false
   const now = Date.now()
   const next = messages.map((m) => {
     // 工具：结束计时 + 未完成状态收成 completed（turn 结束时）
     // 子 agent 独立生命周期：只听 subagent_finished，勿被父 turn_ended 误定稿
+    // 后台任务同理，有自己独立的后台生命周期
     if (m.role === 'tool' && m.toolCall) {
       const tc = m.toolCall
       if ((tc.kind || '').toLowerCase() === 'subagent') return m
+      if (bgTaskIds?.has(tc.toolCallId)) return m
+
       const open =
         m.isStreaming ||
         tc.status === 'pending' ||

@@ -188,9 +188,21 @@ pub fn unmark_tool_session(id: &str) -> Result<(), String> {
     })
 }
 
-/// 把历史里标题像画布生成器的会话补标成工具会话（一次性隔离旧脏数据）。
+/// 把历史里有工作台产物绑定或像画布生成器的会话补标成工具会话（一次性隔离旧脏数据）。
 pub fn mark_legacy_canvas_sessions() -> Result<(), String> {
     with_db(|conn| {
+        // 1. 已有工作台绑定的产物/会话直接打标
+        conn.execute(
+            "INSERT OR IGNORE INTO thread_tool_sessions (id)
+             SELECT DISTINCT session_id FROM thread_workbench_artifacts
+             UNION
+             SELECT id FROM thread_workbench_bindings
+             WHERE active_workbench_view != ''",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // 2. 匹配历史残余特征（title / preview）
         conn.execute(
             "INSERT OR IGNORE INTO thread_tool_sessions (id)
              SELECT id FROM threads
@@ -199,7 +211,10 @@ pub fn mark_legacy_canvas_sessions() -> Result<(), String> {
                 OR title LIKE '你是这个流程画布%'
                 OR title LIKE 'You are the Vesprism flow-canvas%'
                 OR title LIKE 'Generate a flow graph:%'
-                OR title LIKE 'interface FlowGraph%'",
+                OR title LIKE 'interface FlowGraph%'
+                OR preview LIKE '%flow-canvas%'
+                OR preview LIKE '%FlowGraph%'
+                OR preview LIKE '%生成流程图%'",
             [],
         )
         .map_err(|e| e.to_string())?;

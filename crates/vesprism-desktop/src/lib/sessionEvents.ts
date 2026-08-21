@@ -80,11 +80,12 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         const msgs = getTabState(tabId)?.messages ?? []
         const already = msgs.some((m) => m.role === 'user' && m.promptId === running)
         if (!already) {
+          const bgs = new Set(Object.keys(getTabState(tabId)?.backgroundTasks || {}))
           patch.messages = applyTranscriptEvent(msgs, {
             type: 'user_text_chunk',
             text: ev.running_text,
             prompt_id: running,
-          })
+          }, bgs)
         }
       }
       patchTab(tabId, patch)
@@ -95,13 +96,18 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       // 队列空时显式 idle：不能只等 status_changed，后端漏发会让取消按钮一直亮着。
       const st = getTabState(tabId)
       const msgs = st?.messages ?? []
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user')
       let stale = false
-      if (ev.prompt_id && msgs.length > 0) {
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role === 'user') {
-            stale = Boolean(msgs[i].promptId) && msgs[i].promptId !== ev.prompt_id
-            break
-          }
+      if (ev.prompt_id) {
+        if (lastUser?.promptId && lastUser.promptId !== ev.prompt_id) {
+          stale = true
+        }
+      } else if (st?.status === 'generating' && lastUser?.promptId) {
+        // 无 prompt_id 的 turn_ended（常见于取消/打断后的延迟收尾事件）
+        // 如果当前 Tab 处于生成中且最新发出的就是 user 消息（等待新回复），判定为旧取消残余事件，不误杀新回合
+        const lastMsg = msgs[msgs.length - 1]
+        if (lastMsg && (lastMsg.role === 'user' || (lastMsg.role === 'assistant' && lastMsg.promptId === lastUser.promptId && !lastMsg.text))) {
+          stale = true
         }
       }
       if (stale) break

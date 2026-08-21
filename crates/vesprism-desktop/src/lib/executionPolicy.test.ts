@@ -50,7 +50,7 @@ describe('evaluatePermission', () => {
     expect(evaluatePermission({ command: 'npm run build' }, review).action).toBe('review')
   })
 
-  it('沙箱模式：未知命令走 sandbox，白名单仍直接放行', () => {
+  it('副本模式：未知命令走 sandbox，白名单仍直接放行', () => {
     expect(evaluatePermission({ command: 'git status' }, sandbox).action).toBe('allow')
     expect(evaluatePermission({ command: 'npm run build' }, sandbox).action).toBe('sandbox')
   })

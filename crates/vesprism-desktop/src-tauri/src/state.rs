@@ -1837,14 +1837,17 @@ async fn run_supervisor(
     /// 连续 panic 自动重建的上限；超过后标记 Failed，等待用户手动 RestartTab。
     const MAX_PANIC_RESTARTS: u32 = 3;
 
-    /// 每个 tab 的重启计数（手动 RestartTab 清零）。
+    /// 每个 tab 的重启计数（手动 RestartTab 清零）。closed=用户关过，禁止 panic 复活。
     struct SupervisorTabEntry {
         restart_count: u32,
+        generation: u64,
+        closed: bool,
     }
 
     /// TabActor 退出通知：result 为 Err 表示 panic（JoinHandle 已捕获），Ok 表示正常退出。
     struct TabExitedMsg {
         tab_id: TabId,
+        generation: u64,
         result: Result<(), tokio::task::JoinError>,
     }
 
@@ -1860,6 +1863,7 @@ async fn run_supervisor(
             std::sync::Mutex<HashMap<TabId, mpsc::UnboundedSender<ActorCommand>>>,
         >,
         exited_tx: &mpsc::UnboundedSender<TabExitedMsg>,
+        generation: u64,
     ) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<ActorCommand>();
         tabs.lock().unwrap().insert(tab_id.clone(), cmd_tx);
@@ -1876,6 +1880,7 @@ async fn run_supervisor(
             let result = handle.await;
             let _ = exited_tx2.send(TabExitedMsg {
                 tab_id: tab_id3,
+                generation,
                 result,
             });
         });
@@ -1889,45 +1894,74 @@ async fn run_supervisor(
                     SupervisorCommand::OpenTab { reply } => {
                         let n = NEXT_TAB_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let tab_id: TabId = format!("tab-{n}");
-                        entries.insert(tab_id.clone(), SupervisorTabEntry { restart_count: 0 });
-                        spawn_tab(&app, tab_id.clone(), &tabs, &exited_tx);
+                        entries.insert(
+                            tab_id.clone(),
+                            SupervisorTabEntry {
+                                restart_count: 0,
+                                generation: 0,
+                                closed: false,
+                            },
+                        );
+                        spawn_tab(&app, tab_id.clone(), &tabs, &exited_tx, 0);
                         let _ = reply.send(Ok(tab_id));
                     }
                     SupervisorCommand::CloseTab { tab_id, reply } => {
                         tabs.lock().unwrap().remove(&tab_id);
-                        entries.remove(&tab_id);
+                        entries
+                            .entry(tab_id)
+                            .and_modify(|e| e.closed = true)
+                            .or_insert(SupervisorTabEntry {
+                                restart_count: 0,
+                                generation: 0,
+                                closed: true,
+                            });
                         let _ = reply.send(Ok(()));
                     }
                     SupervisorCommand::RestartTab { tab_id, reply } => {
                         // 手动重启和 panic 自动重建走同一条路径：关旧、起空壳、通知前端重放。
                         tabs.lock().unwrap().remove(&tab_id);
-                        entries
-                            .entry(tab_id.clone())
-                            .and_modify(|e| e.restart_count = 0)
-                            .or_insert(SupervisorTabEntry { restart_count: 0 });
-                        spawn_tab(&app, tab_id.clone(), &tabs, &exited_tx);
+                        let generation = {
+                            let e = entries.entry(tab_id.clone()).or_insert(SupervisorTabEntry {
+                                restart_count: 0,
+                                generation: 0,
+                                closed: false,
+                            });
+                            e.closed = false;
+                            e.restart_count = 0;
+                            e.generation = e.generation.wrapping_add(1);
+                            e.generation
+                        };
+                        spawn_tab(&app, tab_id.clone(), &tabs, &exited_tx, generation);
                         emit(&app, &tab_id, FrontendEvent::TabRecovering { attempt: 0 });
                         let _ = reply.send(Ok(()));
                     }
                 }
             }
             msg = exited_rx.recv() => {
-                let Some(TabExitedMsg { tab_id, result }) = msg else { continue };
+                let Some(TabExitedMsg { tab_id, generation, result }) = msg else { continue };
                 if let Err(_join_err) = result {
-                    let restart_count = entries.get(&tab_id).map(|e| e.restart_count).unwrap_or(0);
+                    let Some(entry) = entries.get_mut(&tab_id) else {
+                        continue;
+                    };
+                    // CloseTab 过的禁止复活；RestartTab 之后旧 actor 的 panic 也丢弃。
+                    if entry.closed || generation != entry.generation {
+                        continue;
+                    }
+                    let restart_count = entry.restart_count;
                     if restart_count < MAX_PANIC_RESTARTS {
                         let attempt = restart_count + 1;
                         eprintln!("[supervisor] tab {tab_id} panic，静默重建为空壳（第 {attempt} 次）");
-                        entries.entry(tab_id.clone()).and_modify(|e| e.restart_count = attempt);
-                        spawn_tab(&app, tab_id.clone(), &tabs, &exited_tx);
+                        entry.restart_count = attempt;
+                        let actor_gen = entry.generation;
+                        spawn_tab(&app, tab_id.clone(), &tabs, &exited_tx, actor_gen);
                         emit(&app, &tab_id, FrontendEvent::TabRecovering { attempt });
                     } else {
                         eprintln!("[supervisor] tab {tab_id} 连续 panic 超过 {MAX_PANIC_RESTARTS} 次，标记 Failed");
+                        entry.closed = true;
                         tabs.lock().unwrap().remove(&tab_id);
                         emit(&app, &tab_id, FrontendEvent::TabFailed { attempts: restart_count });
                     }
                 }
-                // Ok(()) 是 CloseTab 触发的正常退出，entries 已在 CloseTab 分支清过
             }
         }
     }

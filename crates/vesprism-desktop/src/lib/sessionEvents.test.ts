@@ -67,4 +67,17 @@ describe('turn_ended status', () => {
     expect(st?.status).toBe('generating')
     expect(st?.permission).not.toBeNull()
   })
+
+  it('取消产生的无 prompt_id 迟到 turn_ended：不误杀新发出的 generating 状态', () => {
+    patchTab('tab-1', {
+      status: 'generating',
+      permission: null,
+      messages: [
+        { id: 'm2', role: 'user', text: 'new question', promptId: 'p_new' } as never,
+      ],
+    })
+    handleSessionEvent({ tab_id: 'tab-1', type: 'turn_ended' })
+    const st = getTabState('tab-1')
+    expect(st?.status).toBe('generating')
+  })
 })
