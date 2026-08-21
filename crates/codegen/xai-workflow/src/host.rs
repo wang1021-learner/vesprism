@@ -25,6 +25,10 @@ pub struct AgentOpts {
     pub output_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub phase: Option<String>,
+    /// 整个 agent() 调用（含官方 schema 重试）的墙钟超时（毫秒）。
+    /// 由 workflow host 在 spawn 时强制：超时取消子 agent 并返回失败。
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
     /// // jike: 工作台 Agent 细粒度工具停用；透传到子 agent 工具集过滤。
     #[serde(default)]
     pub disabled_tools: Vec<String>,

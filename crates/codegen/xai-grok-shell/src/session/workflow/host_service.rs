@@ -569,6 +569,13 @@ impl HostService {
         let mut next_prompt = prompt;
         let mut fork_context = opts.fork_context;
 
+        // 整个 agent() 调用（含 schema retry 全部尝试）的墙钟超时截止点。
+        // deadline 在循环外计算一次，循环内每轮 select 都等同一个 deadline → 总超时语义。
+        let deadline = opts
+            .timeout_ms
+            .filter(|ms| *ms > 0)
+            .map(|ms| tokio::time::Instant::now() + std::time::Duration::from_millis(ms));
+
         let (result, output) = loop {
             attempts += 1;
             let run = self.agent_runs.fetch_add(1, Ordering::Relaxed);
@@ -605,6 +612,21 @@ impl HostService {
             tokio::pin!(result_fut);
             let result = tokio::select! {
                 result = &mut result_fut => result,
+                // 硬超时：逐行模仿下方 cancel 分支（cancel_token 是官方子 agent 取消机制）。
+                _ = async {
+                    match deadline {
+                        Some(d) => tokio::time::sleep_until(d).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    let ms = opts.timeout_ms.unwrap_or(0);
+                    cancel_token.cancel();
+                    self.active_agents.fetch_sub(1, Ordering::Relaxed);
+                    row.finish("failed", total_tokens, total_duration);
+                    return Err(HostError::Failed(format!(
+                        "subagent timed out after {ms}ms"
+                    )));
+                }
                 _ = self.params.cancel.cancelled() => {
                     cancel_token.cancel();
                     self.active_agents.fetch_sub(1, Ordering::Relaxed);
@@ -1227,6 +1249,64 @@ mod tests {
                 .expect("second result")
                 .success,
             "second agent completes"
+        );
+
+        drop(host_tx);
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    }
+
+    /// timeout_ms 强制墙钟超时：子 agent 一直不完成 → 超时分支取消并返回 Failed。
+    #[tokio::test]
+    async fn agent_timeout_cancels_and_returns_failed() {
+        let run_id = "wf_agent_timeout".to_string();
+        let mut tracker = WorkflowTracker::default();
+        tracker.start_run(
+            run_id.clone(),
+            "demo".into(),
+            "objective".into(),
+            vec![],
+            Some(1000),
+            None,
+        );
+        let tracker = Arc::new(parking_lot::Mutex::new(tracker));
+        let (subagent_tx, mut subagent_rx) = mpsc::unbounded_channel();
+        let (params, _persist_rx) = test_host_params(
+            &run_id,
+            1,
+            "wf-scratch-agent-timeout",
+            tracker.clone(),
+            subagent_tx,
+        );
+        let cancel = params.cancel.clone();
+        let (host_tx, host_rx) = mpsc::unbounded_channel();
+        let (handle, _drained) = spawn_workflow_host_service(params, host_rx);
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        host_tx
+            .send(WorkflowHostRequest::SpawnAgent {
+                opts: AgentOpts {
+                    prompt: "sleep forever".to_owned(),
+                    timeout_ms: Some(120),
+                    ..Default::default()
+                },
+                reply: reply_tx,
+            })
+            .unwrap();
+
+        // 子 agent 请求到达 coordinator（表示已开始跑），但故意不 respond → 永不完成。
+        let _spawn = tokio::time::timeout(Duration::from_secs(5), subagent_rx.recv())
+            .await
+            .expect("an agent reaches the coordinator")
+            .expect("subagent channel open");
+
+        let reply = tokio::time::timeout(Duration::from_secs(5), reply_rx)
+            .await
+            .expect("host replies after timeout")
+            .expect("host sends a result");
+        assert!(
+            matches!(reply, Err(HostError::Failed(ref msg)) if msg.contains("timed out after 120ms")),
+            "expected timeout failure, got {reply:?}"
         );
 
         drop(host_tx);
