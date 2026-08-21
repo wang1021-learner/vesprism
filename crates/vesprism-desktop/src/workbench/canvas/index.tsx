@@ -535,6 +535,10 @@ function FlowCanvasInner() {
     (rec: Awaited<ReturnType<typeof getFlow>>, markDirty = false) => {
       historyRef.current = []
       futureRef.current = []
+      // 记录"画布当前流程"：tab state（本次 tab 精确）+ localStorage（跨会话兜底）。
+      // 重挂载恢复靠它，避免切走再切回时画布回落 demo 或旧流程。
+      if (tabId) patchTab(tabId, { flowId: rec.id })
+      localStorage.setItem('vesprism.flow-canvas.lastId', rec.id)
       const savedTestInput = localStorage.getItem(testKey(rec.id))
       if (savedTestInput) {
         setTestInput(savedTestInput)
@@ -593,6 +597,34 @@ function FlowCanvasInner() {
       }
     })()
   }, [focusFlowId, applyFlowRecord])
+
+  // 重挂载恢复：画布组件在 tab 切换（如打开「试跑详情」flow-run）时会卸载，
+  // 经 TabBar 直接切回时没有外部 focus 信号（requestFlowFocus 只走侧栏绑定路径），
+  // 这里恢复「画布当前流程」——优先 tab state 的 flowId（applyFlowRecord/persist 同步写入，
+  // 本次 tab 内精确），其次 localStorage lastId（跨 tab 会话兜底），避免画布回落 demo 草稿。
+  useEffect(() => {
+    if (focusFlowId) return
+    const tabFlowId = tabId ? getTabState(tabId)?.flowId : undefined
+    const flowId = tabFlowId || localStorage.getItem('vesprism.flow-canvas.lastId')
+    if (!flowId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const rec = await getFlow(flowId)
+        if (cancelled) return
+        if (rec && Array.isArray(rec.nodes) && rec.nodes.length) {
+          applyFlowRecord(rec, false)
+        }
+      } catch {
+        /* 流程可能已被删除，保持 demo 草稿 */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // 仅挂载时执行：后续流程切换走 focusFlowId / applyFlowRecord 显式路径。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const persist = useCallback(
     async (d: FlowDraft, extra?: { publish?: boolean; stage?: boolean; bind?: boolean; ephemeral?: boolean }) => {
@@ -670,6 +702,7 @@ function FlowCanvasInner() {
       })
       if (!extra?.ephemeral) {
         localStorage.setItem('vesprism.flow-canvas.lastId', saved.id)
+        if (tabId) patchTab(tabId, { flowId: saved.id })
       }
       const shouldBind = extra?.bind !== false && !extra?.ephemeral
       const st = tabId ? getTabState(tabId) : undefined

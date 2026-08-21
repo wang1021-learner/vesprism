@@ -73,6 +73,8 @@ export interface TabState {
    * 侧栏入口打开时写入，主区据此切换面板而非空白会话。
    */
   utilityKind: UtilityKind | null
+  /** 画布当前编辑的流程 id（flow-canvas tab；组件卸载重挂载时据此恢复，避免回落 demo） */
+  flowId?: string
   /** 隔离 worktree 绝对路径；空=未沙箱 */
   sandboxCwd: string
   /** 沙箱对应的主工作区 */
