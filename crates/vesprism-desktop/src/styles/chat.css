@@ -14,7 +14,7 @@
   flex-shrink: 0;
 }
 
-.sandbox-banner-lock {
+.sandbox-banner-mark {
   display: grid;
   place-items: center;
   color: var(--text-primary);

@@ -2,7 +2,7 @@
 
 /* ── Shell ── */
 .sidebar {
-  width: 260px;
+  width: 250px;
   height: 100%;
   background: var(--surface-elevated);
   border-radius: var(--radius-md);
@@ -173,7 +173,7 @@
   --rail-btn: 32px;
   --rail-top: 40px;
   /* = .tabbar height */
-  width: 52px;
+  width: 50px;
   align-items: center;
   padding: 0 0 10px;
   gap: 0;

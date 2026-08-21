@@ -115,9 +115,9 @@ export const ChatTimeline = memo(function ChatTimeline({
         return
       }
 
-      const visibleItems = virtualizer.getVirtualItems()
-      if (visibleItems.length === 0) return
-      const topmostVisibleIndex = visibleItems[0].index
+      // 用 range.startIndex（真实可见首条），不用 getVirtualItems()[0]（含 overscan，会向上偏移）
+      const topmostVisibleIndex = virtualizer.range?.startIndex
+      if (topmostVisibleIndex === undefined) return
 
       let nextActive = 0
       for (let i = 0; i < entries.length; i++) {
@@ -150,7 +150,6 @@ export const ChatTimeline = memo(function ChatTimeline({
     const row = rowRefs.current[index]
     if (row) {
       row.classList.toggle('timeline-row-hovered', on)
-      if (on) row.scrollIntoView({ block: 'nearest' })
     }
   }, [])
 

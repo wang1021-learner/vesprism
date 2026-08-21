@@ -610,8 +610,20 @@ const ThoughtLine = memo(function ThoughtLine({
   useEffect(() => {
     const box = expandRef.current
     if (open) {
-      if (collapsing) setCollapsing(false)
-      if (box) {
+      if (collapsing) {
+        setCollapsing(false)
+        if (box) {
+          box.classList.remove('is-collapsing')
+          const currentHeight = getComputedStyle(box).maxHeight
+          if (currentHeight !== 'none') box.style.maxHeight = currentHeight
+          void box.scrollHeight // force reflow
+          box.style.maxHeight = `${box.scrollHeight}px`
+          const t = setTimeout(() => {
+            if (expandRef.current) expandRef.current.style.maxHeight = ''
+          }, 200) // matches 180ms CSS transition
+          return () => clearTimeout(t)
+        }
+      } else if (box) {
         box.style.maxHeight = ''
         box.classList.remove('is-collapsing')
       }
@@ -1028,12 +1040,6 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
             aria-label="派生新会话"
             onClick={() => void forkCurrentSession()}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
-              <circle cx="6" cy="6" r="2.2" />
-              <circle cx="6" cy="18" r="2.2" />
-              <circle cx="18" cy="12" r="2.2" />
-              <path d="M6 8.2v7.6M8.2 6.8 16 11.2" />
-            </svg>
             派生
           </button>
           <button
@@ -1043,10 +1049,6 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
             aria-label="回滚会话"
             onClick={() => openRewind($activeTabId.get())}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M8 7H5V4" />
-              <path d="M5.6 16.5A8 8 0 1 0 7.2 7.4L5 9.2" />
-            </svg>
             回滚
           </button>
         </div>

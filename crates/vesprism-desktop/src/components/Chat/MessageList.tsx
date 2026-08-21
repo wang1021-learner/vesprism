@@ -305,10 +305,7 @@ export const MessageList = memo(function MessageList({
       void scrollToBottom({ animation: 'instant' })
       requestAnimationFrame(() => {
         void scrollToBottom({ animation: 'instant' })
-        requestAnimationFrame(() => {
-          void scrollToBottom({ animation: 'instant' })
-          setScrollReady(true)
-        })
+        setScrollReady(true)
       })
     }
   }, [chatKey, count, lastId, loadingHistory, scrollToBottom])
@@ -322,7 +319,7 @@ export const MessageList = memo(function MessageList({
     if (!lastMsg || lastMsg.role !== 'user') return
     if (lastMsg.id === prevLastUserMsgId.current) return
     prevLastUserMsgId.current = lastMsg.id
-    void scrollToBottom({ animation: 'smooth' })
+    void scrollToBottom({ animation: 'instant' })
   }, [count, lastId, scrollReady, scrollToBottom, messages])
 
   // 当产生实际内容增长（新消息到达、尾部工具卡展开、思考块变长等高度增加）且用户原本在底部时，跟进贴底；

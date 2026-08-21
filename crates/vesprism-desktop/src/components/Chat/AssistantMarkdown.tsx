@@ -97,7 +97,9 @@ function detectAlert(children: ReactNode): { type: AlertType; body: ReactNode } 
 
 // ── 组件 ──
 
-interface Props { text: string }
+interface Props {
+  text: string
+}
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: Props) {
   const code = useCodePlugin()
@@ -180,6 +182,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: Props
     hr: (_props: ComponentProps<'hr'>) => <hr className="md-hr" />,
 
     // ── 列表 ──
+    p: ({ className, ...props }: ComponentProps<'p'>) => (
+      <p className={`md-p${className ? ` ${className}` : ''}`} {...props} />
+    ),
     ul: ({ className, ...props }: ComponentProps<'ul'>) => (
       <ul className={`md-ul${className ? ` ${className}` : ''}`} {...props} />
     ),

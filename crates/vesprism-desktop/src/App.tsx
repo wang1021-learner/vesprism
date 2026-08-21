@@ -372,12 +372,14 @@ function AppComposer() {
   }, [])
 
   const onRemoveQueued = useCallback(async (id: string, version: number) => {
-    const prev = $queuedPrompts.get()
-    patchActiveTab({ queuedPrompts: prev.filter((q) => q.id !== id) })
+    const targetTabId = $activeTabId.get()
+    if (!targetTabId) return
+    const prev = getTabState(targetTabId)?.queuedPrompts ?? []
+    patchTab(targetTabId, { queuedPrompts: prev.filter((q) => q.id !== id) })
     try {
-      await removeQueuedPrompt($activeTabId.get(), id, version)
+      await removeQueuedPrompt(targetTabId, id, version)
     } catch (e) {
-      patchActiveTab({ queuedPrompts: prev, error: String(e) })
+      patchTab(targetTabId, { queuedPrompts: prev, error: String(e) })
     }
   }, [])
 

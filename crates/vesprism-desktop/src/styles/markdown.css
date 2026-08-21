@@ -7,9 +7,9 @@
    ═══════════════════════════════════════════════════ */
 
 .md-body {
-  font-size: 13.5px;
-  font-weight: 500;
-  line-height: 1.65;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.62;
   overflow-wrap: break-word;
   word-break: normal;
   color: var(--text-primary);
@@ -17,17 +17,17 @@
 }
 
 /* 首尾与外层消息间距对齐，避免上下双重空隙 */
-.md-body > :first-child {
+.md-body> :first-child {
   margin-top: 0 !important;
 }
 
-.md-body > :last-child {
+.md-body> :last-child {
   margin-bottom: 0 !important;
 }
 
 /* ── 段落 ── */
 .md-body p {
-  margin: 0 0 0.7em;
+  margin: 0 0 0.85em;
 }
 
 .md-body p:last-child {
@@ -35,53 +35,56 @@
 }
 
 .md-body strong {
-  font-weight: 650;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
-/* ── 标题层级：略小于正文层级差，字重克制 ── */
+/* ── 标题层级：结构清晰，字重分明 ── */
 .md-h1 {
-  margin: 1.15em 0 0.45em;
-  font-size: 1.2em;
-  font-weight: 650;
-  letter-spacing: -0.015em;
-  line-height: 1.3;
+  margin: 1.35em 0 0.5em;
+  font-size: 1.35em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
   color: var(--text-primary);
 }
 
 .md-h2 {
-  margin: 1.05em 0 0.4em;
-  font-size: 1.08em;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
+  margin: 1.2em 0 0.45em;
+  font-size: 1.18em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
   color: var(--text-primary);
 }
 
 .md-h3 {
-  margin: 0.9em 0 0.35em;
-  font-size: 1em;
-  font-weight: 600;
-  line-height: 1.35;
+  margin: 1em 0 0.4em;
+  font-size: 1.06em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
   color: var(--text-primary);
 }
 
 .md-h4 {
-  margin: 0.75em 0 0.3em;
-  font-size: 0.95em;
+  margin: 0.85em 0 0.35em;
+  font-size: 0.98em;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.4;
   color: var(--text-secondary);
 }
 
-/* ── 行内代码 ── */
-.md-body :not(pre) > code {
+/* ── 行内代码（清晰的 Code Badge 胶囊） ── */
+.md-body :not(pre)>code {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 10.5px;
-  background: color-mix(in srgb, var(--surface-muted) 92%, #000 3%);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--surface-muted) 85%, var(--text-primary) 4%);
   border: 1px solid color-mix(in srgb, var(--border-solid) 90%, transparent);
-  border-radius: 4px;
-  padding: 0.08em 0.32em;
+  border-radius: 5px;
+  padding: 0.12em 0.42em;
+  margin: 0 0.1em;
+  color: var(--text-primary);
   word-break: break-word;
 }
 
@@ -109,7 +112,7 @@
   padding: 0;
   margin: 0;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.55;
   color: var(--text-primary);
   white-space: inherit;
@@ -120,9 +123,9 @@
 
 /* ── 引用块：仅左边线，无色块底 ── */
 .md-blockquote {
-  margin: 0.45em 0 0.85em;
-  padding: 0.15em 0 0.15em 0.85em;
-  border-left: 2px solid var(--border-strong-solid);
+  margin: 0.55em 0 0.95em;
+  padding: 0.2em 0 0.2em 0.95em;
+  border-left: 2.5px solid var(--border-strong-solid);
   color: var(--text-secondary);
   background: transparent;
   border-radius: 0;
@@ -207,12 +210,13 @@
   white-space: nowrap;
 }
 
-/* ── 链接 ── */
+/* ── 链接与引用角标 ── */
 .md-link {
   color: var(--accent);
   text-decoration: none;
   border-bottom: 1px solid var(--border-strong-solid);
   text-underline-offset: 2px;
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
 
 .md-link:hover {
@@ -231,21 +235,29 @@
 
 /* ── 分隔线 ── */
 .md-hr {
-  margin: 1em 0;
+  margin: 1.25em 0;
   border: none;
   border-top: 1px solid var(--border-solid);
-  opacity: 0.9;
+  opacity: 0.85;
 }
 
-/* ── 列表：可见标记 + 舒适行距 ── */
+/* ── 列表：分层清晰 + 舒适行距 ── */
 .md-ul,
 .md-ol {
-  margin: 0.25em 0 0.85em;
-  padding-left: 1.35em;
+  margin: 0.35em 0 0.95em;
+  padding-left: 1.4em;
 }
 
 .md-ul {
   list-style: disc;
+}
+
+.md-ul .md-ul {
+  list-style: circle;
+}
+
+.md-ul .md-ul .md-ul {
+  list-style: square;
 }
 
 .md-ol {
@@ -253,36 +265,36 @@
 }
 
 .md-li {
-  margin: 0.28em 0;
+  margin: 0.32em 0;
   padding-left: 0.15em;
-  line-height: 1.6;
+  line-height: 1.62;
 }
 
 .md-li::marker {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
-.md-li > .md-ul,
-.md-li > .md-ol {
-  margin: 0.25em 0;
+.md-li>.md-ul,
+.md-li>.md-ol {
+  margin: 0.25em 0 0.25em;
 }
 
-.md-li > p {
+.md-li>p {
   margin: 0 0 0.35em;
 }
 
-.md-li > p:last-child {
+.md-li>p:last-child {
   margin-bottom: 0;
 }
 
-/* ── 表格：圆角壳 + 细线 + 自适应横滚 ── */
+/* ── 表格：圆角卡片 + 明确结构线 + 自适应横滚 + 主题自适应 ── */
 .md-table-wrapper {
-  margin: 0.6em 0 1em;
+  margin: 0.8em 0 1.2em;
   overflow-x: auto;
   border-radius: 8px;
   border: 1px solid var(--border-solid);
-  background: var(--surface-elevated, #fff);
-  box-shadow: none;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
   max-width: 100%;
 }
 
@@ -292,16 +304,16 @@
   width: 100%;
   min-width: 100%;
   table-layout: auto;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  line-height: 1.55;
 }
 
 .md-table th,
 .md-table td {
   border: none;
   border-bottom: 1px solid var(--border-solid);
-  border-right: 1px solid color-mix(in srgb, var(--border-solid) 85%, transparent);
-  padding: 0.55rem 0.75rem;
+  border-right: 1px solid color-mix(in srgb, var(--border-solid) 80%, transparent);
+  padding: 0.65rem 0.85rem;
   text-align: left;
   vertical-align: top;
   white-space: normal;
@@ -315,16 +327,16 @@
 }
 
 .md-table th {
-  background: #f4f5f7;
-  color: var(--text-secondary);
-  font-weight: 600;
-  white-space: normal;
-  font-size: 12px;
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  font-weight: 650;
+  font-size: 12.5px;
+  border-bottom: 1.5px solid var(--border-strong-solid);
 }
 
 .md-table td {
   color: var(--text-primary);
-  background: #fff;
+  background: var(--surface);
 }
 
 .md-table tbody tr:last-child td {
@@ -332,13 +344,13 @@
 }
 
 .md-table tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, #f8f9fb 88%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 55%, var(--surface) 45%);
 }
 
-/* 表内代码略紧凑 */
+/* 表内代码与标签对齐 */
 .md-table code {
-  font-size: 10.5px;
-  padding: 0.05em 0.28em;
+  font-size: 11.5px;
+  padding: 0.08em 0.35em;
 }
 
 /* Streamdown 代码块：与应用中性灰一致 */
@@ -488,37 +500,4 @@
   max-width: 100%;
   height: auto;
 }
-
-/* ── 流式阶段（保留兼容） ── */
-.md-body-streaming {
-  position: relative;
-}
-
-.md-streaming-plain {
-  margin: 0;
-  padding: 0;
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.7;
-  color: var(--text-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: transparent;
-  border: none;
-}
-
-.md-streaming-caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 1px;
-  vertical-align: text-bottom;
-  background: var(--text-tertiary);
-  animation: md-caret-blink 1s step-end infinite;
-}
-
-@keyframes md-caret-blink {
-  50% {
-    opacity: 0;
-  }
-}
+

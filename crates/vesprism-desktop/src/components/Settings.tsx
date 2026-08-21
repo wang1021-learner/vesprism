@@ -544,7 +544,7 @@ export function SettingsModal() {
                   >
                     <option value="request-review">审批模式（默认）— 未知命令弹出确认</option>
                     <option value="always-proceed">信任模式 — 除黑名单外全部自动放行</option>
-                    <option value="proceed-in-sandbox">沙箱模式 — 在隔离 git worktree 中执行</option>
+                    <option value="proceed-in-sandbox">副本模式 — 文件写入 git worktree 副本（不是进程沙箱）</option>
                   </select>
                   <label className="settings-label" htmlFor="settings-net">
                     联网

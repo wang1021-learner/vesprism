@@ -108,12 +108,13 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
           ? formatAskUserAnswerPreview('accepted', payload.answers)
           : formatAskUserAnswerPreview(payload.outcome)
       const cur = getTabState(tabId)?.messages ?? $messages.get()
+      const bgs = new Set(Object.keys(getTabState(tabId)?.backgroundTasks || {}))
       const next = applyTranscriptEvent(cur, {
         type: 'user_question_resolved',
         tool_call_id: request.toolCallId,
         outcome: payload.outcome,
         answer_preview: answerPreview,
-      })
+      }, bgs)
       patchTab(tabId, { messages: next, userQuestion: null })
       setBusy(false)
     },

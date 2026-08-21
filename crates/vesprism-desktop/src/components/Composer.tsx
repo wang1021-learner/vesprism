@@ -382,6 +382,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const text = e.clipboardData.getData('text')
     if (text.length <= PASTE_FOLD_THRESHOLD) return // 短内容走默认粘贴行为
+    const el = e.currentTarget
+    if (el.selectionStart !== el.selectionEnd) return // 有选中文本时，走默认覆盖行为！
     e.preventDefault()
     const block: PasteBlock = {
       id: generateId('paste_'),

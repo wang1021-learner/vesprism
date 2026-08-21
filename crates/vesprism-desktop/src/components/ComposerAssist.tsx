@@ -27,7 +27,7 @@ const SLASH: Item[] = [
   {
     id: 'sandbox',
     label: '/sandbox',
-    hint: '本会话按沙箱策略自动处理未知命令',
+    hint: '本会话把文件改动写到 git 副本目录（不是进程沙箱）',
     insert: '',
     run: () => {
       const tabId = $activeTabId.get()
@@ -43,9 +43,9 @@ const SLASH: Item[] = [
               reasoningEffort: st?.reasoningEffort,
             })
           }
-          pushToast('本会话已进入隔离 worktree，写文件不会动原仓库', 'info')
+          pushToast('本会话文件改动将写入 git 副本，不会动原仓库（命令仍用系统权限）', 'info')
         } catch (e) {
-          pushToast(`无法启动沙箱：${String(e)}`, 'error')
+          pushToast(`无法启动工作区副本：${String(e)}`, 'error')
         }
       })()
     },
