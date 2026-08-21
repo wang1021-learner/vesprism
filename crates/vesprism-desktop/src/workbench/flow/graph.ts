@@ -18,6 +18,13 @@ export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[]
   { type: 'start', label: '起点', hint: '定义流程输入' },
   { type: 'agent', label: 'Agent', hint: '挂编制员工 / 试岗角色' },
   { type: 'tool', label: '工具', hint: '执行命令或工具调用' },
+  { type: 'http', label: 'HTTP', hint: '调用外部接口（GET/POST 等）' },
+  { type: 'database', label: '数据库', hint: '执行 SQL（内置 SQLite）' },
+  { type: 'knowledge', label: '知识库', hint: '检索本地知识库（FTS5）' },
+  { type: 'variable', label: '变量', hint: '常量或引用上游/输入' },
+  { type: 'transform', label: '代码', hint: 'Rhai 表达式变换数据' },
+  { type: 'loop', label: '迭代', hint: 'For-Each 遍历数组' },
+  { type: 'loop_end', label: '迭代汇聚', hint: '收集循环结果' },
   { type: 'flow', label: '子流程', hint: '引用已发布流程' },
   { type: 'branch', label: '分支', hint: '按条件多路分流' },
   { type: 'parallel', label: '并行', hint: '并发执行多分支任务' },
@@ -38,9 +45,23 @@ export function defaultParams(type: FlowNodeType): FlowGraphNode['params'] {
     case 'start':
       return { label: '起点', fields: [{ name: 'input', type: 'string', required: true }] }
     case 'agent':
-      return { label: 'Agent', role: '', presetId: '', model: '', agentType: '', prompt: '' }
+      return { label: 'Agent', role: '', presetId: '', model: '', agentType: '', prompt: '', maxOutputTokens: 0, retry: 0, timeoutSecs: 0 }
     case 'tool':
-      return { label: '代办', toolName: '', command: '', args: {} }
+      return { label: '代办', toolName: '', command: '', args: {}, retry: 0, timeoutSecs: 0 }
+    case 'http':
+      return { label: 'HTTP', url: '', method: 'GET', headers: '', body: '', retry: 0, timeoutSecs: 0 }
+    case 'database':
+      return { label: '数据库', sql: '', dbPath: '', retry: 0 }
+    case 'knowledge':
+      return { label: '知识库', knowledgeBase: '', query: '', limit: 5, retry: 0 }
+    case 'variable':
+      return { label: '变量', value: '', valueType: 'string' }
+    case 'transform':
+      return { label: '代码', code: '' }
+    case 'loop':
+      return { label: '迭代' }
+    case 'loop_end':
+      return { label: '迭代汇聚' }
     case 'flow':
       return { label: '子流程', flowId: '', input: {} }
     case 'branch':

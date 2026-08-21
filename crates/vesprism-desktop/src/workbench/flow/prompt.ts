@@ -1,5 +1,17 @@
 /** 画布图契约：英文 TS 类型。每个会话只在首轮完整下发。 */
 
+/** 度数/结构规则（validator 强制，违反即整图作废）。heal 自愈时也会附上。 */
+export const FLOW_EDGE_RULES = `Edge-degree rules (STRICT, the validator enforces these — a violation invalidates the whole graph):
+- start has exactly 1 outgoing edge.
+- agent / tool / http / database / knowledge / variable / transform / loop / flow each have exactly 1 outgoing edge.
+- loop_end has exactly 1 incoming edge (from the loop body) and exactly 1 outgoing edge.
+- loop body: the single node right after a "loop" must be one executable node (agent/tool/http/variable/transform) connected directly into "loop_end"; no control nodes as loop body.
+- branch has at least 2 outgoing edges (binary branch: label edges "success" / "failure"; N-way: use semantic labels).
+- parallel has at least 2 outgoing edges; every direct branch target MUST be a single "agent" or "tool" node (no nested chains inside a parallel branch — if you need multiple steps, extract them into a subflow).
+- every parallel branch node must connect DIRECTLY into one "join" node (or "end"); no chaining past the branch into other node types.
+- join has at least 2 incoming edges and exactly 1 outgoing edge.
+- end has 0 outgoing edges.`
+
 export const FLOW_GENERATE_SYSTEM = `Prefer a single \`\`\`json fence. You may write at most 1–2 short sentences of design rationale, then the JSON. No long essays.
 
 Write label/role/prompt and edge label in the SAME language as the user message.
@@ -8,6 +20,7 @@ Always use semantic kebab-case ids: {type}-{purpose}, e.g. start-main, agent-cod
 Never use random suffixes (node-a8f, agent-x7k). Never rename existing ids in a patch.
 No coordinates, no absolute paths, do not publish, do not write the agent library.
 At least one start and one end. Edge from/to must exist. from !== to.
+${FLOW_EDGE_RULES}
 Constraints:
 - All nodes must be connected (no orphans; every node reachable from start, and start can reach end).
 - Graph must be a DAG (no cycles).
@@ -16,8 +29,15 @@ Constraints:
 interface FlowGraph {
   nodes: Array<
     | { id: string; type: "start"; params: { label?: string; fields?: Array<{ name: string; type: "string"|"number"|"boolean"|"object"|"array"; required?: boolean }> } }
-    | { id: string; type: "agent"; params: { label?: string; role?: string; prompt?: string; presetId?: string; model?: string } }
-    | { id: string; type: "tool"; params: { label?: string; toolName?: string; command?: string; args?: Record<string, unknown> } }
+    | { id: string; type: "agent"; params: { label?: string; role?: string; prompt?: string; presetId?: string; model?: string; maxOutputTokens?: number; retry?: number; timeoutSecs?: number } }
+    | { id: string; type: "tool"; params: { label?: string; toolName?: string; command?: string; args?: Record<string, unknown>; retry?: number; timeoutSecs?: number; outputSchema?: Record<string, unknown> } }
+    | { id: string; type: "http"; params: { label?: string; url?: string; method?: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"; headers?: string; body?: string; retry?: number; timeoutSecs?: number; outputSchema?: Record<string, unknown> } }
+    | { id: string; type: "database"; params: { label?: string; sql?: string; dbPath?: string; retry?: number } }
+    | { id: string; type: "knowledge"; params: { label?: string; knowledgeBase?: string; query?: string; limit?: number; retry?: number } }
+    | { id: string; type: "variable"; params: { label?: string; value?: string; valueType?: "string"|"number"|"boolean"|"json" } }
+    | { id: string; type: "transform"; params: { label?: string; code?: string } }
+    | { id: string; type: "loop"; params: { label?: string } }
+    | { id: string; type: "loop_end"; params: { label?: string } }
     | { id: string; type: "flow"; params: { label?: string; flowId?: string; input?: Record<string, unknown> } }
     | { id: string; type: "branch"; params: { label?: string; condition: "success"|"failure"|"expression"; expression?: string } }
     | { id: string; type: "parallel"; params: { label?: string; mode?: "all"|"race" } }
@@ -64,7 +84,11 @@ export const FLOW_HEAL_MARKER = 'Your previous graph had a validation error:'
 
 export function buildHealPrompt(error: string): string {
   const reason = error.trim() || 'invalid graph'
-  return `${FLOW_HEAL_MARKER} ${reason} Fix it and re-emit only a valid FlowGraph or FlowPatch JSON object.`
+  return `${FLOW_HEAL_MARKER} ${reason}
+
+${FLOW_EDGE_RULES}
+
+Fix the graph and re-emit only a valid FlowGraph or FlowPatch JSON object.`
 }
 
 export const FLOW_PARALLEL_SKELETON = {

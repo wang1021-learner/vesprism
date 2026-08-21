@@ -13,13 +13,48 @@ export interface NodeInspectorProps {
   demoteToTrial: () => void
   openPromote: () => void
   onRerunFromNode: (nodeId: string) => void
+  /** 当前节点的上游节点（点选式变量绑定用） */
+  upstreamNodes: { id: string; label: string }[]
 }
 
-function VariableChips({ onInsert }: { onInsert: (v: string) => void }) {
+function FlowNumField({
+  label,
+  value,
+  placeholder,
+  onValue,
+}: {
+  label: string
+  value: number
+  placeholder?: string
+  onValue: (v: number) => void
+}) {
+  return (
+    <label className="flow-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={0}
+        placeholder={placeholder}
+        value={value > 0 ? String(value) : ''}
+        onChange={(e) => {
+          const raw = e.target.value.trim()
+          onValue(raw === '' ? 0 : Number(raw))
+        }}
+      />
+    </label>
+  )
+}
+
+function VariableChips({
+  onInsert,
+  upstreamNodes,
+}: {
+  onInsert: (v: string) => void
+  upstreamNodes: { id: string; label: string }[]
+}) {
   const vars = [
     { label: '上游产物', val: '{{prev.output}}' },
-    { label: '初始输入', val: '{{start.input}}' },
-    { label: '工作目录', val: '{{workspace.cwd}}' },
+    { label: '初始输入', val: '{{input}}' },
   ]
   return (
     <div className="flow-var-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', margin: '4px 0 6px' }}>
@@ -45,6 +80,41 @@ function VariableChips({ onInsert }: { onInsert: (v: string) => void }) {
           {item.val}
         </button>
       ))}
+      {upstreamNodes.length > 0 && (
+        <>
+          <span
+            style={{
+              fontSize: '10.5px',
+              color: 'var(--text-tertiary, #9ca3af)',
+              alignSelf: 'center',
+              marginLeft: '4px',
+            }}
+          >
+            上游绑定:
+          </span>
+          {upstreamNodes.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              className="flow-var-chip"
+              title={`插入 {{${u.id}.output}}（${u.label || u.id} 的输出）`}
+              onClick={() => onInsert(`{{${u.id}.output}}`)}
+              style={{
+                padding: '2px 6px',
+                fontSize: '11px',
+                fontFamily: 'var(--font-mono, monospace)',
+                background: '#eef2ff',
+                border: '1px solid #c7d2fe',
+                borderRadius: '4px',
+                color: '#4f46e5',
+                cursor: 'pointer',
+              }}
+            >
+              ↑ {u.label || u.id}
+            </button>
+          ))}
+        </>
+      )}
     </div>
   )
 }
@@ -57,6 +127,7 @@ export const NodeInspector = memo(function NodeInspector({
   demoteToTrial,
   openPromote,
   onRerunFromNode,
+  upstreamNodes,
 }: NodeInspectorProps) {
   if (!selected) return null
 
@@ -138,7 +209,7 @@ export const NodeInspector = memo(function NodeInspector({
             </label>
             <label className="flow-field">
               <span>任务提示词（Prompt / 指令要求）</span>
-              <VariableChips
+              <VariableChips upstreamNodes={upstreamNodes}
                 onInsert={(v) => {
                   const cur = String((data as { prompt?: string }).prompt ?? '')
                   patchSelected({ prompt: cur ? `${cur} ${v}` : v } as Partial<FlowRfData>)
@@ -173,6 +244,24 @@ export const NodeInspector = memo(function NodeInspector({
                 ))}
               </select>
             </label>
+            <FlowNumField
+              label="最大输出 Token（空 = 不限制）"
+              placeholder="如：4096"
+              value={Number((data as { maxOutputTokens?: number }).maxOutputTokens) || 0}
+              onValue={(v) => patchSelected({ maxOutputTokens: v } as Partial<FlowRfData>)}
+            />
+            <FlowNumField
+              label="失败重试次数（0 = 不重试）"
+              placeholder="如：2"
+              value={Number((data as { retry?: number }).retry) || 0}
+              onValue={(v) => patchSelected({ retry: v } as Partial<FlowRfData>)}
+            />
+            <FlowNumField
+              label="超时秒数（0 = 不设，真超时）"
+              placeholder="如：120"
+              value={Number((data as { timeoutSecs?: number }).timeoutSecs) || 0}
+              onValue={(v) => patchSelected({ timeoutSecs: v } as Partial<FlowRfData>)}
+            />
             <button type="button" className="flow-btn primary" onClick={openPromote}>
               ✦ 升格为 Agent
             </button>
@@ -192,7 +281,7 @@ export const NodeInspector = memo(function NodeInspector({
           </label>
           <label className="flow-field">
             <span>执行命令</span>
-            <VariableChips
+            <VariableChips upstreamNodes={upstreamNodes}
               onInsert={(v) => {
                 const cur = String((data as { command?: string }).command ?? '')
                 patchSelected({ command: cur ? `${cur} ${v}` : v } as Partial<FlowRfData>)
@@ -204,7 +293,299 @@ export const NodeInspector = memo(function NodeInspector({
               onChange={(e) => patchSelected({ command: e.target.value } as Partial<FlowRfData>)}
             />
           </label>
+          <FlowNumField
+            label="失败重试次数（0 = 不重试）"
+            placeholder="如：2"
+            value={Number((data as { retry?: number }).retry) || 0}
+            onValue={(v) => patchSelected({ retry: v } as Partial<FlowRfData>)}
+          />
+          <FlowNumField
+            label="执行超时秒数（0 = 不设）"
+            placeholder="如：60"
+            value={Number((data as { timeoutSecs?: number }).timeoutSecs) || 0}
+            onValue={(v) => patchSelected({ timeoutSecs: v } as Partial<FlowRfData>)}
+          />
+          <label className="flow-field">
+            <span>输出 JSON Schema（可选，官方按它结构化输出）</span>
+            <textarea
+              rows={3}
+              placeholder={'如：\n{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}'}
+              value={(data as { outputSchema?: unknown }).outputSchema ? JSON.stringify((data as { outputSchema?: unknown }).outputSchema) : ''}
+              onChange={(e) => {
+                const raw = e.target.value.trim()
+                if (!raw) {
+                  patchSelected({ outputSchema: undefined } as Partial<FlowRfData>)
+                  return
+                }
+                try {
+                  patchSelected({ outputSchema: JSON.parse(raw) } as Partial<FlowRfData>)
+                } catch {
+                  // 非法 JSON：暂不写入，避免脏数据
+                }
+              }}
+            />
+          </label>
         </>
+      )}
+
+      {data.nodeType === 'http' && (
+        <>
+          <label className="flow-field">
+            <span>请求 URL</span>
+            <VariableChips upstreamNodes={upstreamNodes}
+              onInsert={(v) => {
+                const cur = String((data as { url?: string }).url ?? '')
+                patchSelected({ url: cur ? `${cur}${v}` : v } as Partial<FlowRfData>)
+              }}
+            />
+            <input
+              placeholder="如：https://api.example.com/v1/items"
+              value={String((data as { url?: string }).url ?? '')}
+              onChange={(e) => patchSelected({ url: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <label className="flow-field">
+            <span>请求方法</span>
+            <select
+              value={String((data as { method?: string }).method ?? 'GET')}
+              onChange={(e) => patchSelected({ method: e.target.value } as Partial<FlowRfData>)}
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+              <option value="HEAD">HEAD</option>
+            </select>
+          </label>
+          <label className="flow-field">
+            <span>请求头（每行一个 Name: value）</span>
+            <VariableChips upstreamNodes={upstreamNodes}
+              onInsert={(v) => {
+                const cur = String((data as { headers?: string }).headers ?? '')
+                patchSelected({ headers: cur ? `${cur}\n${v}` : v } as Partial<FlowRfData>)
+              }}
+            />
+            <textarea
+              rows={2}
+              placeholder={'如：\nContent-Type: application/json\nAuthorization: Bearer {{start.input.token}}'}
+              value={String((data as { headers?: string }).headers ?? '')}
+              onChange={(e) => patchSelected({ headers: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <label className="flow-field">
+            <span>请求体（JSON 文本）</span>
+            <textarea
+              rows={3}
+              placeholder={'如：\n{"name": "{{prev.output.title}}", "done": false}'}
+              value={String((data as { body?: string }).body ?? '')}
+              onChange={(e) => patchSelected({ body: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <FlowNumField
+            label="失败重试次数（0 = 不重试）"
+            placeholder="如：2"
+            value={Number((data as { retry?: number }).retry) || 0}
+            onValue={(v) => patchSelected({ retry: v } as Partial<FlowRfData>)}
+          />
+          <FlowNumField
+            label="请求超时秒数（0 = 不设）"
+            placeholder="如：30"
+            value={Number((data as { timeoutSecs?: number }).timeoutSecs) || 0}
+            onValue={(v) => patchSelected({ timeoutSecs: v } as Partial<FlowRfData>)}
+          />
+          <label className="flow-field">
+            <span>输出 JSON Schema（可选，官方按它结构化输出）</span>
+            <textarea
+              rows={3}
+              placeholder={'如：\n{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}'}
+              value={(data as { outputSchema?: unknown }).outputSchema ? JSON.stringify((data as { outputSchema?: unknown }).outputSchema) : ''}
+              onChange={(e) => {
+                const raw = e.target.value.trim()
+                if (!raw) {
+                  patchSelected({ outputSchema: undefined } as Partial<FlowRfData>)
+                  return
+                }
+                try {
+                  patchSelected({ outputSchema: JSON.parse(raw) } as Partial<FlowRfData>)
+                } catch {
+                  // 非法 JSON：暂不写入，避免脏数据
+                }
+              }}
+            />
+          </label>
+        </>
+      )}
+
+      {data.nodeType === 'database' && (
+        <>
+          <label className="flow-field">
+            <span>{'SQL 语句（支持 {{prev.output}} / {{input}} 引用）'}</span>
+            <VariableChips upstreamNodes={upstreamNodes}
+              onInsert={(v) => {
+                const cur = String((data as { sql?: string }).sql ?? '')
+                patchSelected({ sql: cur ? `${cur} ${v}` : v } as Partial<FlowRfData>)
+              }}
+            />
+            <textarea
+              rows={4}
+              placeholder={'如：\nSELECT * FROM tasks WHERE owner = {{prev.output.id}}'}
+              value={String((data as { sql?: string }).sql ?? '')}
+              onChange={(e) => patchSelected({ sql: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <label className="flow-field">
+            <span>SQLite 文件路径（空 = 默认库）</span>
+            <input
+              placeholder="如：C:\data\app.sqlite（默认 ~/.vesprism/mcp/db.sqlite）"
+              value={String((data as { dbPath?: string }).dbPath ?? '')}
+              onChange={(e) => patchSelected({ dbPath: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <FlowNumField
+            label="失败重试次数（0 = 不重试）"
+            placeholder="如：1"
+            value={Number((data as { retry?: number }).retry) || 0}
+            onValue={(v) => patchSelected({ retry: v } as Partial<FlowRfData>)}
+          />
+        </>
+      )}
+
+      {data.nodeType === 'knowledge' && (
+        <>
+          <label className="flow-field">
+            <span>知识库名（~/.vesprism/knowledge/&lt;名&gt;/ 目录）</span>
+            <input
+              placeholder="如：project-docs"
+              value={String((data as { knowledgeBase?: string }).knowledgeBase ?? '')}
+              onChange={(e) => patchSelected({ knowledgeBase: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <label className="flow-field">
+            <span>{'检索词（FTS5 语法，支持 {{}} 引用）'}</span>
+            <VariableChips upstreamNodes={upstreamNodes}
+              onInsert={(v) => {
+                const cur = String((data as { query?: string }).query ?? '')
+                patchSelected({ query: cur ? `${cur} ${v}` : v } as Partial<FlowRfData>)
+              }}
+            />
+            <input
+              placeholder="如：重试 OR 超时"
+              value={String((data as { query?: string }).query ?? '')}
+              onChange={(e) => patchSelected({ query: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <FlowNumField
+            label="最多返回片段数"
+            placeholder="如：5"
+            value={Number((data as { limit?: number }).limit) || 0}
+            onValue={(v) => patchSelected({ limit: v } as Partial<FlowRfData>)}
+          />
+          <FlowNumField
+            label="失败重试次数（0 = 不重试）"
+            placeholder="如：1"
+            value={Number((data as { retry?: number }).retry) || 0}
+            onValue={(v) => patchSelected({ retry: v } as Partial<FlowRfData>)}
+          />
+        </>
+      )}
+
+      {data.nodeType === 'variable' && (
+        <>
+          <label className="flow-field">
+            <span>值类型</span>
+            <select
+              value={String((data as { valueType?: string }).valueType ?? 'string')}
+              onChange={(e) => patchSelected({ valueType: e.target.value } as Partial<FlowRfData>)}
+            >
+              <option value="string">字符串</option>
+              <option value="number">数字</option>
+              <option value="boolean">布尔</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label className="flow-field">
+            <span>{'值（支持 {{prev.output}} / {{input}} 引用）'}</span>
+            <VariableChips upstreamNodes={upstreamNodes}
+              onInsert={(v) => {
+                const cur = String((data as { value?: string }).value ?? '')
+                patchSelected({ value: cur ? `${cur}${v}` : v } as Partial<FlowRfData>)
+              }}
+            />
+            <textarea
+              rows={3}
+              placeholder={'如：https://api.example.com/{{prev.output.id}}  或  {"key": "{{input.token}}"}'}
+              value={String((data as { value?: string }).value ?? '')}
+              onChange={(e) => patchSelected({ value: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+        </>
+      )}
+
+      {data.nodeType === 'transform' && (
+        <>
+          <label className="flow-field">
+            <span>Rhai 表达式（input = 上一步输出）</span>
+            <VariableChips upstreamNodes={upstreamNodes}
+              onInsert={(v) => {
+                const cur = String((data as { code?: string }).code ?? '')
+                patchSelected({ code: cur ? `${cur} ${v}` : v } as Partial<FlowRfData>)
+              }}
+            />
+            <textarea
+              rows={5}
+              placeholder={'如：\ninput.items.map(|x| #{ name: x.name, score: x.score * 2 })'}
+              value={String((data as { code?: string }).code ?? '')}
+              onChange={(e) => patchSelected({ code: e.target.value } as Partial<FlowRfData>)}
+            />
+          </label>
+          <div
+            className="flow-field-hint"
+            style={{
+              marginTop: '6px',
+              padding: '6px 8px',
+              borderRadius: '6px',
+              background: 'var(--surface-muted, #f3f4f6)',
+              color: 'var(--text-secondary, #4b5563)',
+              border: '1px solid var(--border-solid, #e5e7eb)',
+              lineHeight: 1.4,
+            }}
+          >
+            💡 表达式在本机官方引擎里真实执行；异常会立即终止流程并报错。不要在此写 agent()/parallel() 调用。
+          </div>
+        </>
+      )}
+
+      {data.nodeType === 'loop' && (
+        <div
+          className="flow-field-hint"
+          style={{
+            padding: '8px 10px',
+            borderRadius: '6px',
+            background: 'var(--surface-muted, #f3f4f6)',
+            color: 'var(--text-secondary, #4b5563)',
+            border: '1px solid var(--border-solid, #e5e7eb)',
+            lineHeight: 1.5,
+          }}
+        >
+          💡 遍历上游输出的数组，对每个元素执行一次循环体；循环体必须是单个可执行节点（Agent/工具/HTTP/变量/代码），并直连「迭代汇聚」。循环体内用 <strong>{'{{prev.output}}'}</strong> 引用当前元素。
+        </div>
+      )}
+
+      {data.nodeType === 'loop_end' && (
+        <div
+          className="flow-field-hint"
+          style={{
+            padding: '8px 10px',
+            borderRadius: '6px',
+            background: 'var(--surface-muted, #f3f4f6)',
+            color: 'var(--text-secondary, #4b5563)',
+            border: '1px solid var(--border-solid, #e5e7eb)',
+            lineHeight: 1.5,
+          }}
+        >
+          💡 迭代汇聚输出循环收集的结果数组（顺序与输入数组一致）。循环体失败会立即终止整个流程并报错。
+        </div>
       )}
 
       {data.nodeType === 'flow' && (
@@ -234,7 +615,7 @@ export const NodeInspector = memo(function NodeInspector({
           </label>
           <label className="flow-field">
             <span>条件表达式</span>
-            <VariableChips
+            <VariableChips upstreamNodes={upstreamNodes}
               onInsert={(v) => {
                 const cur = String((data as { expression?: string }).expression ?? '')
                 patchSelected({ expression: cur ? `${cur} ${v}` : v } as Partial<FlowRfData>)
@@ -307,5 +688,6 @@ export const NodeInspector = memo(function NodeInspector({
   prev.openBoundAgent === next.openBoundAgent &&
   prev.demoteToTrial === next.demoteToTrial &&
   prev.openPromote === next.openPromote &&
-  prev.onRerunFromNode === next.onRerunFromNode
+  prev.onRerunFromNode === next.onRerunFromNode &&
+  prev.upstreamNodes === next.upstreamNodes
 ))

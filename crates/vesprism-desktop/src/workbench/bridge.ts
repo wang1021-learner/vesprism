@@ -52,3 +52,6 @@ export const updateSessionFlows = (tabId: string, flows: string[]) =>
 
 export const purgeRerunSidecars = (except?: string | null) =>
   invoke<number>('purge_rerun_sidecars', { except: except ?? null })
+
+/** 把内置 MCP server 挂载进 <cwd>/.mcp.json（官方热加载，子 agent 获得 database/knowledge 工具）。 */
+export const mountMcp = (cwd: string) => invoke<string>('mount_mcp', { cwd })

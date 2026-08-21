@@ -8,6 +8,13 @@ export const FLOW_NODE_TYPES = [
   'start',
   'agent',
   'tool',
+  'http',
+  'database',
+  'knowledge',
+  'variable',
+  'transform',
+  'loop',
+  'loop_end',
   'flow',
   'branch',
   'parallel',
@@ -41,6 +48,12 @@ export interface AgentParams {
   /** 官方 AgentOpts.agent_type；空 = 用 Agent 源，再空 = general-purpose。不进画布。 */
   agentType?: string
   prompt?: string
+  /** 官方 AgentOpts.max_output_tokens：单次 agent 输出上限（token 数）。空 = 不传。 */
+  maxOutputTokens?: number
+  /** 失败自动重试次数（编译成 Rhai 循环，0 = 不重试）。 */
+  retry?: number
+  /** 整个 agent 调用墙钟超时（秒），编译进官方 AgentOpts.timeout_ms 真超时。0 = 不设。 */
+  timeoutSecs?: number
 }
 
 export interface ToolParams {
@@ -48,6 +61,78 @@ export interface ToolParams {
   toolName?: string
   command?: string
   args?: Record<string, unknown>
+  /** 失败自动重试次数（编译成 Rhai 循环，0 = 不重试）。 */
+  retry?: number
+  /** 执行超时（秒），编译进任务说明由执行 agent 落实（指令级）。0 = 不设。 */
+  timeoutSecs?: number
+  /** 输出 JSON Schema（编译进 AgentOpts.output_schema，官方按它结构化+重试）。 */
+  outputSchema?: JsonSchema
+}
+
+export interface HttpParams {
+  label?: string
+  url?: string
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD'
+  /** 请求头（每行一个 `Name: value`，或 JSON 对象文本） */
+  headers?: string
+  /** 请求体（JSON 文本） */
+  body?: string
+  /** 失败自动重试次数（编译成 Rhai 循环，0 = 不重试）。 */
+  retry?: number
+  /** 请求超时（秒），编译进任务说明由执行 agent 落实（指令级）。0 = 不设。 */
+  timeoutSecs?: number
+  /** 输出 JSON Schema（编译进 AgentOpts.output_schema，官方按它结构化+重试）。 */
+  outputSchema?: JsonSchema
+}
+
+/** 变量/常量节点：value 支持 {{prev.output}} / {{input}} 运行时引用。 */
+export interface VariableParams {
+  label?: string
+  /** 常量值或含 {{变量}} 的表达式文本 */
+  value?: string
+  /** 无 {{}} 时的常量解释方式 */
+  valueType?: 'string' | 'number' | 'boolean' | 'json'
+}
+
+/** 数据库查询节点：走内置 MCP 工具 database_query（SQLite，真执行）。 */
+export interface DatabaseParams {
+  label?: string
+  /** SQL 语句 */
+  sql?: string
+  /** SQLite 文件路径；空 = 默认库 ~/.vesprism/mcp/db.sqlite */
+  dbPath?: string
+  /** 失败自动重试次数（0 = 不重试）。 */
+  retry?: number
+}
+
+/** 知识库检索节点：走内置 MCP 工具 knowledge_search（FTS5 全文检索）。 */
+export interface KnowledgeParams {
+  label?: string
+  /** 知识库名 = ~/.vesprism/knowledge/<名>/ 目录 */
+  knowledgeBase?: string
+  /** 检索词（FTS5 语法） */
+  query?: string
+  /** 最多返回片段数，默认 5 */
+  limit?: number
+  /** 失败自动重试次数（0 = 不重试）。 */
+  retry?: number
+}
+
+/** 代码/Transform 节点：Rhai 表达式，用 input 引用上游输出。 */
+export interface TransformParams {
+  label?: string
+  /** Rhai 表达式，如 input.items.map(|x| #{ name: x.name })；`input` = 上一步输出 */
+  code?: string
+}
+
+/** For-Each 迭代：loop → 单一循环体节点 → loop_end。循环体内 {{prev.output}} 指当前元素。 */
+export interface LoopParams {
+  label?: string
+}
+
+/** 迭代汇聚：输出收集后的结果数组。 */
+export interface LoopEndParams {
+  label?: string
 }
 
 export interface FlowRefParams {
@@ -81,6 +166,13 @@ export type FlowNodeParams =
   | StartParams
   | AgentParams
   | ToolParams
+  | HttpParams
+  | DatabaseParams
+  | KnowledgeParams
+  | VariableParams
+  | TransformParams
+  | LoopParams
+  | LoopEndParams
   | FlowRefParams
   | BranchParams
   | ParallelParams

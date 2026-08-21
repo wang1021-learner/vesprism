@@ -196,6 +196,43 @@ export function validateFlowGraph(input: unknown): SchemaResult {
         }
       }
     }
+    if (n.type === 'loop') {
+      const bodyEdge = edges.find((e) => e.from === n.id)
+      if (bodyEdge) {
+        const bodyNode = nodes.find((x) => x.id === bodyEdge.to)
+        if (
+          !bodyNode ||
+          ['start', 'end', 'branch', 'parallel', 'join', 'loop', 'loop_end', 'flow'].includes(
+            bodyNode.type,
+          )
+        ) {
+          return {
+            ok: false,
+            error: `迭代节点 (${n.id}) 的循环体必须是单个可执行节点（Agent/工具/HTTP/变量/代码），不能是流程控制节点`,
+          }
+        }
+        if (edges.filter((e) => e.to === bodyNode.id).length !== 1) {
+          return {
+            ok: false,
+            error: `迭代节点 (${n.id}) 的循环体 (${bodyNode.id}) 只能由该迭代节点进入，不能再被其他节点引用`,
+          }
+        }
+        const bodyOutEdges = edges.filter((e) => e.from === bodyNode.id)
+        const downNode = bodyOutEdges.length === 1 ? nodes.find((x) => x.id === bodyOutEdges[0].to) : undefined
+        if (bodyOutEdges.length !== 1 || !downNode || downNode.type !== 'loop_end') {
+          return {
+            ok: false,
+            error: `迭代节点 (${n.id}) 的循环体 (${bodyNode.id}) 必须直连汇聚节点 (loop_end)`,
+          }
+        }
+      }
+    }
+    if (n.type === 'loop_end') {
+      const inDegree = inCount.get(n.id) ?? 0
+      if (inDegree !== 1) {
+        return { ok: false, error: `迭代汇聚 (${n.id}) 必须恰好有 1 条输入边（来自循环体）` }
+      }
+    }
   }
 
   const dagErr = findDagErrors(nodes, edges)

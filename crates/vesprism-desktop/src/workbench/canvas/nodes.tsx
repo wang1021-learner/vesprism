@@ -1,16 +1,23 @@
 import { memo, type ReactNode } from 'react'
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import {
+  IconBooks,
+  IconCircleDot,
+  IconCode,
   IconCopy,
+  IconDatabase,
   IconGitBranch,
   IconGitFork,
   IconGitMerge,
   IconHierarchy2,
+  IconHttpDelete,
   IconPlayerPlay,
+  IconRepeat,
   IconSparkles,
   IconSquareRoundedCheck,
   IconTerminal2,
   IconTrash,
+  IconVariable,
 } from '@tabler/icons-react'
 import type { FlowNodeType } from '../flow'
 import { useFlowCanvas } from './context'
@@ -25,6 +32,13 @@ const TYPE_META: Record<
   start: { tag: '起点', cls: 'is-start', icon: <IconPlayerPlay size={16} stroke={2} /> },
   agent: { tag: 'Agent', cls: 'is-agent', icon: <IconSparkles size={16} stroke={2} /> },
   tool: { tag: '代办', cls: 'is-tool', icon: <IconTerminal2 size={16} stroke={2} /> },
+  http: { tag: 'HTTP', cls: 'is-http', icon: <IconHttpDelete size={16} stroke={2} /> },
+  database: { tag: '数据库', cls: 'is-database', icon: <IconDatabase size={16} stroke={2} /> },
+  knowledge: { tag: '知识库', cls: 'is-knowledge', icon: <IconBooks size={16} stroke={2} /> },
+  variable: { tag: '变量', cls: 'is-variable', icon: <IconVariable size={16} stroke={2} /> },
+  transform: { tag: '代码', cls: 'is-transform', icon: <IconCode size={16} stroke={2} /> },
+  loop: { tag: '迭代', cls: 'is-loop', icon: <IconRepeat size={16} stroke={2} /> },
+  loop_end: { tag: '迭代汇聚', cls: 'is-loop-end', icon: <IconCircleDot size={16} stroke={2} /> },
   flow: { tag: '子流程', cls: 'is-flow', icon: <IconHierarchy2 size={16} stroke={2} /> },
   branch: { tag: '分支', cls: 'is-branch', icon: <IconGitBranch size={16} stroke={2} /> },
   parallel: { tag: '并行', cls: 'is-parallel', icon: <IconGitFork size={16} stroke={2} /> },
@@ -51,6 +65,32 @@ function subtitleOf(data: FlowRfData): string {
     case 'tool': {
       const p = data as { toolName?: string; command?: string }
       return p.command || p.toolName || '执行工具/命令'
+    }
+    case 'http': {
+      const p = data as { method?: string; url?: string }
+      return p.url ? `${p.method || 'GET'} ${p.url}` : '未配置 URL'
+    }
+    case 'database': {
+      const p = data as { sql?: string }
+      return p.sql ? p.sql.slice(0, 48) : '未写 SQL'
+    }
+    case 'knowledge': {
+      const p = data as { knowledgeBase?: string; query?: string }
+      return p.query ? `「${p.knowledgeBase || '默认'}」${p.query}` : '未写检索词'
+    }
+    case 'variable': {
+      const p = data as { value?: string; valueType?: string }
+      return p.value ? `${p.valueType || 'string'}: ${p.value}` : '空值'
+    }
+    case 'transform': {
+      const p = data as { code?: string }
+      return p.code ? p.code.slice(0, 48) : '未写表达式'
+    }
+    case 'loop': {
+      return '遍历上游数组（循环体内 {{prev.output}} = 当前元素）'
+    }
+    case 'loop_end': {
+      return '收集循环结果数组'
     }
     case 'flow': {
       const p = data as { flowId?: string }
@@ -103,7 +143,7 @@ function FlowNodeView({ id, data, selected }: NodeProps<FlowRfNode>) {
         diffGlow === 'add' ? ' is-diff-add' : diffGlow === 'update' ? ' is-diff-update' : ''
       }`}
     >
-      <div className="flow-node-actions" aria-hidden>
+      <div className="flow-node-actions nodrag" aria-hidden>
         {data.nodeType !== 'start' && (
           <button
             type="button"

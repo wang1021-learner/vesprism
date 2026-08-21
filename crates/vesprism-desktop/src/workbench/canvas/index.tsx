@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
+  BackgroundVariant,
   Controls,
   MiniMap,
   Panel,
@@ -22,17 +23,24 @@ import '@xyflow/react/dist/style.css'
 import { useStore } from '@nanostores/react'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import {
+  IconBooks,
   IconChevronDown,
   IconChevronUp,
+  IconCircleDot,
+  IconCode,
+  IconDatabase,
   IconGitBranch,
   IconGitFork,
   IconGitMerge,
   IconHierarchy2,
+  IconHttpDelete,
   IconPlayerPlay,
+  IconRepeat,
   IconSearch,
   IconSparkles,
   IconSquareRoundedCheck,
   IconTerminal2,
+  IconVariable,
   IconX,
 } from '@tabler/icons-react'
 import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
@@ -110,6 +118,13 @@ const flowNodeTypes = {
   start: FlowNode,
   agent: FlowNode,
   tool: FlowNode,
+  http: FlowNode,
+  database: FlowNode,
+  knowledge: FlowNode,
+  variable: FlowNode,
+  transform: FlowNode,
+  loop: FlowNode,
+  loop_end: FlowNode,
   flow: FlowNode,
   branch: FlowNode,
   parallel: FlowNode,
@@ -280,7 +295,8 @@ function FlowCanvasInner() {
   const [replayOpen, setReplayOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [paletteQuery, setPaletteQuery] = useState('')
+  /** 双击节点弹出的属性 Modal 当前目标节点 id（null = 未打开） */
+  const [dblNodeId, setDblNodeId] = useState<string | null>(null)
   const [promoteOpen, setPromoteOpen] = useState(false)
   const [promoteId, setPromoteId] = useState('')
   const [promoteName, setPromoteName] = useState('')
@@ -320,6 +336,20 @@ function FlowCanvasInner() {
       )
     })
   }, [nodes, searchText])
+
+  /** 当前节点的上游节点列表（点选式变量绑定）。 */
+  const upstreamNodesOf = useCallback(
+    (id?: string | null): { id: string; label: string }[] => {
+      if (!id) return []
+      const simpleEdges = edges.map((e) => ({ from: e.source, to: e.target }))
+      return Array.from(getAncestors(id, simpleEdges))
+        .map((nid) => nodes.find((n) => n.id === nid))
+        .filter((n): n is RfNode => Boolean(n))
+        .filter((n) => (n.data as { nodeType?: string }).nodeType !== 'start')
+        .map((n) => ({ id: n.id, label: String((n.data as { label?: string }).label ?? n.id) }))
+    },
+    [nodes, edges],
+  )
 
   const focusNode = useCallback(
     (targetNode: RfNode) => {
@@ -362,6 +392,16 @@ function FlowCanvasInner() {
   }, [tabId, draft.name, draft.id])
 
   useEffect(() => () => resetCanvasGraphWait(), [])
+
+  // 画布 tab 打开时把内置 MCP server 挂载进会话 cwd（.mcp.json，官方热加载），
+  // 这样数据库/知识库节点的 agent 才能拿到 database_query / knowledge_search 工具。
+  useEffect(() => {
+    if (!tabId) return
+    const st = getTabState(tabId)
+    const cwd = st?.cwd
+    if (!cwd) return
+    void import('../../workbench/bridge').then((m) => m.mountMcp(cwd).catch(() => {}))
+  }, [tabId])
 
   const startRunRef = useRef<(nodeId?: string) => Promise<void>>(async () => {})
   const historyRef = useRef<GraphSnap[]>([])
@@ -901,6 +941,12 @@ function FlowCanvasInner() {
     setRunSteps(steps)
     setReplayOpen(true)
     setDockOpen(true)
+    // 试跑前确保内置 MCP 挂载在会话 cwd（切换项目后 .mcp.json 也要跟着走）。
+    const st0 = getTabState(tabId)
+    const cwd0 = st0?.cwd
+    if (cwd0) {
+      void import('../../workbench/bridge').then((m) => m.mountMcp(cwd0).catch(() => {}))
+    }
     try {
       await persist(current, {
         stage: true,
@@ -1160,23 +1206,8 @@ function FlowCanvasInner() {
     [list],
   )
 
-  const paletteQ = paletteQuery.trim().toLowerCase()
-  const filteredAgents = useMemo(
-    () =>
-      agents.filter((a) => {
-        if (!paletteQ) return true
-        return `${a.name || ''} ${a.id} ${a.model || ''}`.toLowerCase().includes(paletteQ)
-      }),
-    [agents, paletteQ],
-  )
-  const filteredLibrary = useMemo(
-    () =>
-      NODE_LIBRARY.filter((item) => {
-        if (!paletteQ) return true
-        return `${item.label} ${item.hint} ${item.type}`.toLowerCase().includes(paletteQ)
-      }),
-    [paletteQ],
-  )
+  const filteredAgents = agents
+  const filteredLibrary = NODE_LIBRARY
 
   const PALETTE_META: Record<
     FlowNodeType,
@@ -1185,6 +1216,13 @@ function FlowCanvasInner() {
     start: { icon: <IconPlayerPlay size={18} stroke={2} /> },
     agent: { icon: <IconSparkles size={18} stroke={2} /> },
     tool: { icon: <IconTerminal2 size={18} stroke={2} /> },
+    http: { icon: <IconHttpDelete size={18} stroke={2} /> },
+    database: { icon: <IconDatabase size={18} stroke={2} /> },
+    knowledge: { icon: <IconBooks size={18} stroke={2} /> },
+    variable: { icon: <IconVariable size={18} stroke={2} /> },
+    transform: { icon: <IconCode size={18} stroke={2} /> },
+    loop: { icon: <IconRepeat size={18} stroke={2} /> },
+    loop_end: { icon: <IconCircleDot size={18} stroke={2} /> },
     flow: { icon: <IconHierarchy2 size={18} stroke={2} /> },
     branch: { icon: <IconGitBranch size={18} stroke={2} /> },
     parallel: { icon: <IconGitFork size={18} stroke={2} /> },
@@ -1345,41 +1383,6 @@ function FlowCanvasInner() {
         <aside className="flow-palette" aria-label="节点库">
           <div className="flow-palette-header">
             <span className="flow-palette-title">节点库</span>
-            <div className="flow-palette-search-wrap">
-              <svg
-                className="flow-palette-search-icon"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                className="flow-palette-search"
-                placeholder="搜索..."
-                value={paletteQuery}
-                onChange={(e) => setPaletteQuery(e.target.value)}
-                aria-label="搜索节点库"
-              />
-              {paletteQuery && (
-                <button
-                  type="button"
-                  className="flow-palette-search-clear"
-                  onClick={() => setPaletteQuery('')}
-                  title="清空搜索"
-                  aria-label="清空搜索"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
           </div>
           <div className="flow-palette-list">
             {filteredAgents.length > 0 && (
@@ -1463,6 +1466,7 @@ function FlowCanvasInner() {
                 onConnect={onConnect}
                 onNodeDragStart={onNodeDragStart}
                 onNodeDragStop={onNodeDragStop}
+                onNodeDoubleClick={(_, node) => setDblNodeId(node.id)}
                 onMoveStart={onPaneMoveStart}
                 onMoveEnd={onPaneMoveEnd}
                 onSelectionChange={onRfSelectionChange}
@@ -1483,7 +1487,12 @@ function FlowCanvasInner() {
                 minZoom={0.08}
                 elevateNodesOnSelect={false}
               >
-                <Background gap={20} size={1.2} color="var(--border-solid, #e5e7eb)" />
+                <Background
+                  variant={BackgroundVariant.Lines}
+                  gap={24}
+                  lineWidth={1}
+                  color="color-mix(in srgb, var(--border-solid, #e5e7eb) 75%, transparent)"
+                />
                 {!rfBusy && nodes.length <= 80 ? (
                   <MiniMap position="top-right" pannable zoomable />
                 ) : null}
@@ -1601,8 +1610,52 @@ function FlowCanvasInner() {
             demoteToTrial={demoteToTrial}
             openPromote={openPromote}
             onRerunFromNode={(nodeId) => void startRun(nodeId)}
+            upstreamNodes={upstreamNodesOf(selected?.id)}
           />
         </div>
+
+        {(() => {
+          const dblSelected = dblNodeId ? (nodes.find((n) => n.id === dblNodeId) ?? null) : null
+          if (!dblSelected) return null
+          return (
+            <div
+              className="flow-modal-back"
+              role="dialog"
+              aria-modal="true"
+              aria-label="节点属性"
+              onMouseDown={() => setDblNodeId(null)}
+            >
+              <div
+                className="flow-modal flow-modal-node"
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{ maxWidth: 520, maxHeight: '86vh', overflowY: 'auto' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <h2>节点属性</h2>
+                  <button
+                    type="button"
+                    className="flow-btn"
+                    title="关闭"
+                    onClick={() => setDblNodeId(null)}
+                    style={{ padding: '2px 8px' }}
+                  >
+                    <IconX size={14} />
+                  </button>
+                </div>
+                <NodeInspector
+                  selected={dblSelected}
+                  patchSelected={patchSelected}
+                  agents={agents}
+                  openBoundAgent={openBoundAgent}
+                  demoteToTrial={demoteToTrial}
+                  openPromote={openPromote}
+                  onRerunFromNode={(nodeId) => void startRun(nodeId)}
+                  upstreamNodes={upstreamNodesOf(dblSelected.id)}
+                />
+              </div>
+            </div>
+          )
+        })()}
 
         <WorkbenchDock
           dockOpen={dockOpen}
