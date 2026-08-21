@@ -1,0 +1,17 @@
+# 行尾统一 LF：仓库 blob 已全 LF（已验证 0 个 CR），声明后零 renormalize 噪音。
+# .gitattributes 优先级高于 core.autocrlf，避免 "LF will be replaced by CRLF" 警告与
+# 下次 checkout 把 LF 转 CRLF 导致的整文件 diff 噪音。
+* text=auto
+Cargo.lock text eol=lf
+*.rs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.sql text eol=lf
+*.rhai text eol=lf
