@@ -147,9 +147,9 @@ export const NodeInspector = memo(function NodeInspector({
 
       {data.nodeType === 'start' && (
         <label className="flow-field">
-          <span>输入字段声明（格式：name:type，多个用逗号隔开）</span>
+          <span>输入字段声明（格式：name:type，多个用逗号隔开；name 只允许字母数字下划线）</span>
           <input
-            placeholder="如：input:string, file_path:string"
+            placeholder="如：phoneNumber:string, customerName:string, retryCount:number"
             value={((data as { fields?: SchemaField[] }).fields ?? [])
               .map((f) => `${f.name}:${f.type}`)
               .join(', ')}
@@ -160,14 +160,21 @@ export const NodeInspector = memo(function NodeInspector({
                 .filter(Boolean)
                 .map((x) => {
                   const [name, type] = x.split(':').map((s) => s.trim())
+                  // 清洗：name 只保留标识符字符，防污染（如 `{"phoneNumber"`）
+                  const clean = name.replace(/[^A-Za-z0-9_]/g, '')
                   const t = (['string', 'number', 'boolean', 'object', 'array'] as const).includes(type as never)
                     ? (type as SchemaField['type'])
                     : 'string'
-                  return { name, type: t, required: true }
+                  return { name: clean, type: t, required: true }
                 })
+                .filter((f) => Boolean(f.name))
               patchSelected({ fields, inputSchema: fieldsToSchema(fields) } as Partial<FlowRfData>)
             }}
           />
+          <p className="flow-field-hint">
+            试跑参数按这些字段生成模板（工作栏「试跑参数」里填值）；节点内用{' '}
+            <code>{'{{input.字段名}}'}</code> 引用，如 <code>{'{{input.phoneNumber}}'}</code>。
+          </p>
         </label>
       )}
 

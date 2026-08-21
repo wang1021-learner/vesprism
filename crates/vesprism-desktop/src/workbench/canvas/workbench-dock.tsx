@@ -182,6 +182,9 @@ export type WorkbenchDockProps = {
   onToggleDock: () => void
   onOpenDetails?: () => void
   onRerunFromMock?: (nodeId: string, mockOutput: unknown) => void
+  /** 试跑参数（JSON 文本，按 start 节点字段生成模板） */
+  testInput?: string
+  onTestInputChange?: (v: string) => void
 }
 
 export const WorkbenchDock = memo(function WorkbenchDock({
@@ -194,6 +197,8 @@ export const WorkbenchDock = memo(function WorkbenchDock({
   onToggleDock,
   onOpenDetails,
   onRerunFromMock,
+  testInput,
+  onTestInputChange,
 }: WorkbenchDockProps) {
   const [runOpen, setRunOpen] = useState(runSteps.length > 0)
   const [chatOpen, setChatOpen] = useState(true)
@@ -258,6 +263,22 @@ export const WorkbenchDock = memo(function WorkbenchDock({
                 </button>
               )}
             </div>
+            {typeof testInput === 'string' && onTestInputChange && (
+              <label className="wb-test-input-wrap">
+                <span className="wb-meta-label">试跑参数（JSON，按起点字段生成模板）</span>
+                <textarea
+                  className="wb-test-input"
+                  rows={3}
+                  value={testInput}
+                  onChange={(e) => onTestInputChange(e.target.value)}
+                  placeholder='{"phoneNumber":"13800138000"}'
+                  spellCheck={false}
+                />
+                <span className="wb-meta-hint">
+                  节点内用 <code>{'{{input.字段名}}'}</code> 引用；留空传空对象。
+                </span>
+              </label>
+            )}
             {runSteps.length > 0 ? (
               <div className="wb-run-steps-wrap">
                 <button

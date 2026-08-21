@@ -25,11 +25,11 @@ Constraints:
 - All nodes must be connected (no orphans; every node reachable from start, and start can reach end).
 - Graph must be a DAG (no cycles).
 - Never reference undefined node IDs in edges.
+- start.fields[].name MUST be a plain identifier: only letters/digits/underscore, no quotes, braces, or spaces (e.g. "phoneNumber", not "\"phoneNumber\"" or "{\"phoneNumber\"". The canvas sanitizes these, but clean names prevent data loss).
 
 interface FlowGraph {
   nodes: Array<
-    | { id: string; type: "start"; params: { label?: string; fields?: Array<{ name: string; type: "string"|"number"|"boolean"|"object"|"array"; required?: boolean }> } }
-    | { id: string; type: "agent"; params: { label?: string; role?: string; prompt?: string; presetId?: string; model?: string; maxOutputTokens?: number; retry?: number; timeoutSecs?: number } }
+    | { id: string; type: "start"; params: { label?: string; fields?: Array<{ name: string; type: "string"|"number"|"boolean"|"object"|"array"; required?: boolean }> } }    | { id: string; type: "agent"; params: { label?: string; role?: string; prompt?: string; presetId?: string; model?: string; maxOutputTokens?: number; retry?: number; timeoutSecs?: number } }
     | { id: string; type: "tool"; params: { label?: string; toolName?: string; command?: string; args?: Record<string, unknown>; retry?: number; timeoutSecs?: number; outputSchema?: Record<string, unknown> } }
     | { id: string; type: "http"; params: { label?: string; url?: string; method?: "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"; headers?: string; body?: string; retry?: number; timeoutSecs?: number; outputSchema?: Record<string, unknown> } }
     | { id: string; type: "database"; params: { label?: string; sql?: string; dbPath?: string; retry?: number } }

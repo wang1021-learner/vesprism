@@ -77,6 +77,7 @@ import {
   layoutDraft,
   layoutGraph,
   subgraphFrom,
+  testInputTemplate,
   type FlowDraft,
   type FlowGraphNode,
   type FlowListItem,
@@ -84,6 +85,7 @@ import {
   type FlowRunStep,
   type GraphSnap,
   type PresetResolve,
+  type SchemaField,
   applySnap,
   historyCap,
   pushCapped,
@@ -545,6 +547,11 @@ function FlowCanvasInner() {
       const savedTestInput = localStorage.getItem(testKey(rec.id))
       if (savedTestInput) {
         setTestInput(savedTestInput)
+      } else {
+        // 未自定义过试跑参数：按 start 节点字段生成模板，用户填值即可试跑
+        const start = (Array.isArray(rec.nodes) ? rec.nodes : []).find((n) => n.type === 'start')
+        const tpl = testInputTemplate((start?.params as { fields?: SchemaField[] } | undefined)?.fields)
+        if (tpl) setTestInput(tpl)
       }
       applyDraft(
         {
@@ -1733,6 +1740,8 @@ function FlowCanvasInner() {
           onToggleDock={onDockClose}
           onOpenDetails={onDockDetails}
           onRerunFromMock={onDockRerunMock}
+          testInput={testInput}
+          onTestInputChange={setTestInput}
         />
       </div>
 

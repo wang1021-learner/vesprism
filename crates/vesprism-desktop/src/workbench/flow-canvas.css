@@ -2370,6 +2370,47 @@
   border-radius: 4px;
 }
 
+/* 试跑参数输入区 */
+.wb-test-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.wb-test-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-primary, #111827);
+  background: var(--surface-elevated, #ffffff);
+  border: 1px solid var(--border-solid, #d1d5db);
+  border-radius: 6px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.wb-test-input:focus {
+  border-color: var(--brand-primary, #4f46e5);
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.12);
+}
+
+.wb-meta-hint {
+  font-size: 10.5px;
+  color: var(--text-tertiary, #9ca3af);
+  line-height: 1.4;
+}
+
+.wb-meta-hint code {
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-muted, #f3f4f6);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
 .wb-btn-inline {
   padding: 2px 7px;
   font-size: 11px;

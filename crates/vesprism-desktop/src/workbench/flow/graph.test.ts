@@ -5,11 +5,50 @@ import {
   createDemoDraft,
   layoutDraft,
   layoutGraph,
+  sanitizeStartFields,
   subgraphFrom,
+  testInputTemplate,
 } from './graph'
 import type { FlowDraft, FlowGraphJson, FlowGraphNode } from './types'
 
 describe('graph topological layout & utilities', () => {
+  it('sanitizeStartFields 清洗 AI 污染字段名（引号/花括号剔除），非法条目丢弃', () => {
+    const cleaned = sanitizeStartFields([
+      { name: '{\\"phoneNumber\\"', type: 'string' },
+      { name: '"customerName"', type: 'string' },
+      { name: 'businessType', type: 'string' },
+      { name: 'retryCount', type: 'number' },
+      { name: '  有 空格 ', type: 'string' },
+      { name: 'bad-type', type: 'weird' },
+      { name: '', type: 'string' },
+      'not-an-object',
+      null,
+    ])
+    expect(cleaned.map((f) => f.name)).toEqual([
+      'phoneNumber',
+      'customerName',
+      'businessType',
+      'retryCount',
+      'badtype', // 'weird' 类型回退 string；'  有 空格 ' 全非标识符 → 丢弃
+    ])
+    expect(cleaned.find((f) => f.name === 'retryCount')?.type).toBe('number')
+    expect(cleaned.find((f) => f.name === 'badtype')?.type).toBe('string')
+    expect(cleaned.find((f) => f.name === 'phoneNumber')?.required).toBe(true)
+  })
+
+  it('testInputTemplate 按 start 字段生成试跑参数模板；无字段返回 null', () => {
+    const tpl = testInputTemplate([
+      { name: 'phoneNumber', type: 'string', required: true },
+      { name: 'customerName', type: 'string', required: true },
+      { name: 'retryCount', type: 'number', required: false },
+    ])
+    expect(tpl).toContain('"phoneNumber": ""')
+    expect(tpl).toContain('"customerName": ""')
+    expect(tpl).toContain('"retryCount": "0"')
+    expect(testInputTemplate([])).toBeNull()
+    expect(testInputTemplate(undefined)).toBeNull()
+  })
+
   it('assigns progressive x-coordinates based on topological layer', () => {
     const graph: FlowGraphJson = {
       nodes: [

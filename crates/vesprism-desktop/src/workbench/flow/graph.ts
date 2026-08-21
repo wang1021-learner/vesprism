@@ -136,6 +136,45 @@ export function fieldsToSchema(fields: SchemaField[]): JsonSchema {
   }
 }
 
+/**
+ * 清洗 start 节点字段定义：name 必须是纯标识符（AI 生成时可能输出
+ * `"{\"phoneNumber\""` 这类带引号/花括号的污染），非法字符一律剔除。
+ * 非数组/非对象条目丢弃；type 非法回退 string。
+ */
+export function sanitizeStartFields(fields: unknown): SchemaField[] {
+  if (!Array.isArray(fields)) return []
+  const out: SchemaField[] = []
+  for (const f of fields) {
+    if (!f || typeof f !== 'object') continue
+    const raw = (f as { name?: unknown }).name
+    if (typeof raw !== 'string') continue
+    const name = raw.trim().replace(/[^A-Za-z0-9_]/g, '')
+    if (!name) continue
+    const rawType = (f as { type?: unknown }).type
+    const type = ['string', 'number', 'boolean', 'object', 'array'].includes(String(rawType))
+      ? (String(rawType) as SchemaField['type'])
+      : 'string'
+    const required = (f as { required?: unknown }).required !== false
+    const description =
+      typeof (f as { description?: unknown }).description === 'string'
+        ? ((f as { description?: string }).description as string)
+        : undefined
+    out.push({ name, type, required, ...(description ? { description } : {}) })
+  }
+  return out
+}
+
+/** 从 start 节点字段生成试跑参数 JSON 模板（供试跑输入框默认值）。无字段返回 null。 */
+export function testInputTemplate(fields: SchemaField[] | undefined | null): string | null {
+  if (!fields || fields.length === 0) return null
+  const obj: Record<string, string> = {}
+  for (const f of fields) {
+    if (!f.name) continue
+    obj[f.name] = f.type === 'number' ? '0' : f.type === 'boolean' ? 'false' : ''
+  }
+  return JSON.stringify(obj, null, 2)
+}
+
 export function summarizeInputSchema(nodes: FlowGraphNode[]): JsonSchema {
   const start = nodes.find((n) => n.type === 'start')
   if (!start) return { type: 'object' }
@@ -254,7 +293,21 @@ export function draftFromGraph(
   graph: FlowGraphJson,
   meta: { id?: string; name?: string; description?: string; version?: string },
 ): FlowDraft {
-  const nodes = layoutGraph(graph)
+  // 清洗 AI 生成的 start 字段（name 纯标识符），防 `{"phoneNumber"` 类污染进草稿。
+  const nodes = layoutGraph({
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      n.type === 'start'
+        ? {
+            ...n,
+            params: {
+              ...n.params,
+              fields: sanitizeStartFields((n.params as { fields?: unknown })?.fields),
+            },
+          }
+        : n,
+    ),
+  })
   const name = meta.name?.trim() || '未命名流程'
   return {
     id: meta.id && meta.id.trim() ? meta.id : slugifyFlowId(name),
