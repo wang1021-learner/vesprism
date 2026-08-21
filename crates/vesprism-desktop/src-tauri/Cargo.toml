@@ -34,6 +34,7 @@ chrono = { workspace = true }
 zip = { workspace = true }
 serde_yaml = { workspace = true }
 portable-pty = { workspace = true }
+xai-grok-mcp = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

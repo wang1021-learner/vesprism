@@ -11,6 +11,12 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 内置 MCP server 模式：exe --vesprism-mcp-server（stdio 传输，供官方引擎 .mcp.json 挂载）。
+    // 必须在 GUI 初始化之前分支，避免拉起整个 Tauri 应用。
+    if std::env::args().any(|a| a == workbench::mcp_server::MCP_SERVER_FLAG) {
+        std::process::exit(workbench::mcp_server::run_mcp_server_stdio());
+    }
+
     // 桌面 app 使用独立的 GROK_HOME，与命令行 grok 及 grok-gui-poc 完全隔离。
     // 必须在任何配置读取（grok_home() 首次调用）之前设置，否则 OnceLock 会锁定为默认值。
     // 密钥与 config.toml 一律放在此目录，**禁止**依赖仓库内 crates/vesprism-desktop/.env。
@@ -83,6 +89,12 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            // 官方记忆系统：确保 [memory] enabled 已显式配置（默认开）。
+            // 必须在任何会话启动前完成，否则官方 MemoryConfig 默认禁用。
+            if let Err(e) = engine_prefs::ensure_memory_default() {
+                log::warn!("[vesprism] 写入记忆开关默认值失败: {e}");
             }
 
             // 启动 Supervisor 线程（管理所有 tab 的会话 Actor），并把句柄交给 Tauri 状态管理。
@@ -184,7 +196,6 @@ pub fn run() {
             workbench::bindings::list_workbench_bindings,
             workbench::bindings::list_workbench_sessions,
             workbench::bindings::bind_workbench_artifact,
-            commands::read_file_for_preview,
             commands::save_artifact_file,
             commands::list_dir,
             commands::read_file_text,
@@ -192,6 +203,7 @@ pub fn run() {
             commands::workspace_changes,
             commands::get_rewind_points,
             commands::execute_rewind,
+            commands::mount_mcp,
             commands::fork_session,
             commands::kill_task,
             commands::list_running_subagents,

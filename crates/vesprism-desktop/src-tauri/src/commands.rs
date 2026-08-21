@@ -978,30 +978,8 @@ pub fn env_file_location() -> String {
     env_file_path().display().to_string()
 }
 
-/// 读取指定文件的完整文本内容，仅用于 Artifact 预览等按需读取场景。
-/// 安全约束：拒绝任何解析后不在 workspace_root 之内的路径（防止越界读取）。
-#[tauri::command]
-pub fn read_file_for_preview(path: String, workspace_root: String) -> Result<String, String> {
-    let canonical_requested =
-        ensure_within_workspace(&path, std::path::Path::new(&workspace_root))?;
-
-    const MAX_PREVIEW_FILE_BYTES: u64 = 10 * 1024 * 1024; // 10MB 上限
-    let metadata =
-        std::fs::metadata(&canonical_requested).map_err(|e| format!("读取文件信息失败: {e}"))?;
-    if metadata.len() > MAX_PREVIEW_FILE_BYTES {
-        return Err(format!(
-            "文件过大（{} bytes），超过预览上限 {} bytes",
-            metadata.len(),
-            MAX_PREVIEW_FILE_BYTES
-        ));
-    }
-
-    std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
-}
-
 /// 把 Artifact 预览内容写入用户通过系统"另存为"对话框选择的路径。
-/// 与 read_file_for_preview 不同，这里的目标路径完全由用户在
-/// 系统对话框中主动选择，不做工作区范围校验。
+/// 这里的目标路径完全由用户在系统对话框中主动选择，不做工作区范围校验。
 #[tauri::command]
 pub fn save_artifact_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("保存文件失败: {e}"))
@@ -2983,6 +2961,15 @@ pub async fn execute_rewind(
         })
         .map_err(|_| "会话线程已退出".to_string())?;
     reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 把内置 MCP server 挂载进 `<cwd>/.mcp.json`（合并写入，官方监听热加载）。
+/// 返回写入后的 `.mcp.json` 路径。
+#[tauri::command]
+pub fn mount_mcp(cwd: String) -> Result<String, String> {
+    let path = crate::workbench::mcp_server::ensure_mcp_mount(std::path::Path::new(&cwd))
+        .map_err(|e| format!("挂载 MCP 失败: {e}"))?;
+    Ok(path.display().to_string())
 }
 
 #[cfg(test)]

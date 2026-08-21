@@ -6,3 +6,4 @@
 pub mod agents;
 pub mod bindings;
 pub mod flows;
+pub mod mcp_server;
