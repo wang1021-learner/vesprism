@@ -307,6 +307,9 @@ function FlowCanvasInner() {
   const [searchIdx, setSearchIdx] = useState(0)
   const saveTimer = useRef<number>(0)
   const ephemeralRunId = useRef<string | null>(null)
+  /** 本次试跑提交时的 workflows 快照（key=runId 集合 + 流程名）：
+   * 回填只认提交后新出现的本流程 run，旧 run 的迟到 phase 事件不再污染新 run 状态。 */
+  const submittedRunRef = useRef<{ keys: Set<string>; name: string } | null>(null)
   const draftRef = useRef(draft)
   draftRef.current = draft
   const nodesRef = useRef(nodes)
@@ -1002,6 +1005,11 @@ function FlowCanvasInner() {
       if (fromNodeId) ephemeralRunId.current = current.id
       const arg = Object.keys(input as object).length ? ` ${JSON.stringify(input)}` : ''
       await sendPrompt(tabId, `/${fromNodeId ? current.id : draft.id}${arg}`)
+      // 记录提交基线：此后 workflows 里新出现的「本流程」run 才回填到 runSteps。
+      submittedRunRef.current = {
+        keys: new Set(Object.keys($workflows.get())),
+        name: draft.name,
+      }
       setRunSteps((prev) => prev.map((s) => (s.type === 'start' ? { ...s, status: 'running', startedAt: Date.now() } : s)))
       pushToast('已提交试跑', 'success')
     } catch (e) {
@@ -1035,7 +1043,13 @@ function FlowCanvasInner() {
   }
 
   useEffect(() => {
-    const items = Object.values(workflows)
+    const submitted = submittedRunRef.current
+    if (!submitted) return
+    // 只认「提交基线之后新出现」且流程名匹配的 run：
+    // 旧 run（重复试跑/聊天区 run）的迟到 phase 事件不再污染本画布 runSteps。
+    const items = Object.values(workflows).filter(
+      (w) => w.name === submitted.name && !submitted.keys.has(w.runId),
+    )
     if (items.length === 0 || runSteps.length === 0) return
     const latest = items[items.length - 1]
     setRunSteps((prev) =>
