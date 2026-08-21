@@ -13,6 +13,9 @@ const DEFAULT_VIDEO_GEN: i64 = 4;
 pub struct EnginePrefsDto {
     /// 缺省开启（官方 `features.session_search` default_enabled）。
     pub session_search: bool,
+    /// 官方记忆系统（`[memory] enabled`）：跨会话知识注入/检索。
+    /// Vesprism 缺省开启；embedding 未配置时官方自动退化为 FTS-only。
+    pub memory_enabled: bool,
     pub web_search_allowed: Vec<String>,
     pub web_search_excluded: Vec<String>,
     pub max_parallel_image_gen_calls: i64,
@@ -82,6 +85,12 @@ pub fn get_engine_prefs() -> Result<EnginePrefsDto, String> {
         .and_then(|v| v.as_table());
     Ok(EnginePrefsDto {
         session_search,
+        memory_enabled: root
+            .get("memory")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
         web_search_allowed: string_array(web.and_then(|t| t.get("allowed_domains"))),
         web_search_excluded: string_array(web.and_then(|t| t.get("excluded_domains"))),
         max_parallel_image_gen_calls: media
@@ -97,6 +106,26 @@ pub fn get_engine_prefs() -> Result<EnginePrefsDto, String> {
     })
 }
 
+/// 启动时确保官方 `[memory] enabled` 已显式配置：config 无值时写入 true（默认开）。
+/// 官方 MemoryConfig 默认禁用（memory_config_default_disabled），不写键记忆不会启用。
+pub fn ensure_memory_default() -> Result<(), String> {
+    let mut root = load_config_root()?;
+    let root_tbl = root
+        .as_table_mut()
+        .ok_or_else(|| "config.toml 根节点必须是 table".to_string())?;
+    let memory = root_tbl
+        .entry("memory".to_string())
+        .or_insert_with(|| Value::Table(Map::new()));
+    let memory_tbl = memory
+        .as_table_mut()
+        .ok_or_else(|| "[memory] 必须是 table".to_string())?;
+    if !memory_tbl.contains_key("enabled") {
+        memory_tbl.insert("enabled".into(), Value::Boolean(true));
+        write_config_root(&root)?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_engine_prefs(prefs: EnginePrefsDto) -> Result<EnginePrefsDto, String> {
     let mut root = load_config_root()?;
@@ -109,24 +138,34 @@ pub fn set_engine_prefs(prefs: EnginePrefsDto) -> Result<EnginePrefsDto, String>
         features.insert("session_search".into(), Value::Boolean(prefs.session_search));
     }
 
+    {
+        // 官方记忆系统总开关（三态解析：env/cli 可覆盖，config 生效）。
+        let memory = table_mut(root_tbl, "memory")?;
+        memory.insert("enabled".into(), Value::Boolean(prefs.memory_enabled));
+        if memory.is_empty() {
+            root_tbl.remove("memory");
+        }
+    }
+
     let allowed = normalize_domains(&prefs.web_search_allowed);
     let excluded = normalize_domains(&prefs.web_search_excluded);
     let drop_toolset = {
         let toolset = table_mut(root_tbl, "toolset")?;
         {
             let web = table_mut(toolset, "web_search")?;
+            // 两个列表独立写入，互不影响：写入端不做隐式丢弃。
+            // 官方若读到 allowed+excluded 并存，会在运行时解析端 fail-closed
+            // （WebSearchOptions::validate 丢弃 excluded 并告警）——那是安全兜底，
+            // 不是写入端该做的事。get→set→get 往返不丢数据。
             if allowed.is_empty() {
                 web.remove("allowed_domains");
             } else {
                 web.insert("allowed_domains".into(), to_string_array(&allowed));
-                web.remove("excluded_domains");
             }
-            if allowed.is_empty() {
-                if excluded.is_empty() {
-                    web.remove("excluded_domains");
-                } else {
-                    web.insert("excluded_domains".into(), to_string_array(&excluded));
-                }
+            if excluded.is_empty() {
+                web.remove("excluded_domains");
+            } else {
+                web.insert("excluded_domains".into(), to_string_array(&excluded));
             }
             if web.is_empty() {
                 toolset.remove("web_search");
@@ -386,4 +425,100 @@ pub fn set_config_hooks(groups: Vec<HookGroupDto>) -> Result<Vec<HookGroupDto>, 
     }
     write_config_root(&root)?;
     list_config_hooks()
+}
+
+#[cfg(test)]
+mod memory_prefs_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// GROK_HOME 是进程级环境变量，测试串行化避免互相污染。
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn tmp_home() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "vesprism-mem-prefs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn ensure_memory_default_writes_enabled_when_absent_and_respects_existing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tmp_home();
+        // SAFETY: 单线程测试 + ENV_LOCK 串行，无并发读 GROK_HOME 的路径。
+        unsafe { std::env::set_var("GROK_HOME", &tmp) };
+        // 无 config → 写入 enabled=true（默认开）
+        ensure_memory_default().unwrap();
+        let root = load_config_root().unwrap();
+        assert_eq!(root["memory"]["enabled"], Value::Boolean(true));
+        // 已有显式 false → ensure 不覆盖
+        let mut root2 = load_config_root().unwrap();
+        root2.as_table_mut().unwrap()["memory"]
+            .as_table_mut()
+            .unwrap()
+            .insert("enabled".into(), Value::Boolean(false));
+        write_config_root(&root2).unwrap();
+        ensure_memory_default().unwrap();
+        let root3 = load_config_root().unwrap();
+        assert_eq!(root3["memory"]["enabled"], Value::Boolean(false));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn engine_prefs_roundtrip_memory_enabled() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tmp_home();
+        // SAFETY: 单线程测试 + ENV_LOCK 串行，无并发读 GROK_HOME 的路径。
+        unsafe { std::env::set_var("GROK_HOME", &tmp) };
+        // 缺省 true
+        let p = get_engine_prefs().unwrap();
+        assert!(p.memory_enabled, "缺省应开启记忆");
+        // 关 → 写回 → 读回 false
+        let mut off = p.clone();
+        off.memory_enabled = false;
+        let back = set_engine_prefs(off).unwrap();
+        assert!(!back.memory_enabled);
+        assert_eq!(load_config_root().unwrap()["memory"]["enabled"], Value::Boolean(false));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// 回归：web_search 的 allowed 与 excluded 并存时，写入端不能静默丢弃任一列表。
+    /// 官方在运行时解析端 fail-closed（丢弃 excluded + 告警），但写入端必须照单全收，
+    /// 保证 get→set→get 往返不丢数据。
+    #[test]
+    fn web_search_allowed_and_excluded_coexist_roundtrip() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tmp_home();
+        // SAFETY: 单线程测试 + ENV_LOCK 串行，无并发读 GROK_HOME 的路径。
+        unsafe { std::env::set_var("GROK_HOME", &tmp) };
+        let mut prefs = get_engine_prefs().unwrap();
+        prefs.web_search_allowed = vec!["docs.x.ai".into(), "arxiv.org".into()];
+        prefs.web_search_excluded = vec!["reddit.com".into()];
+        let back = set_engine_prefs(prefs).unwrap();
+        // 并存写入：两个列表都保留
+        assert_eq!(back.web_search_allowed, vec!["docs.x.ai", "arxiv.org"]);
+        assert_eq!(back.web_search_excluded, vec!["reddit.com"]);
+        // 往返：再 get 一次也不丢
+        let again = get_engine_prefs().unwrap();
+        assert_eq!(again.web_search_allowed, vec!["docs.x.ai", "arxiv.org"]);
+        assert_eq!(again.web_search_excluded, vec!["reddit.com"]);
+        // config 里两键并存
+        let root = load_config_root().unwrap();
+        assert_eq!(
+            root["toolset"]["web_search"]["allowed_domains"][0],
+            Value::String("docs.x.ai".into())
+        );
+        assert_eq!(
+            root["toolset"]["web_search"]["excluded_domains"][0],
+            Value::String("reddit.com".into())
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

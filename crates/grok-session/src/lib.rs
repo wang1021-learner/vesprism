@@ -37,6 +37,7 @@ use tokio::sync::watch;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xai_grok_shell::agent::app::spawn_agent_local;
 use xai_grok_shell::agent::config::Config as AgentConfig;
+use xai_grok_shell::agent::config::RuntimeResolutionContext;
 use xai_grok_shell::extensions::notification::{GoalClassifierVerdict, RetryState};
 pub use xai_grok_shell::session::{
     RewindConflictInfo, RewindMode, RewindPointInfo, RewindResponse,
@@ -643,10 +644,16 @@ impl Client for GuiClient {
             ),
             None => String::new(),
         };
-        let policy = self.policy.read().unwrap_or_else(|e| e.into_inner());
+        // 守卫必须在任何 .await 之前 drop：本函数会等用户点审批弹窗（分钟级）。
+        // std::sync 锁会堵住 LocalSet 线程，RespondPermission / set_policy 都会焊死。
+        let session_policy = self
+            .policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         // 锁定顺序：会话级 deny → per-agent deny → 子会话/只读自动放行 → 其余规则 → 审批条。
-        if let Some(engine) = policy.as_ref() {
+        if let Some(engine) = session_policy.as_ref() {
             if engine.has_deny(&category, &detail) {
                 if let Some(opt) = pick_reject_once(&args.options) {
                     return Ok(auto_allow(opt));
@@ -654,19 +661,23 @@ impl Client for GuiClient {
             }
         }
 
-        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
-        let is_child = own_id.as_ref().is_some_and(|id| *id != args.session_id);
+        let is_child = {
+            let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+            own_id.as_ref().is_some_and(|id| *id != args.session_id)
+        };
 
         // jike: per-agent deny（工作台 Agent 的 permission_rules）——先于子会话自动放行。
         if is_child {
-            let deny_map = self
-                .per_agent_deny
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
-            if let Some(engine) = deny_map.get(&args.session_id.to_string())
-                && engine.has_deny(&category, &detail)
-                && let Some(opt) = pick_reject_once(&args.options)
-            {
+            let child_denied = {
+                let deny_map = self
+                    .per_agent_deny
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner());
+                deny_map
+                    .get(&args.session_id.to_string())
+                    .is_some_and(|engine| engine.has_deny(&category, &detail))
+            };
+            if child_denied && let Some(opt) = pick_reject_once(&args.options) {
                 return Ok(auto_allow(opt));
             }
         }
@@ -687,7 +698,7 @@ impl Client for GuiClient {
             }
         }
 
-        if let Some(engine) = policy.as_ref() {
+        if let Some(engine) = session_policy.as_ref() {
             match engine.evaluate_non_deny(&category, &detail) {
                 crate::policy::PolicyDecision::Respond(crate::policy::Policy::Deny) => {
                     if let Some(opt) = pick_reject_once(&args.options) {
@@ -775,8 +786,10 @@ impl Client for GuiClient {
     ) -> agent_client_protocol::Result<CreateTerminalResponse> {
         // 子会话终端仍执行（引擎 pull 需要），但不投影到父会话命令输出区。
         // 必须 own_id 已绑定且等于本次 session_id；未绑定或子会话一律不发 UI。
-        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
-        let emit_ui = own_id.as_ref().is_some_and(|id| *id == args.session_id);
+        let emit_ui = {
+            let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+            own_id.as_ref().is_some_and(|id| *id == args.session_id)
+        };
         let terminal_id = terminal::spawn_terminal(
             &self.terminals,
             &args.session_id,
@@ -849,8 +862,11 @@ impl Client for GuiClient {
         // 子会话（workflow 子 agent / 后台任务）的更新会推送到父会话连接，
         // 但 session_id 不同。丢弃它们，避免子 agent 的任务提示/思考/正文
         // 混进父会话消息流（子 agent 状态走 SubagentSpawned/Progress/Finished）。
-        let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
-        if own_id.as_ref().is_some_and(|id| *id != args.session_id) {
+        let is_foreign = {
+            let own_id = self.session_id.lock().unwrap_or_else(|e| e.into_inner());
+            own_id.as_ref().is_some_and(|id| *id != args.session_id)
+        };
+        if is_foreign {
             return Ok(());
         }
         let meta = args.meta.as_ref();
@@ -2028,8 +2044,23 @@ impl GrokSession {
         // 从环境变量与配置目录加载合并后的有效配置。
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
-        let agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
+        let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
             .map_err(|e| anyhow::anyhow!("创建 agent 配置失败: {}", e))?;
+        // 官方 CLI/GUI 在 new_from_toml_cfg 后都会调 resolve_runtime_fields；
+        // 缺了这步 memory_config 恒为 None，官方记忆（[memory] enabled）不会启用。
+        agent_config.resolve_runtime_fields(&RuntimeResolutionContext {
+            raw_config: &raw_config,
+            remote_settings: None,
+            is_headless: false,
+            cli_subagents: None,
+            cli_web_search_model: None,
+            cli_session_summary_model: None,
+            memory_enabled_override: None,
+            disable_web_search: false,
+            todo_gate: false,
+            laziness_debug_log: None,
+            storage_mode: None,
+        });
         let auth_manager = Arc::new(agent_config.create_auth_manager());
 
         let (gui_stream, agent_stream) = tokio::io::duplex(65536);
@@ -2037,9 +2068,19 @@ impl GrokSession {
         let compat_rx = agent_rx.compat();
         let compat_tx = agent_tx.compat_write();
 
+        // 官方记忆配置必须随 spawn 注入（spawn_agent_local 第 4 参数），
+        // 否则 MvpAgent.memory_config 保持 None，记忆后端不会初始化。
+        let memory_config = agent_config.memory_config.clone();
+
         tokio::task::spawn_local(async move {
-            let handle_io =
-                spawn_agent_local(agent_config, auth_manager, None, None, compat_tx, compat_rx);
+            let handle_io = spawn_agent_local(
+                agent_config,
+                auth_manager,
+                None,
+                memory_config,
+                compat_tx,
+                compat_rx,
+            );
             if let Err(e) = handle_io.await {
                 eprintln!("Agent 运行时错误: {:?}", e);
             }
@@ -2112,16 +2153,38 @@ impl GrokSession {
     ) -> anyhow::Result<Self> {
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
-        let agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
+        let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
             .map_err(|e| anyhow::anyhow!("创建 agent 配置失败: {}", e))?;
+        // 同 start_inner：补 resolve_runtime_fields，让官方记忆在恢复会话时也生效。
+        agent_config.resolve_runtime_fields(&RuntimeResolutionContext {
+            raw_config: &raw_config,
+            remote_settings: None,
+            is_headless: false,
+            cli_subagents: None,
+            cli_web_search_model: None,
+            cli_session_summary_model: None,
+            memory_enabled_override: None,
+            disable_web_search: false,
+            todo_gate: false,
+            laziness_debug_log: None,
+            storage_mode: None,
+        });
         let auth_manager = Arc::new(agent_config.create_auth_manager());
         let (gui_stream, agent_stream) = tokio::io::duplex(65536);
         let (agent_rx, agent_tx) = tokio::io::split(agent_stream);
         let compat_rx = agent_rx.compat();
         let compat_tx = agent_tx.compat_write();
+        // 同 start_inner：官方记忆配置随 spawn 注入。
+        let memory_config = agent_config.memory_config.clone();
         tokio::task::spawn_local(async move {
-            let handle_io =
-                spawn_agent_local(agent_config, auth_manager, None, None, compat_tx, compat_rx);
+            let handle_io = spawn_agent_local(
+                agent_config,
+                auth_manager,
+                None,
+                memory_config,
+                compat_tx,
+                compat_rx,
+            );
             if let Err(e) = handle_io.await {
                 eprintln!("Agent 运行时错误: {:?}", e);
             }

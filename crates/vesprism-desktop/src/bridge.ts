@@ -271,6 +271,7 @@ export const reloadModels = (tabId: string) => invoke('reload_models', { tabId }
 
 export type EnginePrefs = {
   session_search: boolean
+  memory_enabled: boolean
   web_search_allowed: string[]
   web_search_excluded: string[]
   max_parallel_image_gen_calls: number
@@ -454,8 +455,6 @@ export const saveEnvKey = (keyName: string, value: string) =>
 export const envFileLocation = () => invoke<string>('env_file_location')
 
 // ── 文件 ──
-export const readFileForPreview = (path: string, workspaceRoot: string) =>
-  invoke<string>('read_file_for_preview', { path, workspaceRoot })
 
 export const listDir = (path: string) =>
   invoke<Array<{ name: string; is_dir: boolean }>>('list_dir', { path })

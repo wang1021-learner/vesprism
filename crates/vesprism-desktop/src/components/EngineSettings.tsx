@@ -29,6 +29,15 @@ export function EngineSettings({
   const [prefs, setPrefs] = useState<EnginePrefs | null>(null)
   const [allowedText, setAllowedText] = useState('')
   const [excludedText, setExcludedText] = useState('')
+  /**
+   * Web 搜索限制模式（互斥）：官方 WebSearchOptions::validate 拒绝 allowed+excluded 并存
+   * （allowlist wins，安全 fail-closed）。UI 用单选从源头杜绝并存：
+   * - none：不限制（两列表都空）
+   * - allow：只写白名单
+   * - exclude：只写排除列表
+   * 切换模式时各自的文本保留在 state（数据永不丢），保存只写当前模式对应的列表。
+   */
+  const [wsMode, setWsMode] = useState<'none' | 'allow' | 'exclude'>('none')
   const [wt, setWt] = useState<WorktreeStatusInfo | null>(null)
   const [gcBusy, setGcBusy] = useState(false)
 
@@ -38,6 +47,9 @@ export function EngineSettings({
       setPrefs(p)
       setAllowedText(p.web_search_allowed.join('\n'))
       setExcludedText(p.web_search_excluded.join('\n'))
+      setWsMode(
+        p.web_search_allowed.length > 0 ? 'allow' : p.web_search_excluded.length > 0 ? 'exclude' : 'none',
+      )
     } catch (e) {
       onToast(String(e), 'error')
     }
@@ -59,14 +71,18 @@ export function EngineSettings({
     }
     setSaving(true)
     try {
+      // 互斥模式：只写当前激活模式的列表，另一个显式传空——不会出现官方丢弃 excluded 的情况。
       const next = await setEnginePrefs({
         ...prefs,
-        web_search_allowed: parseDomainLines(allowedText),
-        web_search_excluded: parseDomainLines(excludedText),
+        web_search_allowed: wsMode === 'allow' ? parseDomainLines(allowedText) : [],
+        web_search_excluded: wsMode === 'exclude' ? parseDomainLines(excludedText) : [],
       })
       setPrefs(next)
       setAllowedText(next.web_search_allowed.join('\n'))
       setExcludedText(next.web_search_excluded.join('\n'))
+      setWsMode(
+        next.web_search_allowed.length > 0 ? 'allow' : next.web_search_excluded.length > 0 ? 'exclude' : 'none',
+      )
       onToast('引擎设置已写入 config.toml', 'success')
     } catch (e) {
       onToast(String(e), 'error')
@@ -99,8 +115,6 @@ export function EngineSettings({
     return <p className="settings-hint">正在读取官方配置…</p>
   }
 
-  const allowWins = parseDomainLines(allowedText).length > 0
-
   return (
     <div className="settings-panel-inner">
       <section className="settings-card">
@@ -120,37 +134,93 @@ export function EngineSettings({
       </section>
 
       <section className="settings-card">
+        <h3 className="settings-card-title">记忆系统</h3>
+        <p className="settings-card-desc">
+          官方跨会话记忆（<code>[memory] enabled</code>）：新会话自动注入相关记忆，
+          会话结束时自动存摘要，agent 可用 memory_search / memory_get 主动检索。
+          存储位置 <code>~/.vesprism/memory/</code>；未配置 embedding 时官方自动退化为
+          FTS 关键词检索（无外部依赖）。
+        </p>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={prefs.memory_enabled}
+            onChange={(e) => setPrefs({ ...prefs, memory_enabled: e.target.checked })}
+          />
+          启用跨会话记忆（默认开）
+        </label>
+        <p className="settings-hint">保存后新会话生效；关掉后已存的记忆文件不会被删除。</p>
+      </section>
+
+      <section className="settings-card">
         <h3 className="settings-card-title">Web 搜索域名</h3>
         <p className="settings-card-desc">
-          写入 <code>[toolset.web_search]</code>。白名单与黑名单同时填写时，官方只认白名单。
+          写入 <code>[toolset.web_search]</code>。官方语义：白名单与排除列表互斥（同时存在时只认白名单，
+          fail-closed）。这里用单选从源头杜绝并存——切换模式时各自内容保留，不会丢。
         </p>
-        <label className="settings-label" htmlFor="ws-allow">
-          允许域名（每行一个）
-        </label>
-        <textarea
-          id="ws-allow"
-          className="settings-input settings-textarea"
-          rows={4}
-          value={allowedText}
-          onChange={(e) => setAllowedText(e.target.value)}
-          placeholder="docs.x.ai&#10;arxiv.org"
-        />
-        <label className="settings-label" htmlFor="ws-deny">
-          排除域名（每行一个）
-        </label>
-        <textarea
-          id="ws-deny"
-          className="settings-input settings-textarea"
-          rows={3}
-          value={excludedText}
-          onChange={(e) => setExcludedText(e.target.value)}
-          disabled={allowWins}
-          placeholder="reddit.com"
-        />
-        {allowWins ? (
-          <p className="settings-hint">已填写白名单，排除列表不会写入（官方 allowlist 优先）。</p>
-        ) : (
-          <p className="settings-hint">留空表示不限制。保存后新会话生效。</p>
+        <div className="settings-row" style={{ gap: 14 }}>
+          <label className="settings-check">
+            <input
+              type="radio"
+              name="ws-mode"
+              checked={wsMode === 'none'}
+              onChange={() => setWsMode('none')}
+            />
+            不限制
+          </label>
+          <label className="settings-check">
+            <input
+              type="radio"
+              name="ws-mode"
+              checked={wsMode === 'allow'}
+              onChange={() => setWsMode('allow')}
+            />
+            白名单（只允许）
+          </label>
+          <label className="settings-check">
+            <input
+              type="radio"
+              name="ws-mode"
+              checked={wsMode === 'exclude'}
+              onChange={() => setWsMode('exclude')}
+            />
+            排除列表（只禁止）
+          </label>
+        </div>
+        {wsMode === 'allow' && (
+          <>
+            <label className="settings-label" htmlFor="ws-allow">
+              允许域名（每行一个）
+            </label>
+            <textarea
+              id="ws-allow"
+              className="settings-input settings-textarea"
+              rows={4}
+              value={allowedText}
+              onChange={(e) => setAllowedText(e.target.value)}
+              placeholder="docs.x.ai&#10;arxiv.org"
+            />
+            <p className="settings-hint">保存后新会话生效。</p>
+          </>
+        )}
+        {wsMode === 'exclude' && (
+          <>
+            <label className="settings-label" htmlFor="ws-deny">
+              排除域名（每行一个）
+            </label>
+            <textarea
+              id="ws-deny"
+              className="settings-input settings-textarea"
+              rows={3}
+              value={excludedText}
+              onChange={(e) => setExcludedText(e.target.value)}
+              placeholder="reddit.com"
+            />
+            <p className="settings-hint">保存后新会话生效。</p>
+          </>
+        )}
+        {wsMode === 'none' && (
+          <p className="settings-hint">不限制搜索域名，官方不会启用域名过滤。</p>
         )}
       </section>
 
