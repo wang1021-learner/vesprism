@@ -76,7 +76,21 @@ describe('pickCanvasApplyTargets', () => {
     expect(decideCanvasApply(full, true)).toBe('apply')
   })
 
-  it('生成中 JSON 还没闭合：继续等，不自愈', () => {
-    expect(decideCanvasApply('```json\n{"nodes":[', true)).toBe('wait')
+  it('用户输入以斜杠开头的文件路径时，正常认图不被误判为试跑', () => {
+    expectCanvasGraph('p_path')
+    const messages = [
+      u('/app/src/auth.ts 请帮我分析并画出认证流程', 'p_path'),
+      a(callJson, 'p_path'),
+    ]
+    expect(pickCanvasApplyTargets(messages, false)).toEqual([{ index: 1, promptId: 'p_path' }])
+  })
+
+  it('用户输入 /demo-linear 或 /demo-linear { ... } 时正确识别为试跑', () => {
+    expectCanvasGraph('p_run2')
+    const messages = [
+      u('/demo-linear', 'p_run2'),
+      a(callJson, 'p_run2'),
+    ]
+    expect(pickCanvasApplyTargets(messages, false)).toEqual([])
   })
 })

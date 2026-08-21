@@ -34,7 +34,7 @@ import {
   isCanvasContractPrimed,
   markCanvasContractPrimed,
 } from '../flow/prompt'
-import { consumeCanvasGraph, expectCanvasGraph } from '../generateWait'
+import { consumeCanvasGraph, expectCanvasGraph, resetHealBudget } from '../generateWait'
 import { isFlowRunUserText } from './applyCanvasOutput'
 
 function stopCanvasWheel(e: WheelEvent) {
@@ -97,6 +97,7 @@ export const CanvasComposer = memo(function CanvasComposer({
       })
       if (sent) {
         markCanvasContractPrimed(sessionId)
+        resetHealBudget()
       } else if (expectGraph) {
         consumeCanvasGraph(promptId)
       }
@@ -104,15 +105,20 @@ export const CanvasComposer = memo(function CanvasComposer({
     [flowName, flowId, tabId, nodeIds],
   )
 
-  const onRemoveQueued = useCallback(async (id: string, version: number) => {
-    const prev = $queuedPrompts.get()
-    patchActiveTab({ queuedPrompts: prev.filter((q) => q.id !== id) })
-    try {
-      await removeQueuedPrompt($activeTabId.get(), id, version)
-    } catch (e) {
-      patchActiveTab({ queuedPrompts: prev, error: String(e) })
-    }
-  }, [])
+  const onRemoveQueued = useCallback(
+    async (id: string, version: number) => {
+      const targetTabId = tabId || $activeTabId.get()
+      if (!targetTabId) return
+      const prev = getTabState(targetTabId)?.queuedPrompts ?? []
+      patchTab(targetTabId, { queuedPrompts: prev.filter((q) => q.id !== id) })
+      try {
+        await removeQueuedPrompt(targetTabId, id, version)
+      } catch (e) {
+        patchTab(targetTabId, { queuedPrompts: prev, error: String(e) })
+      }
+    },
+    [tabId],
+  )
 
   const onCancel = useCallback(async () => {
     await cancelActiveTurn()

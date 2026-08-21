@@ -82,3 +82,18 @@ export function markCanvasHeal(promptId: string): void {
 export function isCanvasHeal(promptId: string | undefined): boolean {
   return Boolean(promptId && canvasHealPrompts.has(promptId))
 }
+
+/** 每个用户回合最多自动自愈 2 次，超过就停下来让用户手动重试，避免死循环。 */
+let healBudget = 2
+
+export function canHeal(): boolean {
+  return healBudget > 0
+}
+
+export function spendHeal(): void {
+  healBudget = healBudget > 0 ? healBudget - 1 : 0
+}
+
+export function resetHealBudget(): void {
+  healBudget = 2
+}
