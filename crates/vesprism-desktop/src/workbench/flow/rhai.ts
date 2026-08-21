@@ -184,7 +184,11 @@ function ident(id: string): string {
 }
 
 function phaseTitle(n: FlowGraphNode): string {
-  return nodeLabel(n).slice(0, 48) || n.id
+  const label = nodeLabel(n).trim()
+  const base = label ? label.slice(0, 40) : ''
+  // 附加节点 id：同 label 节点的 phase 状态互不污染（官方 phase 事件只有 title），
+  // 试跑回填时也能按 id 精确匹配。
+  return base ? `${base} · ${n.id}` : n.id
 }
 
 function outgoing(edges: FlowGraphEdge[], id: string): FlowGraphEdge[] {

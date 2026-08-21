@@ -923,8 +923,18 @@ function FlowCanvasInner() {
       const sub = subgraphFrom(current.nodes, current.edges, fromNodeId)
       current = { ...current, id: `${current.id}-rerun`, nodes: sub.nodes, edges: sub.edges }
       if (!current.nodes.some((n) => n.type === 'start')) {
+        // 起点连所有「无入边的可执行节点」：普通节点（fromNodeId）直接喂 input；
+        // 从 join 重跑时 subgraphFrom 拉入的兄弟节点也一并接入，避免兄弟成孤岛
+        // 导致「无法从 start 到达」校验失败。join 自身有兄弟入边，不直接连 start。
+        const noIn = current.nodes.filter((n) => !current.edges.some((e) => e.to === n.id))
+        let starts = noIn.filter((n) => n.type !== 'join' && n.type !== 'end' && n.type !== 'start')
+        if (starts.length === 0) {
+          starts = noIn.filter((n) => n.type !== 'end').slice(0, 1)
+        }
         current.nodes = [{ id: 'start-rerun', type: 'start', params: { label: '起点' } }, ...current.nodes]
-        current.edges = [{ from: 'start-rerun', to: fromNodeId }, ...current.edges]
+        for (const s of starts) {
+          current.edges.push({ from: 'start-rerun', to: s.id })
+        }
       }
       if (!current.nodes.some((n) => n.type === 'end')) {
         const hasOut = new Set(current.edges.map((e) => e.from))
@@ -971,6 +981,9 @@ function FlowCanvasInner() {
       type: n.type,
       status: 'pending',
     }))
+    // 全新试跑（非 Mock 续跑）清掉上一轮 stepOutputs，避免旧 run 的节点输出
+    // 混入 ancestorContext / Mock 合并（旧 run 迟到 phase 也会被 label 匹配污染）。
+    if (!fromNodeId) setStepOutputs({})
     setRunSteps(steps)
     setReplayOpen(true)
     setDockOpen(true)
@@ -1010,7 +1023,14 @@ function FlowCanvasInner() {
       return
     }
     const nextNodeId = outgoingEdges[0].to
-    pushToast(`已注入 Mock 值，正从下游节点「${nextNodeId}」继续执行`, 'success')
+    if (outgoingEdges.length > 1) {
+      pushToast(
+        `该节点有 ${outgoingEdges.length} 条出边，Mock 续跑将沿「${nextNodeId}」这一条继续；需要全部分支请改用「从此处重跑」`,
+        'info',
+      )
+    } else {
+      pushToast(`已注入 Mock 值，正从下游节点「${nextNodeId}」继续执行`, 'success')
+    }
     await startRun(nextNodeId, updatedOutputs)
   }
 

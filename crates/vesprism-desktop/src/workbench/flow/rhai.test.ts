@@ -8,7 +8,7 @@ describe('compileToRhai', () => {
     const rhai = compileToRhai(createDemoDraft())
     expect(rhai).toContain('let meta = #{')
     expect(rhai).toContain('name: "demo-linear"')
-    expect(rhai).toContain('phase("摘要")')
+    expect(rhai).toContain('phase("摘要 · agent-1")')
     expect(rhai).toContain('agent(')
     expect(rhai).toContain('complete(')
     expect(rhai).not.toMatch(/position/)

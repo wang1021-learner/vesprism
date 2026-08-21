@@ -101,6 +101,28 @@ describe('graph topological layout & utilities', () => {
     expect(sub.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'end', 'j'])
     expect(sub.edges.filter((e) => e.to === 'j')).toHaveLength(2)
   })
+
+  it('subgraphFrom 从 join 重跑时拉入兄弟节点，兄弟无入边（由 start-rerun 接入）', () => {
+    const nodes: FlowGraphNode[] = [
+      { id: 'start', type: 'start', params: {} },
+      { id: 'a', type: 'agent', params: {} },
+      { id: 'b', type: 'agent', params: {} },
+      { id: 'j', type: 'join', params: {} },
+      { id: 'end', type: 'end', params: {} },
+    ]
+    const edges = [
+      { from: 'start', to: 'a' },
+      { from: 'start', to: 'b' },
+      { from: 'a', to: 'j' },
+      { from: 'b', to: 'j' },
+      { from: 'j', to: 'end' },
+    ]
+    const sub = subgraphFrom(nodes, edges, 'j')
+    expect(sub.nodes.map((n) => n.id).sort()).toEqual(['a', 'b', 'end', 'j'])
+    // join 有兄弟入边（不在无入边集合）；a/b 无入边 → 由重跑起点接入，不会成孤岛
+    const noIn = sub.nodes.filter((n) => !sub.edges.some((e) => e.to === n.id)).map((n) => n.id)
+    expect(noIn.sort()).toEqual(['a', 'b'])
+  })
 })
 
 describe('applyFlowPatch', () => {
