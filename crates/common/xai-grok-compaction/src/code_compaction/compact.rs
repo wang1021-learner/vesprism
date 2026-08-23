@@ -365,10 +365,8 @@ mod tests {
         )
     }
 
-    /// Golden end-to-end test: a realistic conversation + a mock sampler that
-    /// returns a structured summary must produce grok-build's exact compacted
-    /// history shape, with the LLM output cleaned and the agent-state reminder
-    /// carried through as the final item.
+    /// 端到端：真实对话 + mock 采样得到结构化摘要后，历史形状正确，
+    /// 模型输出已清洗，摘要为最后一项。
     #[tokio::test]
     async fn full_replace_produces_grok_build_history_shape() {
         let llm_turns = vec![
@@ -385,7 +383,7 @@ mod tests {
                 .expect("compaction should succeed")
                 .history;
 
-        // [system, prefix, agents_md, last_query, recent_tail, summary, reminder]
+        // [system, prefix, agents_md, reminder, last_query, recent_tail, summary]
         assert_eq!(out.len(), 7, "got: {out:#?}");
         assert_eq!(
             out[0],
@@ -401,16 +399,22 @@ mod tests {
         );
         assert_eq!(
             out[3],
-            MockItem::User("<user_query>\nfix the login bug\n</user_query>".into())
+            MockItem::SystemReminder(
+                "<system-reminder>\n## Running Subagents\n- sub-1\n</system-reminder>".into()
+            )
         );
         assert_eq!(
             out[4],
+            MockItem::User("<user_query>\nfix the login bug\n</user_query>".into())
+        );
+        assert_eq!(
+            out[5],
             MockItem::Tail("tool: read_file(auth.rs) -> ...".into())
         );
 
-        // Summary carrier: cleaned (no <analysis>/<summary> tags), with preamble.
-        let MockItem::UserMeta(summary) = &out[5] else {
-            panic!("expected UserMeta summary at [5], got {:?}", out[5]);
+        // 摘要载体：已清洗（无 <analysis>/<summary> 标签），带导语。
+        let MockItem::UserMeta(summary) = &out[6] else {
+            panic!("expected UserMeta summary last, got {:?}", out[6]);
         };
         assert!(summary.starts_with("This session is being continued"));
         assert!(summary.contains("Summary:\n1. Primary Request: fix login bug"));
@@ -420,14 +424,6 @@ mod tests {
         );
         assert!(!summary.contains("<summary>"), "live tag leaked: {summary}");
         assert!(!summary.contains("thinking about it"));
-
-        // Agent-state reminder carried through verbatim as the final item.
-        assert_eq!(
-            out[6],
-            MockItem::SystemReminder(
-                "<system-reminder>\n## Running Subagents\n- sub-1\n</system-reminder>".into()
-            )
-        );
     }
 
     #[tokio::test]
@@ -455,7 +451,7 @@ mod tests {
                 .expect("should succeed after one retry")
                 .history;
         assert_eq!(sampler.call_count(), 2);
-        assert!(matches!(out.last(), Some(MockItem::SystemReminder(_))));
+        assert!(matches!(out.last(), Some(MockItem::UserMeta(_))));
     }
 
     #[tokio::test]
@@ -509,8 +505,8 @@ mod tests {
                 .expect("should succeed after degenerate retry")
                 .history;
         assert_eq!(sampler.call_count(), 2);
-        let MockItem::UserMeta(summary) = &out[out.len() - 2] else {
-            panic!("expected summary carrier");
+        let MockItem::UserMeta(summary) = out.last().expect("history not empty") else {
+            panic!("expected summary carrier last, got {:?}", out.last());
         };
         assert!(summary.contains("fix the login bug"));
     }

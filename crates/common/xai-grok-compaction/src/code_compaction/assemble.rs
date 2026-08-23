@@ -5,7 +5,7 @@
 //! the canonical post-compaction history:
 //!
 //! ```text
-//! [SP, UP', AGENTS_MD?, UQ_last?, recent…, summary, reminder?]
+//! [SP, UP', AGENTS_MD?, reminder?, UQ_last?, recent…, summary]
 //! ```
 //!
 //! grok-build is the canonical harness. The summary carrier text is built by
@@ -38,27 +38,26 @@ pub struct CompactedHistoryParts<T> {
     pub recent_messages: Vec<T>,
     /// The LLM-generated compaction summary text.
     pub compaction_summary: String,
-    /// An optional pre-rendered `<system-reminder>` block to append after the
-    /// summary. `None` means no state reminder is appended.
+    /// 可选的预渲染 `<system-reminder>`，插在最后一条用户消息之上。
+    /// `None` 表示不插入运行态提醒。
     pub system_reminder: Option<String>,
     /// Pre-built transcript hint appended to the summary (`None` to omit).
     pub transcript_hint: Option<String>,
 }
 
-/// Build the compacted conversation history from pure data inputs.
+/// 用纯数据拼出压缩后的对话历史。
 ///
-/// The returned `Vec<T>` is structured as:
+/// 返回的 `Vec<T>` 顺序为：
 ///
-/// 1. **System message** -- the original system prompt.
-/// 2. **User message prefix** -- e.g. `<user_info>` block (no `<user_query>` tags).
-/// 3. **AGENTS.md reminder** (if any) -- project instructions re-injected verbatim.
-/// 4. **Last user query** (if any) -- wrapped in `<user_query>` tags.
-/// 5. **Recent messages** (if any) -- retained verbatim from after the last
-///    real user turn.
-/// 6. **Compaction summary** -- with the optional `<system-reminder>`
-///    appended as a separate message.
+/// 1. **系统消息** —— 原系统提示。
+/// 2. **用户前缀** —— 如 `<user_info>`（不含 `<user_query>`）。
+/// 3. **AGENTS.md 提醒**（若有）—— 项目说明原样回灌。
+/// 4. **系统提醒**（若有）—— 运行态，插在最后一条真用户消息之上。
+/// 5. **最后一条用户提问**（若有）—— 包在 `<user_query>` 里。
+/// 6. **近期消息**（若有）—— 最后一轮用户之后原样保留。
+/// 7. **压缩摘要** —— 模型可见的最后一项，便于前缀缓存命中。
 ///
-/// This is a pure function with no I/O.
+/// 纯函数，无 I/O。
 pub fn assemble_compacted_history<T: CompactionItemFactory>(
     parts: CompactedHistoryParts<T>,
 ) -> Vec<T> {
@@ -67,36 +66,35 @@ pub fn assemble_compacted_history<T: CompactionItemFactory>(
         T::new_user_meta(parts.user_message_prefix),
     ];
 
-    // Re-inject AGENTS.md as a user message so project instructions survive
-    // compaction verbatim (not dependent on the summarizer). The
-    // `ProjectInstructions` tag is what the spawn-time idempotence guard
-    // recognizes on resume, so post-compaction sessions stay duplicate-free.
+    // 把 AGENTS.md 当用户消息回灌，项目说明不依赖摘要模型。
+    // `ProjectInstructions` 标签给恢复会话时的幂等守卫识别，避免压缩后再插一份。
     if let Some(ref reminder) = parts.agents_md_reminder {
         compacted.push(T::new_project_instructions(reminder.clone()));
     }
 
-    // Last user query wrapped in <user_query> tags for consistency.
+    // 运行态（cwd / 文件 / 任务）放在最后一条真用户消息之上：
+    // 回合中压缩时前缀尽量不动，摘要作为模型看到的最后一项。
+    if let Some(ref reminder) = parts.system_reminder {
+        compacted.push(T::new_system_reminder(reminder.clone()));
+    }
+
+    // 最后一条用户提问包进 <user_query>，与其它入口一致。
     if let Some(ref last_query) = parts.last_user_query {
         compacted.push(T::new_user(wrap_user_query(last_query.as_str())));
     }
 
-    // grok-build keeps the legacy `<user_query>`-wrapped continuation text and
-    // appends the transcript hint after the continuation summary.
+    // 沿用带 `<user_query>` 包装的续写正文，会话位置提示接在摘要后面。
     let mut formatted_summary = format_compact_summary_content(&parts.compaction_summary);
     if let Some(ref hint) = parts.transcript_hint {
         formatted_summary.push_str(hint);
     }
     let summary_item = T::new_user_meta(formatted_summary);
 
-    // Recent messages come first, then the summary.
+    // 先近期消息，摘要始终垫底。
     for msg in parts.recent_messages {
         compacted.push(msg);
     }
     compacted.push(summary_item);
-
-    if let Some(ref reminder) = parts.system_reminder {
-        compacted.push(T::new_system_reminder(reminder.clone()));
-    }
 
     compacted
 }
@@ -148,7 +146,7 @@ mod tests {
     fn grok_build_order_recent_before_summary() {
         let recent = vec![MockItem::Recent("a1".into()), MockItem::Recent("t1".into())];
         let out = assemble_compacted_history(parts(recent));
-        // [sys, prefix, agents_md, query, a1, t1, summary, reminder]
+        // [sys, prefix, agents_md, reminder, query, a1, t1, summary]
         assert_eq!(out.len(), 8);
         assert_eq!(out[0], MockItem::System("sys".into()));
         assert_eq!(
@@ -161,18 +159,18 @@ mod tests {
         );
         assert_eq!(
             out[3],
-            MockItem::User("<user_query>\nfix the bug\n</user_query>".into())
-        );
-        assert_eq!(out[4], MockItem::Recent("a1".into()));
-        assert_eq!(out[5], MockItem::Recent("t1".into()));
-        let MockItem::UserMeta(summary) = &out[6] else {
-            panic!("expected UserMeta summary, got {:?}", out[6]);
-        };
-        assert!(summary.starts_with("This session is being continued"));
-        assert_eq!(
-            out[7],
             MockItem::SystemReminder("<system-reminder>state</system-reminder>".into())
         );
+        assert_eq!(
+            out[4],
+            MockItem::User("<user_query>\nfix the bug\n</user_query>".into())
+        );
+        assert_eq!(out[5], MockItem::Recent("a1".into()));
+        assert_eq!(out[6], MockItem::Recent("t1".into()));
+        let MockItem::UserMeta(summary) = &out[7] else {
+            panic!("expected UserMeta summary last, got {:?}", out[7]);
+        };
+        assert!(summary.starts_with("This session is being continued"));
     }
 
     #[test]
@@ -194,8 +192,8 @@ mod tests {
         let mut p = parts(vec![]);
         p.transcript_hint = Some("\n\n<transcript_location>/x</transcript_location>".into());
         let out = assemble_compacted_history(p);
-        let MockItem::UserMeta(summary) = &out[4] else {
-            panic!("expected UserMeta summary, got {:?}", out[4]);
+        let Some(MockItem::UserMeta(summary)) = out.last() else {
+            panic!("expected UserMeta summary last, got {:?}", out.last());
         };
         assert!(summary.ends_with("</transcript_location>"));
     }
