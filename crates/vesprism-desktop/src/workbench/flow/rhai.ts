@@ -12,7 +12,7 @@ export type PresetResolve = {
   systemPrompt?: string
   model?: string
   agentType?: string
-  /** 官方 capability_mode 字符串：read-only / read-write / execute / all */
+  /** 编制展示档位；1.0.6 起官方 spawn 不再认 capability_mode，不写入 Rhai */
   capability?: string
   /** isolation_worktree：在隔离工作区里跑，弄脏不进主仓库 */
   isolation?: boolean
@@ -365,7 +365,6 @@ function emitAgentCall(
   const opts: string[] = [`label: "${esc(n.id)}"`]
   if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
   if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
-  if (resolved.capability) opts.push(`capability_mode: "${esc(resolved.capability)}"`)
   pushIsolation(opts, resolved.isolation)
   if (resolved.outputSchema !== undefined) {
     opts.push(`output_schema: ${jsonToRhaiLiteral(resolved.outputSchema)}`)
@@ -450,7 +449,7 @@ function emitToolCall(n: FlowGraphNode, prevVar: string, lines: string[]): strin
   const task = toolTaskLiteral(n, prevVar, p)
   lines.push(`phase("${esc(phaseTitle(n))}");`)
   lines.push(`log("node ${esc(n.id)} tool");`)
-  const opts: string[] = [`label: "${esc(n.id)}"`, `capability_mode: "execute"`]
+  const opts: string[] = [`label: "${esc(n.id)}"`]
   if (p.outputSchema !== undefined && p.outputSchema !== null) {
     opts.push(`output_schema: ${jsonToRhaiLiteral(p.outputSchema)}`)
   }
@@ -466,7 +465,7 @@ function emitHttpCall(n: FlowGraphNode, prevVar: string, lines: string[]): strin
   const task = httpTaskLiteral(n, prevVar, p)
   lines.push(`phase("${esc(phaseTitle(n))}");`)
   lines.push(`log("node ${esc(n.id)} http");`)
-  const opts: string[] = [`label: "${esc(n.id)}"`, `capability_mode: "execute"`]
+  const opts: string[] = [`label: "${esc(n.id)}"`]
   if (p.outputSchema !== undefined && p.outputSchema !== null) {
     opts.push(`output_schema: ${jsonToRhaiLiteral(p.outputSchema)}`)
   }
@@ -484,7 +483,7 @@ function emitDatabaseCall(n: FlowGraphNode, prevVar: string, lines: string[]): s
   lines.push(`log("node ${esc(n.id)} database");`)
   const call = (target: string) => {
     lines.push(
-      `let ${target} = agent(json_encode(${task}), #{ label: "${esc(n.id)}", capability_mode: "execute" });`,
+      `let ${target} = agent(json_encode(${task}), #{ label: "${esc(n.id)}" });`,
     )
   }
   return wrapRetry(n, lines, 'database', call)
@@ -497,7 +496,7 @@ function emitKnowledgeCall(n: FlowGraphNode, prevVar: string, lines: string[]): 
   lines.push(`log("node ${esc(n.id)} knowledge");`)
   const call = (target: string) => {
     lines.push(
-      `let ${target} = agent(json_encode(${task}), #{ label: "${esc(n.id)}", capability_mode: "execute" });`,
+      `let ${target} = agent(json_encode(${task}), #{ label: "${esc(n.id)}" });`,
     )
   }
   return wrapRetry(n, lines, 'knowledge', call)
@@ -565,7 +564,6 @@ function buildAgentJobMap(
     const opts: string[] = [`prompt: json_encode(${task})`, `label: "${esc(n.id)}"`]
     if (resolved.model) opts.push(`model: "${esc(resolved.model)}"`)
     if (resolved.agentType) opts.push(`agent_type: "${esc(resolved.agentType)}"`)
-    if (resolved.capability) opts.push(`capability_mode: "${esc(resolved.capability)}"`)
     pushIsolation(opts, resolved.isolation)
     if (resolved.outputSchema !== undefined) {
       opts.push(`output_schema: ${jsonToRhaiLiteral(resolved.outputSchema)}`)
@@ -582,11 +580,11 @@ function buildAgentJobMap(
   } else if (n.type === 'tool') {
     const p = n.params as { toolName?: string; command?: string; args?: Record<string, unknown> }
     const task = toolTaskLiteral(n, prevVar, p)
-    return `#{ prompt: json_encode(${task}), label: "${esc(n.id)}", capability_mode: "execute" }`
+    return `#{ prompt: json_encode(${task}), label: "${esc(n.id)}" }`
   } else if (n.type === 'http') {
     const p = n.params as { url?: string; method?: string; headers?: string; body?: string }
     const task = httpTaskLiteral(n, prevVar, p)
-    return `#{ prompt: json_encode(${task}), label: "${esc(n.id)}", capability_mode: "execute" }`
+    return `#{ prompt: json_encode(${task}), label: "${esc(n.id)}" }`
   }
   return `#{ prompt: json_encode(#{ node_id: ${jsonToRhaiLiteral(n.id)}, input: ${prevVar} }), label: "${esc(n.id)}" }`
 }

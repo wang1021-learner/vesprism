@@ -18,6 +18,7 @@ import type {
   SubagentRuntime,
   TerminalRuntime,
   UserQuestionRequest,
+  McpElicitRequest,
   ExitPlanModeRequest,
   PlanPhase,
 } from './types'
@@ -57,6 +58,8 @@ export interface TabState {
   permission: PermissionRequest | null
   /** 挂起的 AI 问卷 */
   userQuestion: UserQuestionRequest | null
+  /** 挂起的 MCP 征求（表单 / URL） */
+  mcpElicit: McpElicitRequest | null
   /** 官方 session/set_mode：default / plan / ask */
   sessionMode: SessionModeId
   /** 最近一次 /recap，不进模型上下文 */
@@ -162,6 +165,7 @@ export function emptyTabState(): TabState {
     phase: 'idle',
     permission: null,
     userQuestion: null,
+    mcpElicit: null,
     sessionMode: 'default',
     lastRecap: null,
     memoryEnabled: true,
@@ -206,7 +210,7 @@ export type TabActivity = 'idle' | 'working' | 'permission' | 'error'
 
 export function deriveTabActivity(s: TabState): TabActivity {
   if (s.phase === 'failed' || (s.error && s.error.trim().length > 0)) return 'error'
-  if (s.permission || s.userQuestion || s.planApproval) return 'permission'
+  if (s.permission || s.userQuestion || s.mcpElicit || s.planApproval) return 'permission'
   const hasRunningSubagent = s.subagents.some((a) => a.status === 'running')
   // 不把 loading / restarting / initializing 算作 working，避免切会话、开历史时绿灯闪一下
   if (hasRunningSubagent || s.status === 'generating' || s.queuedPrompts.length > 0) {
@@ -420,6 +424,7 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('phase' in patch) $sessionPhase.set(patch.phase!)
   if ('permission' in patch) $permission.set(patch.permission!)
   if ('userQuestion' in patch) $userQuestion.set(patch.userQuestion!)
+  if ('mcpElicit' in patch) $mcpElicit.set(patch.mcpElicit!)
   if ('sessionMode' in patch) $sessionMode.set(patch.sessionMode ?? 'default')
   if ('lastRecap' in patch) $lastRecap.set(patch.lastRecap ?? null)
   if ('memoryEnabled' in patch) $memoryEnabled.set(patch.memoryEnabled ?? true)
@@ -461,6 +466,7 @@ function projectTab(id: string): void {
     phase: s.phase,
     permission: s.permission,
     userQuestion: s.userQuestion,
+    mcpElicit: s.mcpElicit,
     sessionMode: s.sessionMode,
     lastRecap: s.lastRecap,
     memoryEnabled: s.memoryEnabled,
@@ -501,6 +507,7 @@ function resetProjection(): void {
     phase: 'idle',
     permission: null,
     userQuestion: null,
+    mcpElicit: null,
     sessionMode: 'default',
     lastRecap: null,
     memoryEnabled: true,
@@ -580,7 +587,7 @@ function isRecyclableBlank(st: TabState): boolean {
     return false
   }
   if (st.subagents.length > 0) return false
-  if (st.permission || st.userQuestion || st.planApproval) return false
+  if (st.permission || st.userQuestion || st.mcpElicit || st.planApproval) return false
   return true
 }
 
@@ -604,6 +611,7 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     composerInput: '',
     permission: null,
     userQuestion: null,
+    mcpElicit: null,
     sessionMode: 'default',
     lastRecap: null,
     memoryEnabled: true,
@@ -664,6 +672,7 @@ export const $permission = atom<PermissionRequest | null>(null)
 /** 内嵌审批条是否在视口内（Permission.tsx 的 IntersectionObserver 维护；浮层兜底读它） */
 export const $permissionInlineVisible = atom(true)
 export const $userQuestion = atom<UserQuestionRequest | null>(null)
+export const $mcpElicit = atom<McpElicitRequest | null>(null)
 export const $sessionMode = atom<SessionModeId>('default')
 export const $lastRecap = atom<{ summary: string; auto: boolean } | null>(null)
 export const $memoryEnabled = atom(true)

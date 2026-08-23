@@ -53,7 +53,7 @@ function Dot({ state }: { state: ReturnType<typeof dotState> }) {
   return <span className={`st-dot is-${state}`} aria-hidden />
 }
 
-/** 能力档 → 中文徽标（官方 capability_mode 字符串）。 */
+/** 岗位标签 → 中文徽标（工作流上报的 capability_mode，仅展示）。 */
 function capabilityLabel(mode: string): string {
   switch (mode) {
     case 'read-only':

@@ -184,16 +184,21 @@ async fn run() -> anyhow::Result<()> {
                     description,
                     options,
                     respond,
+                    ..
                 }) => {
                     println!("\n--- 权限请求: {}", description);
-                    for (id, name) in &options {
-                        println!("    选项: {} ({})", name, id);
+                    for o in &options {
+                        println!("    选项: {} ({})", o.name, o.id);
                     }
-                    if let Some((first_id, _)) = options.first() {
-                        println!("--- （自动选择第一项: {}）\n", first_id);
-                        let _ = respond.send(first_id.clone());
+                    if let Some(first) = options.first() {
+                        println!("--- （自动选择第一项: {}）\n", first.id);
+                        let _ = respond.send(first.id.clone());
                     }
                 }
+                Some(SessionEvent::McpElicitRequest { respond, .. }) => {
+                    let _ = respond.send(r#"{"outcome":"cancel"}"#.to_string());
+                }
+                Some(SessionEvent::McpElicitComplete { .. }) => {}
                 // SessionEvent 新增工具事件；POC 不展示详情，忽略即可
                 Some(SessionEvent::ToolCall(_)) | Some(SessionEvent::ToolCallUpdate(_)) => {}
                 Some(SessionEvent::TokenUsage { .. }) => {}

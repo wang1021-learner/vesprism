@@ -63,7 +63,8 @@ export interface ChatMessage {
 export interface PermissionOption {
   id: string
   name: string
-  kind?: string // allow | deny | other
+  /** 官方 ACP：allow_once / allow_always / reject_once / reject_always；旧回退 allow | deny | other */
+  kind?: string
 }
 
 /** 客户端终端运行态（ACP 终端能力；key=terminalId） */
@@ -115,7 +116,20 @@ export interface UserQuestionItem {
   multiSelect?: boolean | null
 }
 
-/** 挂起的 AI 问卷（前端 TabState） */
+/** MCP 征求（官方 x.ai/mcp/elicit） */
+export interface McpElicitRequest {
+  requestId: number
+  toolCallId: string
+  serverName: string
+  message: string
+  mode: 'form' | 'url'
+  requestedSchema?: unknown
+  url?: string
+  elicitationId?: string
+  /** 本地点过同意之后，等 elicit_complete */
+  waiting?: boolean
+}
+
 export interface UserQuestionRequest {
   requestId: number
   toolCallId: string

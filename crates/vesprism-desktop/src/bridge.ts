@@ -744,6 +744,10 @@ export interface SessionEventPayload {
   request_id?: number
   description?: string
   options?: { id: string; name: string; kind?: string }[]
+  server_name?: string
+  requested_schema?: unknown
+  url?: string
+  elicitation_id?: string
   status?: string
   session_id?: string
   total_tokens?: number

@@ -43,7 +43,7 @@ describe('compileToRhai', () => {
     expect(rhai).toContain('if (')
     expect(rhai).toContain('} else {')
     expect(rhai).toContain('处理成功')
-    expect(rhai).toContain('capability_mode: "execute"')
+    expect(rhai).not.toContain('capability_mode')
     expect(rhai).not.toContain('invoke')
     expect(() =>
       compileToRhai({
@@ -67,7 +67,7 @@ describe('compileToRhai', () => {
     expect(rhai).not.toContain('你按组装单')
   })
 
-  it('Agent 的 capability / isolation / output_schema / disabled_tools / permission_rules 编译进官方 AgentOpts', () => {
+  it('Agent 的 isolation / output_schema / disabled_tools / permission_rules 编译进官方 AgentOpts；capability 不再写入', () => {
     const d = createDemoDraft()
     ;(d.nodes[1].params as { presetId?: string }).presetId = 'auditor'
     const rhai = compileToRhai(d, {
@@ -81,7 +81,7 @@ describe('compileToRhai', () => {
         },
       },
     })
-    expect(rhai).toContain('capability_mode: "read-only"')
+    expect(rhai).not.toContain('capability_mode')
     expect(rhai).toContain('isolation_worktree: true')
     expect(rhai).toContain('output_schema: #{ "type": "object"')
     expect(rhai).toContain('"required": ["ok"]')
@@ -101,7 +101,7 @@ describe('compileToRhai', () => {
         auditor: { capability: 'all', isolation: true },
       },
     })
-    expect(rhai).toContain('capability_mode: "read-only"')
+    expect(rhai).not.toContain('capability_mode')
     expect(rhai).toContain('isolation_worktree: false')
     expect(rhai).not.toContain('isolation_worktree: true')
   })
@@ -219,7 +219,7 @@ describe('compileToRhai', () => {
     expect(rhai).toContain('{\\"name\\":\\"demo\\"}')
     expect(rhai).toContain('禁止伪造或编造响应')
     expect(rhai).toContain('kind: "http"')
-    expect(rhai).toContain('capability_mode: "execute"')
+    expect(rhai).not.toContain('capability_mode')
     expect(rhai).toContain('complete(')
   })
 
@@ -531,7 +531,7 @@ describe('compileToRhai', () => {
     expect(rhai).toContain('用 knowledge_search 工具在本地知识库「docs」全文检索：重试 OR 超时')
     expect(rhai).toContain('最多返回 3 条命中片段')
     expect(rhai).toContain('kind: "knowledge"')
-    expect(rhai).toContain('capability_mode: "execute"')
+    expect(rhai).not.toContain('capability_mode')
   })
 
   it('标识符冲突/保留字编译期报错（a-b 与 a_b 撞名、id=input 撞保留字）', () => {

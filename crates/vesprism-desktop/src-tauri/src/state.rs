@@ -410,6 +410,22 @@ pub enum FrontendEvent {
         mode: String,
         questions: Vec<UserQuestionItem>,
     },
+    /// MCP 要表单 / URL 同意（官方 x.ai/mcp/elicit）。
+    McpElicitRequest {
+        request_id: u64,
+        tool_call_id: String,
+        server_name: String,
+        message: String,
+        mode: String,
+        requested_schema: Option<serde_json::Value>,
+        url: Option<String>,
+        elicitation_id: Option<String>,
+    },
+    /// MCP URL 征求完成（官方 x.ai/mcp/elicit_complete）。
+    McpElicitComplete {
+        elicitation_id: String,
+        server_name: Option<String>,
+    },
     /// 会话模式（ACP CurrentModeUpdate：default / plan / ask）。
     CurrentModeUpdate {
         mode_id: String,
@@ -511,7 +527,8 @@ pub enum FrontendEvent {
 pub struct PermissionOptionDto {
     pub id: String,
     pub name: String,
-    /// allow | deny | other — 前端按钮样式与 Esc 默认拒绝用
+    /// 官方 ACP kind：allow_once / allow_always / reject_once / reject_always；
+    /// 旧回退：allow | deny | other
     pub kind: String,
 }
 
@@ -1789,9 +1806,17 @@ fn forward_event(
                     description,
                     options: options
                         .into_iter()
-                        .map(|(id, name)| {
-                            let kind = permission_option_kind(&id, &name).to_string();
-                            PermissionOptionDto { id, name, kind }
+                        .map(|o| {
+                            let kind = if o.kind.is_empty() {
+                                permission_option_kind(&o.id, &o.name).to_string()
+                            } else {
+                                o.kind
+                            };
+                            PermissionOptionDto {
+                                id: o.id,
+                                name: o.name,
+                                kind,
+                            }
                         })
                         .collect(),
                     security_findings,
@@ -1894,6 +1919,47 @@ fn forward_event(
                     tool_call_id,
                     mode,
                     questions,
+                },
+            );
+        }
+        SessionEvent::McpElicitRequest {
+            tool_call_id,
+            server_name,
+            message,
+            mode,
+            requested_schema,
+            url,
+            elicitation_id,
+            respond,
+        } => {
+            let request_id = *next_id;
+            *next_id += 1;
+            pending.insert(request_id, respond);
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::McpElicitRequest {
+                    request_id,
+                    tool_call_id,
+                    server_name,
+                    message,
+                    mode,
+                    requested_schema,
+                    url,
+                    elicitation_id,
+                },
+            );
+        }
+        SessionEvent::McpElicitComplete {
+            elicitation_id,
+            server_name,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::McpElicitComplete {
+                    elicitation_id,
+                    server_name,
                 },
             );
         }

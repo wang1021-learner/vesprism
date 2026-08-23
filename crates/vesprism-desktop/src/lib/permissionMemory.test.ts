@@ -11,6 +11,9 @@ import {
   isSessionAllowed,
   permissionSignature,
   pickAllowStrict,
+  pickAllowAlways,
+  pickRejectAlways,
+  pickDeny,
   isReadOnlyPermission,
 } from './permissionMemory'
 import { parsePermissionDescription } from '../types'
@@ -131,6 +134,23 @@ describe('选项识别', () => {
     const denyOnly = [{ id: 'd', name: '拒绝', kind: 'deny' }]
     expect(isAllowOption(denyOnly[0])).toBe(false)
     expect(pickAllowStrict(denyOnly)).toBeUndefined()
+  })
+})
+
+describe('官方 ACP kind', () => {
+  it('reject_always 与 reject_once 分开', () => {
+    const once = { id: 'no', name: '拒绝', kind: 'reject_once' }
+    const never = { id: 'never', name: 'Never allow', kind: 'reject_always' }
+    const always = { id: 'aa', name: 'Always allow', kind: 'allow_always' }
+    const opts = [
+      { id: 'yes', name: '运行', kind: 'allow_once' },
+      always,
+      once,
+      never,
+    ]
+    expect(pickDeny(opts)?.id).toBe('no')
+    expect(pickRejectAlways(opts)?.id).toBe('never')
+    expect(pickAllowAlways(opts)?.id).toBe('aa')
   })
 })
 

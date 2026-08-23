@@ -31,5 +31,6 @@ export async function cancelActiveTurn(tabId = $activeTabId.get()): Promise<void
     status: queued.length > 0 ? 'generating' : 'idle',
     permission: null,
     userQuestion: null,
+    mcpElicit: null,
   })
 }

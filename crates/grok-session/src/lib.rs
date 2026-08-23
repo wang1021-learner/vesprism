@@ -263,6 +263,15 @@ pub struct WorkflowInfoDto {
     pub result_summary: Option<String>,
 }
 
+/// ACP 权限选项（带官方 `PermissionOptionKind` 线格式）。
+#[derive(Debug, Clone)]
+pub struct PermissionOptionInfo {
+    pub id: String,
+    pub name: String,
+    /// `allow_once` / `allow_always` / `reject_once` / `reject_always` / `other`
+    pub kind: String,
+}
+
 /// 面向 GUI / REPL 的业务层事件。
 pub enum SessionEvent {
     /// AI 回复文本片段（流式）。
@@ -338,8 +347,7 @@ pub enum SessionEvent {
     /// 工具权限门控：通过 `respond` 发送选中的 `option_id` 作答。
     PermissionRequest {
         description: String,
-        /// `(选项 id, 显示名称)`
-        options: Vec<(String, String)>,
+        options: Vec<PermissionOptionInfo>,
         /// 安全预检发现（官方分类器/评估经请求 meta `x.ai/security_findings` 下发）
         security_findings: Vec<String>,
         respond: oneshot::Sender<String>,
@@ -387,6 +395,23 @@ pub enum SessionEvent {
         mode: String,
         questions: Vec<UserQuestionItem>,
         respond: oneshot::Sender<String>,
+    },
+    /// MCP 要表单 / URL 同意（官方 `x.ai/mcp/elicit`）。
+    /// `respond` 回传 JSON：`{ "outcome": "accept"|"decline"|"cancel", "content"?: object }`。
+    McpElicitRequest {
+        tool_call_id: String,
+        server_name: String,
+        message: String,
+        mode: String,
+        requested_schema: Option<serde_json::Value>,
+        url: Option<String>,
+        elicitation_id: Option<String>,
+        respond: oneshot::Sender<String>,
+    },
+    /// MCP URL 征求完成后的关闭通知（官方 `x.ai/mcp/elicit_complete`）。
+    McpElicitComplete {
+        elicitation_id: String,
+        server_name: Option<String>,
     },
     /// 会话模式变化（ACP `CurrentModeUpdate`：`default` / `plan` / `ask`）。
     CurrentModeUpdate { mode_id: String },
@@ -623,6 +648,23 @@ impl std::fmt::Debug for SessionEvent {
                 mode,
                 questions.len()
             ),
+            Self::McpElicitRequest {
+                tool_call_id,
+                server_name,
+                mode,
+                ..
+            } => write!(
+                f,
+                "McpElicitRequest {{ tool_call_id: {:?}, server: {:?}, mode: {:?} }}",
+                tool_call_id, server_name, mode
+            ),
+            Self::McpElicitComplete {
+                elicitation_id, ..
+            } => write!(
+                f,
+                "McpElicitComplete {{ elicitation_id: {:?} }}",
+                elicitation_id
+            ),
             Self::CurrentModeUpdate { mode_id } => {
                 write!(f, "CurrentModeUpdate {{ mode_id: {mode_id:?} }}")
             }
@@ -805,10 +847,14 @@ impl Client for GuiClient {
             }
         }
 
-        let options: Vec<(String, String)> = args
+        let options: Vec<PermissionOptionInfo> = args
             .options
             .iter()
-            .map(|o| (o.option_id.to_string(), o.name.clone()))
+            .map(|o| PermissionOptionInfo {
+                id: o.option_id.to_string(),
+                name: o.name.clone(),
+                kind: permission_kind_wire(&o.kind),
+            })
             .collect();
 
         // 安全预检发现（官方注入请求 meta 的 `x.ai/security_findings` token 列表）
@@ -853,7 +899,7 @@ impl Client for GuiClient {
             Ok(id) => id,
             Err(_) => {
                 // 外部未作答（通道被 drop）：安全默认选第一项。
-                options[0].0.clone()
+                options[0].id.clone()
             }
         };
 
@@ -974,6 +1020,25 @@ impl Client for GuiClient {
     async fn ext_notification(&self, args: ExtNotification) -> agent_client_protocol::Result<()> {
         match args.method.as_ref() {
             "x.ai/session_notification" => {}
+            "x.ai/mcp/elicit_complete" => {
+                #[derive(serde::Deserialize)]
+                #[serde(rename_all = "camelCase")]
+                struct CompleteParams {
+                    elicitation_id: String,
+                    #[serde(default)]
+                    server_name: Option<String>,
+                }
+                if let Ok(p) = serde_json::from_str::<CompleteParams>(args.params.get()) {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::McpElicitComplete {
+                            elicitation_id: p.elicitation_id,
+                            server_name: p.server_name,
+                        })
+                        .await;
+                }
+                return Ok(());
+            }
             "x.ai/queue/changed" => {
                 #[derive(serde::Deserialize)]
                 #[serde(rename_all = "camelCase")]
@@ -1514,6 +1579,9 @@ impl Client for GuiClient {
         if args.method.as_ref() == "x.ai/exit_plan_mode" {
             return self.handle_exit_plan_mode(args).await;
         }
+        if args.method.as_ref() == "x.ai/mcp/elicit" {
+            return self.handle_mcp_elicit(args).await;
+        }
         if args.method.as_ref() != "x.ai/ask_user_question" {
             // 未实现的扩展方法：返回 null，与 ACP Client 默认行为一致。
             return Ok(ExtResponse::new(
@@ -1629,6 +1697,83 @@ impl GuiClient {
                 tracing::error!(error = %e, "exit_plan_mode response is not valid JSON");
                 match serde_json::value::to_raw_value(&serde_json::json!({
                     "outcome": "cancelled"
+                })) {
+                    Ok(r) => r,
+                    Err(_) => return Err(agent_client_protocol::Error::internal_error()),
+                }
+            }
+        };
+        Ok(ExtResponse::new(raw.into()))
+    }
+
+    async fn handle_mcp_elicit(
+        &self,
+        args: ExtRequest,
+    ) -> agent_client_protocol::Result<ExtResponse> {
+        // 官方 McpElicitExtRequest 线格式（flatten tagged mode）。
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ElicitParams {
+            #[serde(default)]
+            tool_call_id: String,
+            #[serde(default)]
+            server_name: String,
+            #[serde(default)]
+            message: String,
+            #[serde(default)]
+            mode: String,
+            #[serde(default)]
+            requested_schema: Option<serde_json::Value>,
+            #[serde(default)]
+            url: Option<String>,
+            #[serde(default)]
+            elicitation_id: Option<String>,
+        }
+
+        let params: ElicitParams = match serde_json::from_str(args.params.get()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to parse x.ai/mcp/elicit params");
+                return Err(agent_client_protocol::Error::invalid_params());
+            }
+        };
+
+        let mode = if params.mode.trim().is_empty() {
+            if params.url.as_ref().is_some_and(|u| !u.is_empty()) {
+                "url".to_string()
+            } else {
+                "form".to_string()
+            }
+        } else {
+            params.mode
+        };
+
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let _ = self
+            .event_tx
+            .send(SessionEvent::McpElicitRequest {
+                tool_call_id: params.tool_call_id,
+                server_name: params.server_name,
+                message: params.message,
+                mode,
+                requested_schema: params.requested_schema,
+                url: params.url,
+                elicitation_id: params.elicitation_id,
+                respond: respond_tx,
+            })
+            .await;
+
+        let response_json = match respond_rx.await {
+            Ok(s) if !s.trim().is_empty() => s,
+            _ => r#"{"outcome":"cancel"}"#.to_string(),
+        };
+
+        let raw = match serde_json::value::RawValue::from_string(response_json) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "mcp elicit response is not valid JSON");
+                match serde_json::value::to_raw_value(&serde_json::json!({
+                    "outcome": "cancel"
                 })) {
                     Ok(r) => r,
                     Err(_) => return Err(agent_client_protocol::Error::internal_error()),
@@ -1812,6 +1957,18 @@ fn pick_reject_once(
     options
         .iter()
         .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::RejectOnce)
+}
+
+fn permission_kind_wire(kind: &agent_client_protocol::PermissionOptionKind) -> String {
+    use agent_client_protocol::PermissionOptionKind as K;
+    match kind {
+        K::AllowOnce => "allow_once",
+        K::AllowAlways => "allow_always",
+        K::RejectOnce => "reject_once",
+        K::RejectAlways => "reject_always",
+        _ => "other",
+    }
+    .to_string()
 }
 
 fn auto_allow(

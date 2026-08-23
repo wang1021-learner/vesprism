@@ -2,7 +2,7 @@
  * 工具审批（内嵌位置 + choice 语义）：
  * - 主：内嵌在「发起审批的工具行」下方（positional：挂起时最后一个 in_progress 工具行）
  * - 兜底：输入框上方浮层，仅当内嵌条不可见时显示
- * - 主按钮：运行(once)；下拉：本次会话允许 / 总是允许（确认弹窗）/ 拒绝
+ * - 主按钮：运行(once)；下拉：本次会话允许 / 总是允许 / 永不允许（官方 RejectAlways）/ 拒绝
  * - 键盘：Ctrl/⌘+Enter 运行 · Esc 拒绝
  * - 子 agent 的权限请求已在后端自动放行，不会到达这里
  */
@@ -16,7 +16,9 @@ import {
   addSessionAllowed,
   permissionSignature,
   pickAllow,
+  pickAllowAlways,
   pickDeny,
+  pickRejectAlways,
 } from '../lib/permissionMemory'
 
 function isMacPlatform(): boolean {
@@ -87,6 +89,7 @@ function ApprovalBar({
   const [showCommand, setShowCommand] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmAlways, setConfirmAlways] = useState(false)
+  const [confirmNever, setConfirmNever] = useState(false)
   const runRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const mac = useMemo(() => isMacPlatform(), [])
@@ -104,7 +107,9 @@ function ApprovalBar({
   }, [menuOpen])
 
   const allow = useMemo(() => pickAllow(request.options), [request.options])
+  const allowAlways = useMemo(() => pickAllowAlways(request.options), [request.options])
   const deny = useMemo(() => pickDeny(request.options), [request.options])
+  const neverAllow = useMemo(() => pickRejectAlways(request.options), [request.options])
   const command = (request.command || '').trim()
   const hasCommand = command.length > 0
   const respond = async (optionId: string) => {
@@ -127,7 +132,7 @@ function ApprovalBar({
   }
 
   useEffect(() => {
-    if (confirmAlways) return
+    if (confirmAlways || confirmNever) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -145,7 +150,7 @@ function ApprovalBar({
     return () => window.removeEventListener('keydown', onKey, true)
     // respond 每次 render 重建，这里按选项 id 判断即可，无需整个函数入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request, allow?.id, deny?.id, busy, confirmAlways])
+  }, [request, allow?.id, deny?.id, busy, confirmAlways, confirmNever])
 
   useEffect(() => {
     if (surface === 'inline') runRef.current?.focus()
@@ -168,10 +173,23 @@ function ApprovalBar({
 
   const confirmAlwaysAllow = () => {
     setConfirmAlways(false)
-    if (!allow) return
-    console.log('[perm] 总是允许 ->', { sig })
+    const opt = allowAlways || allow
+    if (!opt) return
+    console.log('[perm] 总是允许 ->', { sig, kind: opt.kind })
     addAlwaysAllowed(sig)
-    runOnce(allow.id)
+    runOnce(opt.id)
+  }
+
+  const onNeverAllow = () => {
+    setMenuOpen(false)
+    setConfirmNever(true)
+  }
+
+  const confirmNeverAllow = () => {
+    setConfirmNever(false)
+    if (!neverAllow) return
+    console.log('[perm] 永不允许 ->', { sig, kind: neverAllow.kind })
+    runOnce(neverAllow.id)
   }
 
   const onMenuDeny = () => {
@@ -270,6 +288,17 @@ function ApprovalBar({
               总是允许
               <span className="perm-menu-hint">写入本地配置</span>
             </button>
+            {neverAllow && neverAllow.id !== deny?.id ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="perm-menu-item perm-menu-item-danger"
+                onClick={onNeverAllow}
+              >
+                永不允许
+                <span className="perm-menu-hint">写入项目，以后同类都拒绝</span>
+              </button>
+            ) : null}
             {deny && deny.id !== allow?.id ? (
               <button
                 type="button"
@@ -293,7 +322,9 @@ function ApprovalBar({
           <div className="perm-dialog" role="alertdialog" aria-label="总是允许">
             <div className="perm-dialog-title">总是允许该命令？</div>
             <div className="perm-dialog-desc">
-              之后同类命令将不再询问（写入本地配置）。
+              {allowAlways
+                ? '之后同类命令将不再询问（写入项目权限）。'
+                : '之后同类命令将不再询问（写入本地配置）。'}
             </div>
             {hasCommand ? <pre className="perm-command perm-dialog-cmd">{command}</pre> : null}
             <div className="perm-dialog-actions">
@@ -311,6 +342,35 @@ function ApprovalBar({
                 onClick={confirmAlwaysAllow}
               >
                 总是允许
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmNever ? (
+        <div className="perm-dialog-backdrop" role="presentation">
+          <div className="perm-dialog" role="alertdialog" aria-label="永不允许">
+            <div className="perm-dialog-title">永不允许该命令？</div>
+            <div className="perm-dialog-desc">
+              以后同类请求会直接拒绝（写入项目权限，官方 Never allow）。
+            </div>
+            {hasCommand ? <pre className="perm-command perm-dialog-cmd">{command}</pre> : null}
+            <div className="perm-dialog-actions">
+              <button
+                type="button"
+                className="perm-act perm-act-deny"
+                onClick={() => setConfirmNever(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="perm-act perm-act-deny"
+                autoFocus
+                onClick={confirmNeverAllow}
+              >
+                永不允许
               </button>
             </div>
           </div>

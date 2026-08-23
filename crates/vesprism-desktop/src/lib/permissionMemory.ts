@@ -15,13 +15,17 @@ export function permissionSignature(p: PermissionRequest): string {
   return 'kind:' + (p.kindLabel || p.tool || '')
 }
 
+function kindOf(opt: PermissionOption): string {
+  return (opt.kind || '').toLowerCase().replace(/-/g, '_')
+}
+
 /** 选项识别（与 Permission.tsx 共用） */
 export function isAllowOption(opt: PermissionOption): boolean {
-  const kind = (opt.kind || '').toLowerCase()
+  const kind = kindOf(opt)
+  if (kind === 'allow_once' || kind === 'allow_always' || kind === 'allow') return true
+  if (kind === 'reject_once' || kind === 'reject_always' || kind === 'deny') return false
   const name = opt.name || ''
   const lower = name.toLowerCase()
-  if (kind === 'allow') return true
-  if (kind === 'deny') return false
   return (
     /yes|proceed|allow|approve|accept|run|once/i.test(lower) ||
     name.includes('允许') ||
@@ -31,11 +35,11 @@ export function isAllowOption(opt: PermissionOption): boolean {
 }
 
 export function isDenyOption(opt: PermissionOption): boolean {
-  const kind = (opt.kind || '').toLowerCase()
+  const kind = kindOf(opt)
+  if (kind === 'reject_once' || kind === 'reject_always' || kind === 'deny') return true
+  if (kind === 'allow_once' || kind === 'allow_always' || kind === 'allow') return false
   const name = opt.name || ''
   const lower = name.toLowerCase()
-  if (kind === 'deny') return true
-  if (kind === 'allow') return false
   return (
     /no|deny|reject|cancel|differently|refuse/i.test(lower) ||
     name.includes('拒绝') ||
@@ -44,8 +48,24 @@ export function isDenyOption(opt: PermissionOption): boolean {
   )
 }
 
+export function pickAllowOnce(options: PermissionOption[]): PermissionOption | undefined {
+  return options.find((o) => kindOf(o) === 'allow_once') || options.find(isAllowOption)
+}
+
+export function pickAllowAlways(options: PermissionOption[]): PermissionOption | undefined {
+  return options.find((o) => kindOf(o) === 'allow_always')
+}
+
+export function pickRejectOnce(options: PermissionOption[]): PermissionOption | undefined {
+  return options.find((o) => kindOf(o) === 'reject_once')
+}
+
+export function pickRejectAlways(options: PermissionOption[]): PermissionOption | undefined {
+  return options.find((o) => kindOf(o) === 'reject_always')
+}
+
 export function pickAllow(options: PermissionOption[]): PermissionOption | undefined {
-  return options.find(isAllowOption) || options[0]
+  return pickAllowOnce(options) || options[0]
 }
 
 /** 官方只读工具分类：读/搜/思考/拉取，无工作区副作用。 */
@@ -62,7 +82,11 @@ export function pickAllowStrict(
 }
 
 export function pickDeny(options: PermissionOption[]): PermissionOption | undefined {
-  return options.find(isDenyOption) || options[options.length - 1]
+  return (
+    pickRejectOnce(options) ||
+    options.find((o) => isDenyOption(o) && kindOf(o) !== 'reject_always') ||
+    options[options.length - 1]
+  )
 }
 
 /** 本次会话允许：tabId → 命令签名集合 */

@@ -408,7 +408,7 @@ export default function AgentsPanel() {
 
             <h3 className="agents-section">能力与权限</h3>
             <label className="agents-field">
-              <span>能力档</span>
+              <span>岗位标签</span>
               <select
                 value={draft.capability}
                 onChange={(e) => patch({ capability: parseCapability(e.target.value) })}
@@ -419,6 +419,9 @@ export default function AgentsPanel() {
                   </option>
                 ))}
               </select>
+              <span className="agents-hint">
+                只做展示。工具集由 Agent 类型和下面的停用工具控制（官方 1.0.6 起 spawn 不再认能力档）。
+              </span>
             </label>
             <label className="agents-field agents-check">
               <input

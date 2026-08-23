@@ -17,6 +17,7 @@ import {
 } from './components/ErrorBoundary'
 import { PendingApprovalFallback } from './components/Permission'
 import { UserQuestionPanel } from './components/UserQuestion'
+import { McpElicitPanel } from './components/McpElicit'
 
 import { RightPanel } from './components/RightPanel'
 import { SettingsModal } from './components/Settings'
@@ -38,7 +39,7 @@ import {
   $activeTabId, $tabs,
   $activeChatId, $chats, $composerInput,
   $defaultModelId, $error, $generating, $messages, $models, $queuedPrompts,
-  $permission, $userQuestion, $reasoningEffort, $sessionPhase,
+  $permission, $userQuestion, $mcpElicit, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
   $preferredWorkspaceCwd, $scratchCwd, $securityPolicy,
@@ -362,6 +363,7 @@ function AppMainBody() {
           <AppMessages />
         </ErrorBoundary>
         <AppUserQuestion />
+        <AppMcpElicit />
         <AppPlanApproval />
         <SessionInsight />
         <SchedulePanel />
@@ -532,4 +534,9 @@ function AppUserQuestion() {
     return () => window.removeEventListener('jike:focus-user-question', onFocus)
   }, [])
   return <UserQuestionPanel request={req} focusKey={focusKey} />
+}
+
+function AppMcpElicit() {
+  const req = useStore($mcpElicit)
+  return <McpElicitPanel request={req} />
 }

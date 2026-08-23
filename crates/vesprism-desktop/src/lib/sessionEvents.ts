@@ -29,6 +29,7 @@ import {
   loadSession,
   respondExitPlanMode,
   respondPermission,
+  respondUserQuestion,
   setCurrentModel,
   startSession,
 } from '../bridge'
@@ -140,6 +141,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         status: queued.length > 0 ? 'generating' : 'idle',
         permission: null,
         userQuestion: null,
+        mcpElicit: null,
       })
       break
     }
@@ -246,6 +248,43 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           console.warn('[perm] 记忆命中但无明确 allow 选项', { sig, options: req.options })
         }
         patchTab(tabId, { permission: req })
+      }
+      break
+    }
+    case 'mcp_elicit_request':
+      if (getTabState(tabId)?.phase === 'loading') break
+      if (ev.request_id != null) {
+        const prev = getTabState(tabId)?.mcpElicit
+        if (prev && prev.requestId !== ev.request_id && !prev.waiting) {
+          void respondUserQuestion(tabId, prev.requestId, JSON.stringify({ outcome: 'cancel' })).catch(
+            () => {},
+          )
+        }
+        patchTab(tabId, {
+          mcpElicit: {
+            requestId: ev.request_id,
+            toolCallId: ev.tool_call_id || `elicit_${ev.request_id}`,
+            serverName: ev.server_name || '',
+            message: ev.message || '',
+            mode: ev.mode === 'url' ? 'url' : 'form',
+            requestedSchema: ev.requested_schema,
+            url: ev.url,
+            elicitationId: ev.elicitation_id,
+          },
+        })
+      }
+      break
+    case 'mcp_elicit_complete': {
+      const cur = getTabState(tabId)?.mcpElicit
+      if (
+        cur &&
+        cur.elicitationId &&
+        ev.elicitation_id &&
+        cur.elicitationId === ev.elicitation_id
+      ) {
+        patchTab(tabId, { mcpElicit: null })
+      } else if (cur?.waiting) {
+        patchTab(tabId, { mcpElicit: null })
       }
       break
     }
@@ -649,7 +688,7 @@ async function replayTabAfterCrash(tabId: string) {
   const st = getTabState(tabId)
   if (!st) return
   // 清挂起的 UI 状态（旧 actor 的权限 / 问卷 oneshot 已随 panic 失效）
-  patchTab(tabId, { permission: null, userQuestion: null, error: '', subagents: [] })
+  patchTab(tabId, { permission: null, userQuestion: null, mcpElicit: null, error: '', subagents: [] })
   const cwd = st.cwd || $workspaceCwd.get()
   try {
     if (st.sessionId) {

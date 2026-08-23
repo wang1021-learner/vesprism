@@ -119,6 +119,7 @@ export async function openWorkbenchHistory(
       subagents: [],
       permission: null,
       userQuestion: null,
+      mcpElicit: null,
       composerInput: '',
     })
     clearSessionAllowed(tabId)

@@ -864,6 +864,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         subagents: [],
         permission: null,
         userQuestion: null,
+        mcpElicit: null,
       })
       // 本次会话权限记忆按会话清，避免命令记忆跨会话串用
       clearSessionAllowed(myTab)
@@ -985,6 +986,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         composerInput: '',
         permission: null,
         userQuestion: null,
+        mcpElicit: null,
         subagents: [],
         error: '',
         chatId: '',

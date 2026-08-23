@@ -35,6 +35,9 @@ const vitest = spawnSync(
     'src/lib/writingToolLabel.test.ts',
     'src/lib/closeChatTab.test.ts',
     'src/lib/sessionEvents.test.ts',
+    'src/lib/permissionMemory.test.ts',
+    'src/lib/mcpElicit.test.ts',
+    'src/workbench/flow/rhai.test.ts',
   ],
 
   { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' },

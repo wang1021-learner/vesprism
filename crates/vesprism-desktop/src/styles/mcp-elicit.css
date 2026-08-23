@@ -1,0 +1,155 @@
+/* MCP elicitation card — same dock as user-question */
+
+.elicit-dock {
+  flex: 0 0 auto;
+  width: min(var(--chat-column-width, 90%), var(--chat-column-max-width, 48.75rem));
+  max-width: var(--chat-column-max-width, 48.75rem);
+  margin: 0 auto 0.5rem;
+  z-index: 46;
+  pointer-events: none;
+}
+
+.elicit-card {
+  pointer-events: auto;
+  padding: 0.625rem 0.875rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-solid);
+  background: color-mix(in srgb, var(--surface-elevated) 92%, #9a9a9a 4%);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+}
+
+.elicit-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.elicit-badge {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border-solid);
+  border-radius: 4px;
+}
+
+.elicit-server {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.elicit-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.elicit-msg,
+.elicit-wait {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.elicit-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.elicit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.elicit-field input,
+.elicit-field select {
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+}
+
+.elicit-desc {
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+
+.elicit-multi {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.elicit-error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #b42318;
+}
+
+.elicit-url {
+  margin-bottom: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.elicit-host {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.elicit-url-full {
+  word-break: break-all;
+  color: var(--text-tertiary);
+}
+
+.elicit-warn {
+  color: #b42318;
+  font-weight: 500;
+}
+
+.elicit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.elicit-act {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.elicit-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.elicit-act-run {
+  background: var(--text-primary);
+  color: var(--surface-elevated);
+  border-color: var(--text-primary);
+}

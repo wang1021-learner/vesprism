@@ -9,11 +9,11 @@ import {
 } from '../types'
 
 export const CAPABILITY_OPTIONS: { value: AgentCapability | ''; label: string }[] = [
-  { value: '', label: '未设（继承）' },
-  { value: 'read_only', label: '只读' },
-  { value: 'read_write', label: '可改文件' },
-  { value: 'execute', label: '能跑命令' },
-  { value: 'all', label: '全权' },
+  { value: '', label: '未设（展示用）' },
+  { value: 'read_only', label: '只读（展示）' },
+  { value: 'read_write', label: '可改文件（展示）' },
+  { value: 'execute', label: '能跑命令（展示）' },
+  { value: 'all', label: '全权（展示）' },
 ]
 
 export type AgentFormDraft = {
