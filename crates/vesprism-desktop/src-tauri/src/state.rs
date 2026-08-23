@@ -467,6 +467,16 @@ pub enum FrontendEvent {
         next_fire_at: Option<String>,
         reason: String,
     },
+    Recap {
+        summary: String,
+        auto: bool,
+    },
+    RecapUnavailable,
+    MonitorEvent {
+        task_id: String,
+        description: String,
+        event_text: String,
+    },
     /// 会话状态变更。
     StatusChanged {
         status: SessionStatus,
@@ -1988,6 +1998,27 @@ fn forward_event(
                     human_schedule,
                     next_fire_at,
                     reason,
+                },
+            );
+        }
+        SessionEvent::Recap { summary, auto } => {
+            emit(app, tab_id, FrontendEvent::Recap { summary, auto });
+        }
+        SessionEvent::RecapUnavailable => {
+            emit(app, tab_id, FrontendEvent::RecapUnavailable);
+        }
+        SessionEvent::MonitorEvent {
+            task_id,
+            description,
+            event_text,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::MonitorEvent {
+                    task_id,
+                    description,
+                    event_text,
                 },
             );
         }

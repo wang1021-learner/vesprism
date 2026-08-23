@@ -415,6 +415,16 @@ pub enum SessionEvent {
         /// 删除原因：expired / deleted / completed / shutdown / unknown。
         reason: String,
     },
+    /// 会话回顾（官方 SessionRecap，不进模型上下文）。
+    Recap { summary: String, auto: bool },
+    /// 手动 /recap 没有产出。
+    RecapUnavailable,
+    /// 监视任务 stdout 一行（官方 MonitorEvent）。
+    MonitorEvent {
+        task_id: String,
+        description: String,
+        event_text: String,
+    },
     /// Goal 编排进度（官方 `x.ai/session_notification` → `GoalUpdated`）。
     GoalUpdated(GoalInfoDto),
     /// 工作流运行进度（官方 `x.ai/session_notification` → `WorkflowUpdated`）。
@@ -636,6 +646,11 @@ impl std::fmt::Debug for SessionEvent {
             }
             Self::ScheduledTask { op, task_id, .. } => {
                 write!(f, "ScheduledTask {{ op: {op:?}, id: {task_id:?} }}")
+            }
+            Self::Recap { auto, .. } => write!(f, "Recap {{ auto: {auto} }}"),
+            Self::RecapUnavailable => write!(f, "RecapUnavailable"),
+            Self::MonitorEvent { task_id, .. } => {
+                write!(f, "MonitorEvent {{ id: {task_id:?} }}")
             }
             Self::GoalUpdated(g) => write!(
                 f,
@@ -1450,6 +1465,32 @@ impl Client for GuiClient {
                             human_schedule: String::new(),
                             next_fire_at: None,
                             reason: format!("{reason:?}").to_ascii_lowercase(),
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::SessionRecap {
+                    summary,
+                    auto,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::Recap { summary, auto })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::SessionRecapUnavailable => {
+                    let _ = self.event_tx.send(SessionEvent::RecapUnavailable).await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::MonitorEvent {
+                    task_id,
+                    description,
+                    event_text,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::MonitorEvent {
+                            task_id,
+                            description,
+                            event_text,
                         })
                         .await;
                 }
