@@ -26,6 +26,7 @@ use super::turn_status::SPINNER_DIVISOR;
 use crate::app::agent::{GoalDisplayPhase, GoalDisplayState, GoalDisplayStatus};
 use crate::app::agent_view::McpInitProgress;
 use crate::theme::Theme;
+use crate::views::tasks_pane::TaskStatusCounts;
 
 /// A named status bar item.
 struct StatusEntry {
@@ -134,6 +135,50 @@ impl<'a> AgentStatusBar<'a> {
     }
 }
 
+pub(crate) fn task_status_line(
+    counts: TaskStatusCounts,
+    theme: &Theme,
+    is_hovered: bool,
+    tick: u64,
+) -> Option<Line<'static>> {
+    if counts == TaskStatusCounts::default() {
+        return None;
+    }
+
+    let hover = if is_hovered {
+        ratatui::style::Modifier::BOLD
+    } else {
+        ratatui::style::Modifier::empty()
+    };
+    let running_style = Style::default()
+        .fg(theme.accent_running)
+        .bg(theme.bg_base)
+        .add_modifier(hover);
+    let paused_style = Style::default()
+        .fg(theme.warning)
+        .bg(theme.bg_base)
+        .add_modifier(hover);
+    let mut spans = Vec::with_capacity(2);
+
+    if counts.running > 0 {
+        let frames = crate::glyphs::dot_spinner_frames();
+        let frame_idx = (tick / SPINNER_DIVISOR) as usize % frames.len();
+        spans.push(Span::styled(
+            format!("{} {}", frames[frame_idx], counts.running),
+            running_style,
+        ));
+    }
+    if counts.paused_workflows > 0 {
+        let prefix = if counts.running > 0 { "  " } else { "" };
+        spans.push(Span::styled(
+            format!("{prefix}P {}", counts.paused_workflows),
+            paused_style,
+        ));
+    }
+
+    Some(Line::from(spans))
+}
+
 // ---------------------------------------------------------------------------
 // Goal status line
 // ---------------------------------------------------------------------------
@@ -213,7 +258,7 @@ pub fn active_phase_label(goal: &GoalDisplayState) -> String {
 /// Returns the empty string when both fields are absent / zero — no
 /// classifier run has been reserved yet, so there is no meaningful
 /// counter. Callers render it only when non-empty: the chip drops the
-/// `(n/m)` suffix, the modal falls back to an em-dash.
+/// `(n/m)` suffix, the modal falls back to a hyphen.
 pub fn classifier_attempts_label(goal: &GoalDisplayState) -> String {
     let attempt = goal.classifier_runs_attempted.unwrap_or(0);
     let max = goal.classifier_max_runs.unwrap_or(0);
@@ -324,6 +369,10 @@ pub fn mcp_status_line(
         ),
     ]))
 }
+
+#[cfg(test)]
+#[path = "agent_status_task_tests.rs"]
+mod task_tests;
 
 #[cfg(test)]
 mod tests {

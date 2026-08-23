@@ -3,7 +3,6 @@ import {
   $scratchCwd,
   createTab,
   getTabState,
-  patchTab,
   resetTabsForTests,
 } from '../store'
 import type { WorkbenchBinding } from '../workbench/bindings'

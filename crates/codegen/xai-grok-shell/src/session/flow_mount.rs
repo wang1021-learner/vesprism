@@ -165,6 +165,7 @@ pub(crate) async fn run_flow_tool(
         objective: contract.description.clone(),
         args,
         agent_budget: Some(FLOW_DEFAULT_AGENT_BUDGET),
+        effort: None,
         resume_run_id: None,
     };
     let launched = manager.lock().await.launch(resolved, spec);

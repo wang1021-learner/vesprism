@@ -431,6 +431,16 @@ pub(crate) enum SwapOutcome {
 pub struct WorkspaceHandle {
     pub(crate) shared: Arc<WorkspaceShared>,
 }
+type AcknowledgedNotifyChannel = (
+    xai_grok_tools::notification::types::ToolNotificationHandle,
+    tokio::sync::mpsc::UnboundedReceiver<
+        xai_grok_tools::notification::AcknowledgedToolNotification,
+    >,
+);
+/// Builds with no forwarder. They must not open the channel, because an unread one blocks every delete.
+fn acknowledged_notify_channel(_enabled: bool) -> Option<AcknowledgedNotifyChannel> {
+    None
+}
 /// Client-fs resolution base: request paths resolve against `base`,
 /// `canonical` is the matching canonicalization-containment boundary.
 pub(crate) struct ClientFsBase {
@@ -862,19 +872,20 @@ impl WorkspaceHandle {
         if session_id.is_empty() {
             return Err(WorkspaceError::EmptyAgentId);
         }
-        let mut sessions = self.shared.sessions.write();
-        if self.shared.activity_tracker.is_draining() {
-            return Err(WorkspaceError::ShuttingDown);
-        }
-        if sessions.contains_key(&session_id) {
-            return Err(WorkspaceError::SessionAlreadyExists(session_id));
+        {
+            let sessions = self.shared.sessions.read();
+            if self.shared.activity_tracker.is_draining() {
+                return Err(WorkspaceError::ShuttingDown);
+            }
+            if sessions.contains_key(&session_id) {
+                return Err(WorkspaceError::SessionAlreadyExists(session_id));
+            }
         }
         let session_env = Arc::new(std::collections::HashMap::new());
         let config = tool_config.unwrap_or_else(|| self.shared.default_tool_config.clone());
         let mcp_snapshot = self.shared.mcp_tools_snapshot.load_full();
         let hub_snapshot = self.shared.hub_tools_snapshot.load_full();
-        let system_notify_channel = system_notifications
-            .then(xai_grok_tools::notification::types::ToolNotificationHandle::channel);
+        let system_notify_channel = acknowledged_notify_channel(system_notifications);
         let system_notify_handle = system_notify_channel.as_ref().map(|(h, _)| h.clone());
         let (effective, toolset, terminal_backend) = {
             let _span = LocalSpan::enter_with_local_parent("tool_server.toolset_resolve")
@@ -911,14 +922,37 @@ impl WorkspaceHandle {
             system_notifications,
             system_notify_channel,
         ));
-        tracing::info!(session_id = %session_id, "create_session: new session created");
-        sessions.insert(session_id, session.clone());
+        self.insert_session_guarded(&session)?;
+        tracing::info!(session_id = %session.session_id(), "create_session: new session created");
         record_toolset_swap(
             &self.shared.activity_tracker,
             "create",
             session.session_id(),
         );
         Ok(session)
+    }
+    /// Insert under the write lock the evict drain shares, so a racing insert is
+    /// seen by the evict or rejected here; rejection tears down what resolve spawned.
+    fn insert_session_guarded(&self, session: &Arc<WorkspaceSession>) -> WorkspaceResult<()> {
+        let rejection = {
+            let mut sessions = self.shared.sessions.write();
+            if self.shared.activity_tracker.is_draining() {
+                Some(WorkspaceError::ShuttingDown)
+            } else if sessions.contains_key(session.session_id()) {
+                Some(WorkspaceError::SessionAlreadyExists(
+                    session.session_id().to_owned(),
+                ))
+            } else {
+                sessions.insert(session.session_id().to_owned(), Arc::clone(session));
+                None
+            }
+        };
+        if let Some(err) = rejection {
+            session.cancel_hunk_tracker();
+            session.shutdown_terminal_backend();
+            return Err(err);
+        }
+        Ok(())
     }
     /// Update a session's tool config with auth and serialization; the RPC
     /// handler derives `caller_session_id` from the server-bound envelope.
@@ -2985,18 +3019,7 @@ impl WorkspaceHandle {
             false,
             None,
         ));
-        {
-            let mut sessions = self.shared.sessions.write();
-            if self.shared.activity_tracker.is_draining() {
-                session.cancel_hunk_tracker();
-                return Err(WorkspaceError::ShuttingDown);
-            }
-            if sessions.contains_key(&config.agent_id) {
-                session.cancel_hunk_tracker();
-                return Err(WorkspaceError::SessionAlreadyExists(config.agent_id));
-            }
-            sessions.insert(config.agent_id.clone(), session.clone());
-        }
+        self.insert_session_guarded(&session)?;
         record_toolset_swap(&self.shared.activity_tracker, "fork", session.session_id());
         self.finalize_session_setup(&session).await;
         Ok(session)
@@ -4433,7 +4456,24 @@ async fn persist_and_enqueue_tool_state(
     upload_queue: Arc<xai_file_utils::queue::UploadQueue>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let toolset = session.toolset();
-    let state_path = toolset.save_and_flush_persistence().await.to_path_buf();
+    let Some(state_path) = toolset
+        .save_and_flush_persistence()
+        .await
+        .map(std::path::Path::to_path_buf)
+    else {
+        dc_log!(
+            debug,
+            session_id = %session_id,
+            turn_number,
+            phase = "tool_state",
+            outcome = "skipped",
+            skip_reason = "no_state_path",
+            "workspace: tool_state upload skipped, session has no state directory"
+        );
+        crate::upload::record_upload_outcome("tool_state", "skipped");
+        crate::upload::record_upload_skipped("tool_state", "no_state_path");
+        return Ok(());
+    };
     let bytes = tokio::fs::read(&state_path).await.map_err(|e| {
         format!(
             "failed to read flushed tool_state from {}: {e}",
