@@ -2076,6 +2076,7 @@ impl xai_tool_runtime::Tool for BashTool {
                 clamp_foreground_block(timeout, config_timeout, max_foreground_block())
             };
 
+            let env_for_retry = env.clone();
             let request = TerminalRunRequest {
                 command: command.clone(),
                 working_directory: cwd.clone(),
@@ -2085,7 +2086,7 @@ impl xai_tool_runtime::Tool for BashTool {
                 output_file: output_file.clone(),
                 notification_handle: notification_handle.clone(),
                 tool_call_id: tool_call_id.as_str().to_owned(),
-                display_command,
+                display_command: display_command.clone(),
                 // Honour `auto_background_on_timeout` regardless of
                 // whether the model supplied an explicit `timeout`.
                 // The previous gate (`input.timeout.is_none()`) hard-
@@ -2118,6 +2119,47 @@ impl xai_tool_runtime::Tool for BashTool {
                     let bash_err = BashError::from(e);
                     return Err(bash_err.into());
                 }
+            };
+
+            // 权限已在 prepare_tool_call 通过。内核/沙箱拒绝则免问再跑一次，
+            // 关掉子进程断网过滤器。
+            let result = if !result.timed_out
+                && result.signal.is_none()
+                && xai_grok_sandbox::is_likely_sandbox_denied(
+                    result.exit_code,
+                    &result.combined_output,
+                )
+                && xai_grok_sandbox::should_restrict_child_network()
+                && !env_for_retry
+                    .contains_key(xai_grok_sandbox::SKIP_CHILD_NETWORK_FILTER_ENV)
+            {
+                let mut retry_env = env_for_retry;
+                retry_env.insert(
+                    xai_grok_sandbox::SKIP_CHILD_NETWORK_FILTER_ENV.to_string(),
+                    "1".to_string(),
+                );
+                let retry = TerminalRunRequest {
+                    command: command.clone(),
+                    working_directory: cwd.clone(),
+                    env: retry_env,
+                    timeout,
+                    output_byte_limit,
+                    output_file: output_file.clone(),
+                    notification_handle: notification_handle.clone(),
+                    tool_call_id: tool_call_id.as_str().to_owned(),
+                    display_command: display_command.clone(),
+                    auto_background_on_timeout: Self::auto_background_on_timeout_enabled(&params),
+                    foreground_block_budget: Self::effective_foreground_block_budget(&params),
+                    kind: crate::computer::types::TaskKind::Bash,
+                    owner_session_id: owner_session_id.clone(),
+                    description: Some(input.description.clone()).filter(|d| !d.trim().is_empty()),
+                };
+                match backend.run(retry).await {
+                    Ok(retried) => retried,
+                    Err(_) => result,
+                }
+            } else {
+                result
             };
 
             // ─── Backgrounded (user Ctrl+G or auto-timeout): return BackgroundTaskStarted ───

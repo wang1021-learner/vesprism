@@ -92,6 +92,56 @@ pub fn should_restrict_child_network() -> bool {
         .get()
         .is_some_and(|state| state.restrict_network_at_known_linux_launches)
 }
+
+/// 写在单次 spawn 的环境变量里，跳过子进程断网过滤器。
+/// 审批已通过、内核沙箱拒绝后再跑一次时使用；父进程仍保留模型 API 网络。
+pub const SKIP_CHILD_NETWORK_FILTER_ENV: &str = "__GROK_SKIP_CHILD_NET_FILTER";
+
+/// 这次 spawn 是否应安装子进程断网过滤器。
+pub fn child_network_filter_requested(env: &std::collections::HashMap<String, String>) -> bool {
+    should_restrict_child_network() && !env.contains_key(SKIP_CHILD_NETWORK_FILTER_ENV)
+}
+
+/// 保守判断是否像内核/沙箱拒绝（不是缺文件那种普通 EPERM）。
+/// 只认明确标记；`Permission denied` 仅在进程级沙箱已生效时计入。
+pub fn is_likely_sandbox_denied(exit_code: Option<i32>, output: &str) -> bool {
+    if exit_code.unwrap_or(0) == 0 {
+        return false;
+    }
+    let o = output.to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "landlock",
+        "seccomp",
+        "sandbox-exec",
+        "seatbelt",
+        "blocked by the sandbox",
+        "network is disabled in the sandbox",
+        "network restricted by sandbox",
+    ];
+    if MARKERS.iter().any(|m| o.contains(m)) {
+        return true;
+    }
+    is_active()
+        && (o.contains("operation not permitted")
+            || o.contains("eperm")
+            || o.contains("network is unreachable"))
+}
+
+#[cfg(test)]
+mod sandbox_denial_tests {
+    use super::is_likely_sandbox_denied;
+
+    #[test]
+    fn markers_count_as_sandbox_denial() {
+        assert!(is_likely_sandbox_denied(
+            Some(1),
+            "connect: seccomp filter rejected"
+        ));
+        assert!(is_likely_sandbox_denied(Some(1), "landlock: denied write"));
+        assert!(!is_likely_sandbox_denied(Some(0), "seccomp"));
+        assert!(!is_likely_sandbox_denied(Some(1), "No such file or directory"));
+    }
+}
 /// Whether bash commands should be auto-approved when the sandbox is active.
 pub fn should_auto_allow_bash() -> bool {
     AUTO_ALLOW_BASH.load(Ordering::Relaxed) && is_active()

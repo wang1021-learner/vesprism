@@ -914,7 +914,7 @@ fn spawn_with_argv(
                 .stderr(Stdio::piped());
 
             #[cfg(target_os = "linux")]
-            if xai_grok_sandbox::should_restrict_child_network() {
+            if xai_grok_sandbox::child_network_filter_requested(env) {
                 // SAFETY: single prctl syscall (async-signal-safe).
                 unsafe {
                     cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());

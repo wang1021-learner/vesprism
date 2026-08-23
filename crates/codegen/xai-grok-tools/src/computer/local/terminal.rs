@@ -710,7 +710,7 @@ impl LocalTerminalActor {
         }
 
         #[cfg(target_os = "linux")]
-        if xai_grok_sandbox::should_restrict_child_network() {
+        if xai_grok_sandbox::child_network_filter_requested(env) {
             unsafe {
                 cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
             }
@@ -831,7 +831,7 @@ impl LocalTerminalActor {
         }
 
         #[cfg(target_os = "linux")]
-        if xai_grok_sandbox::should_restrict_child_network() {
+        if xai_grok_sandbox::child_network_filter_requested(env) {
             unsafe {
                 cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
             }
@@ -3224,7 +3224,7 @@ fn spawn_shell_command(
         // Filesystem restrictions are already inherited from the process-level
         // Landlock/Seatbelt sandbox — no action needed here for FS.
         #[cfg(target_os = "linux")]
-        if xai_grok_sandbox::should_restrict_child_network() {
+        if xai_grok_sandbox::child_network_filter_requested(env) {
             unsafe {
                 cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
             }
