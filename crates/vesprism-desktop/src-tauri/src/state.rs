@@ -157,6 +157,11 @@ pub enum ActorCommand {
         response_json: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 切换会话模式（官方 session/set_mode：default / plan / ask）
+    SetSessionMode {
+        mode_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// 列出 MCP 服务器（x.ai/mcp/list）
     ListMcpServers {
         cache: bool,
@@ -177,6 +182,24 @@ pub enum ActorCommand {
     /// 删除本地 MCP（x.ai/mcp/delete）
     DeleteMcpServer {
         server_name: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 单工具开关（x.ai/mcp/toggle_tool）
+    ToggleMcpTool {
+        server_name: String,
+        tool_name: String,
+        enabled: bool,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// MCP OAuth（x.ai/mcp/auth_trigger）
+    McpAuthTrigger {
+        server_name: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// MCP setup 提交（x.ai/mcp/setup）
+    McpSetup {
+        server_name: String,
+        values: serde_json::Value,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
     /// 列出会话可用命令/工具/技能（x.ai/commands/list）
@@ -219,6 +242,12 @@ pub enum ActorCommand {
         name: String,
         enabled: bool,
         cwd: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// 通用官方 x.ai/* 扩展（自动带 sessionId）。
+    SessionExt {
+        method: String,
+        params: serde_json::Value,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
 }
@@ -295,6 +324,11 @@ pub enum FrontendEvent {
     /// 其它调试信息。
     Other {
         debug: String,
+    },
+    /// 官方 MCP 推送（server_status / tools_changed / servers_updated / init_progress）。
+    McpPush {
+        method: String,
+        payload: serde_json::Value,
     },
     /// 新工具调用（完整快照）。
     ToolCall {
@@ -376,6 +410,16 @@ pub enum FrontendEvent {
         mode: String,
         questions: Vec<UserQuestionItem>,
     },
+    /// 会话模式（ACP CurrentModeUpdate：default / plan / ask）。
+    CurrentModeUpdate {
+        mode_id: String,
+    },
+    /// 退出计划模式审批（x.ai/exit_plan_mode）。
+    ExitPlanModeRequest {
+        request_id: u64,
+        tool_call_id: String,
+        plan_content: Option<String>,
+    },
     /// Goal 编排进度（官方 GoalUpdated 投影）。
     GoalUpdated {
         goal: grok_session::GoalInfoDto,
@@ -406,6 +450,22 @@ pub enum FrontendEvent {
     /// 引擎释放终端，前端应移除卡片。
     TerminalReleased {
         terminal_id: String,
+    },
+    MemoryFiles {
+        files: Vec<grok_session::MemoryFileDto>,
+    },
+    MemoryOp {
+        kind: String,
+        result: String,
+        path: Option<String>,
+    },
+    ScheduledTask {
+        op: String,
+        task_id: String,
+        prompt: String,
+        human_schedule: String,
+        next_fire_at: Option<String>,
+        reason: String,
     },
     /// 会话状态变更。
     StatusChanged {
@@ -920,6 +980,60 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::ToggleMcpTool {
+            server_name,
+            tool_name,
+            enabled,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.toggle_mcp_tool(&server_name, &tool_name, enabled).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("切换 MCP 工具失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::McpAuthTrigger {
+            server_name,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.mcp_auth_trigger(&server_name).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("MCP 登录失败: {e}")));
+                }
+            }
+        }
+        ActorCommand::McpSetup {
+            server_name,
+            values,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.mcp_setup(&server_name, values).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(format!("MCP 配置失败: {e}")));
+                }
+            }
+        }
         ActorCommand::ListSessionCommands { cwd, reply } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
@@ -1032,6 +1146,24 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::SessionExt {
+            method,
+            params,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.ext_json(&method, params).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
         ActorCommand::ToggleSkill {
             name,
             enabled,
@@ -1081,6 +1213,20 @@ async fn handle_command(
             }
             None => {
                 let _ = reply.send(Err(format!("未知问卷请求 id={request_id}")));
+            }
+        },
+        ActorCommand::SetSessionMode { mode_id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.set_session_mode(mode_id).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
             }
         },
         ActorCommand::Restart {
@@ -1571,6 +1717,9 @@ fn forward_event(
         SessionEvent::Other(debug) => {
             emit(app, tab_id, FrontendEvent::Other { debug });
         }
+        SessionEvent::McpPush { method, payload } => {
+            emit(app, tab_id, FrontendEvent::McpPush { method, payload });
+        }
         SessionEvent::ToolCall(tool) => {
             emit(app, tab_id, FrontendEvent::ToolCall { tool });
         }
@@ -1738,6 +1887,27 @@ fn forward_event(
                 },
             );
         }
+        SessionEvent::CurrentModeUpdate { mode_id } => {
+            emit(app, tab_id, FrontendEvent::CurrentModeUpdate { mode_id });
+        }
+        SessionEvent::ExitPlanModeRequest {
+            tool_call_id,
+            plan_content,
+            respond,
+        } => {
+            let request_id = *next_id;
+            *next_id += 1;
+            pending.insert(request_id, respond);
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::ExitPlanModeRequest {
+                    request_id,
+                    tool_call_id,
+                    plan_content,
+                },
+            );
+        }
         SessionEvent::GoalUpdated(goal) => {
             emit(app, tab_id, FrontendEvent::GoalUpdated { goal });
         }
@@ -1793,6 +1963,33 @@ fn forward_event(
         }
         SessionEvent::TerminalReleased { terminal_id } => {
             emit(app, tab_id, FrontendEvent::TerminalReleased { terminal_id });
+        }
+        SessionEvent::MemoryFiles { files } => {
+            emit(app, tab_id, FrontendEvent::MemoryFiles { files });
+        }
+        SessionEvent::MemoryOp { kind, result, path } => {
+            emit(app, tab_id, FrontendEvent::MemoryOp { kind, result, path });
+        }
+        SessionEvent::ScheduledTask {
+            op,
+            task_id,
+            prompt,
+            human_schedule,
+            next_fire_at,
+            reason,
+        } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::ScheduledTask {
+                    op,
+                    task_id,
+                    prompt,
+                    human_schedule,
+                    next_fire_at,
+                    reason,
+                },
+            );
         }
     }
 }

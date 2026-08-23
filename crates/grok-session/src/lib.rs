@@ -25,9 +25,10 @@ use agent_client_protocol::{
     InitializeRequest, KillTerminalRequest, KillTerminalResponse, LoadSessionRequest, ModelId,
     NewSessionRequest, PromptRequest, ProtocolVersion, ReleaseTerminalRequest,
     ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
-    SessionUpdate, SetSessionModelRequest, TerminalOutputRequest, TerminalOutputResponse,
-    WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionModeId,
+    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModelRequest,
+    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
+    WaitForTerminalExitResponse,
 };
 use futures::FutureExt;
 use std::sync::Arc;
@@ -304,6 +305,11 @@ pub enum SessionEvent {
     },
     /// 其它未专门映射的通知（调试用）。
     Other(String),
+    /// 官方 MCP 推送（`x.ai/mcp/server_status` / `tools_changed` / `servers_updated` / `init_progress`）。
+    McpPush {
+        method: String,
+        payload: serde_json::Value,
+    },
     /// 新工具调用（或完整快照）。
     ToolCall(ToolCallInfo),
     /// 工具调用状态/内容更新。
@@ -382,6 +388,33 @@ pub enum SessionEvent {
         questions: Vec<UserQuestionItem>,
         respond: oneshot::Sender<String>,
     },
+    /// 会话模式变化（ACP `CurrentModeUpdate`：`default` / `plan` / `ask`）。
+    CurrentModeUpdate { mode_id: String },
+    /// 退出计划模式审批（`x.ai/exit_plan_mode`）。
+    /// `respond` 回传 JSON：`{ "outcome": "approved"|"cancelled"|"abandoned", "feedback"?: string }`。
+    ExitPlanModeRequest {
+        tool_call_id: String,
+        plan_content: Option<String>,
+        respond: oneshot::Sender<String>,
+    },
+    /// `/memory` 文件清单（官方 MemoryFiles）。
+    MemoryFiles { files: Vec<MemoryFileDto> },
+    /// 记忆冲刷 / 整理完成。
+    MemoryOp {
+        kind: String,
+        result: String,
+        path: Option<String>,
+    },
+    /// 定时任务创建 / 触发 / 删除。
+    ScheduledTask {
+        op: String,
+        task_id: String,
+        prompt: String,
+        human_schedule: String,
+        next_fire_at: Option<String>,
+        /// 删除原因：expired / deleted / completed / shutdown / unknown。
+        reason: String,
+    },
     /// Goal 编排进度（官方 `x.ai/session_notification` → `GoalUpdated`）。
     GoalUpdated(GoalInfoDto),
     /// 工作流运行进度（官方 `x.ai/session_notification` → `WorkflowUpdated`）。
@@ -409,6 +442,17 @@ pub enum SessionEvent {
     },
     /// 引擎 `terminal/release`：卡片应移除。
     TerminalReleased { terminal_id: String },
+}
+
+/// 记忆文件元数据（官方 MemoryFileInfo → 前端 camelCase）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryFileDto {
+    pub path: String,
+    pub source: String,
+    pub size_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_epoch_secs: Option<u64>,
 }
 
 /// 问卷选项（与 ACP camelCase 对齐）。
@@ -492,6 +536,7 @@ impl std::fmt::Debug for SessionEvent {
                 )
             }
             Self::Other(o) => write!(f, "Other({:?})", o),
+            Self::McpPush { method, .. } => write!(f, "McpPush {{ method: {method:?} }}"),
             Self::ToolCall(t) => write!(
                 f,
                 "ToolCall {{ id: {:?}, kind: {:?}, status: {:?}, title: {:?} }}",
@@ -568,6 +613,30 @@ impl std::fmt::Debug for SessionEvent {
                 mode,
                 questions.len()
             ),
+            Self::CurrentModeUpdate { mode_id } => {
+                write!(f, "CurrentModeUpdate {{ mode_id: {mode_id:?} }}")
+            }
+            Self::ExitPlanModeRequest {
+                tool_call_id,
+                plan_content,
+                ..
+            } => write!(
+                f,
+                "ExitPlanModeRequest {{ tool_call_id: {:?}, has_plan: {} }}",
+                tool_call_id,
+                plan_content
+                    .as_ref()
+                    .is_some_and(|s| !s.trim().is_empty())
+            ),
+            Self::MemoryFiles { files } => {
+                write!(f, "MemoryFiles {{ n: {} }}", files.len())
+            }
+            Self::MemoryOp { kind, result, .. } => {
+                write!(f, "MemoryOp {{ kind: {kind:?}, result: {result:?} }}")
+            }
+            Self::ScheduledTask { op, task_id, .. } => {
+                write!(f, "ScheduledTask {{ op: {op:?}, id: {task_id:?} }}")
+            }
             Self::GoalUpdated(g) => write!(
                 f,
                 "GoalUpdated {{ id: {:?}, status: {:?}, phase: {:?} }}",
@@ -947,6 +1016,21 @@ impl Client for GuiClient {
                 }
                 return Ok(());
             }
+            "x.ai/mcp/server_status"
+            | "x.ai/mcp/tools_changed"
+            | "x.ai/mcp/servers_updated"
+            | "x.ai/mcp/init_progress" => {
+                let payload = serde_json::from_str(args.params.get())
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                let _ = self
+                    .event_tx
+                    .send(SessionEvent::McpPush {
+                        method: args.method.to_string(),
+                        payload,
+                    })
+                    .await;
+                return Ok(());
+            }
             _ => return Ok(()),
         }
 
@@ -1275,6 +1359,100 @@ impl Client for GuiClient {
                         }))
                         .await;
                 }
+                xai_grok_shell::extensions::notification::SessionUpdate::MemoryFiles { files } => {
+                    let files = files
+                        .into_iter()
+                        .map(|f| MemoryFileDto {
+                            path: f.path,
+                            source: f.source,
+                            size_bytes: f.size_bytes,
+                            modified_epoch_secs: f.modified_epoch_secs,
+                        })
+                        .collect();
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::MemoryFiles { files })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::MemoryFlushCompleted {
+                    result,
+                    path,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::MemoryOp {
+                            kind: "flush".into(),
+                            result,
+                            path,
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::MemoryDreamCompleted {
+                    result,
+                    path,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::MemoryOp {
+                            kind: "dream".into(),
+                            result,
+                            path,
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::ScheduledTaskCreated {
+                    task_id,
+                    prompt,
+                    human_schedule,
+                    next_fire_at,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::ScheduledTask {
+                            op: "created".into(),
+                            task_id,
+                            prompt,
+                            human_schedule,
+                            next_fire_at,
+                            reason: String::new(),
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::ScheduledTaskFired {
+                    task_id,
+                    prompt,
+                    human_schedule,
+                    next_fire_at,
+                    ..
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::ScheduledTask {
+                            op: "fired".into(),
+                            task_id,
+                            prompt,
+                            human_schedule,
+                            next_fire_at,
+                            reason: String::new(),
+                        })
+                        .await;
+                }
+                xai_grok_shell::extensions::notification::SessionUpdate::ScheduledTaskDeleted {
+                    task_id,
+                    reason,
+                } => {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::ScheduledTask {
+                            op: "deleted".into(),
+                            task_id,
+                            prompt: String::new(),
+                            human_schedule: String::new(),
+                            next_fire_at: None,
+                            reason: format!("{reason:?}").to_ascii_lowercase(),
+                        })
+                        .await;
+                }
                 other => {
                     let _ = self.event_tx.send(SessionEvent::Other(format!("{:?}", other))).await;
                 }
@@ -1292,6 +1470,9 @@ impl Client for GuiClient {
     }
 
     async fn ext_method(&self, args: ExtRequest) -> agent_client_protocol::Result<ExtResponse> {
+        if args.method.as_ref() == "x.ai/exit_plan_mode" {
+            return self.handle_exit_plan_mode(args).await;
+        }
         if args.method.as_ref() != "x.ai/ask_user_question" {
             // 未实现的扩展方法：返回 null，与 ACP Client 默认行为一致。
             return Ok(ExtResponse::new(
@@ -1354,6 +1535,62 @@ impl Client for GuiClient {
                     Err(_) => {
                         return Err(agent_client_protocol::Error::internal_error());
                     }
+                }
+            }
+        };
+        Ok(ExtResponse::new(raw.into()))
+    }
+}
+
+impl GuiClient {
+    async fn handle_exit_plan_mode(
+        &self,
+        args: ExtRequest,
+    ) -> agent_client_protocol::Result<ExtResponse> {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ExitParams {
+            #[serde(default)]
+            tool_call_id: String,
+            #[serde(default)]
+            plan_content: Option<String>,
+        }
+
+        let params: ExitParams = match serde_json::from_str(args.params.get()) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to parse x.ai/exit_plan_mode params");
+                return Err(agent_client_protocol::Error::invalid_params());
+            }
+        };
+
+        let plan_content = params
+            .plan_content
+            .filter(|s| !s.trim().is_empty());
+        let (respond_tx, respond_rx) = oneshot::channel();
+        let _ = self
+            .event_tx
+            .send(SessionEvent::ExitPlanModeRequest {
+                tool_call_id: params.tool_call_id,
+                plan_content,
+                respond: respond_tx,
+            })
+            .await;
+
+        let response_json = match respond_rx.await {
+            Ok(s) if !s.trim().is_empty() => s,
+            _ => r#"{"outcome":"cancelled"}"#.to_string(),
+        };
+
+        let raw = match serde_json::value::RawValue::from_string(response_json) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(error = %e, "exit_plan_mode response is not valid JSON");
+                match serde_json::value::to_raw_value(&serde_json::json!({
+                    "outcome": "cancelled"
+                })) {
+                    Ok(r) => r,
+                    Err(_) => return Err(agent_client_protocol::Error::internal_error()),
                 }
             }
         };
@@ -1899,6 +2136,9 @@ pub fn session_update_to_event(
                 title: title.clone(),
             },
             None => SessionEvent::Other(format!("SessionInfoUpdate({update:?})")),
+        },
+        SessionUpdate::CurrentModeUpdate(update) => SessionEvent::CurrentModeUpdate {
+            mode_id: update.current_mode_id.to_string(),
         },
         other => SessionEvent::Other(format!("{other:?}")),
     }
@@ -2455,6 +2695,19 @@ impl GrokSession {
         Ok(())
     }
 
+    /// 切换会话模式（官方 `session/set_mode`：`default` / `plan` / `ask`）。
+    /// 点「计划」芯片走这条，不要另发一套协议。
+    pub async fn set_session_mode(&self, mode_id: impl Into<String>) -> anyhow::Result<()> {
+        let mode_id = mode_id.into();
+        let req =
+            SetSessionModeRequest::new(self.session_id.clone(), SessionModeId::new(mode_id));
+        self.connection
+            .set_session_mode(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("设置会话模式失败: {e:?}"))?;
+        Ok(())
+    }
+
     /// 应用已解析的组装单（已接线通道）。
     pub async fn apply_composition(
         &self,
@@ -2854,6 +3107,69 @@ impl GrokSession {
             .map_err(|e| anyhow::anyhow!("解析 mcp/delete 响应失败: {e}"))
     }
 
+    /// 启用/停用某一 MCP 工具（官方 `x.ai/mcp/toggle_tool`）。
+    pub async fn toggle_mcp_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        enabled: bool,
+    ) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "session_id": self.session_id.to_string(),
+            "server_name": server_name,
+            "tool_name": tool_name,
+            "enabled": enabled,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 mcp/toggle_tool 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/toggle_tool", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp/toggle_tool 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/toggle_tool 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
+    }
+
+    /// 触发 MCP 服务器 OAuth（官方 `x.ai/mcp/auth_trigger`，会开浏览器）。
+    pub async fn mcp_auth_trigger(&self, server_name: &str) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "session_id": self.session_id.to_string(),
+            "server_name": server_name,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 mcp/auth_trigger 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/auth_trigger", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp/auth_trigger 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/auth_trigger 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
+    }
+
+    /// 提交 MCP setup 字段（官方 `x.ai/mcp/setup`，camelCase）。
+    pub async fn mcp_setup(
+        &self,
+        server_name: &str,
+        values: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "serverName": server_name,
+            "values": values,
+        }))
+        .map_err(|e| anyhow::anyhow!("序列化 mcp/setup 失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new("x.ai/mcp/setup", params.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("mcp/setup 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 mcp/setup 失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
+    }
+
     /// 列出当前会话可用斜杠命令 + 工具名（官方 `x.ai/commands/list`）。
     ///
     /// - 仅 `session_id`：会话内 catalog（含 tools）
@@ -2890,6 +3206,35 @@ impl GrokSession {
         } else {
             Ok(value)
         }
+    }
+
+    /// 通用官方扩展方法。对象参数缺 `sessionId` 时自动补当前会话。
+    pub async fn ext_json(
+        &self,
+        method: &str,
+        mut params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        if params.is_null() {
+            params = serde_json::json!({});
+        }
+        if let serde_json::Value::Object(map) = &mut params {
+            if !map.contains_key("sessionId") && !map.contains_key("session_id") {
+                map.insert(
+                    "sessionId".into(),
+                    serde_json::Value::String(self.session_id.to_string()),
+                );
+            }
+        }
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化 {method} 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new(method, raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("{method} 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析 {method} 响应失败: {e}"))?;
+        Ok(unwrap_ext_json(value))
     }
 
     /// 列出已发现的自动化工作流（官方 `x.ai/workflows/list`）。
@@ -3390,6 +3735,18 @@ mod tests {
                 assert_eq!(prompt_id, Some("p-123".to_string()));
             }
             other => panic!("期望 UserTextChunk，实际 {:?}", other),
+        }
+    }
+
+    #[test]
+    fn current_mode_update_becomes_event() {
+        let update = SessionUpdate::CurrentModeUpdate(
+            agent_client_protocol::CurrentModeUpdate::new(SessionModeId::new("plan")),
+        );
+        let event = session_update_to_event(update, None);
+        match event {
+            SessionEvent::CurrentModeUpdate { mode_id } => assert_eq!(mode_id, "plan"),
+            other => panic!("期望 CurrentModeUpdate，实际 {:?}", other),
         }
     }
 }

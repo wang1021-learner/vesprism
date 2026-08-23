@@ -376,6 +376,17 @@ pub fn enable_tab_sandbox(tab_id: String, state: State<'_, AppState>) -> Result<
     Ok(())
 }
 
+/// 取消本 tab 强制沙箱；下次 start/restart 按全局策略决定是否进副本。
+#[tauri::command]
+pub fn disable_tab_sandbox(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .sandbox_tabs
+        .lock()
+        .map_err(|_| "sandbox_tabs 锁损坏".to_string())?
+        .remove(&tab_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_sandbox_status(
     tab_id: String,
@@ -539,6 +550,36 @@ pub async fn respond_permission(
 /// 回答 AI 问卷（`x.ai/ask_user_question`）；`response_json` 为完整 outcome JSON。
 #[tauri::command]
 pub async fn respond_user_question(
+    tab_id: String,
+    request_id: u64,
+    response_json: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::RespondUserQuestion {
+        request_id,
+        response_json,
+        reply,
+    })
+    .await
+}
+
+/// 切换会话模式（官方 `session/set_mode`：`default` / `plan` / `ask`）。
+#[tauri::command]
+pub async fn set_session_mode(
+    tab_id: String,
+    mode_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::SetSessionMode {
+        mode_id,
+        reply,
+    })
+    .await
+}
+
+/// 回答退出计划模式审批（`x.ai/exit_plan_mode`）；JSON 与问卷共用 pending 通道。
+#[tauri::command]
+pub async fn respond_exit_plan_mode(
     tab_id: String,
     request_id: u64,
     response_json: String,
@@ -750,6 +791,54 @@ pub async fn upsert_mcp_server(
     reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
+/// 单工具开关（官方 x.ai/mcp/toggle_tool）。
+#[tauri::command]
+pub async fn toggle_mcp_tool(
+    tab_id: String,
+    server_name: String,
+    tool_name: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::ToggleMcpTool {
+        server_name,
+        tool_name,
+        enabled,
+        reply,
+    })
+    .await
+}
+
+/// MCP OAuth 登录（官方 x.ai/mcp/auth_trigger，会打开系统浏览器）。
+#[tauri::command]
+pub async fn mcp_auth_trigger(
+    tab_id: String,
+    server_name: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::McpAuthTrigger {
+        server_name,
+        reply,
+    })
+    .await
+}
+
+/// 提交 MCP setup 字段（官方 x.ai/mcp/setup）。
+#[tauri::command]
+pub async fn mcp_setup(
+    tab_id: String,
+    server_name: String,
+    values: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    session_cmd_json(&tab_id, &state, |reply| ActorCommand::McpSetup {
+        server_name,
+        values,
+        reply,
+    })
+    .await
+}
+
 /// 删除本地 MCP 服务器（官方 x.ai/mcp/delete）。
 #[tauri::command]
 pub async fn delete_mcp_server(
@@ -793,6 +882,32 @@ pub async fn list_session_commands(
     cmd_tx
         .send(ActorCommand::ListSessionCommands {
             cwd,
+            reply: reply_tx,
+        })
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
+}
+
+/// 通用官方扩展方法（自动带 sessionId）。
+#[tauri::command]
+pub async fn session_ext(
+    tab_id: String,
+    method: String,
+    params: Option<serde_json::Value>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(&tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(ActorCommand::SessionExt {
+            method,
+            params: params.unwrap_or(serde_json::Value::Null),
             reply: reply_tx,
         })
         .map_err(|_| "会话线程已退出".to_string())?;
@@ -1268,6 +1383,12 @@ pub struct ModelEntryDto {
     pub max_completion_tokens: Option<u64>,
     #[serde(default)]
     pub extra_headers: std::collections::BTreeMap<String, String>,
+    /// 官方 query_params：附加到每次请求 URL
+    #[serde(default)]
+    pub query_params: std::collections::BTreeMap<String, String>,
+    /// 官方 env_http_headers：请求头名 → 环境变量名
+    #[serde(default)]
+    pub env_http_headers: std::collections::BTreeMap<String, String>,
     /// API key 鉴权专用 base（空 = 与 base_url 相同）
     #[serde(default)]
     pub api_base_url: String,
@@ -1422,11 +1543,12 @@ fn table_opt_u64(t: &toml::map::Map<String, toml::Value>, key: &str) -> Option<u
         .map(|n| n as u64)
 }
 
-fn table_extra_headers(
+fn table_string_map(
     t: &toml::map::Map<String, toml::Value>,
+    key: &str,
 ) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
-    let Some(h) = t.get("extra_headers").and_then(|v| v.as_table()) else {
+    let Some(h) = t.get(key).and_then(|v| v.as_table()) else {
         return out;
     };
     for (k, v) in h {
@@ -1506,7 +1628,9 @@ fn parse_model_entries(root: &toml::Value) -> Vec<ModelEntryDto> {
                 temperature: table_opt_f64(t, "temperature"),
                 top_p: table_opt_f64(t, "top_p"),
                 max_completion_tokens: table_opt_u64(t, "max_completion_tokens"),
-                extra_headers: table_extra_headers(t),
+                extra_headers: table_string_map(t, "extra_headers"),
+                query_params: table_string_map(t, "query_params"),
+                env_http_headers: table_string_map(t, "env_http_headers"),
                 api_base_url: table_str(t, "api_base_url"),
                 max_retries: table_u64(t, "max_retries"),
                 inference_idle_timeout_secs: table_u64(t, "inference_idle_timeout_secs"),
@@ -1683,12 +1807,7 @@ fn upsert_model_entry(
     );
     entry_tbl.insert("api_backend".into(), toml::Value::String(backend));
 
-    if !entry.env_key.trim().is_empty() {
-        entry_tbl.insert(
-            "env_key".into(),
-            toml::Value::String(entry.env_key.trim().into()),
-        );
-    }
+    insert_opt_string(entry_tbl, "env_key", &entry.env_key);
 
     insert_opt_string(entry_tbl, "description", &entry.description);
     insert_opt_string(entry_tbl, "system_prompt_label", &entry.system_prompt_label);
@@ -1837,18 +1956,27 @@ fn upsert_model_entry(
         &entry.compaction_at_tokens,
     );
 
-    let headers: toml::map::Map<String, toml::Value> = entry
-        .extra_headers
+    write_string_map(entry_tbl, "extra_headers", &entry.extra_headers);
+    write_string_map(entry_tbl, "query_params", &entry.query_params);
+    write_string_map(entry_tbl, "env_http_headers", &entry.env_http_headers);
+    Ok(())
+}
+
+fn write_string_map(
+    tbl: &mut toml::map::Map<String, toml::Value>,
+    key: &str,
+    map: &std::collections::BTreeMap<String, String>,
+) {
+    let out: toml::map::Map<String, toml::Value> = map
         .iter()
         .filter(|(k, v)| !k.trim().is_empty() && !v.trim().is_empty())
         .map(|(k, v)| (k.trim().to_string(), toml::Value::String(v.trim().into())))
         .collect();
-    if headers.is_empty() {
-        entry_tbl.remove("extra_headers");
+    if out.is_empty() {
+        tbl.remove(key);
     } else {
-        entry_tbl.insert("extra_headers".into(), toml::Value::Table(headers));
+        tbl.insert(key.into(), toml::Value::Table(out));
     }
-    Ok(())
 }
 
 fn write_tri_mode(tbl: &mut toml::map::Map<String, toml::Value>, key: &str, raw: &str) {
@@ -1951,6 +2079,210 @@ pub fn save_model_settings(default_id: String, models: Vec<ModelEntryDto>) -> Re
     std::fs::write(&path, serialized.as_bytes())
         .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
+}
+
+/// 测连通：GET `{base_url}/models`（官方预取目录同路径），不写盘、不回传密钥。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeModelArgs {
+    pub base_url: String,
+    #[serde(default)]
+    pub extra_headers: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub query_params: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub env_http_headers: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub env_key: String,
+    /// 尚未保存的粘贴密钥，仅本次探测使用
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ProbeModelResult {
+    pub ok: bool,
+    pub status: u16,
+    pub message: String,
+    pub models: Vec<String>,
+}
+
+fn probe_models_url(base: &str) -> Result<reqwest::Url, String> {
+    let trimmed = base.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("Base URL 不能为空".into());
+    }
+    let with_models = if trimmed.ends_with("/models") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/models")
+    };
+    reqwest::Url::parse(&with_models).map_err(|e| format!("Base URL 无效: {e}"))
+}
+
+fn header_has(headers: &reqwest::header::HeaderMap, name: &str) -> bool {
+    headers.keys().any(|k| k.as_str().eq_ignore_ascii_case(name))
+}
+
+/// GET `{base}/models`：用来确认第三方 URL / 协议 / 密钥能否连上。
+#[tauri::command]
+pub async fn probe_model_endpoint(args: ProbeModelArgs) -> Result<ProbeModelResult, String> {
+    let _ = dotenvy::from_path_override(env_file_path());
+    let mut url = probe_models_url(&args.base_url)?;
+    {
+        let mut pairs = url.query_pairs_mut();
+        for (k, v) in &args.query_params {
+            let key = k.trim();
+            let val = v.trim();
+            if !key.is_empty() && !val.is_empty() {
+                pairs.append_pair(key, val);
+            }
+        }
+    }
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (k, v) in &args.extra_headers {
+        let key = k.trim();
+        let val = v.trim();
+        if key.is_empty() || val.is_empty() {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(key.as_bytes())
+            .map_err(|_| format!("请求头名无效: {key}"))?;
+        let value = reqwest::header::HeaderValue::from_str(val)
+            .map_err(|_| format!("请求头「{key}」的值无效"))?;
+        headers.insert(name, value);
+    }
+    for (header, env_name) in &args.env_http_headers {
+        let header = header.trim();
+        let env_name = env_name.trim();
+        if header.is_empty() || env_name.is_empty() {
+            continue;
+        }
+        let Ok(val) = std::env::var(env_name) else {
+            continue;
+        };
+        let val = val.trim().to_string();
+        if val.is_empty() {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(header.as_bytes())
+            .map_err(|_| format!("请求头名无效: {header}"))?;
+        let value = reqwest::header::HeaderValue::from_str(&val)
+            .map_err(|_| format!("环境头「{header}」的值无效"))?;
+        headers.insert(name, value);
+    }
+
+    let pasted = args.api_key.trim().to_string();
+    let from_env = {
+        let k = args.env_key.trim();
+        if k.is_empty() {
+            String::new()
+        } else {
+            std::env::var(k).unwrap_or_default()
+        }
+    };
+    let key = if !pasted.is_empty() {
+        pasted
+    } else {
+        from_env.trim().to_string()
+    };
+    if !key.is_empty()
+        && !header_has(&headers, "authorization")
+        && !header_has(&headers, "x-api-key")
+    {
+        let bearer = format!("Bearer {key}");
+        let value = reqwest::header::HeaderValue::from_str(&bearer)
+            .map_err(|_| "密钥含无法放入请求头的字符".to_string())?;
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let resp = client.get(url).headers(headers).send().await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = if e.is_connect() {
+                "连不上这个地址。检查 Base URL、本机服务有没有开（例如 Ollama）。".to_string()
+            } else if e.is_timeout() {
+                "等待超时。地址可能不对，或对方服务没响应。".to_string()
+            } else {
+                format!("请求失败: {e}")
+            };
+            return Ok(ProbeModelResult {
+                ok: false,
+                status: 0,
+                message: msg,
+                models: Vec::new(),
+            });
+        }
+    };
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    let models = parse_model_ids_from_list(&body);
+    if (200..300).contains(&status) {
+        let message = if models.is_empty() {
+            "通了。对方没有返回模型列表，但 HTTP 正常。".to_string()
+        } else {
+            let preview = models.iter().take(8).cloned().collect::<Vec<_>>().join("、");
+            let more = if models.len() > 8 {
+                format!(" 等 {} 个", models.len())
+            } else {
+                String::new()
+            };
+            format!("通了。对方列出：{preview}{more}")
+        };
+        return Ok(ProbeModelResult {
+            ok: true,
+            status,
+            message,
+            models,
+        });
+    }
+    let message = match status {
+        401 | 403 => "密钥或协议不对（401/403）。检查 Key、Chat Completions / Messages，以及 Anthropic 是否走了 x-api-key。".into(),
+        404 => "地址没找到（404）。OpenAI / Ollama 兼容一般要带 /v1；DeepSeek 官方不要加 /v1。".into(),
+        429 => "对方限流（429）。密钥多半是对的，稍后再试。".into(),
+        _ => format!("HTTP {status}"),
+    };
+    Ok(ProbeModelResult {
+        ok: false,
+        status,
+        message,
+        models,
+    })
+}
+
+fn parse_model_ids_from_list(body: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let arr = v
+        .get("data")
+        .and_then(|d| d.as_array())
+        .or_else(|| v.get("models").and_then(|d| d.as_array()));
+    let Some(arr) = arr else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in arr {
+        let id = item
+            .get("id")
+            .and_then(|x| x.as_str())
+            .or_else(|| item.as_str())
+            .unwrap_or("")
+            .trim();
+        if !id.is_empty() && !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+        if out.len() >= 24 {
+            break;
+        }
+    }
+    out
 }
 
 /// 热重载运行中 agent 的模型目录（写盘后调用，无需 restart_session）。
@@ -2313,6 +2645,40 @@ pub async fn list_sessions(
     .map_err(|e| format!("list_sessions 任务失败: {e}"))?
 }
 
+#[tauri::command]
+pub fn add_project(root: String) -> Result<crate::session_index::ProjectRow, String> {
+    crate::session_index::upsert_project(&root)
+}
+
+#[tauri::command]
+pub fn remove_project(root: String) -> Result<(), String> {
+    crate::session_index::remove_project(&root)
+}
+
+#[tauri::command]
+pub fn list_projects() -> Result<Vec<crate::session_index::ProjectRow>, String> {
+    crate::session_index::list_projects()
+}
+
+#[tauri::command]
+pub fn list_sessions_for_project(
+    root: String,
+    limit: Option<u32>,
+) -> Result<Vec<SessionSummaryDto>, String> {
+    let listed = crate::session_index::list_threads_for_project(&root, limit)?;
+    Ok(listed
+        .into_iter()
+        .map(|r| SessionSummaryDto {
+            id: r.id,
+            title: r.title,
+            updated_at: r.updated_at,
+            num_messages: r.num_messages,
+            cwd: r.cwd,
+            preview: r.preview,
+        })
+        .collect())
+}
+
 /// 标记会话为工具会话（flow-canvas / agents 等面板），默认不进侧栏历史。
 #[tauri::command]
 pub fn mark_tool_session(session_id: String) -> Result<(), String> {
@@ -2568,6 +2934,139 @@ pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     Ok(entries)
 }
 
+#[derive(serde::Serialize)]
+pub struct WorkspaceFileHit {
+    pub path: String,
+    pub rel: String,
+    pub is_dir: bool,
+}
+
+fn skip_walk_name(name: &str) -> bool {
+    matches!(
+        name,
+        "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | "out"
+            | ".git"
+            | ".next"
+            | "__pycache__"
+            | ".turbo"
+            | ".cache"
+            | "coverage"
+    ) || name.starts_with('.')
+}
+
+fn walk_workspace_files(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    query: &str,
+    depth: u32,
+    limit: usize,
+    visits: &mut u32,
+    out: &mut Vec<WorkspaceFileHit>,
+) {
+    const MAX_DEPTH: u32 = 8;
+    const MAX_VISITS: u32 = 2500;
+    if out.len() >= limit || *visits >= MAX_VISITS || depth > MAX_DEPTH {
+        return;
+    }
+    let read = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for entry in read.flatten() {
+        if out.len() >= limit || *visits >= MAX_VISITS {
+            break;
+        }
+        *visits += 1;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if skip_walk_name(&name) {
+            continue;
+        }
+        let path = entry.path();
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        let rel = path
+            .strip_prefix(root)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| name.clone());
+        let hay = rel.to_ascii_lowercase();
+        if query.is_empty() || hay.contains(query) || name.to_ascii_lowercase().contains(query) {
+            out.push(WorkspaceFileHit {
+                path: path.to_string_lossy().into_owned(),
+                rel,
+                is_dir,
+            });
+        }
+        if is_dir {
+            walk_workspace_files(&path, root, query, depth + 1, limit, visits, out);
+        }
+    }
+}
+
+/// 工作区内文件名模糊搜索（@ 引用）。跳过依赖/构建目录，限制遍历以免卡住输入。
+#[tauri::command]
+pub fn search_workspace_files(
+    root: String,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<WorkspaceFileHit>, String> {
+    let dir = std::path::Path::new(&root);
+    if !dir.is_dir() {
+        return Err(format!("不是目录: {}", dir.display()));
+    }
+    let q = query.trim().to_ascii_lowercase();
+    let cap = limit.unwrap_or(24).clamp(1, 40) as usize;
+    let mut out = Vec::new();
+    let mut visits = 0u32;
+    walk_workspace_files(dir, dir, &q, 0, cap, &mut visits, &mut out);
+    Ok(out)
+}
+
+const MAX_PASTE_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+
+/// 把剪贴板/拖入的图片落到临时文件，供附件 kind=image 发送。
+#[tauri::command]
+pub fn save_paste_image(base64: String, mime: String) -> Result<String, String> {
+    use base64::Engine;
+    let raw = base64
+        .split(',')
+        .next_back()
+        .unwrap_or(base64.trim())
+        .trim();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|e| format!("图片解码失败: {e}"))?;
+    if bytes.is_empty() {
+        return Err("图片为空".into());
+    }
+    if bytes.len() > MAX_PASTE_IMAGE_BYTES {
+        return Err("图片超过 10MB".into());
+    }
+    let ext = match mime.to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        _ => "png",
+    };
+    let dir = std::env::temp_dir().join("vesprism-paste");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录: {e}"))?;
+    let name = format!(
+        "paste-{}-{}.{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        std::process::id(),
+        ext
+    );
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).map_err(|e| format!("写入图片失败: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 pub fn read_file_text(path: String, state: State<'_, AppState>) -> Result<String, String> {
     let workspace_root = resolve_workspace_cwd(&state);
@@ -2584,6 +3083,78 @@ pub fn read_file_text(path: String, state: State<'_, AppState>) -> Result<String
         ));
     }
     std::fs::read_to_string(&canonical_requested).map_err(|e| format!("读取文件失败: {e}"))
+}
+
+fn memory_root_canonical() -> Result<PathBuf, String> {
+    desktop_home_dir()
+        .join("memory")
+        .canonicalize()
+        .map_err(|e| format!("记忆目录无效: {e}"))
+}
+
+fn ensure_under_memory(path: &str) -> Result<PathBuf, String> {
+    let requested = std::path::Path::new(path.trim())
+        .canonicalize()
+        .map_err(|e| format!("记忆文件不存在或无法访问: {e}"))?;
+    let root = memory_root_canonical()?;
+    if !requested.starts_with(&root) {
+        return Err("拒绝访问：只能操作本机记忆目录下的文件".into());
+    }
+    Ok(requested)
+}
+
+/// 读官方记忆文件（只允许 `$GROK_HOME/memory/` 下）。
+#[tauri::command]
+pub fn read_memory_file(path: String) -> Result<String, String> {
+    let requested = ensure_under_memory(&path)?;
+    if !requested.is_file() {
+        return Err("不是文件".into());
+    }
+    const MAX_BYTES: u64 = 2 * 1024 * 1024;
+    let meta = std::fs::metadata(&requested).map_err(|e| format!("读取文件信息失败: {e}"))?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!(
+            "文件过大（{} bytes），上限 {} bytes",
+            meta.len(),
+            MAX_BYTES
+        ));
+    }
+    std::fs::read_to_string(&requested).map_err(|e| format!("读取记忆文件失败: {e}"))
+}
+
+/// 删记忆：`session` 只删该日志；`workspace` 删该仓库记忆目录（含会话日志）。
+/// 全局 MEMORY.md 不允许从这里整份删。
+#[tauri::command]
+pub fn delete_memory_path(path: String, source: String) -> Result<(), String> {
+    let requested = ensure_under_memory(&path)?;
+    let root = memory_root_canonical()?;
+    match source.as_str() {
+        "session" => {
+            if !requested.is_file() {
+                return Err("不是会话日志文件".into());
+            }
+            std::fs::remove_file(&requested).map_err(|e| format!("删除失败: {e}"))
+        }
+        "workspace" => {
+            // …/memory/<slug-hash>/MEMORY.md → 删整个 <slug-hash>
+            let dir = if requested.is_dir() {
+                requested
+            } else {
+                requested
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .ok_or_else(|| "无法解析仓库记忆目录".to_string())?
+            };
+            if dir == root {
+                return Err("不能删除整个记忆根目录".into());
+            }
+            if !dir.starts_with(&root) {
+                return Err("拒绝访问：目标不在记忆目录内".into());
+            }
+            std::fs::remove_dir_all(&dir).map_err(|e| format!("删除仓库记忆失败: {e}"))
+        }
+        _ => Err("全局记忆不能整份删除，请改文件内容或手动删磁盘文件".into()),
+    }
 }
 
 /// 工作区文件相对 HEAD 的差异（绑定右栏当前打开的源码路径）

@@ -13413,12 +13413,14 @@ name = "vesprism-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
  "dotenvy",
  "grok-session",
  "log",
  "portable-pty",
+ "reqwest 0.12.24",
  "rusqlite",
  "serde",
  "serde_json",

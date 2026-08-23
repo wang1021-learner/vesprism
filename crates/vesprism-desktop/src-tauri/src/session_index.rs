@@ -7,6 +7,30 @@ use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// 把 Windows 长路径、斜杠、大小写折成同一把钥匙，
+/// 使 `D:\foo`、`d:/foo`、`\\?\D:\foo` 归为同一项目。
+pub fn normalize_workspace_path(path: &str) -> String {
+    let mut s = path.trim().replace('\\', "/");
+    if let Some(rest) = s.strip_prefix("//?/UNC/") {
+        s = format!("//{rest}");
+    } else if let Some(rest) = s.strip_prefix("//?/") {
+        s = rest.to_string();
+    }
+    if s.len() > 1 {
+        while s.ends_with('/') {
+            let keep_drive_root = s.len() == 3 && s.as_bytes().get(1) == Some(&b':');
+            if keep_drive_root {
+                break;
+            }
+            s.pop();
+            if s.is_empty() {
+                break;
+            }
+        }
+    }
+    s.to_ascii_lowercase()
+}
+
 static INDEX: Mutex<Option<Connection>> = Mutex::new(None);
 
 fn db_path() -> PathBuf {
@@ -66,6 +90,12 @@ fn open_db() -> Result<Connection, String> {
          -- 不进主聊天历史。已绑定 Flow / Agent 的走 list_workbench_threads，进侧栏「工作台」。
          CREATE TABLE IF NOT EXISTS thread_tool_sessions (
            id TEXT PRIMARY KEY
+         );
+         -- 用户钉住的仓库根。只给侧栏多仓库切换用，不参与审批/信任。
+         CREATE TABLE IF NOT EXISTS projects (
+           root TEXT PRIMARY KEY,
+           display_name TEXT NOT NULL DEFAULT '',
+           updated_at_ms INTEGER NOT NULL DEFAULT 0
          );",
     )
     .map_err(|e| format!("初始化 threads 表失败: {e}"))?;
@@ -113,7 +143,7 @@ pub fn rebuild_from_summaries(rows: &[ThreadRow]) -> Result<(), String> {
                     r.id,
                     r.title,
                     r.preview,
-                    r.cwd,
+                    normalize_workspace_path(&r.cwd),
                     r.updated_at,
                     r.updated_at_ms,
                     r.num_messages as i64,
@@ -146,7 +176,7 @@ pub fn upsert_thread(row: &ThreadRow) -> Result<(), String> {
                 row.id,
                 row.title,
                 row.preview,
-                row.cwd,
+                normalize_workspace_path(&row.cwd),
                 row.updated_at,
                 row.updated_at_ms,
                 row.num_messages as i64,
@@ -275,7 +305,7 @@ fn map_thread_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ThreadRow> {
 pub fn list_threads(current_cwd: &str, limit: Option<u32>) -> Result<Vec<ThreadRow>, String> {
     let _ = mark_legacy_canvas_sessions();
     with_db(|conn| {
-        let current = current_cwd.trim().replace('\\', "/").to_ascii_lowercase();
+        let current = normalize_workspace_path(current_cwd);
         let lim = limit.filter(|n| *n > 0).map(|n| n as i64);
 
         // cwd 规范化后与当前工作区比：当前优先，组内 recency
@@ -283,14 +313,14 @@ pub fn list_threads(current_cwd: &str, limit: Option<u32>) -> Result<Vec<ThreadR
             "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
              FROM threads
              WHERE id NOT IN (SELECT id FROM thread_tool_sessions)
-             ORDER BY CASE WHEN lower(replace(cwd, '\\', '/')) = ?1 THEN 0 ELSE 1 END,
+             ORDER BY CASE WHEN cwd = ?1 THEN 0 ELSE 1 END,
                       updated_at_ms DESC
              LIMIT ?2"
         } else {
             "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
              FROM threads
              WHERE id NOT IN (SELECT id FROM thread_tool_sessions)
-             ORDER BY CASE WHEN lower(replace(cwd, '\\', '/')) = ?1 THEN 0 ELSE 1 END,
+             ORDER BY CASE WHEN cwd = ?1 THEN 0 ELSE 1 END,
                       updated_at_ms DESC"
         };
 
@@ -550,6 +580,113 @@ pub fn add_thread_workbench_artifact(
     })
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectRow {
+    pub root: String,
+    pub display_name: String,
+    pub updated_at_ms: i64,
+}
+
+fn display_name_from_root(root: &str) -> String {
+    Path::new(root)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| root.to_string())
+}
+
+/// 把仓库根记进侧栏项目表；已有则刷新显示名和时间。
+pub fn upsert_project(root: &str) -> Result<ProjectRow, String> {
+    let root = normalize_workspace_path(root);
+    if root.is_empty() {
+        return Err("项目路径为空".into());
+    }
+    let display_name = display_name_from_root(&root);
+    let now = now_ms();
+    with_db(|conn| {
+        conn.execute(
+            "INSERT INTO projects (root, display_name, updated_at_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(root) DO UPDATE SET
+               display_name = excluded.display_name,
+               updated_at_ms = excluded.updated_at_ms",
+            params![root, display_name, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })?;
+    Ok(ProjectRow {
+        root,
+        display_name,
+        updated_at_ms: now,
+    })
+}
+
+pub fn remove_project(root: &str) -> Result<(), String> {
+    let root = normalize_workspace_path(root);
+    with_db(|conn| {
+        conn.execute("DELETE FROM projects WHERE root = ?1", params![root])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+pub fn list_projects() -> Result<Vec<ProjectRow>, String> {
+    with_db(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT root, display_name, updated_at_ms
+                 FROM projects ORDER BY updated_at_ms DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ProjectRow {
+                    root: row.get(0)?,
+                    display_name: row.get(1)?,
+                    updated_at_ms: row.get(2)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    })
+}
+
+/// 列出 cwd 与项目根精确相等（已规范化）的主聊天会话。
+pub fn list_threads_for_project(root: &str, limit: Option<u32>) -> Result<Vec<ThreadRow>, String> {
+    let root = normalize_workspace_path(root);
+    with_db(|conn| {
+        let lim = limit.filter(|n| *n > 0).map(|n| n as i64);
+        let sql = if lim.is_some() {
+            "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
+             FROM threads
+             WHERE cwd = ?1 AND id NOT IN (SELECT id FROM thread_tool_sessions)
+             ORDER BY updated_at_ms DESC
+             LIMIT ?2"
+        } else {
+            "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
+             FROM threads
+             WHERE cwd = ?1 AND id NOT IN (SELECT id FROM thread_tool_sessions)
+             ORDER BY updated_at_ms DESC"
+        };
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = if let Some(n) = lim {
+            stmt.query_map(params![root, n], map_thread_row)
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect()
+        } else {
+            stmt.query_map(params![root], map_thread_row)
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+        Ok(rows)
+    })
+}
+
 /// 解析会话目录下 updates.jsonl 绝对路径（若存在）。
 pub fn transcript_path_for_dir(dir: &Path) -> String {
     let p = dir.join("updates.jsonl");
@@ -559,5 +696,25 @@ pub fn transcript_path_for_dir(dir: &Path) -> String {
         dir.join("chat_history.jsonl")
             .to_string_lossy()
             .into_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_workspace_path;
+
+    #[test]
+    fn normalize_folds_windows_path_variants() {
+        // D:\foo、d:/foo、\\?\D:\foo 必须是同一把钥匙。
+        assert_eq!(
+            normalize_workspace_path(r"D:\foo\bar"),
+            normalize_workspace_path(r"d:/foo/bar")
+        );
+        assert_eq!(
+            normalize_workspace_path(r"\\?\D:\foo\bar"),
+            normalize_workspace_path(r"D:\foo\bar")
+        );
+        assert_eq!(normalize_workspace_path(r"D:\foo\bar\"), "d:/foo/bar");
+        assert_eq!(normalize_workspace_path("D:/"), "d:/");
     }
 }
