@@ -50,6 +50,19 @@ const META: ToolMeta[] = [
     readOnly: true,
   },
   {
+    name: 'glob',
+    label: '按名查找文件',
+    category: 'file',
+    description: '按 glob 匹配工作区文件路径',
+    readOnly: true,
+  },
+  {
+    name: 'apply_patch',
+    label: '应用补丁',
+    category: 'file',
+    description: '把补丁应用到工作区文件',
+  },
+  {
     name: 'delete_file',
     label: '删除文件',
     category: 'file',
@@ -101,6 +114,12 @@ const META: ToolMeta[] = [
     category: 'web',
     description: '读取网页内容',
     readOnly: true,
+  },
+  {
+    name: 'skill',
+    label: '加载技能',
+    category: 'plan',
+    description: '按名称读取 SKILL.md 全文，注入本轮指令',
   },
   {
     name: 'spawn_subagent',
@@ -182,6 +201,18 @@ const META: ToolMeta[] = [
     label: '生成视频',
     category: 'media',
     description: '文生视频或图生视频',
+  },
+  {
+    name: 'image_to_video',
+    label: '图生视频',
+    category: 'media',
+    description: '把一张图做成短视频',
+  },
+  {
+    name: 'reference_to_video',
+    label: '参考生视频',
+    category: 'media',
+    description: '按参考图 / 音色生成视频',
   },
   {
     name: 'kill_task',

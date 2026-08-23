@@ -1,132 +1,70 @@
 /**
- * MCP 管理面板 — 官方 x.ai/mcp/list | toggle | upsert | delete
+ * MCP 管理面板 — 官方 list / toggle / toggle_tool / upsert / delete / auth_trigger / setup
  */
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { $activeTabId, $shellReady, pushToast } from '../store'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { $activeTabId, $mcpPush, $shellReady, pushToast } from '../store'
 import {
   deleteMcpServer,
   listMcpServers,
+  mcpAuthTrigger,
+  mcpSetup,
   toggleMcpServer,
+  toggleMcpTool,
   upsertMcpServer,
-  type McpServerDto,
+  type McpSetupDto,
+  type McpSetupFieldDto,
 } from '../bridge'
 import { zhServerLabel, zhToolLabel } from '../lib/toolChinese'
-
-type Row = {
-  name: string
-  displayName: string
-  source: string
-  sourceLabel: string
-  transport: string
-  detail: string
-  enabled: boolean
-  status: string
-  tools: Array<{ name: string; label: string; description: string; enabled: boolean }>
-  authRequired: boolean
-  setupRequired: boolean
-  /** managed 不可删 */
-  canDelete: boolean
-}
+import {
+  applyMcpStatusPush,
+  applyMcpToolsPush,
+  formatEnvBlock,
+  groupMcpRows,
+  joinArgs,
+  MCP_GROUP_LABEL,
+  normalizeMcpServer,
+  parseEnvBlock,
+  setupFields,
+  splitArgs,
+  statusLabel,
+  validServerName,
+  type McpRow,
+} from '../lib/mcpRows'
 
 type TransportKind = 'stdio' | 'http'
 
-function normalize(s: McpServerDto): Row {
-  const session = s.session
-  const displayName =
-    (s.displayName || s.display_name || s.name || '').trim() || s.name
-  const type = (s.type || '').toLowerCase()
-  let transport = type || 'unknown'
-  let detail = ''
-  if (type === 'http' || s.url) {
-    transport = 'http'
-    detail = s.url || ''
-  } else if (type === 'stdio' || s.command) {
-    transport = 'stdio'
-    const cmd = s.command || ''
-    const args = Array.isArray(s.args) ? s.args.join(' ') : ''
-    detail = [cmd, args].filter(Boolean).join(' ')
-  } else if (type === 'managedgateway') {
-    // 官方 serde `managedGateway` 经 toLowerCase() 后为 managedgateway
-    transport = 'managed'
-    detail = 'Managed gateway'
-  }
-  const source = String(s.source || 'local').toLowerCase()
-  const tools = (session?.tools || []).map((t) => ({
-    name: t.name,
-    label: (t.displayName || t.display_name || t.name || '').trim() || t.name,
-    description: (t.description || '').trim(),
-    enabled: t.enabled !== false,
-  }))
-  return {
-    name: s.name,
-    displayName,
-    source,
-    sourceLabel: (s.sourceLabel || s.source_label || s.source || '').toString(),
-    transport,
-    detail,
-    enabled: session?.enabled !== false,
-    status: (session?.status || (session ? 'ready' : '—')).toString(),
-    tools,
-    authRequired: Boolean(session?.authRequired ?? session?.auth_required),
-    setupRequired: Boolean(session?.setupRequired ?? session?.setup_required),
-    canDelete: source !== 'managed' && transport !== 'managed',
-  }
-}
-
-function statusLabel(status: string): string {
-  switch (status.toLowerCase()) {
-    case 'ready':
-      return '就绪'
-    case 'initializing':
-      return '初始化'
-    case 'setuprequired':
-    case 'setup_required':
-      return '需配置'
-    case 'unavailable':
-      return '不可用'
-    default:
-      return status || '—'
-  }
-}
-
-/** 名称：字母数字 _ - */
-function validServerName(name: string): boolean {
-  return /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(name)
-}
-
-/** 简易 shell 分词：引号包裹或空白分隔 */
-function splitArgs(raw: string): string[] {
-  const out: string[] = []
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(raw))) {
-    out.push(m[1] ?? m[2] ?? m[3] ?? '')
-  }
-  return out.filter(Boolean)
+const EMPTY_FORM = {
+  name: '',
+  transport: 'stdio' as TransportKind,
+  command: 'npx',
+  args: '-y @modelcontextprotocol/server-filesystem .',
+  url: '',
+  header: '',
+  env: '',
 }
 
 export function McpPanel() {
   const tabId = useStore($activeTabId)
   const ready = useStore($shellReady)
-  const [rows, setRows] = useState<Row[]>([])
+  const mcpPush = useStore($mcpPush)
+  const [rows, setRows] = useState<McpRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
   const [busyName, setBusyName] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [showForm, setShowForm] = useState(false)
-
-  // 添加表单
-  const [formName, setFormName] = useState('')
-  const [formTransport, setFormTransport] = useState<TransportKind>('stdio')
-  const [formCommand, setFormCommand] = useState('npx')
-  const [formArgs, setFormArgs] = useState(
-    '-y @modelcontextprotocol/server-filesystem .',
-  )
-  const [formUrl, setFormUrl] = useState('')
-  const [formHeader, setFormHeader] = useState('')
+  const [editingName, setEditingName] = useState<string | null>(null)
+  const [form, setForm] = useState(EMPTY_FORM)
   const [formSaving, setFormSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [setupName, setSetupName] = useState('')
+  const [setupFieldsState, setSetupFieldsState] = useState<McpSetupFieldDto[]>([])
+  const [setupValues, setSetupValues] = useState<Record<string, string>>({})
+  const [setupError, setSetupError] = useState('')
+  const [setupSaving, setSetupSaving] = useState(false)
+  const reloadTimer = useRef<number>(0)
 
   const load = useCallback(
     async (force = false) => {
@@ -136,7 +74,7 @@ export function McpPanel() {
       try {
         const resp = await listMcpServers(tabId, !force)
         const list = Array.isArray(resp?.servers) ? resp.servers : []
-        setRows(list.map(normalize))
+        setRows(list.map(normalizeMcpServer))
       } catch (e) {
         setError(String(e))
         setRows([])
@@ -152,118 +90,238 @@ export function McpPanel() {
     void load(false)
   }, [tabId, load])
 
-  const onToggle = useCallback(
-    async (row: Row) => {
-      if (!tabId || busyName) return
-      setBusyName(row.name)
-      try {
-        await toggleMcpServer(tabId, row.name, !row.enabled)
-        pushToast(
-          row.enabled ? `已禁用 ${row.displayName}` : `已启用 ${row.displayName}`,
-          'success',
-        )
-        await load(true)
-      } catch (e) {
-        pushToast(`切换失败 · ${String(e)}`, 'error')
-      } finally {
-        setBusyName(null)
-      }
-    },
-    [tabId, busyName, load],
-  )
+  useEffect(() => {
+    if (!mcpPush || !tabId) return
+    const method = mcpPush.method
+    if (method.endsWith('/server_status')) {
+      setRows((cur) => applyMcpStatusPush(cur, mcpPush.payload))
+      return
+    }
+    if (method.endsWith('/tools_changed')) {
+      setRows((cur) => applyMcpToolsPush(cur, mcpPush.payload))
+      const tools = mcpPush.payload.tools
+      if (Array.isArray(tools) && tools.length > 0) return
+    }
+    window.clearTimeout(reloadTimer.current)
+    reloadTimer.current = window.setTimeout(() => {
+      void load(true)
+    }, 160)
+    return () => window.clearTimeout(reloadTimer.current)
+  }, [mcpPush, tabId, load])
 
-  const onDelete = useCallback(
-    async (row: Row) => {
-      if (!tabId || !row.canDelete || busyName) return
-      if (!window.confirm(`确定删除 MCP 服务器「${row.displayName}」？\n仅可删除本地 config 中的条目。`)) {
+  const openAdd = () => {
+    setEditingName(null)
+    setForm(EMPTY_FORM)
+    setFormError('')
+    setShowForm(true)
+    setSetupName('')
+  }
+
+  const openEdit = (row: McpRow) => {
+    setEditingName(row.name)
+    setForm({
+      name: row.name,
+      transport: row.transport === 'http' || row.transport === 'sse' ? 'http' : 'stdio',
+      command: row.command || 'npx',
+      args: joinArgs(row.args),
+      url: row.url,
+      header: '',
+      env: formatEnvBlock(row.env),
+    })
+    setFormError('')
+    setShowForm(true)
+    setSetupName('')
+  }
+
+  const onToggle = async (row: McpRow) => {
+    if (!tabId || busyName) return
+    setBusyName(row.name)
+    try {
+      await toggleMcpServer(tabId, row.name, !row.enabled)
+      pushToast(row.enabled ? `已停用 ${row.displayName}` : `已启用 ${row.displayName}`, 'success')
+      await load(true)
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyName(null)
+    }
+  }
+
+  const onToggleTool = async (row: McpRow, toolName: string, enabled: boolean) => {
+    if (!tabId || busyName) return
+    setBusyName(`${row.name}:${toolName}`)
+    setRows((cur) =>
+      cur.map((r) =>
+        r.name !== row.name
+          ? r
+          : {
+              ...r,
+              tools: r.tools.map((t) => (t.name === toolName ? { ...t, enabled } : t)),
+            },
+      ),
+    )
+    try {
+      await toggleMcpTool(tabId, row.name, toolName, enabled)
+    } catch (e) {
+      pushToast(String(e), 'error')
+      await load(true)
+    } finally {
+      setBusyName(null)
+    }
+  }
+
+  const onDelete = async (row: McpRow) => {
+    if (!tabId || !row.canDelete || busyName) return
+    if (!window.confirm(`确定删除「${row.displayName}」？只删本地配置里的这一条。`)) return
+    setBusyName(row.name)
+    try {
+      await deleteMcpServer(tabId, row.name)
+      pushToast(`已删除 ${row.displayName}`, 'success')
+      await load(true)
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyName(null)
+    }
+  }
+
+  const openSetup = (row: McpRow, extra?: McpSetupDto | null) => {
+    const fields = setupFields(extra ?? row.setup)
+    if (fields.length === 0) {
+      pushToast('这条服务器没有可填的配置项，可点刷新看看状态', 'error')
+      return
+    }
+    const values: Record<string, string> = {}
+    for (const f of fields) {
+      values[f.id] = f.default || f.options?.[0]?.value || ''
+    }
+    setSetupName(row.name)
+    setSetupFieldsState(fields)
+    setSetupValues(values)
+    setSetupError('')
+    setShowForm(false)
+  }
+
+  const onLogin = async (row: McpRow) => {
+    if (!tabId || busyName) return
+    setBusyName(row.name)
+    try {
+      const resp = await mcpAuthTrigger(tabId, row.name)
+      const status = String(resp?.status || '')
+      if (status === 'authenticated') {
+        pushToast(`已登录 ${row.displayName}`, 'success')
+        await load(true)
         return
       }
-      setBusyName(row.name)
-      try {
-        await deleteMcpServer(tabId, row.name)
-        pushToast(`已删除 ${row.displayName}`, 'success')
-        await load(true)
-      } catch (e) {
-        pushToast(`删除失败 · ${String(e)}`, 'error')
-      } finally {
-        setBusyName(null)
+      if (status === 'setup_required') {
+        openSetup(row, resp?.setup)
+        if (resp?.error) setSetupError(String(resp.error))
+        return
       }
-    },
-    [tabId, busyName, load],
-  )
+      pushToast(resp?.error || `登录未完成（${status || '未知'}）`, 'error')
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyName(null)
+    }
+  }
 
-  const onSubmitAdd = useCallback(async () => {
+  const onSubmitSetup = async () => {
+    if (!tabId || !setupName || setupSaving) return
+    setSetupSaving(true)
+    setSetupError('')
+    try {
+      const resp = await mcpSetup(tabId, setupName, setupValues)
+      if (resp?.ok === false) {
+        setSetupError('配置未通过')
+        return
+      }
+      pushToast(`已保存 ${setupName} 的配置`, 'success')
+      setSetupName('')
+      await load(true)
+    } catch (e) {
+      setSetupError(String(e))
+    } finally {
+      setSetupSaving(false)
+    }
+  }
+
+  const onSubmitForm = async () => {
     if (!tabId || formSaving) return
-    const name = formName.trim()
+    const name = (editingName || form.name).trim()
     setFormError('')
     if (!validServerName(name)) {
       setFormError('名称需以字母开头，仅含字母数字 _ -（最长 64）')
       return
     }
     let config: Record<string, unknown>
-    if (formTransport === 'stdio') {
-      const command = formCommand.trim()
+    if (form.transport === 'stdio') {
+      const command = form.command.trim()
       if (!command) {
         setFormError('请填写启动命令，例如 npx 或 uvx')
         return
       }
+      const env = parseEnvBlock(form.env)
       config = {
         command,
-        args: splitArgs(formArgs),
+        args: splitArgs(form.args),
         enabled: true,
       }
+      if (Object.keys(env).length) config.env = env
     } else {
-      const url = formUrl.trim()
+      const url = form.url.trim()
       if (!url || !/^https?:\/\//i.test(url)) {
         setFormError('请填写合法的 http(s) URL')
         return
       }
-      config = {
-        url,
-        type: 'http',
-        enabled: true,
-      }
-      const header = formHeader.trim()
+      config = { url, type: 'http', enabled: true }
+      const header = form.header.trim()
       if (header) {
-        // Authorization: Bearer xxx 或直接 token
         if (/^authorization\s*:/i.test(header)) {
           const v = header.replace(/^authorization\s*:\s*/i, '').trim()
           config.headers = { Authorization: v }
         } else {
-          config.headers = { Authorization: header.startsWith('Bearer ') ? header : `Bearer ${header}` }
+          config.headers = {
+            Authorization: header.startsWith('Bearer ') ? header : `Bearer ${header}`,
+          }
         }
       }
     }
     setFormSaving(true)
     try {
       await upsertMcpServer(tabId, name, config)
-      pushToast(`已添加 MCP · ${name}`, 'success')
+      pushToast(editingName ? `已更新 ${name}` : `已添加 ${name}`, 'success')
       setShowForm(false)
-      setFormName('')
-      setFormUrl('')
-      setFormHeader('')
+      setEditingName(null)
+      setForm(EMPTY_FORM)
       await load(true)
     } catch (e) {
       setFormError(String(e))
     } finally {
       setFormSaving(false)
     }
-  }, [
-    tabId,
-    formSaving,
-    formName,
-    formTransport,
-    formCommand,
-    formArgs,
-    formUrl,
-    formHeader,
-    load,
-  ])
+  }
 
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q) ||
+        r.displayName.toLowerCase().includes(q) ||
+        r.detail.toLowerCase().includes(q) ||
+        r.tools.some((t) => t.name.toLowerCase().includes(q) || t.label.toLowerCase().includes(q)),
+    )
+  }, [rows, query])
+
+  const grouped = useMemo(() => groupMcpRows(filtered), [filtered])
   const stats = useMemo(() => {
     const on = rows.filter((r) => r.enabled).length
-    return { total: rows.length, on }
+    const auth = rows.filter((r) => r.authRequired).length
+    return { total: rows.length, on, auth }
   }, [rows])
+
+  const patchForm = (p: Partial<typeof EMPTY_FORM>) => setForm((f) => ({ ...f, ...p }))
 
   return (
     <div className="mcp-panel" role="region" aria-label="MCP 服务器">
@@ -272,24 +330,22 @@ export function McpPanel() {
           <div className="mcp-panel-titles">
             <h2 className="mcp-panel-title">MCP 服务器</h2>
             <p className="mcp-panel-desc">
-              可视化管理：列表 / 启用禁用 / <strong>添加</strong> / 删除。
-              对接官方 <code>x.ai/mcp/*</code>，写入本地 config。
+              外接工具来源。模型会按需搜索并调用；需要对方网站授权的，点「登录」。
+              托管连接器在平台管理，这里只能开关。
             </p>
           </div>
           <div className="mcp-panel-actions">
             <span className="mcp-panel-stats">
               {stats.total} 台 · 启用 {stats.on}
+              {stats.auth > 0 ? ` · ${stats.auth} 需登录` : ''}
             </span>
             <button
               type="button"
               className="mcp-btn primary"
               disabled={!ready || !tabId}
-              onClick={() => {
-                setShowForm((v) => !v)
-                setFormError('')
-              }}
+              onClick={() => (showForm && !editingName ? setShowForm(false) : openAdd())}
             >
-              {showForm ? '收起表单' : '+ 添加服务器'}
+              {showForm && !editingName ? '收起' : '添加'}
             </button>
             <button
               type="button"
@@ -302,53 +358,73 @@ export function McpPanel() {
           </div>
         </header>
 
+        <div className="mcp-toolbar">
+          <input
+            className="mcp-search"
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索名称 / 工具…"
+          />
+        </div>
+
         {showForm ? (
-          <section className="mcp-form" aria-label="添加 MCP 服务器">
-            <h3 className="mcp-form-title">添加 MCP 服务器</h3>
+          <section className="mcp-form" aria-label={editingName ? '编辑 MCP 服务器' : '添加 MCP 服务器'}>
+            <h3 className="mcp-form-title">{editingName ? `编辑 ${editingName}` : '添加 MCP 服务器'}</h3>
             <div className="mcp-form-grid">
               <label className="mcp-field">
                 <span>名称</span>
                 <input
                   className="mcp-input"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
+                  value={form.name}
+                  disabled={Boolean(editingName)}
+                  onChange={(e) => patchForm({ name: e.target.value })}
                   placeholder="例如 filesystem"
                   autoComplete="off"
                   spellCheck={false}
                 />
               </label>
               <label className="mcp-field">
-                <span>传输类型</span>
+                <span>传输</span>
                 <select
                   className="mcp-input"
-                  value={formTransport}
-                  onChange={(e) =>
-                    setFormTransport(e.target.value as TransportKind)
-                  }
+                  value={form.transport}
+                  onChange={(e) => patchForm({ transport: e.target.value as TransportKind })}
                 >
-                  <option value="stdio">本地进程 (stdio)</option>
-                  <option value="http">远程 HTTP / SSE</option>
+                  <option value="stdio">本地进程</option>
+                  <option value="http">远程 HTTP</option>
                 </select>
               </label>
-              {formTransport === 'stdio' ? (
+              {form.transport === 'stdio' ? (
                 <>
                   <label className="mcp-field">
                     <span>命令</span>
                     <input
                       className="mcp-input"
-                      value={formCommand}
-                      onChange={(e) => setFormCommand(e.target.value)}
+                      value={form.command}
+                      onChange={(e) => patchForm({ command: e.target.value })}
                       placeholder="npx / uvx / 绝对路径"
                       spellCheck={false}
                     />
                   </label>
                   <label className="mcp-field mcp-field-span">
-                    <span>参数（空格分隔，可用引号）</span>
+                    <span>参数</span>
                     <input
                       className="mcp-input"
-                      value={formArgs}
-                      onChange={(e) => setFormArgs(e.target.value)}
+                      value={form.args}
+                      onChange={(e) => patchForm({ args: e.target.value })}
                       placeholder="-y @modelcontextprotocol/server-filesystem ."
+                      spellCheck={false}
+                    />
+                  </label>
+                  <label className="mcp-field mcp-field-span">
+                    <span>环境变量（每行 KEY=VALUE）</span>
+                    <textarea
+                      className="mcp-input mcp-textarea"
+                      value={form.env}
+                      onChange={(e) => patchForm({ env: e.target.value })}
+                      placeholder="GITHUB_TOKEN=ghp_…"
+                      rows={3}
                       spellCheck={false}
                     />
                   </label>
@@ -359,19 +435,19 @@ export function McpPanel() {
                     <span>URL</span>
                     <input
                       className="mcp-input"
-                      value={formUrl}
-                      onChange={(e) => setFormUrl(e.target.value)}
+                      value={form.url}
+                      onChange={(e) => patchForm({ url: e.target.value })}
                       placeholder="https://mcp.example.com/mcp"
                       spellCheck={false}
                     />
                   </label>
                   <label className="mcp-field mcp-field-span">
-                    <span>Authorization（可选）</span>
+                    <span>Authorization（可选，对方要登录时优先用「登录」按钮）</span>
                     <input
                       className="mcp-input"
-                      value={formHeader}
-                      onChange={(e) => setFormHeader(e.target.value)}
-                      placeholder="Bearer sk-… 或完整 Authorization 值"
+                      value={form.header}
+                      onChange={(e) => patchForm({ header: e.target.value })}
+                      placeholder="Bearer …"
                       spellCheck={false}
                     />
                   </label>
@@ -388,7 +464,10 @@ export function McpPanel() {
                 type="button"
                 className="mcp-btn"
                 disabled={formSaving}
-                onClick={() => setShowForm(false)}
+                onClick={() => {
+                  setShowForm(false)
+                  setEditingName(null)
+                }}
               >
                 取消
               </button>
@@ -396,30 +475,75 @@ export function McpPanel() {
                 type="button"
                 className="mcp-btn primary"
                 disabled={formSaving || !ready}
-                onClick={() => void onSubmitAdd()}
+                onClick={() => void onSubmitForm()}
               >
-                {formSaving ? '保存中…' : '保存并启用'}
+                {formSaving ? '保存中…' : editingName ? '保存' : '保存并启用'}
               </button>
             </div>
-            <p className="mcp-form-hint">
-              等价 CLI：
-              <code>
-                {formTransport === 'stdio'
-                  ? `grok mcp add ${formName || 'name'} -- ${formCommand} ${formArgs}`
-                  : `grok mcp add --transport http ${formName || 'name'} ${formUrl || '<url>'}`}
-              </code>
-            </p>
+          </section>
+        ) : null}
+
+        {setupName ? (
+          <section className="mcp-form" aria-label="补全 MCP 配置">
+            <h3 className="mcp-form-title">补全 {setupName} 的配置</h3>
+            <div className="mcp-form-grid">
+              {setupFieldsState.map((f) => (
+                <label key={f.id} className="mcp-field mcp-field-span">
+                  <span>
+                    {f.label || f.id}
+                    {f.required ? ' *' : ''}
+                  </span>
+                  {f.options && f.options.length > 0 ? (
+                    <select
+                      className="mcp-input"
+                      value={setupValues[f.id] || ''}
+                      onChange={(e) =>
+                        setSetupValues((v) => ({ ...v, [f.id]: e.target.value }))
+                      }
+                    >
+                      {f.options.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label || o.value}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="mcp-input"
+                      value={setupValues[f.id] || ''}
+                      onChange={(e) =>
+                        setSetupValues((v) => ({ ...v, [f.id]: e.target.value }))
+                      }
+                    />
+                  )}
+                </label>
+              ))}
+            </div>
+            {setupError ? (
+              <div className="mcp-form-error" role="alert">
+                {setupError}
+              </div>
+            ) : null}
+            <div className="mcp-form-actions">
+              <button type="button" className="mcp-btn" onClick={() => setSetupName('')}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="mcp-btn primary"
+                disabled={setupSaving || !ready}
+                onClick={() => void onSubmitSetup()}
+              >
+                {setupSaving ? '提交中…' : '提交配置'}
+              </button>
+            </div>
           </section>
         ) : null}
 
         {error ? (
           <div className="mcp-panel-error" role="alert">
             {error}
-            <button
-              type="button"
-              className="mcp-btn"
-              onClick={() => void load(true)}
-            >
+            <button type="button" className="mcp-btn" onClick={() => void load(true)}>
               重试
             </button>
           </div>
@@ -428,127 +552,176 @@ export function McpPanel() {
         ) : rows.length === 0 ? (
           <div className="mcp-panel-empty">
             <p>还没有 MCP 服务器。</p>
-            <p className="mcp-panel-hint">
-              点击上方 <strong>+ 添加服务器</strong> 用可视化表单添加，或在
-              config 中配置 <code>[mcp_servers.*]</code>。
-            </p>
-            <button
-              type="button"
-              className="mcp-btn primary"
-              style={{ marginTop: '0.75rem' }}
-              onClick={() => setShowForm(true)}
-            >
-              + 添加服务器
+            <p className="mcp-panel-hint">点「添加」接本地进程或远程地址；也可写在 config 的 mcp_servers 里。</p>
+            <button type="button" className="mcp-btn primary" style={{ marginTop: '0.75rem' }} onClick={openAdd}>
+              添加
             </button>
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="mcp-panel-empty">没有匹配的服务器。</div>
         ) : (
-          <ul className="mcp-list">
-            {rows.map((row) => {
-              const open = Boolean(expanded[row.name])
-              return (
-                <li
-                  key={row.name}
-                  className={`mcp-card${row.enabled ? ' is-on' : ' is-off'}`}
-                >
-                  <div className="mcp-card-main">
-                    <button
-                      type="button"
-                      className="mcp-card-expand"
-                      aria-expanded={open}
-                      onClick={() =>
-                        setExpanded((m) => ({ ...m, [row.name]: !m[row.name] }))
-                      }
-                      title={open ? '收起工具' : '展开工具'}
-                    >
-                      <span className="mcp-card-name">{row.displayName}</span>
-                      {zhServerLabel(row.name) ? (
-                        <span className="zh-label">{zhServerLabel(row.name)}</span>
-                      ) : null}
-                      <span className="mcp-card-meta">
-                        <span className={`mcp-pill transport-${row.transport}`}>
-                          {row.transport}
-                        </span>
-                        <span className="mcp-pill source">
-                          {row.sourceLabel || row.source}
-                        </span>
-                        <span
-                          className={`mcp-pill status-${row.status.toLowerCase()}`}
-                        >
-                          {statusLabel(row.status)}
-                        </span>
-                        {row.authRequired ? (
-                          <span className="mcp-pill warn">需登录</span>
-                        ) : null}
-                        {row.setupRequired ? (
-                          <span className="mcp-pill warn">需配置</span>
-                        ) : null}
-                        {row.tools.length > 0 ? (
-                          <span className="mcp-pill">
-                            {row.tools.length} tools
-                          </span>
-                        ) : null}
-                      </span>
-                      {row.detail ? (
-                        <span className="mcp-card-detail" title={row.detail}>
-                          {row.detail}
-                        </span>
-                      ) : null}
-                    </button>
-                    <div className="mcp-card-ops">
-                      <button
-                        type="button"
-                        className={`mcp-toggle${row.enabled ? ' is-on' : ''}`}
-                        disabled={busyName === row.name || !ready}
-                        onClick={() => void onToggle(row)}
-                        aria-pressed={row.enabled}
+          <div className="mcp-groups">
+            {grouped.map(({ group, items }) => (
+              <section key={group} className="mcp-group">
+                <h3 className="mcp-group-title">
+                  {MCP_GROUP_LABEL[group]}
+                  <span className="mcp-group-count">{items.length}</span>
+                </h3>
+                <ul className="mcp-list">
+                  {items.map((row) => {
+                    const open = Boolean(expanded[row.name])
+                    const statusKey = row.status.toLowerCase().replace(/_/g, '')
+                    return (
+                      <li
+                        key={row.name}
+                        className={`mcp-card${row.enabled ? ' is-on' : ' is-off'}${row.authRequired ? ' needs-auth' : ''}`}
                       >
-                        {busyName === row.name
-                          ? '…'
-                          : row.enabled
-                            ? '已启用'
-                            : '已禁用'}
-                      </button>
-                      {row.canDelete ? (
-                        <button
-                          type="button"
-                          className="mcp-btn danger"
-                          disabled={busyName === row.name || !ready}
-                          onClick={() => void onDelete(row)}
-                          title="从本地配置删除"
-                        >
-                          删除
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  {open && row.tools.length > 0 ? (
-                    <ul className="mcp-tools">
-                      {row.tools.map((t) => (
-                        <li
-                          key={t.name}
-                          className={`mcp-tool${t.enabled ? '' : ' is-off'}`}
-                        >
-                          <span className="mcp-tool-name">{t.label}</span>
-                          {zhToolLabel(t.name) ? (
-                            <span className="zh-label">{zhToolLabel(t.name)}</span>
-                          ) : null}
-                          {t.description ? (
-                            <span className="mcp-tool-desc">
-                              {t.description}
+                        <div className="mcp-card-main">
+                          <button
+                            type="button"
+                            className="mcp-card-expand"
+                            aria-expanded={open}
+                            onClick={() =>
+                              setExpanded((m) => ({ ...m, [row.name]: !m[row.name] }))
+                            }
+                          >
+                            <span className="mcp-card-name-row">
+                              <span className={`mcp-dot status-${statusKey}`} aria-hidden />
+                              <span className="mcp-card-name">{row.displayName}</span>
+                              {zhServerLabel(row.name) ? (
+                                <span className="zh-label">{zhServerLabel(row.name)}</span>
+                              ) : null}
                             </span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : open ? (
-                    <div className="mcp-tools-empty">
-                      暂无工具列表（可能未就绪）
-                    </div>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ul>
+                            <span className="mcp-card-meta">
+                              <span className={`mcp-pill transport-${row.transport}`}>
+                                {row.transport === 'stdio'
+                                  ? '本地进程'
+                                  : row.transport === 'managed'
+                                    ? '托管'
+                                    : row.transport.toUpperCase()}
+                              </span>
+                              <span className={`mcp-pill status-${statusKey}`}>
+                                {statusLabel(row.status)}
+                              </span>
+                              {row.authRequired ? (
+                                <span className="mcp-pill warn">需登录</span>
+                              ) : null}
+                              {row.setupRequired ? (
+                                <span className="mcp-pill warn">需配置</span>
+                              ) : null}
+                              {row.tools.length > 0 ? (
+                                <span className="mcp-pill">
+                                  {row.tools.filter((t) => t.enabled).length}/{row.tools.length} 工具
+                                </span>
+                              ) : null}
+                            </span>
+                            {row.detail ? (
+                              <span className="mcp-card-detail" title={row.detail}>
+                                {row.detail}
+                              </span>
+                            ) : null}
+                            {row.statusDetail ? (
+                              <span className="mcp-card-detail" title={row.statusDetail}>
+                                {row.statusDetail}
+                              </span>
+                            ) : null}
+                          </button>
+                          <div className="mcp-card-ops">
+                            {row.authRequired ? (
+                              <button
+                                type="button"
+                                className="mcp-btn primary"
+                                disabled={busyName === row.name || !ready}
+                                onClick={() => void onLogin(row)}
+                                title="打开浏览器，向这台服务器背后的服务授权"
+                              >
+                                {busyName === row.name ? '登录中…' : '登录'}
+                              </button>
+                            ) : null}
+                            {row.setupRequired ? (
+                              <button
+                                type="button"
+                                className="mcp-btn"
+                                disabled={busyName === row.name || !ready}
+                                onClick={() => openSetup(row)}
+                              >
+                                配置
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={`mcp-toggle${row.enabled ? ' is-on' : ''}`}
+                              disabled={busyName === row.name || !ready}
+                              onClick={() => void onToggle(row)}
+                              aria-pressed={row.enabled}
+                            >
+                              {busyName === row.name ? '…' : row.enabled ? '已启用' : '已停用'}
+                            </button>
+                            {row.canEdit ? (
+                              <button
+                                type="button"
+                                className="mcp-btn ghost"
+                                disabled={busyName === row.name || !ready}
+                                onClick={() => openEdit(row)}
+                              >
+                                编辑
+                              </button>
+                            ) : null}
+                            {row.canDelete ? (
+                              <button
+                                type="button"
+                                className="mcp-btn danger"
+                                disabled={busyName === row.name || !ready}
+                                onClick={() => void onDelete(row)}
+                              >
+                                删除
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                        {open && row.tools.length > 0 ? (
+                          <ul className="mcp-tools">
+                            {row.tools.map((t) => (
+                              <li
+                                key={t.name}
+                                className={`mcp-tool${t.enabled ? '' : ' is-off'}`}
+                              >
+                                <div className="mcp-tool-main">
+                                  <span className="mcp-tool-name">{t.label}</span>
+                                  {zhToolLabel(t.name) ? (
+                                    <span className="zh-label">{zhToolLabel(t.name)}</span>
+                                  ) : null}
+                                  {t.description ? (
+                                    <span className="mcp-tool-desc">{t.description}</span>
+                                  ) : null}
+                                </div>
+                                <button
+                                  type="button"
+                                  className={`mcp-toggle compact${t.enabled ? ' is-on' : ''}`}
+                                  disabled={busyName === `${row.name}:${t.name}` || !ready}
+                                  onClick={() => void onToggleTool(row, t.name, !t.enabled)}
+                                >
+                                  {t.enabled ? '开' : '关'}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : open ? (
+                          <div className="mcp-tools-empty">
+                            {row.authRequired
+                              ? '登录后才会列出工具。'
+                              : row.enabled
+                                ? '还没有工具列表（可能仍在连接）。'
+                                : '已停用。'}
+                          </div>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
         )}
       </div>
     </div>

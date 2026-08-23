@@ -1,11 +1,21 @@
 /**
- * 工具面板 — 展示当前会话可用工具（官方 x.ai/commands/list.tools）
- * 并可查看斜杠命令摘要；MCP 工具名（server__tool）单独分组。
+ * 工具面板 — 当前会话可用工具（官方 x.ai/commands/list.tools）
+ * 停用走组装单 tools.disable；斜杠命令可填入输入框。MCP 工具默认折叠。
  */
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { $activeTabId, $shellReady, pushToast } from '../store'
-import { listSessionCommands } from '../bridge'
+import {
+  $activeSessionId,
+  $activeTabId,
+  $composerInput,
+  $shellReady,
+  $tabs,
+  $utilityKind,
+  $workspaceCwd,
+  patchActiveTab,
+  pushToast,
+} from '../store'
+import { getComposition, listSessionCommands } from '../bridge'
 import {
   CATEGORY_LABEL,
   categoryOrder,
@@ -14,40 +24,70 @@ import {
   type ToolMeta,
 } from '../lib/toolCatalog'
 import { zhCommandLabel, zhCommandPurpose, zhToolLabel } from '../lib/toolChinese'
+import {
+  canDisableTool,
+  listChatSessionTargets,
+  mergeComposition,
+  setChatToolsDisabled,
+} from '../lib/toolDisable'
+import { parseOfficialCommands, type ComposerCommand } from '../lib/composerCommands'
 
-type SlashCmd = { name: string; description: string }
+const KIND_LABEL: Record<string, string> = {
+  skill: '技能',
+  workflow: '工作流',
+  command: '命令',
+}
 
 export function ToolsPanel() {
   const tabId = useStore($activeTabId)
+  const sessionId = useStore($activeSessionId)
+  const cwd = useStore($workspaceCwd)
   const ready = useStore($shellReady)
+  const tabs = useStore($tabs)
+  const chatCount = useMemo(
+    () => listChatSessionTargets(cwd || '').length,
+    [cwd, tabs],
+  )
   const [tools, setTools] = useState<ToolMeta[]>([])
-  const [commands, setCommands] = useState<SlashCmd[]>([])
+  const [commands, setCommands] = useState<ComposerCommand[]>([])
+  const [disabled, setDisabled] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<'tools' | 'commands'>('tools')
   const [catFilter, setCatFilter] = useState<ToolCategory | 'all'>('all')
+  const [showMcp, setShowMcp] = useState(false)
+  const [busyTool, setBusyTool] = useState('')
 
   const load = useCallback(async () => {
     if (!tabId) return
     setLoading(true)
     setError('')
     try {
-      const resp = await listSessionCommands(tabId)
+      const chats = listChatSessionTargets(cwd || '')
+      const listTab = chats[0]?.tabId || tabId
+      const compSession = chats[0]?.sessionId || sessionId || null
+      const compCwd = chats[0]?.cwd || cwd || ''
+      const [resp, comp] = await Promise.all([
+        listSessionCommands(listTab),
+        getComposition(compSession, compCwd).catch(() => null),
+      ])
+      const disable = mergeComposition(comp).tools.disable
+      setDisabled(disable)
+
       const toolNames = Array.isArray(resp?.tools)
         ? resp.tools.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
         : []
-      setTools(toolNames.map(enrichToolName).sort((a, b) => a.name.localeCompare(b.name)))
-
-      const cmds = Array.isArray(resp?.commands)
-        ? resp.commands
-            .map((c) => ({
-              name: String(c?.name || '').replace(/^\//, ''),
-              description: String(c?.description || '').trim(),
-            }))
-            .filter((c) => c.name)
-        : []
-      setCommands(cmds)
+      const seen = new Set(toolNames)
+      const listed = toolNames.map(enrichToolName)
+      for (const name of disable) {
+        if (!seen.has(name)) {
+          listed.push(enrichToolName(name))
+          seen.add(name)
+        }
+      }
+      setTools(listed.sort((a, b) => a.name.localeCompare(b.name)))
+      setCommands(parseOfficialCommands(resp?.commands))
     } catch (e) {
       setError(String(e))
       setTools([])
@@ -55,16 +95,19 @@ export function ToolsPanel() {
     } finally {
       setLoading(false)
     }
-  }, [tabId])
+  }, [tabId, sessionId, cwd])
 
   useEffect(() => {
     if (!tabId) return
     void load()
   }, [tabId, load])
 
+  const disabledSet = useMemo(() => new Set(disabled), [disabled])
+
   const filteredTools = useMemo(() => {
     const q = query.trim().toLowerCase()
     return tools.filter((t) => {
+      if (!showMcp && t.category === 'mcp') return false
       if (catFilter !== 'all' && t.category !== catFilter) return false
       if (!q) return true
       return (
@@ -73,7 +116,7 @@ export function ToolsPanel() {
         t.description.toLowerCase().includes(q)
       )
     })
-  }, [tools, query, catFilter])
+  }, [tools, query, catFilter, showMcp])
 
   const grouped = useMemo(() => {
     const map = new Map<ToolCategory, ToolMeta[]>()
@@ -92,10 +135,15 @@ export function ToolsPanel() {
     if (!q) return commands
     return commands.filter(
       (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.description.toLowerCase().includes(q),
+        c.label.toLowerCase().includes(q) ||
+        c.hint.toLowerCase().includes(q),
     )
   }, [commands, query])
+
+  const mcpCount = useMemo(
+    () => tools.filter((t) => t.category === 'mcp').length,
+    [tools],
+  )
 
   const copyName = async (name: string) => {
     try {
@@ -106,10 +154,46 @@ export function ToolsPanel() {
     }
   }
 
+  const fillCommand = (cmd: ComposerCommand) => {
+    $composerInput.set(cmd.insert)
+    patchActiveTab({ utilityKind: null, chatTitle: '' })
+    $utilityKind.set(null)
+    pushToast(`已填入 ${cmd.label}`, 'success')
+  }
+
+  const onToggleDisable = async (name: string) => {
+    if (!tabId || busyTool) return
+    const nextDisabled = !disabledSet.has(name)
+    setBusyTool(name)
+    try {
+      const { disable, count } = await setChatToolsDisabled(
+        cwd || '',
+        name,
+        nextDisabled,
+      )
+      setDisabled(disable)
+      pushToast(
+        nextDisabled
+          ? `已在 ${count} 个对话停用 ${name}`
+          : `已在 ${count} 个对话启用 ${name}`,
+        'success',
+      )
+      await load()
+    } catch (e) {
+      pushToast(String(e), 'error')
+    } finally {
+      setBusyTool('')
+    }
+  }
+
   const catsPresent = useMemo(() => {
-    const s = new Set(tools.map((t) => t.category))
+    const s = new Set(
+      tools
+        .filter((t) => showMcp || t.category !== 'mcp')
+        .map((t) => t.category),
+    )
     return categoryOrder().filter((c) => s.has(c))
-  }, [tools])
+  }, [tools, showMcp])
 
   return (
     <div className="tools-panel" role="region" aria-label="工具">
@@ -118,14 +202,16 @@ export function ToolsPanel() {
           <div className="tools-panel-titles">
             <h2 className="tools-panel-title">工具</h2>
             <p className="tools-panel-desc">
-              当前会话 Agent 可用的工具清单（官方{' '}
-              <code>x.ai/commands/list</code> → <code>tools</code>）。
-              模型会按需调用，无需在此手动执行。
+              模型按需调用，不必在此手动执行。停用写入同一工作区对话的组装单{' '}
+              <code>tools.disable</code>，不影响这个工具页自己。
             </p>
           </div>
           <div className="tools-panel-actions">
             <span className="tools-panel-stats">
-              {tools.length} 工具 · {commands.length} 命令
+              {tools.length} 工具
+              {disabled.length > 0 ? ` · ${disabled.length} 已停用` : ''}
+              {' · '}
+              {commands.length} 命令
             </span>
             <button
               type="button"
@@ -168,7 +254,7 @@ export function ToolsPanel() {
           />
         </div>
 
-        {tab === 'tools' && catsPresent.length > 0 ? (
+        {tab === 'tools' && (catsPresent.length > 0 || mcpCount > 0) ? (
           <div className="tools-cat-row">
             <button
               type="button"
@@ -187,6 +273,19 @@ export function ToolsPanel() {
                 {CATEGORY_LABEL[c]}
               </button>
             ))}
+            {mcpCount > 0 ? (
+              <button
+                type="button"
+                className={`tools-cat-chip${showMcp ? ' is-active' : ''}`}
+                onClick={() => {
+                  setShowMcp((v) => !v)
+                  if (!showMcp) setCatFilter('mcp')
+                  else if (catFilter === 'mcp') setCatFilter('all')
+                }}
+              >
+                MCP ({mcpCount})
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -215,38 +314,66 @@ export function ToolsPanel() {
                     <span className="tools-group-count">{items.length}</span>
                   </h3>
                   <ul className="tools-list">
-                    {items.map((t) => (
-                      <li key={t.name} className="tools-card">
-                        <div className="tools-card-main">
-                          <div className="tools-card-titles">
-                            <span className="tools-card-label">{t.label}</span>
-                            <code className="tools-card-name">{t.name}</code>
-                            {zhToolLabel(t.name) ? (
-                              <span className="zh-label">{zhToolLabel(t.name)}</span>
-                            ) : null}
-                          </div>
-                          <p className="tools-card-desc">{t.description}</p>
-                          <div className="tools-card-meta">
-                            {t.readOnly ? (
-                              <span className="tools-pill readonly">只读</span>
-                            ) : (
-                              <span className="tools-pill write">可写</span>
-                            )}
-                            <span className="tools-pill cat">
-                              {CATEGORY_LABEL[t.category]}
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          className="tools-btn ghost"
-                          onClick={() => void copyName(t.name)}
-                          title="复制工具名"
+                    {items.map((t) => {
+                      const off = disabledSet.has(t.name)
+                      return (
+                        <li
+                          key={t.name}
+                          className={`tools-card${off ? ' is-disabled' : ''}`}
                         >
-                          复制
-                        </button>
-                      </li>
-                    ))}
+                          <div className="tools-card-main">
+                            <div className="tools-card-titles">
+                              <span className="tools-card-label">{t.label}</span>
+                              <code className="tools-card-name">{t.name}</code>
+                              {zhToolLabel(t.name) ? (
+                                <span className="zh-label">{zhToolLabel(t.name)}</span>
+                              ) : null}
+                              {off ? (
+                                <span className="tools-pill is-off">已停用</span>
+                              ) : null}
+                            </div>
+                            <p className="tools-card-desc">{t.description}</p>
+                            <div className="tools-card-meta">
+                              {t.readOnly ? (
+                                <span className="tools-pill readonly">只读</span>
+                              ) : (
+                                <span className="tools-pill write">可写</span>
+                              )}
+                              <span className="tools-pill cat">
+                                {CATEGORY_LABEL[t.category]}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="tools-card-ops">
+                            {canDisableTool(t.name) ? (
+                              <button
+                                type="button"
+                                className="tools-btn ghost"
+                                disabled={busyTool === t.name || !tabId || chatCount === 0}
+                                title={
+                                  chatCount === 0
+                                    ? '请先打开一个对话再停用工具'
+                                    : off
+                                      ? '在同一工作区的对话里重新启用'
+                                      : '在同一工作区的对话里停用（组装单 tools.disable）'
+                                }
+                                onClick={() => void onToggleDisable(t.name)}
+                              >
+                                {off ? '启用' : '停用'}
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="tools-btn ghost"
+                              onClick={() => void copyName(t.name)}
+                              title="复制工具名"
+                            >
+                              复制
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
                   </ul>
                 </section>
               ))}
@@ -259,25 +386,38 @@ export function ToolsPanel() {
         ) : (
           <ul className="tools-list">
             {filteredCmds.map((c) => (
-              <li key={c.name} className="tools-card">
+              <li key={c.id} className="tools-card">
                 <div className="tools-card-main">
                   <div className="tools-card-titles">
-                    <code className="tools-card-name">/{c.name}</code>
-                    {zhCommandLabel(c.name) ? (
-                      <span className="zh-label">{zhCommandLabel(c.name)}</span>
+                    <code className="tools-card-name">{c.label}</code>
+                    <span className="tools-pill">{KIND_LABEL[c.kind || 'command']}</span>
+                    {zhCommandLabel(c.label.slice(1)) ? (
+                      <span className="zh-label">{zhCommandLabel(c.label.slice(1))}</span>
                     ) : null}
                   </div>
-                  {c.description ? (
-                    <p className="tools-card-desc">{zhCommandPurpose(c.name) ?? c.description}</p>
+                  {c.hint ? (
+                    <p className="tools-card-desc">
+                      {zhCommandPurpose(c.label.slice(1)) ?? c.hint}
+                    </p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  className="tools-btn ghost"
-                  onClick={() => void copyName(`/${c.name}`)}
-                >
-                  复制
-                </button>
+                <div className="tools-card-ops">
+                  <button
+                    type="button"
+                    className="tools-btn ghost"
+                    onClick={() => void copyName(c.label)}
+                  >
+                    复制
+                  </button>
+                  <button
+                    type="button"
+                    className="tools-btn ghost"
+                    onClick={() => fillCommand(c)}
+                    title="填入输入框并回到对话"
+                  >
+                    使用
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

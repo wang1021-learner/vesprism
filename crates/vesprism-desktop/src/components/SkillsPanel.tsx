@@ -1,6 +1,6 @@
 /**
- * 技能面板 — 官方 x.ai/commands/list（cwd 发现）
- * 技能命令带 meta.scope + meta.path；可复制 /name 并写入输入框。
+ * 技能面板 — 官方 x.ai/skills/list / add / remove / toggle
+ * 选文件夹添加；预览 SKILL.md；启用后模型用 skill 工具加载，用户可用 /name。
  */
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -16,135 +16,23 @@ import {
   addSkill,
   listSessionCommands,
   listSkills,
+  readFileText,
   removeSkill,
   toggleSkill,
   type SkillInfoDto,
 } from '../bridge'
 import { zhCommandLabel, zhCommandPurpose } from '../lib/toolChinese'
+import {
+  isSkillAddPath,
+  parseOfficialSkills,
+  parseSkillsFromCommands,
+  skillPreviewBody,
+  SKILL_SCOPE_LABEL,
+  SKILL_SCOPE_ORDER,
+  type SkillRow,
+} from '../lib/skillRows'
 
-export type SkillRow = {
-  name: string
-  displayName: string
-  description: string
-  scope: string
-  path: string
-  plugin?: string
-  argumentHint?: string
-  enabled: boolean
-}
-
-const SCOPE_LABEL: Record<string, string> = {
-  local: '本地 (cwd)',
-  repo: '仓库',
-  user: '用户',
-  server: '服务器',
-  bundled: '内置',
-  plugin: '插件',
-}
-
-function metaOf(cmd: {
-  meta?: Record<string, unknown> | null
-  _meta?: Record<string, unknown> | null
-}): Record<string, unknown> | null {
-  const m = cmd.meta ?? cmd._meta
-  return m && typeof m === 'object' ? m : null
-}
-
-function parseSkills(
-  commands: Array<{
-    name?: string
-    description?: string
-    input?: unknown
-    meta?: Record<string, unknown> | null
-    _meta?: Record<string, unknown> | null
-  }>,
-): SkillRow[] {
-  const out: SkillRow[] = []
-  for (const c of commands) {
-    const meta = metaOf(c)
-    if (!meta) continue
-    const path = String(meta.path ?? '').trim()
-    const scope = String(meta.scope ?? '').trim().toLowerCase()
-    // 官方技能：同时有 scope + path；工作流另有 workflowPath，跳过
-    if (!path || !scope) continue
-    if (meta.workflowPath || meta.workflowSource) continue
-    const name = String(c.name || '').replace(/^\//, '').trim()
-    if (!name) continue
-    const displayName = String(meta.displayName ?? meta.display_name ?? name)
-    // 用途说明：优先命令 description，其次 meta 里的 short/when_to_use
-    const description = String(
-      c.description ||
-        meta.short_description ||
-        meta.shortDescription ||
-        meta.when_to_use ||
-        meta.whenToUse ||
-        meta.description ||
-        '',
-    ).trim()
-    let argumentHint = ''
-    const input = c.input as
-      | { hint?: string; unstructured?: { hint?: string } }
-      | undefined
-    if (input && typeof input === 'object') {
-      argumentHint = String(
-        input.hint ?? input.unstructured?.hint ?? '',
-      ).trim()
-    }
-    out.push({
-      name,
-      displayName,
-      description:
-        description ||
-        `技能「${displayName}」—— 在对话中输入 /${name} 可调用`,
-      scope,
-      path,
-      plugin: meta.plugin ? String(meta.plugin) : undefined,
-      argumentHint: argumentHint || undefined,
-      enabled: true,
-    })
-  }
-  out.sort((a, b) => {
-    const sa = scopeRank(a.scope) - scopeRank(b.scope)
-    if (sa !== 0) return sa
-    return a.name.localeCompare(b.name)
-  })
-  return out
-}
-
-function parseOfficialSkills(raw: SkillInfoDto[]): SkillRow[] {
-  const out: SkillRow[] = []
-  for (const s of raw) {
-    const name = String(s.name || '').replace(/^\//, '').trim()
-    if (!name) continue
-    const displayName = String(s.displayName ?? s.display_name ?? name)
-    const description = String(
-      s.description ||
-        s.shortDescription ||
-        s.short_description ||
-        s.whenToUse ||
-        s.when_to_use ||
-        '',
-    ).trim()
-    out.push({
-      name,
-      displayName,
-      description:
-        description || `技能「${displayName}」—— 在对话中输入 /${name} 可调用`,
-      scope: String(s.scope || 'user').toLowerCase(),
-      path: String(s.path || ''),
-      plugin: s.pluginName || s.plugin_name || undefined,
-      argumentHint: s.argumentHint || s.argument_hint || undefined,
-      enabled: s.enabled !== false,
-    })
-  }
-  return out
-}
-
-function scopeRank(s: string): number {
-  const order = ['local', 'repo', 'user', 'server', 'bundled', 'plugin']
-  const i = order.indexOf(s)
-  return i < 0 ? 99 : i
-}
+type EnabledFilter = 'all' | 'on' | 'off'
 
 export function SkillsPanel() {
   const tabId = useStore($activeTabId)
@@ -154,8 +42,12 @@ export function SkillsPanel() {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [scopeFilter, setScopeFilter] = useState<string | 'all'>('all')
+  const [enabledFilter, setEnabledFilter] = useState<EnabledFilter>('all')
   const [addPath, setAddPath] = useState('')
   const [busyName, setBusyName] = useState('')
+  const [previewName, setPreviewName] = useState('')
+  const [previewBody, setPreviewBody] = useState('')
+  const [previewError, setPreviewError] = useState('')
 
   const applyOfficial = (raw: SkillInfoDto[] | undefined) => {
     if (!raw?.length) return false
@@ -173,12 +65,12 @@ export function SkillsPanel() {
       if (applyOfficial(list)) return
       const resp = await listSessionCommands(tabId, cwd || undefined)
       const cmds = Array.isArray(resp?.commands) ? resp.commands : []
-      setSkills(parseSkills(cmds))
+      setSkills(parseSkillsFromCommands(cmds))
     } catch (e) {
       try {
         const resp = await listSessionCommands(tabId, cwd || undefined)
         const cmds = Array.isArray(resp?.commands) ? resp.commands : []
-        setSkills(parseSkills(cmds))
+        setSkills(parseSkillsFromCommands(cmds))
       } catch {
         setError(String(e))
         setSkills([])
@@ -195,15 +87,20 @@ export function SkillsPanel() {
 
   const scopesPresent = useMemo(() => {
     const s = new Set(skills.map((x) => x.scope))
-    return ['local', 'repo', 'user', 'server', 'bundled', 'plugin'].filter((x) =>
-      s.has(x),
-    )
+    return SKILL_SCOPE_ORDER.filter((x) => s.has(x))
   }, [skills])
+
+  const enabledCount = useMemo(
+    () => skills.filter((s) => s.enabled).length,
+    [skills],
+  )
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return skills.filter((sk) => {
       if (scopeFilter !== 'all' && sk.scope !== scopeFilter) return false
+      if (enabledFilter === 'on' && !sk.enabled) return false
+      if (enabledFilter === 'off' && sk.enabled) return false
       if (!q) return true
       return (
         sk.name.toLowerCase().includes(q) ||
@@ -212,7 +109,7 @@ export function SkillsPanel() {
         sk.path.toLowerCase().includes(q)
       )
     })
-  }, [skills, query, scopeFilter])
+  }, [skills, query, scopeFilter, enabledFilter])
 
   const grouped = useMemo(() => {
     const map = new Map<string, SkillRow[]>()
@@ -221,7 +118,7 @@ export function SkillsPanel() {
       list.push(sk)
       map.set(sk.scope, list)
     }
-    return ['local', 'repo', 'user', 'server', 'bundled', 'plugin', ...map.keys()]
+    return [...SKILL_SCOPE_ORDER, ...map.keys()]
       .filter((k, i, arr) => map.has(k) && arr.indexOf(k) === i)
       .map((scope) => ({ scope, items: map.get(scope)! }))
   }, [filtered])
@@ -236,12 +133,13 @@ export function SkillsPanel() {
     }
   }
 
-  /** 填入输入框并退出专用面板（勿命名 use*，避免 hooks lint） */
-  const fillInChat = (name: string, _hint?: string) => {
-    $composerInput.set(`/${name} `)
+  /** 填入输入框并回到对话（勿命名 use*） */
+  const fillInChat = (sk: SkillRow) => {
+    $composerInput.set(`/${sk.name} `)
     patchActiveTab({ utilityKind: null, chatTitle: '' })
     $utilityKind.set(null)
-    pushToast(`已填入 /${name}，可补充参数后发送`, 'success')
+    const hint = sk.argumentHint ? `，参数：${sk.argumentHint}` : ''
+    pushToast(`已填入 /${sk.name}${hint}`, 'success')
   }
 
   const onToggle = async (sk: SkillRow) => {
@@ -258,19 +156,71 @@ export function SkillsPanel() {
     }
   }
 
-  const onAdd = async () => {
-    const path = addPath.trim()
-    if (!tabId || !path) return
+  const bulkToggle = async (enabled: boolean) => {
+    if (!tabId || busyName) return
+    const targets = skills.filter((s) => s.enabled !== enabled)
+    if (targets.length === 0) return
+    setBusyName('__bulk__')
+    try {
+      let last: SkillInfoDto[] | undefined
+      for (const sk of targets) {
+        const resp = await toggleSkill(tabId, sk.name, enabled, cwd || '.')
+        last = resp?.skills
+      }
+      if (!applyOfficial(last)) await load()
+      pushToast(enabled ? `已启用 ${targets.length} 个技能` : `已停用 ${targets.length} 个技能`, 'success')
+    } catch (e) {
+      pushToast(String(e), 'error')
+      await load()
+    } finally {
+      setBusyName('')
+    }
+  }
+
+  const submitAdd = async (path: string) => {
+    const trimmed = path.trim()
+    if (!tabId || !trimmed) return
+    if (!isSkillAddPath(trimmed)) {
+      pushToast('请选择技能文件夹，或名为 SKILL.md 的文件', 'error')
+      return
+    }
     setBusyName('__add__')
     try {
-      const resp = await addSkill(tabId, path, cwd || '.')
+      const resp = await addSkill(tabId, trimmed, cwd || '.')
       if (!applyOfficial(resp?.skills)) await load()
       setAddPath('')
-      pushToast(resp?.message || `已添加 ${path}`, 'success')
+      pushToast(resp?.message || `已添加 ${trimmed}`, 'success')
     } catch (e) {
       pushToast(String(e), 'error')
     } finally {
       setBusyName('')
+    }
+  }
+
+  const pickSkillFolder = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({
+        directory: true,
+        title: '选择技能文件夹（内含 SKILL.md）',
+      })
+      if (typeof selected === 'string') await submitAdd(selected)
+    } catch (e) {
+      pushToast(String(e), 'error')
+    }
+  }
+
+  const pickSkillFile = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({
+        multiple: false,
+        title: '选择 SKILL.md',
+        filters: [{ name: 'SKILL.md', extensions: ['md'] }],
+      })
+      if (typeof selected === 'string') await submitAdd(selected)
+    } catch (e) {
+      pushToast(String(e), 'error')
     }
   }
 
@@ -280,11 +230,37 @@ export function SkillsPanel() {
     try {
       const resp = await removeSkill(tabId, sk.path, cwd || '.')
       if (!applyOfficial(resp?.skills)) await load()
+      if (previewName === sk.name) {
+        setPreviewName('')
+        setPreviewBody('')
+      }
       pushToast(resp?.message || `已移除 ${sk.path}`, 'success')
     } catch (e) {
       pushToast(String(e), 'error')
     } finally {
       setBusyName('')
+    }
+  }
+
+  const togglePreview = async (sk: SkillRow) => {
+    if (previewName === sk.name) {
+      setPreviewName('')
+      setPreviewBody('')
+      setPreviewError('')
+      return
+    }
+    setPreviewName(sk.name)
+    setPreviewBody('')
+    setPreviewError('')
+    if (!sk.path) {
+      setPreviewError('没有 SKILL.md 路径')
+      return
+    }
+    try {
+      const text = await readFileText(sk.path)
+      setPreviewBody(skillPreviewBody(String(text || '')))
+    } catch (e) {
+      setPreviewError(String(e))
     }
   }
 
@@ -295,12 +271,24 @@ export function SkillsPanel() {
           <div className="skills-panel-titles">
             <h2 className="skills-panel-title">技能</h2>
             <p className="skills-panel-desc">
-              可复用的提示包。启用/停用走官方 <code>x.ai/skills/toggle</code>；
-              添加路径写入配置后重新发现。
+              可复用的提示包。启用后模型用 <code>skill</code> 工具按需加载全文；
+              你也可以在对话里输入 <code>/名称</code>。停用走官方{' '}
+              <code>x.ai/skills/toggle</code>。
             </p>
           </div>
           <div className="skills-panel-actions">
-            <span className="skills-panel-stats">{skills.length} 个技能</span>
+            <span className="skills-panel-stats">
+              {enabledCount}/{skills.length} 已启用
+            </span>
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={loading || !tabId || busyName === '__bulk__' || skills.length === 0}
+              onClick={() => void bulkToggle(enabledCount < skills.length)}
+              title={enabledCount < skills.length ? '全部启用' : '全部停用'}
+            >
+              {enabledCount < skills.length ? '全部启用' : '全部停用'}
+            </button>
             <button
               type="button"
               className="skills-btn"
@@ -322,47 +310,75 @@ export function SkillsPanel() {
           />
         </div>
         <div className="skills-add-row">
+          <button
+            type="button"
+            className="skills-btn primary"
+            disabled={busyName === '__add__' || !tabId}
+            onClick={() => void pickSkillFolder()}
+          >
+            选文件夹
+          </button>
+          <button
+            type="button"
+            className="skills-btn"
+            disabled={busyName === '__add__' || !tabId}
+            onClick={() => void pickSkillFile()}
+          >
+            选 SKILL.md
+          </button>
           <input
             className="skills-search"
             type="text"
             value={addPath}
             onChange={(e) => setAddPath(e.target.value)}
-            placeholder="添加技能路径，如 .grok/skills/foo 或 ~/.grok/skills/foo"
+            placeholder="或粘贴路径：.grok/skills/foo"
             onKeyDown={(e) => {
-              if (e.key === 'Enter') void onAdd()
+              if (e.key === 'Enter') void submitAdd(addPath)
             }}
           />
           <button
             type="button"
-            className="skills-btn primary"
+            className="skills-btn"
             disabled={!addPath.trim() || busyName === '__add__' || !tabId}
-            onClick={() => void onAdd()}
+            onClick={() => void submitAdd(addPath)}
           >
             添加
           </button>
         </div>
 
-        {scopesPresent.length > 0 ? (
-          <div className="skills-scope-row">
+        <div className="skills-scope-row">
+          <button
+            type="button"
+            className={`skills-scope-chip${enabledFilter === 'all' ? ' is-active' : ''}`}
+            onClick={() => setEnabledFilter('all')}
+          >
+            全部
+          </button>
+          <button
+            type="button"
+            className={`skills-scope-chip${enabledFilter === 'on' ? ' is-active' : ''}`}
+            onClick={() => setEnabledFilter('on')}
+          >
+            已启用
+          </button>
+          <button
+            type="button"
+            className={`skills-scope-chip${enabledFilter === 'off' ? ' is-active' : ''}`}
+            onClick={() => setEnabledFilter('off')}
+          >
+            已停用
+          </button>
+          {scopesPresent.map((s) => (
             <button
+              key={s}
               type="button"
-              className={`skills-scope-chip${scopeFilter === 'all' ? ' is-active' : ''}`}
-              onClick={() => setScopeFilter('all')}
+              className={`skills-scope-chip${scopeFilter === s ? ' is-active' : ''}`}
+              onClick={() => setScopeFilter(scopeFilter === s ? 'all' : s)}
             >
-              全部
+              {SKILL_SCOPE_LABEL[s] || s}
             </button>
-            {scopesPresent.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`skills-scope-chip${scopeFilter === s ? ' is-active' : ''}`}
-                onClick={() => setScopeFilter(s)}
-              >
-                {SCOPE_LABEL[s] || s}
-              </button>
-            ))}
-          </div>
-        ) : null}
+          ))}
+        </div>
 
         {error ? (
           <div className="skills-error" role="alert">
@@ -379,16 +395,21 @@ export function SkillsPanel() {
           <div className="skills-empty">加载中…</div>
         ) : filtered.length === 0 ? (
           <div className="skills-empty">
-            {skills.length === 0
-              ? '当前未发现技能。在 .grok/skills/<名称>/SKILL.md 中配置后点刷新；frontmatter 的 description 会显示为「用途」。'
-              : '没有匹配的技能。'}
+            {skills.length === 0 ? (
+              <>
+                当前未发现技能。把 <code>SKILL.md</code> 放到{' '}
+                <code>.grok/skills/名称/</code> 后点刷新，或用「选文件夹」加入自定义路径。
+              </>
+            ) : (
+              '没有匹配的技能。'
+            )}
           </div>
         ) : (
           <div className="skills-groups">
             {grouped.map(({ scope, items }) => (
               <section key={scope} className="skills-group">
                 <h3 className="skills-group-title">
-                  {SCOPE_LABEL[scope] || scope}
+                  {SKILL_SCOPE_LABEL[scope] || scope}
                   <span className="skills-group-count">{items.length}</span>
                 </h3>
                 <ul className="skills-list">
@@ -407,21 +428,32 @@ export function SkillsPanel() {
                             <span className="zh-label">{zhCommandLabel(sk.name)}</span>
                           ) : null}
                           <span className={`skills-pill scope-${sk.scope}`}>
-                            {SCOPE_LABEL[sk.scope] || sk.scope}
+                            {SKILL_SCOPE_LABEL[sk.scope] || sk.scope}
                           </span>
                           {sk.plugin ? (
                             <span className="skills-pill">
                               plugin:{sk.plugin}
                             </span>
                           ) : null}
+                          {!sk.enabled ? (
+                            <span className="skills-pill is-off">已停用</span>
+                          ) : null}
+                          {!sk.userInvocable ? (
+                            <span className="skills-pill">仅模型</span>
+                          ) : null}
+                          {sk.disableModelInvocation ? (
+                            <span className="skills-pill">仅斜杠</span>
+                          ) : null}
                         </div>
-                        {/* 用途：该技能是干什么的（来自 SKILL.md description） */}
                         <p className="skills-card-purpose">
                           <span className="skills-card-purpose-label">用途</span>
                           <span className="skills-card-purpose-text">
                             {zhCommandPurpose(sk.name) ?? sk.description}
                           </span>
                         </p>
+                        {sk.whenToUse ? (
+                          <p className="skills-card-hint">何时用：{sk.whenToUse}</p>
+                        ) : null}
                         <div className="skills-card-path" title={sk.path}>
                           {sk.path}
                         </div>
@@ -430,17 +462,38 @@ export function SkillsPanel() {
                             参数：{sk.argumentHint}
                           </div>
                         ) : null}
+                        {sk.allowedTools && sk.allowedTools.length > 0 ? (
+                          <div className="skills-card-hint">
+                            允许工具：{sk.allowedTools.join(', ')}
+                          </div>
+                        ) : null}
+                        {previewName === sk.name ? (
+                          previewError ? (
+                            <div className="skills-card-hint">{previewError}</div>
+                          ) : previewBody ? (
+                            <pre className="skills-code">{previewBody}</pre>
+                          ) : (
+                            <div className="skills-card-hint">读取 SKILL.md…</div>
+                          )
+                        ) : null}
                       </div>
                       <div className="skills-card-ops">
                         <button
                           type="button"
                           className="skills-btn ghost"
-                          disabled={busyName === sk.name}
+                          disabled={busyName === sk.name || busyName === '__bulk__'}
                           onClick={() => void onToggle(sk)}
                         >
                           {sk.enabled ? '停用' : '启用'}
                         </button>
-                        {sk.scope === 'user' ? (
+                        <button
+                          type="button"
+                          className="skills-btn ghost"
+                          onClick={() => void togglePreview(sk)}
+                        >
+                          {previewName === sk.name ? '收起' : '预览'}
+                        </button>
+                        {sk.removable ? (
                           <button
                             type="button"
                             className="skills-btn ghost"
@@ -457,14 +510,16 @@ export function SkillsPanel() {
                         >
                           复制
                         </button>
-                        <button
-                          type="button"
-                          className="skills-btn primary"
-                          onClick={() => fillInChat(sk.name, sk.argumentHint)}
-                          title="填入输入框并回到对话"
-                        >
-                          使用
-                        </button>
+                        {sk.userInvocable && sk.enabled ? (
+                          <button
+                            type="button"
+                            className="skills-btn primary"
+                            onClick={() => fillInChat(sk)}
+                            title="填入输入框并回到对话"
+                          >
+                            使用
+                          </button>
+                        ) : null}
                       </div>
                     </li>
                   ))}

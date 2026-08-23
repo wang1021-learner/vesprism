@@ -246,6 +246,24 @@
   border-color: var(--border-strong-solid);
 }
 
+.tools-card.is-disabled {
+  opacity: 0.78;
+}
+
+.tools-pill.is-off {
+  color: #b91c1c;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.tools-card-ops {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
 .tools-card-main {
   flex: 1;
   min-width: 0;

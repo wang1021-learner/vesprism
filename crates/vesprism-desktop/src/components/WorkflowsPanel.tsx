@@ -7,10 +7,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   $activeTabId,
   $composerInput,
+  $sessionPhase,
   $utilityKind,
+  $workflows,
   patchActiveTab,
   pushToast,
 } from '../store'
+import { sendEngineSlash, openSessionSchedule } from '../lib/engineSlash'
 import {
   listRunningSubagents,
   listSessionCommands,
@@ -26,6 +29,8 @@ import {
 
 export function WorkflowsPanel() {
   const tabId = useStore($activeTabId)
+  const live = useStore($workflows)
+  const ready = useStore($sessionPhase) === 'ready'
   const [rows, setRows] = useState<WorkflowRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -166,6 +171,75 @@ export function WorkflowsPanel() {
             </button>
           </div>
         </header>
+
+        {Object.keys(live).length > 0 && (
+          <div className="workflows-running" role="status">
+            <strong>正在跑</strong>
+            <ul>
+              {Object.values(live).map((w) => (
+                <li key={w.runId} style={{ marginBottom: 6 }}>
+                  <div>
+                    {w.name || w.runId} · {w.status}
+                    {w.currentPhase ? ` · ${w.currentPhase}` : ''}
+                  </div>
+                  <div className="work-panel-actions" style={{ marginTop: 4 }}>
+                    {w.status === 'paused' ? (
+                      <button
+                        type="button"
+                        className="workflows-btn"
+                        disabled={!ready}
+                        onClick={() =>
+                          void sendEngineSlash(`/workflow resume ${w.name}`).then(() =>
+                            pushToast('已继续工作流', 'success'),
+                          )
+                        }
+                      >
+                        继续
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="workflows-btn"
+                        disabled={!ready}
+                        onClick={() =>
+                          void sendEngineSlash(`/workflow pause ${w.name}`).then(() =>
+                            pushToast('已暂停工作流', 'success'),
+                          )
+                        }
+                      >
+                        暂停
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="workflows-btn"
+                      disabled={!ready}
+                      onClick={() =>
+                        void sendEngineSlash(`/workflow stop ${w.name}`).then(() =>
+                          pushToast('已停止工作流', 'success'),
+                        )
+                      }
+                    >
+                      停止
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="work-panel-desc" style={{ marginBottom: 12 }}>
+          按间隔反复跑同一条指令是「定时任务」，挂在当前对话上。
+          <button
+            type="button"
+            className="workflows-btn"
+            style={{ marginLeft: 8 }}
+            onClick={() => openSessionSchedule()}
+          >
+            打开定时任务
+          </button>
+        </div>
 
         {running.length > 0 && (
           <div className="workflows-running" role="status">
