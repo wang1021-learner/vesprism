@@ -3,6 +3,7 @@ export const RF_RUNTIME_KEYS = [
   'nodeType',
   'execStatus',
   'execDuration',
+  'diffGlow',
   'onRunFromHere',
   'onDuplicate',
   'onDeleteNode',

@@ -75,6 +75,8 @@ pub struct FlowListItem {
     pub published: bool,
     pub draft: bool,
     pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub preset_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +310,45 @@ fn collect_deps_from_nodes(nodes: &Value) -> Vec<String> {
     }
     deps.sort();
     deps
+}
+
+fn collect_preset_ids_from_nodes(nodes: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    let Some(arr) = nodes.as_array() else {
+        return ids;
+    };
+    for n in arr {
+        let id = n
+            .get("params")
+            .and_then(|p| p.get("presetId").or_else(|| p.get("preset_id")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if !id.is_empty() && !ids.iter().any(|d| d == id) {
+            ids.push(id.to_string());
+        }
+    }
+    ids.sort();
+    ids
+}
+
+fn merge_sorted_unique(mut a: Vec<String>, b: Vec<String>) -> Vec<String> {
+    for id in b {
+        if !a.iter().any(|d| d == &id) {
+            a.push(id);
+        }
+    }
+    a.sort();
+    a
+}
+
+fn load_package_graph_nodes(id: &str) -> Value {
+    let p = package_dir(id).join("graph.json");
+    fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.get("nodes").cloned())
+        .unwrap_or(Value::Null)
 }
 
 /// 从代办节点命令取第一个词当命令名（`cargo test` → `cargo`，`npm run x` → `npm`）。
@@ -648,6 +689,7 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
             if !is_valid_flow_id(&id) {
                 continue;
             }
+            let nodes = v.get("nodes").unwrap_or(&Value::Null);
             map.insert(
                 id.clone(),
                 FlowListItem {
@@ -669,7 +711,8 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
                         .to_string(),
                     published: false,
                     draft: true,
-                    dependencies: collect_deps_from_nodes(v.get("nodes").unwrap_or(&Value::Null)),
+                    dependencies: collect_deps_from_nodes(nodes),
+                    preset_ids: collect_preset_ids_from_nodes(nodes),
                 },
             );
         }
@@ -688,6 +731,7 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
             let Some(meta) = load_package_meta(id) else {
                 continue;
             };
+            let graph_presets = collect_preset_ids_from_nodes(&load_package_graph_nodes(&meta.id));
             let e = map.entry(meta.id.clone()).or_insert(FlowListItem {
                 id: meta.id.clone(),
                 name: meta.name.clone(),
@@ -696,6 +740,7 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
                 published: true,
                 draft: false,
                 dependencies: meta.dependencies.clone(),
+                preset_ids: graph_presets.clone(),
             });
             e.published = true;
             e.version = meta.version;
@@ -708,6 +753,7 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
             if e.dependencies.is_empty() {
                 e.dependencies = meta.dependencies;
             }
+            e.preset_ids = merge_sorted_unique(e.preset_ids.clone(), graph_presets);
         }
     }
     if packages_dir().is_dir() {
@@ -719,6 +765,7 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
             let Some(meta) = load_package_meta(&ent.file_name().to_string_lossy()) else {
                 continue;
             };
+            let graph_presets = collect_preset_ids_from_nodes(&load_package_graph_nodes(&meta.id));
             map.entry(meta.id.clone()).or_insert(FlowListItem {
                 id: meta.id,
                 name: meta.name,
@@ -727,6 +774,7 @@ pub fn list_flows() -> Result<Vec<FlowListItem>, String> {
                 published: true,
                 draft: false,
                 dependencies: meta.dependencies,
+                preset_ids: graph_presets,
             });
         }
     }
@@ -1179,5 +1227,19 @@ mod tests {
     fn test_slug_keep_both() {
         assert_eq!(slug_keep_both("my_flow-v1.0"), "my-flow-v1-0");
         assert_eq!(slug_keep_both("demo--test"), "demo-test");
+    }
+
+    #[test]
+    fn collect_preset_ids_from_agent_nodes() {
+        let nodes = serde_json::json!([
+            {"id":"a","type":"agent","params":{"presetId":"pr-reviewer"}},
+            {"id":"b","type":"agent","params":{"preset_id":"audit"}},
+            {"id":"c","type":"tool","params":{}},
+            {"id":"d","type":"agent","params":{"presetId":"pr-reviewer"}}
+        ]);
+        assert_eq!(
+            collect_preset_ids_from_nodes(&nodes),
+            vec!["audit".to_string(), "pr-reviewer".to_string()]
+        );
     }
 }

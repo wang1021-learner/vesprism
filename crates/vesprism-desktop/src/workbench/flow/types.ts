@@ -250,6 +250,8 @@ export interface FlowListItem {
   published: boolean
   draft: boolean
   dependencies: string[]
+  /** 节点里引用的编制 id；列表扫描用，避免逐条 getFlow。 */
+  preset_ids?: string[]
 }
 
 export interface FlowRecord extends FlowListItem {

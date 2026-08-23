@@ -7,6 +7,7 @@ describe('stripRfRuntime', () => {
       nodeType: 'agent',
       execStatus: 'done',
       execDuration: 1200,
+      diffGlow: 'add',
       onRunFromHere: () => {},
       onDuplicate: () => {},
       onDeleteNode: () => {},
@@ -21,6 +22,7 @@ describe('stripRfRuntime', () => {
       isolation: false,
     })
     expect(params).not.toHaveProperty('execStatus')
+    expect(params).not.toHaveProperty('diffGlow')
     expect(params).not.toHaveProperty('onRunFromHere')
   })
 })
