@@ -8,6 +8,8 @@ describe('writingToolLabel', () => {
     expect(writingToolLabel('run_terminal_command')).toBe('正在写命令')
     expect(writingToolLabel('todo_write')).toBe('正在更新任务清单')
     expect(writingToolLabel('ask_user_question')).toBe('正在准备问题')
+    expect(writingToolLabel('exit_plan_mode')).toBe('正在准备计划稿')
+    expect(writingToolLabel('skill')).toBe('正在加载技能')
   })
 
   it('wire 对不上时回退 kind', () => {

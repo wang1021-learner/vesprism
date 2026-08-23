@@ -22,6 +22,9 @@ export interface MemberRow {
   durationMs: number
   childSessionId?: string
   output?: string
+  turnCount?: number
+  toolCallCount?: number
+  toolsUsed?: string[]
   /** 官方能力档字符串（read-only/read-write/execute/all），Dock 徽标用 */
   capabilityMode?: string
   /** 是否隔离 worktree，Dock 徽标用 */
@@ -120,9 +123,12 @@ function memberFromAgent(
     model: a.model ?? sub?.model ?? null,
     state: a.state,
     tokensUsed: a.tokensUsed,
-    durationMs: a.durationMs,
+    durationMs: sub?.durationMs ?? a.durationMs,
     childSessionId: child || undefined,
     output,
+    turnCount: sub?.turnCount,
+    toolCallCount: sub?.toolCallCount,
+    toolsUsed: sub?.toolsUsed,
     capabilityMode: a.capabilityMode ?? undefined,
     isolation: a.isolationWorktree ?? undefined,
   }
@@ -140,6 +146,9 @@ function memberFromSubagent(s: SubagentRuntime): MemberRow {
     durationMs: s.durationMs ?? 0,
     childSessionId: child || undefined,
     output: s.output || undefined,
+    turnCount: s.turnCount,
+    toolCallCount: s.toolCallCount,
+    toolsUsed: s.toolsUsed,
   }
 }
 
@@ -228,8 +237,7 @@ function buildOrphanTree(orphans: SubagentRuntime[]): RunTree {
 
 /**
  * 每条 workflow 一棵树。agents 认领过的 id 不再进散装桶。
- * 有 run 时，没被认领的 spawn_subagent 合成「派生子代理」。
- * 没有 workflow 时返回空（顶栏目录兜底）。
+ * 没被认领的 spawn_subagent（含没有 workflow 时）合成「派生子代理」。
  */
 export function buildRunForest(
   workflows: WorkflowInfoDto[],

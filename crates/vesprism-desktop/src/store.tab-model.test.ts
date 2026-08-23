@@ -32,6 +32,7 @@ import {
   switchTab,
   tabWorkspaceCwd,
   $preferredWorkspaceCwd,
+  $registeredProjects,
 } from './store'
 import type { ModelInfo } from './types'
 
@@ -50,6 +51,8 @@ const modelA: ModelInfo = {
   top_p: null,
   max_completion_tokens: null,
   extra_headers: {},
+  query_params: {},
+  env_http_headers: {},
   max_retries: 0,
   inference_idle_timeout_secs: 0,
   stream_tool_calls: null,
@@ -83,6 +86,7 @@ beforeEach(() => {
   $preferredWorkspaceCwd.set('')
   $workspaceCwd.set('')
   $workspaceOptions.set([])
+  $registeredProjects.set([])
 })
 
 describe('Tab 模型分片', () => {

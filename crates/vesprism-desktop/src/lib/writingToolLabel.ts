@@ -20,6 +20,9 @@ const WRITING_BY_WIRE: Record<string, string> = {
   image_to_video: '正在写视频提示',
   reference_to_video: '正在写视频提示',
   ask_user_question: '正在准备问题',
+  enter_plan_mode: '正在进入计划模式',
+  exit_plan_mode: '正在准备计划稿',
+  skill: '正在加载技能',
 }
 
 const WRITING_BY_KIND: Record<string, string> = {
@@ -31,6 +34,8 @@ const WRITING_BY_KIND: Record<string, string> = {
   image_gen: '正在写图像提示',
   image_to_video: '正在写视频提示',
   ask_user: '正在准备问题',
+  plan_mode: '正在准备计划稿',
+  skill: '正在加载技能',
 }
 
 function norm(s: string): string {

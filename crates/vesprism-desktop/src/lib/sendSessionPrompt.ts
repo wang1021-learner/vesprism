@@ -12,6 +12,7 @@ import {
 } from '../store'
 import { interjectPrompt, sendPrompt, type PromptAttach } from '../bridge'
 import { generateId } from './generateId'
+import { markPlanActivatedOnSend } from './planMode'
 import { removeUserMessageByPromptId } from './sessionTranscript'
 
 export type SendSessionPromptOpts = {
@@ -40,6 +41,7 @@ export async function sendSessionPrompt(
     : msg
   const wire = (opts.wireText ?? msg).trim() || display
   const tabId = $activeTabId.get()
+  if (!opts.hidden) markPlanActivatedOnSend(tabId)
   if (opts.hidden) {
     if (!wire) return null
     try {

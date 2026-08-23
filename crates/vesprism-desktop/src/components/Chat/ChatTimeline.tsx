@@ -6,7 +6,7 @@ import type { ChatMessage } from '../../types'
 const MIN_ENTRIES = 2
 const HOVER_CLOSE_MS = 140
 
-type EntryKind = 'user' | 'ask_user'
+type EntryKind = 'user' | 'ask_user' | 'plan'
 
 interface TimelineEntry {
   id: string
@@ -50,6 +50,24 @@ function buildEntries(messages: ChatMessage[]): TimelineEntry[] {
           awaiting ? `待回答 · ${raw}` : `已回答 · ${raw}`,
         ),
         kind: 'ask_user',
+        awaiting,
+      })
+      continue
+    }
+    if (msg.role === 'tool' && msg.toolCall?.kind === 'plan_mode') {
+      const tc = msg.toolCall
+      const awaiting =
+        tc.status === 'pending' || tc.status === 'in_progress'
+      const raw =
+        (awaiting ? tc.detail || tc.title : tc.preview || tc.detail || tc.title) ||
+        '计划稿'
+      list.push({
+        id: msg.id,
+        index: i,
+        preview: timelinePreview(
+          awaiting ? `待审批 · ${raw}` : `计划稿 · ${raw}`,
+        ),
+        kind: 'plan',
         awaiting,
       })
     }
@@ -184,6 +202,19 @@ export const ChatTimeline = memo(function ChatTimeline({
           }, 120)
         }
       }
+      if (entry.kind === 'plan') {
+        const msg = messages[entry.index]
+        const toolCallId = msg?.toolCallId || msg?.toolCall?.toolCallId
+        if (toolCallId) {
+          window.setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent('jike:focus-plan', {
+                detail: { toolCallId },
+              }),
+            )
+          }, 120)
+        }
+      }
     },
     [messages, virtualizer],
   )
@@ -216,6 +247,7 @@ export const ChatTimeline = memo(function ChatTimeline({
                 'chat-timeline-tick-mark',
                 idx === activeIndex ? 'is-active' : '',
                 entry.kind === 'ask_user' ? 'is-ask-user' : '',
+                entry.kind === 'plan' ? 'is-plan' : '',
                 entry.awaiting ? 'is-awaiting' : '',
               ]
                 .filter(Boolean)
@@ -236,6 +268,7 @@ export const ChatTimeline = memo(function ChatTimeline({
                 'chat-timeline-row',
                 idx === activeIndex ? 'is-active' : '',
                 entry.kind === 'ask_user' ? 'is-ask-user' : '',
+                entry.kind === 'plan' ? 'is-plan' : '',
                 entry.awaiting ? 'is-awaiting' : '',
               ]
                 .filter(Boolean)
@@ -248,6 +281,10 @@ export const ChatTimeline = memo(function ChatTimeline({
               {entry.kind === 'ask_user' ? (
                 <span className="chat-timeline-row-kind" aria-hidden>
                   ?
+                </span>
+              ) : entry.kind === 'plan' ? (
+                <span className="chat-timeline-row-kind" aria-hidden>
+                  P
                 </span>
               ) : null}
               <span className="chat-timeline-row-text">{entry.preview}</span>

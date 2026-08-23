@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   memo,
@@ -11,8 +12,17 @@ import { useStickToBottom } from 'use-stick-to-bottom'
 import { useStore } from '@nanostores/react'
 import type { ChatMessage, PermissionRequest } from '../../types'
 import { $activeChatId, $sessionPhase } from '../../store'
+import {
+  canRetryAssistant,
+  lastAssistantId,
+  stickyUserIndex,
+  stickyUserPreview,
+} from '../../lib/userMessage'
 import { MessageItem } from './MessageItem'
 import { ChatTimeline } from './ChatTimeline'
+
+/** 助手 hover 操作栏占位：估高宁高勿低，避免贴底时实测把内容上顶 */
+const ASSISTANT_ACTIONS_RESERVE = 28
 
 
 /** 默认行间距（turn 级）；scaffold / user 另见 gapBefore */
@@ -60,6 +70,7 @@ interface MessageListProps {
   streaming: boolean
   permission: PermissionRequest | null
   onFocusUserQuestion?: (toolCallId: string) => void
+  onFocusPlan?: (toolCallId: string) => void
 }
 
 function DownArrowIcon() {
@@ -113,7 +124,7 @@ function estimateMessageHeight(msg: ChatMessage | undefined): number {
       const lines = Math.min(live ? 120 : 40, Math.ceil(len / EST_CHARS_PER_LINE) || 1)
       const cap = live ? 2400 : 640
       const lineH = live ? STREAM_LINE_HEIGHT : 18
-      return Math.min(cap, 56 + lines * lineH) + ROW_GAP
+      return Math.min(cap, 56 + ASSISTANT_ACTIONS_RESERVE + lines * lineH) + ROW_GAP
     }
     default:
       return DEFAULT_ESTIMATE + ROW_GAP
@@ -140,6 +151,7 @@ export const MessageList = memo(function MessageList({
   streaming,
   permission,
   onFocusUserQuestion,
+  onFocusPlan,
 }: MessageListProps) {
   const phase = useStore($sessionPhase)
   const activeChatId = useStore($activeChatId)
@@ -347,6 +359,50 @@ export const MessageList = memo(function MessageList({
     virtualizer.scrollToIndex(count - 1, { align: 'end', behavior: 'smooth' })
   }, [virtualizer, count])
 
+  const latestAssistantId = useMemo(() => lastAssistantId(messages), [messages])
+
+  const [pinnedUserIdx, setPinnedUserIdx] = useState(-1)
+  useEffect(() => {
+    const el = viewportElRef.current
+    if (!el) {
+      setPinnedUserIdx(-1)
+      return
+    }
+    let raf = 0
+    const compute = () => {
+      raf = 0
+      // range.startIndex 是真实可见首条，不含 overscan（getVirtualItems()[0] 会偏上）
+      const start = virtualizer.range?.startIndex ?? 0
+      const next = stickyUserIndex(messagesRef.current, start)
+      setPinnedUserIdx((prev) => (prev === next ? prev : next))
+    }
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(compute)
+    }
+    compute()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [virtualizer, chatKey, count])
+
+  const pinnedUser =
+    pinnedUserIdx >= 0 && messages[pinnedUserIdx]?.role === 'user'
+      ? messages[pinnedUserIdx]
+      : undefined
+  const pinnedPreview = pinnedUser
+    ? stickyUserPreview(pinnedUser.text || '')
+    : ''
+
+  const jumpToPinnedUser = useCallback(() => {
+    if (pinnedUserIdx < 0) return
+    virtualizer.scrollToIndex(pinnedUserIdx, {
+      align: 'start',
+      behavior: 'smooth',
+    })
+  }, [pinnedUserIdx, virtualizer])
+
   if (loadingHistory && messages.length === 0) {
     return (
       <div className="chat-viewport-wrapper" ref={wrapperRef}>
@@ -384,9 +440,28 @@ export const MessageList = memo(function MessageList({
 
   const virtualItems = virtualizer.getVirtualItems()
   const showJump = !isAtBottom && scrollReady
+  const retryAssistantId =
+    streaming || !latestAssistantId
+      ? ''
+      : canRetryAssistant(messages, latestAssistantId, false)
+        ? latestAssistantId
+        : ''
 
   return (
     <div className="chat-viewport-wrapper" ref={wrapperRef}>
+      {scrollReady && pinnedUser && pinnedPreview ? (
+        <div className="sticky-user-overlay">
+          <button
+            type="button"
+            className="sticky-user-chip"
+            title={pinnedUser.text}
+            onClick={jumpToPinnedUser}
+          >
+            <span className="sticky-user-kicker">提问</span>
+            <span className="sticky-user-text">{pinnedPreview}</span>
+          </button>
+        </div>
+      ) : null}
       <div
         className={
           'chat-viewport chat-viewport-virtual' +
@@ -437,7 +512,10 @@ export const MessageList = memo(function MessageList({
                 <MessageItem
                   message={msg}
                   streaming={isLive}
+                  sessionBusy={streaming}
+                  canRetry={msg.role === 'assistant' && msg.id === retryAssistantId}
                   onFocusUserQuestion={onFocusUserQuestion}
+                  onFocusPlan={onFocusPlan}
                   isPermissionOrigin={
                     msg.role === 'tool' && msg.toolCallId === permissionOriginId
                   }

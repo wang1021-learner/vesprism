@@ -32,8 +32,8 @@ export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[]
   { type: 'end', label: '终点', hint: '定义流程输出' },
 ]
 
-const COL_W = 240
-const ROW_H = 140
+const COL_W = 380
+const ROW_H = 220
 
 export function createNodeId(type: FlowNodeType): string {
   const rand = Math.random().toString(36).slice(2, 8)
@@ -200,21 +200,27 @@ export function collectDependencies(nodes: FlowGraphNode[]): string[] {
   return Array.from(ids).sort()
 }
 
-/** 按拓扑分层自动排坐标（AI 生成图 / 导入无坐标时使用） */
+/** 按思维导图树状拓扑分层自动排坐标（宽裕间距、分支居中、消除拥挤） */
 export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
+  if (!graph.nodes.length) return []
+
   const outgoing = new Map<string, string[]>()
   const incoming = new Map<string, string[]>()
   const indeg = new Map<string, number>()
+
   for (const n of graph.nodes) {
     outgoing.set(n.id, [])
     incoming.set(n.id, [])
     indeg.set(n.id, 0)
   }
+
   for (const e of graph.edges) {
     outgoing.get(e.from)?.push(e.to)
     incoming.get(e.to)?.push(e.from)
     indeg.set(e.to, (indeg.get(e.to) ?? 0) + 1)
   }
+
+  // 1. 拓扑分层 (Longest-path layering)
   const layer = new Map<string, number>()
   const queue: string[] = []
   for (const n of graph.nodes) {
@@ -223,6 +229,7 @@ export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
       layer.set(n.id, 0)
     }
   }
+
   while (queue.length) {
     const id = queue.shift()!
     const d = layer.get(id) ?? 0
@@ -234,11 +241,14 @@ export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
       if (left === 0) queue.push(nxt)
     }
   }
+
   for (const n of graph.nodes) {
     if (!layer.has(n.id)) {
       layer.set(n.id, 0)
     }
   }
+
+  // 2. 按层分组
   const buckets = new Map<number, string[]>()
   for (const n of graph.nodes) {
     const L = layer.get(n.id) ?? 0
@@ -246,23 +256,108 @@ export function layoutGraph(graph: FlowGraphJson): FlowGraphNode[] {
     list.push(n.id)
     buckets.set(L, list)
   }
-  const maxLayerSize = Math.max(...Array.from(buckets.values()).map((l) => l.length), 1)
-  const pos = new Map<string, { x: number; y: number }>()
+
   const sortedLayers = Array.from(buckets.keys()).sort((a, b) => a - b)
+  const pos = new Map<string, { x: number; y: number }>()
+
+  // 3. 自左向右初排：按照父节点相对位置做重心排序并给初值
   for (const L of sortedLayers) {
     const ids = buckets.get(L)!
-    const layerOffset = ((maxLayerSize - ids.length) * ROW_H) / 2
+    if (L > 0) {
+      // 重心排序：按上游节点的平均 Y 坐标排序，减少连线交叉
+      ids.sort((a, b) => {
+        const parentsA = incoming.get(a) ?? []
+        const parentsB = incoming.get(b) ?? []
+        const avgYA = parentsA.length
+          ? parentsA.reduce((sum, p) => sum + (pos.get(p)?.y ?? 0), 0) / parentsA.length
+          : 0
+        const avgYB = parentsB.length
+          ? parentsB.reduce((sum, p) => sum + (pos.get(p)?.y ?? 0), 0) / parentsB.length
+          : 0
+        return avgYA - avgYB
+      })
+    }
+
+    // 初步分配 Y 坐标
+    let prevY = -Infinity
     ids.forEach((id, i) => {
+      const parents = incoming.get(id) ?? []
+      let targetY: number
+      if (parents.length > 0) {
+        // 父节点平均中心
+        targetY = parents.reduce((sum, p) => sum + (pos.get(p)?.y ?? 0), 0) / parents.length
+      } else {
+        targetY = 100 + i * ROW_H
+      }
+
+      // 保证同一列内不重叠，保留至少 ROW_H 的安全间距
+      if (targetY < prevY + ROW_H) {
+        targetY = prevY === -Infinity ? 100 : prevY + ROW_H
+      }
+      prevY = targetY
+
       pos.set(id, {
         x: 80 + L * COL_W,
-        y: 80 + layerOffset + i * ROW_H,
+        y: targetY,
       })
     })
   }
-  return graph.nodes.map((n) => ({
-    ...n,
-    position: pos.get(n.id) ?? { x: 80, y: 80 },
-  }))
+
+  // 4. 自右向左反向微调（思维导图树状居中）：让有子节点的父节点对齐子节点垂直中心
+  for (let idx = sortedLayers.length - 1; idx >= 0; idx--) {
+    const L = sortedLayers[idx]
+    const ids = buckets.get(L)!
+    for (const id of ids) {
+      const children = outgoing.get(id) ?? []
+      if (children.length > 0) {
+        const childYs = children.map((c) => pos.get(c)?.y ?? 0)
+        const minY = Math.min(...childYs)
+        const maxY = Math.max(...childYs)
+        const centerY = (minY + maxY) / 2
+        const cur = pos.get(id)!
+        pos.set(id, { ...cur, y: centerY })
+      }
+    }
+
+    // 重新校准同一层内节点，确保不重叠
+    for (let i = 1; i < ids.length; i++) {
+      const prev = pos.get(ids[i - 1])!
+      const cur = pos.get(ids[i])!
+      if (cur.y < prev.y + ROW_H) {
+        pos.set(ids[i], { ...cur, y: prev.y + ROW_H })
+      }
+    }
+  }
+
+  // 5. 正向微调一次（消除反向调整引入的重叠）
+  for (const L of sortedLayers) {
+    const ids = buckets.get(L)!
+    for (let i = 1; i < ids.length; i++) {
+      const prev = pos.get(ids[i - 1])!
+      const cur = pos.get(ids[i])!
+      if (cur.y < prev.y + ROW_H) {
+        pos.set(ids[i], { ...cur, y: prev.y + ROW_H })
+      }
+    }
+  }
+
+  // 6. 坐标平移：确保最小 Y 为 80，最小 X 为 80
+  let minY = Infinity
+  for (const p of pos.values()) {
+    if (p.y < minY) minY = p.y
+  }
+  const shiftY = minY < 80 ? 80 - minY : 0
+
+  return graph.nodes.map((n) => {
+    const p = pos.get(n.id) ?? { x: 80, y: 80 }
+    return {
+      ...n,
+      position: {
+        x: p.x,
+        y: Math.round(p.y + shiftY),
+      },
+    }
+  })
 }
 
 export function layoutDraft(draft: FlowDraft): FlowDraft {

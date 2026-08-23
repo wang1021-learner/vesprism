@@ -180,17 +180,105 @@
   flex-direction: column;
 }
 
+/* 提问钉：不进滚动文档流，不改 list 高度 / 不写 scrollTop */
+.sticky-user-overlay {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 15;
+  width: var(--chat-column-width, 90%);
+  max-width: var(--chat-column-max-width, 48.75rem);
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.sticky-user-chip {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(36rem, 100%);
+  padding: 6px 12px;
+  border: 1px solid var(--border-solid);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+.sticky-user-chip:hover {
+  background: var(--surface-elevated);
+}
+
+.sticky-user-kicker {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.sticky-user-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* 顶部柔和模糊淡出渐变层（避免内容在顶端生硬切断） */
+.chat-viewport-wrapper::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: linear-gradient(
+    to bottom,
+    var(--surface-elevated) 0%,
+    color-mix(in srgb, var(--surface-elevated) 80%, transparent) 45%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 10;
+}
+
 .chat-viewport {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 0 4px;
+  padding: 24px 0 8px;
   display: flex;
   flex-direction: column;
   /* 隐藏系统滚动条；滚轮/触控板仍可滚 */
   scrollbar-width: none;
   -ms-overflow-style: none;
+  /* 顶部渐变遮罩：滚动时文字在顶部柔和消隐 */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.2) 8px,
+    rgba(0, 0, 0, 0.8) 22px,
+    black 32px,
+    black 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    rgba(0, 0, 0, 0.2) 8px,
+    rgba(0, 0, 0, 0.8) 22px,
+    black 32px,
+    black 100%
+  );
 }
 
 .chat-viewport::-webkit-scrollbar {
@@ -489,6 +577,58 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 0;
+}
+
+/* 始终占位（opacity 隐藏），流式结束不要把列表往上拽 */
+.assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 22px;
+  margin-top: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition:
+    opacity var(--duration-fast) var(--ease-out-smooth),
+    transform var(--duration-fast) var(--ease-out-smooth);
+}
+
+.assistant-row:hover .assistant-actions,
+.assistant-row:focus-within .assistant-actions,
+.assistant-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.assistant-actions button {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out-smooth),
+    color var(--duration-fast) var(--ease-out-smooth);
+}
+
+.assistant-actions button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.assistant-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 
@@ -877,6 +1017,22 @@
   opacity: 0.55;
   cursor: default;
 }
+.subagent-inline-open.is-cancel:hover:not(:disabled) {
+  color: var(--danger, #dc2626);
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 45%, var(--border-solid));
+}
+
+/* 进行中一行摘要：固定矮行，不展开孩子全文 */
+.subagent-live-meta {
+  margin: 2px 0 0;
+  max-width: min(36rem, 70vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--conversation-scaffold-meta, var(--text-tertiary));
+}
 .scaffold-glyph.icon-agent {
   color: color-mix(in srgb, #6366f1 70%, var(--text-tertiary));
 }
@@ -986,6 +1142,11 @@
 
 .diff-stat-remove {
   color: #e11d48;
+}
+
+.tool-diff-stack {
+  display: flex;
+  flex-direction: column;
 }
 
 .tool-diff-block+.tool-diff-block {

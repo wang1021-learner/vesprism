@@ -242,6 +242,34 @@ describe('ask_user 工具卡', () => {
     expect(msgs[0].toolCall?.detail).toBe(detailBefore)
   })
 
+  it('exit_plan_mode_request 写入 pending 计划卡', () => {
+    const msgs = applyTranscriptEvent([], {
+      type: 'exit_plan_mode_request',
+      tool_call_id: 'plan_tc',
+      request_id: 4,
+      plan_content: '# 做法',
+    })
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].toolCall?.kind).toBe('plan_mode')
+    expect(msgs[0].toolCall?.status).toBe('pending')
+    expect(msgs[0].toolCall?.detail).toContain('待审批')
+  })
+
+  it('exit_plan_mode_resolved 写结局预览', () => {
+    let msgs: ChatMessage[] = applyTranscriptEvent([], {
+      type: 'exit_plan_mode_request',
+      tool_call_id: 'plan_tc',
+      plan_content: '',
+    })
+    msgs = applyTranscriptEvent(msgs, {
+      type: 'exit_plan_mode_resolved',
+      tool_call_id: 'plan_tc',
+      outcome: 'approved',
+    })
+    expect(msgs[0].toolCall?.status).toBe('completed')
+    expect(msgs[0].toolCall?.preview).toContain('批准')
+  })
+
   it('formatAskUserAnswerPreview 拼接选项', () => {
     expect(
       formatAskUserAnswerPreview('accepted', {

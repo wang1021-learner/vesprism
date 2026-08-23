@@ -22,9 +22,16 @@ import {
   upsertRecentWorkflow,
   bumpGitHeadRevision,
   setBackgroundTask,
+  $mcpPush,
   type QueuedPrompt,
 } from '../store'
-import { loadSession, respondPermission, setCurrentModel, startSession } from '../bridge'
+import {
+  loadSession,
+  respondExitPlanMode,
+  respondPermission,
+  setCurrentModel,
+  startSession,
+} from '../bridge'
 import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './sessionOpen'
 import { applyTranscriptEvent } from './sessionTranscript'
 import { refreshSubagentTabMessages } from './openSubagentTab'
@@ -40,8 +47,10 @@ import {
   pickDeny,
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
+import { applyModeUpdate } from './planMode'
 import { keepTail } from './terminalCards'
 import { cleanSessionTitle } from './sessionTitle'
+import { applyScheduledTask } from './scheduleLoop'
 
 export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) {
   // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
@@ -52,6 +61,21 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
   if (pushTranscriptEvent(ev, tabId)) return
 
   switch (ev.type) {
+    case 'mcp_push': {
+      const method = String(ev.method || '')
+      const raw = ev.payload
+      const payload =
+        raw && typeof raw === 'object' && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : {}
+      $mcpPush.set({
+        tabId,
+        method,
+        payload,
+        seq: Date.now(),
+      })
+      break
+    }
     case 'queue_changed': {
       const server: QueuedPrompt[] = (ev.entries ?? [])
         .filter((e): e is { id: string; version?: number; text?: string; position?: number } =>
@@ -246,6 +270,81 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         })
       }
       break
+    case 'current_mode_update': {
+      const st = getTabState(tabId)
+      const next = applyModeUpdate(ev.mode_id || '', st?.planPhase ?? 'off')
+      const patch: Parameters<typeof patchTab>[1] = { planPhase: next }
+      if (next === 'off' && !st?.planApproval) {
+        patch.planPreviewOpen = false
+      }
+      patchTab(tabId, patch)
+      break
+    }
+    case 'exit_plan_mode_request': {
+      if (getTabState(tabId)?.phase === 'loading') break
+      if (ev.request_id == null) break
+      const prev = getTabState(tabId)?.planApproval
+      if (prev && prev.requestId !== ev.request_id) {
+        void respondExitPlanMode(
+          tabId,
+          prev.requestId,
+          JSON.stringify({ outcome: 'cancelled' }),
+        ).catch(() => {})
+      }
+      const content = typeof ev.plan_content === 'string' ? ev.plan_content : ''
+      const hasPlan = Boolean(content.trim())
+      patchTab(tabId, {
+        planPhase: 'active',
+        planApproval: {
+          requestId: ev.request_id,
+          toolCallId: ev.tool_call_id || `plan_${ev.request_id}`,
+          planContent: content,
+          hasPlan,
+        },
+        planPreviewOpen: true,
+        lastPlanContent: content,
+        lastPlanHasBody: hasPlan,
+        lastPlanToolCallId: ev.tool_call_id || `plan_${ev.request_id}`,
+      })
+      break
+    }
+    case 'memory_files': {
+      const files = (ev.files || []).map((f) => ({
+        path: String(f.path || ''),
+        source: String(f.source || ''),
+        sizeBytes: Number(f.sizeBytes ?? f.size_bytes ?? 0),
+        modifiedEpochSecs: f.modifiedEpochSecs ?? f.modified_epoch_secs ?? null,
+      }))
+      patchTab(tabId, { memoryFiles: files })
+      break
+    }
+    case 'memory_op': {
+      const kind = ev.kind === 'dream' ? '整理' : '写入'
+      const path = (ev.path || '').trim()
+      pushToast(
+        path ? `记忆已${kind} · ${path}` : `记忆${kind}：${ev.result || '完成'}`,
+        'success',
+      )
+      break
+    }
+    case 'scheduled_task': {
+      const prev = getTabState(tabId)?.scheduledTasks ?? []
+      const applied = applyScheduledTask(
+        prev,
+        {
+          op: String(ev.op || ''),
+          taskId: String(ev.task_id || ''),
+          prompt: String(ev.prompt || ''),
+          humanSchedule: String(ev.human_schedule || ''),
+          nextFireAt: ev.next_fire_at ?? null,
+          reason: ev.reason ?? null,
+        },
+        new Date().toISOString(),
+      )
+      patchTab(tabId, { scheduledTasks: applied.list })
+      if (applied.toast) pushToast(applied.toast.text, applied.toast.kind)
+      break
+    }
     case 'subagent_spawned':
       if (ev.subagent_id) {
         upsertSubagent(tabId, {

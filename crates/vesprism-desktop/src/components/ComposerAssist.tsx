@@ -1,28 +1,35 @@
 /**
- * Composer @ / 补全：
- * `/goal` 长程规划前缀 · `/sandbox` 本会话沙箱策略
- * `@` 插入当前工作区文件 / 其它 Tab 标题
+ * Composer / 与 @ 补全：
+ * `/` 官方斜杠目录 + 本地 sandbox/rewind
+ * `@` 工作区文件搜索，选中变成附件芯片
  */
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import {
   $activeTabId,
-  $sessionPolicyOverride,
   $tabs,
-  $workspaceCwd,
+  openRewind,
   getTabState,
-  pushToast,
 } from '../store'
-import { enableTabSandbox, listDir, restartSession } from '../bridge'
+import { listSessionCommands, searchWorkspaceFiles } from '../bridge'
+import { openChatTab } from '../lib/openChatTab'
+import {
+  filterComposerCommands,
+  mergeComposerCommands,
+  parseOfficialCommands,
+  type ComposerCommand,
+} from '../lib/composerCommands'
+import { attachKindFromPath, enableSessionSandbox } from '../lib/sessionSandbox'
+import { openPlanPreview } from '../lib/planMode'
+import { openSessionInsight, openSessionSchedule, sendEngineSlash } from '../lib/engineSlash'
 
-type Item = { id: string; label: string; hint: string; insert: string; run?: () => void }
+type Item = ComposerCommand
 
-const SLASH: Item[] = [
+const LOCAL_SLASH: Item[] = [
   {
     id: 'goal',
     label: '/goal',
     hint: '长程规划：先拆目标再执行',
     insert: '/goal ',
-    run: undefined,
   },
   {
     id: 'sandbox',
@@ -30,25 +37,107 @@ const SLASH: Item[] = [
     hint: '本会话把文件改动写到 git 副本目录（不是进程沙箱）',
     insert: '',
     run: () => {
-      const tabId = $activeTabId.get()
-      const cwd = $workspaceCwd.get()
-      $sessionPolicyOverride.set('proceed-in-sandbox')
-      void (async () => {
-        try {
-          if (tabId) await enableTabSandbox(tabId)
-          if (tabId && cwd) {
-            const st = getTabState(tabId)
-            await restartSession(tabId, cwd, {
-              modelId: st?.modelId,
-              reasoningEffort: st?.reasoningEffort,
-            })
-          }
-          pushToast('本会话文件改动将写入 git 副本，不会动原仓库（命令仍用系统权限）', 'info')
-        } catch (e) {
-          pushToast(`无法启动工作区副本：${String(e)}`, 'error')
-        }
-      })()
+      void enableSessionSandbox()
     },
+  },
+  {
+    id: 'rewind',
+    label: '/rewind',
+    hint: '回滚会话到某条提问之前',
+    insert: '',
+    run: () => {
+      const tabId = $activeTabId.get()
+      if (tabId) openRewind(tabId)
+    },
+  },
+  {
+    id: 'plan',
+    label: '/plan',
+    hint: '只读规划，先出方案再改代码',
+    insert: '/plan ',
+  },
+  {
+    id: 'view-plan',
+    label: '/view-plan',
+    hint: '打开最近一份计划稿',
+    insert: '',
+    run: () => openPlanPreview(),
+  },
+  {
+    id: 'show-plan',
+    label: '/show-plan',
+    hint: '打开最近一份计划稿',
+    insert: '',
+    run: () => openPlanPreview(),
+  },
+  {
+    id: 'plan-view',
+    label: '/plan-view',
+    hint: '打开最近一份计划稿',
+    insert: '',
+    run: () => openPlanPreview(),
+  },
+  {
+    id: 'compact',
+    label: '/compact',
+    hint: '压缩上下文，腾出空间',
+    insert: '',
+    run: () => openSessionInsight(),
+  },
+  {
+    id: 'context',
+    label: '/context',
+    hint: '查看上下文拆分',
+    insert: '',
+    run: () => openSessionInsight(),
+  },
+  {
+    id: 'usage',
+    label: '/usage',
+    hint: '查看本会话用量',
+    insert: '',
+    run: () => openSessionInsight(),
+  },
+  {
+    id: 'session-info',
+    label: '/session-info',
+    hint: '会话详情',
+    insert: '',
+    run: () => openSessionInsight(),
+  },
+  {
+    id: 'flush',
+    label: '/flush',
+    hint: '立刻把本会话写入记忆',
+    insert: '',
+    run: () => {
+      void sendEngineSlash('/flush')
+    },
+  },
+  {
+    id: 'dream',
+    label: '/dream',
+    hint: '整理记忆日志',
+    insert: '',
+    run: () => {
+      void sendEngineSlash('/dream')
+    },
+  },
+  {
+    id: 'memory',
+    label: '/memory',
+    hint: '打开记忆面板',
+    insert: '',
+    run: () => {
+      void openChatTab({ title: '记忆', utilityKind: 'memory' })
+    },
+  },
+  {
+    id: 'loop',
+    label: '/loop',
+    hint: '按间隔反复执行同一条指令',
+    insert: '',
+    run: () => openSessionSchedule(),
   },
 ]
 
@@ -56,10 +145,16 @@ export function useComposerAssist(
   input: string,
   setInput: (v: string) => void,
   cwd: string,
-  opts?: { enableSlash?: boolean },
+  opts?: {
+    enableSlash?: boolean
+    onAttachPath?: (path: string, kind: 'file' | 'folder' | 'image') => void
+  },
 ) {
   const enableSlash = opts?.enableSlash !== false
-  const [files, setFiles] = useState<string[]>([])
+  const [files, setFiles] = useState<
+    Array<{ path: string; rel: string; is_dir: boolean }>
+  >([])
+  const [official, setOfficial] = useState<Item[]>([])
   const [active, setActive] = useState(0)
 
   const mode = useMemo(() => {
@@ -76,23 +171,84 @@ export function useComposerAssist(
   }, [input, mode])
 
   useEffect(() => {
-    if (mode !== 'at' || !cwd) return
+    if (!enableSlash) return
+    const tabId = $activeTabId.get()
+    if (!tabId || getTabState(tabId)?.phase !== 'ready') return
     let alive = true
-    listDir(cwd)
-      .then((ents) => {
-        if (alive) setFiles(ents.slice(0, 40).map((e) => e.name + (e.is_dir ? '/' : '')))
+    listSessionCommands(tabId)
+      .then((resp) => {
+        if (!alive) return
+        setOfficial(parseOfficialCommands(resp?.commands))
       })
       .catch(() => {
-        if (alive) setFiles([])
+        if (alive) setOfficial([])
       })
     return () => {
       alive = false
     }
-  }, [mode, cwd])
+  }, [enableSlash, cwd])
+
+  useEffect(() => {
+    if (mode !== 'at' || !cwd) return
+    let alive = true
+    const t = window.setTimeout(() => {
+      searchWorkspaceFiles(cwd, query, 24)
+        .then((hits) => {
+          if (alive) setFiles(Array.isArray(hits) ? hits : [])
+        })
+        .catch(() => {
+          if (alive) setFiles([])
+        })
+    }, 120)
+    return () => {
+      alive = false
+      window.clearTimeout(t)
+    }
+  }, [mode, cwd, query])
 
   const items: Item[] = useMemo(() => {
     if (mode === 'slash') {
-      return SLASH.filter((x) => x.label.slice(1).startsWith(query) || query === '')
+      return filterComposerCommands(
+        mergeComposerCommands(official, LOCAL_SLASH).map((c) => {
+          const name = c.label.slice(1).toLowerCase()
+          if (name === 'view-plan' || name === 'show-plan' || name === 'plan-view') {
+            return { ...c, insert: '', run: () => openPlanPreview() }
+          }
+          if (
+            name === 'compact' ||
+            name === 'context' ||
+            name === 'usage' ||
+            name === 'session-info' ||
+            name === 'status' ||
+            name === 'info'
+          ) {
+            return { ...c, insert: '', run: () => openSessionInsight() }
+          }
+          if (name === 'memory') {
+            return {
+              ...c,
+              insert: '',
+              run: () => {
+                void openChatTab({ title: '记忆', utilityKind: 'memory' })
+              },
+            }
+          }
+          if (name === 'plugins' || name === 'marketplace') {
+            return {
+              ...c,
+              insert: '',
+              run: () => {
+                void openChatTab({ title: '插件', utilityKind: 'plugins' })
+              },
+            }
+          }
+          if (name === 'loop') {
+            return { ...c, insert: '', run: () => openSessionSchedule() }
+          }
+          return c
+        }),
+        query,
+      )
     }
     if (mode === 'at') {
       const tabs = $tabs.get().map((t) => ({
@@ -101,19 +257,21 @@ export function useComposerAssist(
         hint: '其它会话',
         insert: `@tab:${t.id} `,
       }))
-      const fileItems = files
-        .filter((n) => !query || n.toLowerCase().includes(query))
-        .slice(0, 12)
-        .map((n) => ({
-          id: `f-${n}`,
-          label: `@${n}`,
-          hint: n.endsWith('/') ? '目录' : '文件',
-          insert: `@${n} `,
-        }))
-      return [...fileItems, ...tabs].filter((x) => !query || x.label.toLowerCase().includes(query))
+      const fileItems = files.map((f) => ({
+        id: `f-${f.path}`,
+        label: `@${f.rel}`,
+        hint: f.is_dir ? '目录' : '文件',
+        insert: `@${f.rel} `,
+        run: () => {
+          opts?.onAttachPath?.(f.path, attachKindFromPath(f.path, f.is_dir))
+        },
+      }))
+      return [...fileItems, ...tabs].filter(
+        (x) => !query || x.label.toLowerCase().includes(query),
+      )
     }
     return []
-  }, [mode, query, files])
+  }, [mode, query, files, official, opts?.onAttachPath])
 
   useEffect(() => {
     setActive(0)
@@ -122,7 +280,12 @@ export function useComposerAssist(
   const apply = (item: Item) => {
     if (item.run) {
       item.run()
-      setInput('')
+      if (mode === 'slash') {
+        setInput('')
+        return
+      }
+      const at = input.lastIndexOf('@')
+      setInput(at >= 0 ? input.slice(0, at) : input)
       return
     }
     if (mode === 'slash') {
@@ -174,12 +337,19 @@ export function useComposerAssist(
               apply(it)
             }}
           >
-            <span className="composer-assist-label">{it.label}</span>
+            <span className="composer-assist-main">
+              <span className="composer-assist-label">{it.label}</span>
+              {it.kind && it.kind !== 'command' ? (
+                <span className="composer-assist-kind">
+                  {it.kind === 'skill' ? '技能' : '工作流'}
+                </span>
+              ) : null}
+            </span>
             <span className="composer-assist-hint">{it.hint}</span>
           </button>
         ))}
       </div>
     ) : null
 
-  return { onKeyDown, menu }
+  return { onKeyDown, menu, openSlash: () => setInput('/'), openAt: () => setInput(input ? `${input.replace(/\s+$/, '')} @` : '@') }
 }

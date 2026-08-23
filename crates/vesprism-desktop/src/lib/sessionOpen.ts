@@ -194,7 +194,9 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
     case 'tool_call':
     case 'tool_call_update':
     case 'user_question_request':
-    case 'user_question_resolved': {
+    case 'user_question_resolved':
+    case 'exit_plan_mode_request':
+    case 'exit_plan_mode_resolved': {
       if (isAttachingRuntime(target)) return true
       // 顺序事件前先落盘攒批的文本（保序）；flush 后重新读 store，避免覆盖刚落盘的文本。
       flushBeforeSequential()
@@ -205,11 +207,16 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
       } else {
         $messages.set(applyTranscriptEvent(cur, ev, bgs))
       }
-      // user_question_request 还需 App 挂起问卷面板，不吞掉
-      if (ev.type === 'user_question_request') return false
+      // 问卷 / 计划稿审批还需挂起面板，不吞掉
+      if (ev.type === 'user_question_request' || ev.type === 'exit_plan_mode_request') {
+        return false
+      }
       return true
     }
     case 'token_usage':
+      if (target && typeof ev.total_tokens === 'number') {
+        patchTab(target, { totalTokens: ev.total_tokens })
+      }
       return true
     case 'turn_ended': {
       // 定稿思考条：停止「思考中…」、写耗时，默认折叠；

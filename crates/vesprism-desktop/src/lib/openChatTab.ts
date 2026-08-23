@@ -1,7 +1,7 @@
 /**
  * 打开会话 Tab（Tab 栏「+」与侧栏「技能 / 工具 / MCP / 自动化任务 / 流程画布」共用）
  *
- * 专用面板（skills / tools / mcp / workflows / flow-canvas / agents）：已存在则 **切换**，不再重复新建。
+ * 专用面板（技能 / 工具 / MCP / 记忆 / 插件 / 工作流 / 画布 / Agent）：已存在则切换。
  * 创建时必须写入绝对 cwd，避免切换面板后 $workspaceCwd 变空导致 start/restart 失败。
  */
 import {

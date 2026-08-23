@@ -124,6 +124,25 @@ export interface UserQuestionRequest {
   questions: UserQuestionItem[]
 }
 
+/** 计划模式生命周期（对齐官方 Inactive / Pending / Active / ExitPending） */
+export type PlanPhase = 'off' | 'pending' | 'active' | 'exit_pending'
+
+/** 挂起的退出计划审批（前端 TabState） */
+export interface ExitPlanModeRequest {
+  requestId: number
+  toolCallId: string
+  planContent: string
+  hasPlan: boolean
+}
+
+/** 计划稿行批注（行号从 1 起、含两端） */
+export interface PlanComment {
+  id: string
+  startLine: number
+  endLine: number
+  text: string
+}
+
 /** 问卷提交载荷（回传 JSON outcome） */
 export type UserQuestionResponsePayload =
   | {
@@ -268,6 +287,10 @@ export interface ModelInfo {
   top_p: number | null
   max_completion_tokens: number | null
   extra_headers: Record<string, string>
+  /** 官方 query_params：附加到每次请求 URL */
+  query_params: Record<string, string>
+  /** 官方 env_http_headers：请求头名 → 环境变量名 */
+  env_http_headers: Record<string, string>
   api_base_url: string
   max_retries: number
   inference_idle_timeout_secs: number

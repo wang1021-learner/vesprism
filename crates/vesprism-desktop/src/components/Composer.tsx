@@ -1,10 +1,12 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
@@ -12,7 +14,27 @@ import type { ModelInfo, SessionPhase } from '../types'
 import { REASONING_LEVELS } from '../types'
 import { generateId } from '../lib/generateId'
 import { useComposerAssist } from './ComposerAssist'
-import { $scratchCwd, isScratchCwd, workspaceLabel } from '../store'
+import {
+  $planApproval,
+  $planPhase,
+  $sandboxCwd,
+  $scratchCwd,
+  $securityPolicy,
+  $sessionPolicyOverride,
+  $totalTokens,
+  isScratchCwd,
+  pushToast,
+  workspaceLabel,
+} from '../store'
+import { dedupeWorkspacePaths, normalizeWorkspacePath } from '../lib/workspacePath'
+import {
+  applyComposerPolicy,
+  attachKindFromPath,
+  COMPOSER_POLICY_OPTIONS,
+} from '../lib/sessionSandbox'
+import { clipboardImageFiles, persistImageFile } from '../lib/pasteImage'
+import { planChipLabel, togglePlanMode } from '../lib/planMode'
+import { openSessionInsight } from '../lib/engineSlash'
 import { useStore } from '@nanostores/react'
 import type { PromptAttach } from '../bridge'
 import type { QueuedPrompt } from '../store'
@@ -54,7 +76,6 @@ interface ComposerProps {
   /** 切换推理强度（同模型 + meta.reasoningEffort） */
   onSwitchReasoningEffort: (effort: string) => void
   onSelectWorkspace: (cwd: string) => void
-  onBrowseWorkspace: () => void
   queuedPrompts?: QueuedPrompt[]
   onSend: (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => void
   onRemoveQueued?: (id: string, version: number) => void
@@ -71,7 +92,7 @@ interface ComposerProps {
 
 type AttachChip = {
   id: string
-  kind: 'file' | 'folder'
+  kind: 'file' | 'folder' | 'image'
   path: string
   name: string
 }
@@ -88,10 +109,6 @@ function formatTokenK(n: number): string {
 function formatWorkspaceLabel(p: string): string {
   if (!p || isScratchCwd(p)) return '闲聊'
   return workspaceLabel(p)
-}
-
-function normPath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
 /** 简洁文件夹线框（不用 emoji / 系统桌面图标） */
@@ -169,20 +186,6 @@ function StopIcon() {
   )
 }
 
-function BrowseIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-      <path d="M12 11v6M9 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 function CheckIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -243,7 +246,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onSwitchModel,
     onSwitchReasoningEffort,
     onSelectWorkspace,
-    onBrowseWorkspace,
     queuedPrompts = [],
     onSend,
     onRemoveQueued,
@@ -299,10 +301,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const scratch = useStore($scratchCwd)
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
+  const [policyOpen, setPolicyOpen] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
+  const policyPickerRef = useRef<HTMLDivElement>(null)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
   const [attachChips, setAttachChips] = useState<AttachChip[]>([])
+  const [dragging, setDragging] = useState(false)
   const attachMenuRef = useRef<HTMLDivElement>(null)
+  const securityPolicy = useStore($securityPolicy)
+  const policyOverride = useStore($sessionPolicyOverride)
+  const sandboxCwd = useStore($sandboxCwd)
+  const totalTokens = useStore($totalTokens)
+  const planPhase = useStore($planPhase)
+  const planApproval = useStore($planApproval)
+  const planChip = planChipLabel(planPhase, Boolean(planApproval))
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -310,7 +322,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   // 点击外部关闭下拉
   useEffect(() => {
-    if (!wsOpen && !modelOpen && !attachOpen) return
+    if (!wsOpen && !modelOpen && !attachOpen && !policyOpen) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (wsOpen && wsPickerRef.current && !wsPickerRef.current.contains(t)) {
@@ -318,6 +330,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       }
       if (modelOpen && modelPickerRef.current && !modelPickerRef.current.contains(t)) {
         setModelOpen(false)
+      }
+      if (policyOpen && policyPickerRef.current && !policyPickerRef.current.contains(t)) {
+        setPolicyOpen(false)
       }
       if (attachOpen && attachMenuRef.current && !attachMenuRef.current.contains(t)) {
         setAttachOpen(false)
@@ -327,6 +342,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (e.key === 'Escape') {
         setWsOpen(false)
         setModelOpen(false)
+        setPolicyOpen(false)
         setAttachOpen(false)
       }
     }
@@ -336,7 +352,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [wsOpen, modelOpen, attachOpen])
+  }, [wsOpen, modelOpen, attachOpen, policyOpen])
 
   const selectedModel = useMemo(
     () => models.find((x) => x.id === selectedModelId),
@@ -379,11 +395,42 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const showReasoning =
     Boolean(selectedModel?.supports_reasoning_effort) && shellReady
 
+  const pushAttach = useCallback((kind: AttachChip['kind'], path: string) => {
+    const p = path.trim()
+    if (!p) return
+    const name = p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
+    setAttachChips((prev) =>
+      prev.some((a) => a.path === p)
+        ? prev
+        : [...prev, { id: generateId('att_'), kind, path: p, name }],
+    )
+  }, [])
+
+  const ingestImageFiles = useCallback(
+    async (files: File[]) => {
+      for (const f of files) {
+        try {
+          const path = await persistImageFile(f)
+          pushAttach('image', path)
+        } catch (err) {
+          pushToast(`图片失败：${String(err)}`, 'error')
+        }
+      }
+    },
+    [pushAttach],
+  )
+
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = clipboardImageFiles(e.clipboardData)
+    if (images.length > 0) {
+      e.preventDefault()
+      void ingestImageFiles(images)
+      return
+    }
     const text = e.clipboardData.getData('text')
-    if (text.length <= PASTE_FOLD_THRESHOLD) return // 短内容走默认粘贴行为
+    if (text.length <= PASTE_FOLD_THRESHOLD) return
     const el = e.currentTarget
-    if (el.selectionStart !== el.selectionEnd) return // 有选中文本时，走默认覆盖行为！
+    if (el.selectionStart !== el.selectionEnd) return
     e.preventDefault()
     const block: PasteBlock = {
       id: generateId('paste_'),
@@ -392,6 +439,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       charCount: text.length,
     }
     setPasteBlocks((prev) => [...prev, block])
+  }
+
+  const onCardDragOver = (e: DragEvent) => {
+    if (![...e.dataTransfer.types].some((t) => t === 'Files')) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setDragging(true)
+  }
+
+  const onCardDrop = (e: DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const images = clipboardImageFiles(e.dataTransfer)
+    const files = Array.from(e.dataTransfer.files)
+    void ingestImageFiles(images)
+    for (const f of files) {
+      if (f.type.startsWith('image/') && images.includes(f)) continue
+      const nativePath = (f as File & { path?: string }).path
+      if (nativePath) {
+        pushAttach(attachKindFromPath(nativePath), nativePath)
+      } else if (f.type.startsWith('image/')) {
+        void ingestImageFiles([f])
+      }
+    }
   }
 
   const removePasteBlock = (id: string) => {
@@ -405,17 +476,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     return pasted || typed
   }
 
-  const pushAttach = (kind: 'file' | 'folder', path: string) => {
-    const p = path.trim()
-    if (!p) return
-    const name = p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
-    setAttachChips((prev) =>
-      prev.some((a) => a.path === p)
-        ? prev
-        : [...prev, { id: generateId('att_'), kind, path: p, name }],
-    )
-  }
-
   const pickFiles = async () => {
     setAttachOpen(false)
     try {
@@ -423,7 +483,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       const selected = await open({ multiple: true, title: '选择要附上的文件' })
       const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
       for (const p of paths) {
-        if (typeof p === 'string') pushAttach('file', p)
+        if (typeof p === 'string') pushAttach(attachKindFromPath(p), p)
       }
     } catch (e) {
       console.warn('选择文件失败', e)
@@ -467,7 +527,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setAttachChips([])
   }
 
-  const assist = useComposerAssist(input, setInput, workspaceCwd, { enableSlash })
+  const assist = useComposerAssist(input, setInput, workspaceCwd, {
+    enableSlash,
+    onAttachPath: (path, kind) => pushAttach(kind, path),
+  })
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229) {
@@ -484,10 +547,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const canSubmit =
     canSend && (!!input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)
+  const execPolicy = policyOverride || securityPolicy.executionPolicy
+  const policyChip =
+    sandboxCwd || execPolicy === 'proceed-in-sandbox'
+      ? { label: '副本', title: '文件写入 git 副本，不是进程沙箱' }
+      : execPolicy === 'always-proceed'
+        ? { label: '放行', title: '信任模式：命令自动放行' }
+        : { label: '审批', title: '命令需要确认后执行' }
+  const contextPct =
+    selectedModel && selectedModel.context_window > 0 && totalTokens > 0
+      ? Math.min(100, Math.round((totalTokens / selectedModel.context_window) * 100))
+      : null
   const casual = isScratchCwd(workspaceCwd)
   const wsLabel = formatWorkspaceLabel(workspaceCwd)
-  const currentWsKey = normPath(workspaceCwd)
-  const projectOptions = workspaceOptions.filter((cwd) => !isScratchCwd(cwd))
+  const currentWsKey = normalizeWorkspacePath(workspaceCwd)
+  const projectOptions = dedupeWorkspacePaths(
+    workspaceOptions.filter((cwd) => !isScratchCwd(cwd)),
+  )
 
   return (
     <footer className={`composer-container${variant === 'dock' ? ' is-dock' : ''}`}>
@@ -517,7 +593,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </ul>
         </div>
       ) : null}
-      <div className={`composer-card${isGenerating ? ' is-generating' : ''}`}>
+      <div
+        className={`composer-card${isGenerating ? ' is-generating' : ''}${dragging ? ' is-drop' : ''}`}
+        onDragEnter={onCardDragOver}
+        onDragOver={onCardDragOver}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragging(false)
+        }}
+        onDrop={onCardDrop}
+      >
         {variant !== 'dock' && showWorkspace ? (
         <div className="composer-meta-row">
           <div className="composer-meta-left" ref={wsPickerRef}>
@@ -534,6 +618,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   aria-expanded={wsOpen}
                   onClick={() => {
                     setModelOpen(false)
+                    setPolicyOpen(false)
+                    setAttachOpen(false)
                     setWsOpen((v) => !v)
                   }}
                 >
@@ -574,7 +660,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       <div className="composer-menu-label">最近项目</div>
                     )}
                     {projectOptions.map((cwd) => {
-                      const active = normPath(cwd) === currentWsKey
+                      const active = normalizeWorkspacePath(cwd) === currentWsKey
                       return (
                         <button
                           key={cwd}
@@ -603,22 +689,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                         </button>
                       )
                     })}
-                    <div className="composer-menu-divider" />
-                    <button
-                      type="button"
-                      className="composer-menu-item menu-browse"
-                      onClick={() => {
-                        setWsOpen(false)
-                        onBrowseWorkspace()
-                      }}
-                    >
-                      <span className="menu-item-icon">
-                        <BrowseIcon />
-                      </span>
-                      <span className="menu-item-body">
-                        <span className="menu-item-title">打开项目文件夹…</span>
-                      </span>
-                    </button>
                   </div>
                 )}
               </>
@@ -628,7 +698,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 title={
                   casual
                     ? '闲聊（本会话已开始，换项目请新建对话）'
-                    : `当前项目\n${workspaceCwd || '未设置'}\n\n有对话内容时请从侧栏打开对应会话，或新建后再切换`
+                    : `当前项目\n${workspaceCwd || '未设置'}\n\n有对话内容时请新建对话后再切换，或从侧栏打开该项目下的历史会话`
                 }
               >
                 <span className="chip-icon">
@@ -653,7 +723,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   <div className="paste-block-title" title={a.path}>
                     {a.name}
                   </div>
-                  <div className="paste-block-meta">{a.kind === 'folder' ? '文件夹' : '文件'}</div>
+                  <div className="paste-block-meta">
+                    {a.kind === 'folder' ? '文件夹' : a.kind === 'image' ? '图片' : '文件'}
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -707,11 +779,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               ? isGenerating
                 ? '生成中也可继续输入，Enter 排队…'
                 : placeholder
-              : casual
-                ? '随便问问，或点 + 附上文件… 改代码请先选项目'
-                : isGenerating
-                  ? '生成中也可继续输入，Enter 排队…'
-                  : '输入消息…  /goal 规划  /sandbox 沙箱  @ 引用文件'
+              : isGenerating
+                ? '生成中也可继续输入，Enter 排队…'
+                : casual
+                  ? '随便问问…'
+                  : '输入消息…'
           }
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -724,12 +796,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <button
                 type="button"
                 className={`composer-attach-btn${attachOpen ? ' open' : ''}`}
-                title="附上文件或文件夹（不切换项目）"
-                aria-label="附上文件或文件夹"
+                title="命令、引用或附件"
+                aria-label="命令、引用或附件"
                 aria-expanded={attachOpen}
                 onClick={() => {
                   setWsOpen(false)
                   setModelOpen(false)
+                  setPolicyOpen(false)
                   setAttachOpen((v) => !v)
                 }}
               >
@@ -737,6 +810,41 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               </button>
               {attachOpen && (
                 <div className="composer-menu attach-menu" role="menu">
+                  {enableSlash ? (
+                    <>
+                  <div className="composer-menu-label">命令</div>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    onClick={() => {
+                      setAttachOpen(false)
+                      assist.openSlash()
+                      requestAnimationFrame(() => textareaRef.current?.focus())
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">插入命令…</span>
+                      <span className="menu-item-sub">输入 / 打开斜杠目录</span>
+                    </span>
+                  </button>
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    onClick={() => {
+                      setAttachOpen(false)
+                      assist.openAt()
+                      requestAnimationFrame(() => textareaRef.current?.focus())
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">引用文件…</span>
+                      <span className="menu-item-sub">输入 @ 搜索工作区</span>
+                    </span>
+                  </button>
+                  <div className="composer-menu-divider" />
+                  <div className="composer-menu-label">附件</div>
                   <button
                     type="button"
                     className="composer-menu-item"
@@ -772,11 +880,99 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   : sessionPhase === 'loading' ||
                     sessionPhase === 'booting' ||
                     sessionPhase === 'restarting'
-                    ? '' /* 加载中不占文案，避免干扰 */
-                    : 'Enter 发送 · Shift+Enter 换行'}
+                    ? ''
+                    : 'Enter 发送'}
             </span>
           </div>
           <div className="toolbar-right">
+            <div className="model-picker" ref={policyPickerRef}>
+              <button
+                type="button"
+                className={`composer-chip policy-chip${policyOpen ? ' open' : ''}`}
+                title={policyChip.title}
+                aria-expanded={policyOpen}
+                aria-haspopup="listbox"
+                onClick={() => {
+                  setWsOpen(false)
+                  setModelOpen(false)
+                  setAttachOpen(false)
+                  setPolicyOpen((v) => !v)
+                }}
+              >
+                <span className="chip-label">{policyChip.label}</span>
+                <ChevronIcon up={policyOpen} />
+              </button>
+              {policyOpen && (
+                <div className="composer-menu policy-menu" role="listbox">
+                  <div className="composer-menu-label">执行策略</div>
+                  {COMPOSER_POLICY_OPTIONS.map((opt) => {
+                    const active =
+                      opt.value === 'proceed-in-sandbox'
+                        ? Boolean(sandboxCwd) || execPolicy === 'proceed-in-sandbox'
+                        : !sandboxCwd && execPolicy === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        className={`composer-menu-item${active ? ' active' : ''}`}
+                        onClick={() => {
+                          setPolicyOpen(false)
+                          if (active) return
+                          void applyComposerPolicy(opt.value)
+                        }}
+                      >
+                        <span className="menu-item-body">
+                          <span className="menu-item-title">{opt.label}</span>
+                          <span className="menu-item-sub">{opt.hint}</span>
+                        </span>
+                        {active ? (
+                          <span className="menu-item-check">
+                            <CheckIcon />
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className={`composer-chip plan-chip${planChip.on ? ' is-on' : ''}`}
+              title={planChip.title}
+              aria-pressed={planChip.on}
+              disabled={!shellReady}
+              onClick={() => {
+                setWsOpen(false)
+                setModelOpen(false)
+                setAttachOpen(false)
+                setPolicyOpen(false)
+                void togglePlanMode()
+              }}
+            >
+              <span className="chip-label">{planChip.label}</span>
+            </button>
+            {contextPct != null ? (
+              <button
+                type="button"
+                className={`composer-context-meter${contextPct >= 75 ? ' is-warn' : ''}`}
+                title={`已用约 ${totalTokens.toLocaleString()} / ${formatTokenK(selectedModel?.context_window || 0)} token · 打开上下文`}
+                onClick={() => openSessionInsight()}
+              >
+                {contextPct}%
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="composer-context-meter"
+                title="打开上下文与用量"
+                onClick={() => openSessionInsight()}
+              >
+                用量
+              </button>
+            )}
             {models.length > 0 && (
               <div className="model-picker" ref={modelPickerRef}>
                 <button
@@ -788,6 +984,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   onClick={() => {
                     if (!shellReady) return
                     setWsOpen(false)
+                    setPolicyOpen(false)
+                    setAttachOpen(false)
                     setModelOpen((v) => !v)
                   }}
                 >
@@ -883,41 +1081,56 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             )}
 
             {extraActions}
-            {/* 中断：不用 disabled，避免点击穿透到 textarea */}
-            <button
-              type="button"
-              className={`btn-circle btn-stop${isGenerating ? ' active' : ''}`}
-              aria-disabled={!isGenerating}
-              title={isGenerating ? '停止生成' : '无生成任务'}
-              aria-label="停止生成"
-              onMouseDown={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-              }}
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                if (!isGenerating) return
-                onCancel()
-              }}
-            >
-              <StopIcon />
-            </button>
-            {/* 发送：始终展示，有内容且可发送时高亮 */}
-            <button
-              type="button"
-              className={`btn-circle btn-send${canSubmit ? ' ready' : ''}`}
-              disabled={!canSubmit}
-              title={
-                isGenerating
-                  ? '排队到本轮结束后发送 (Enter)；Ctrl+Enter 立刻插话'
-                  : '发送消息 (Enter)'
-              }
-              aria-label="发送消息"
-              onClick={handleSend}
-            >
-              <SendIcon />
-            </button>
+            {isGenerating && canSubmit ? (
+              <>
+                <button
+                  type="button"
+                  className="composer-live-action"
+                  title="本轮结束后发送 (Enter)"
+                  onClick={handleSend}
+                >
+                  排队
+                </button>
+                <button
+                  type="button"
+                  className="composer-live-action"
+                  title="立刻插进当前轮 (Ctrl+Enter)"
+                  onClick={handleInterject}
+                >
+                  插话
+                </button>
+              </>
+            ) : null}
+            {isGenerating ? (
+              <button
+                type="button"
+                className="btn-circle btn-stop active"
+                title="停止生成"
+                aria-label="停止生成"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onCancel()
+                }}
+              >
+                <StopIcon />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`btn-circle btn-send${canSubmit ? ' ready' : ''}`}
+                disabled={!canSubmit}
+                title="发送消息 (Enter)"
+                aria-label="发送消息"
+                onClick={handleSend}
+              >
+                <SendIcon />
+              </button>
+            )}
           </div>
         </div>
       </div>

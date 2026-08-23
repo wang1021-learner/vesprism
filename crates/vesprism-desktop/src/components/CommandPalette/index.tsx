@@ -12,6 +12,8 @@ import {
   type ChatSummary,
 } from '../../store'
 import { searchSessions } from '../../bridge'
+import { openSessionInsight, openSessionSchedule } from '../../lib/engineSlash'
+import { openChatTab } from '../../lib/openChatTab'
 
 type SearchHit = ChatSummary & { snippet?: string }
 
@@ -206,6 +208,38 @@ export function CommandPalette() {
       subtitle: '配置模型服务商与 API Key',
       action: () => {
         $settingsOpen.set(true)
+      },
+    },
+    {
+      id: 'cmd-insight',
+      title: '上下文与用量',
+      subtitle: '压缩、拆分上下文、本会话费用',
+      action: () => {
+        openSessionInsight()
+      },
+    },
+    {
+      id: 'cmd-memory',
+      title: '记忆',
+      subtitle: '浏览、写入、整理跨会话记忆',
+      action: () => {
+        void openChatTab({ title: '记忆', utilityKind: 'memory' })
+      },
+    },
+    {
+      id: 'cmd-plugins',
+      title: '插件',
+      subtitle: '安装、启停、更新插件',
+      action: () => {
+        void openChatTab({ title: '插件', utilityKind: 'plugins' })
+      },
+    },
+    {
+      id: 'cmd-schedule',
+      title: '定时任务',
+      subtitle: '按间隔反复执行同一条指令（/loop）',
+      action: () => {
+        openSessionSchedule()
       },
     },
   ].filter((c) => !commandFilter || c.title.toLowerCase().includes(commandFilter) || c.subtitle.toLowerCase().includes(commandFilter))

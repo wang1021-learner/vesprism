@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatRecentTools,
   formatSubagentHeadline,
+  formatSubagentLiveMeta,
   subagentToolCallId,
   upsertSubagentMessage,
 } from './subagentMessage'
@@ -42,5 +44,30 @@ describe('upsertSubagentMessage', () => {
     expect(formatSubagentHeadline({ ...base, status: 'completed', turnCount: 1 })).toContain(
       '完成',
     )
+  })
+})
+
+describe('formatSubagentLiveMeta', () => {
+  it('最近工具从尾部去重，优先中文名', () => {
+    expect(formatRecentTools(['grep', 'read_file', 'grep'], 3)).toBe(
+      '内容搜索, 读取文件',
+    )
+  })
+
+  it('拼耗时、轮次、工具；没工具名才写次数', () => {
+    expect(
+      formatSubagentLiveMeta({
+        durationMs: 8000,
+        turnCount: 2,
+        toolCallCount: 5,
+        toolsUsed: ['grep'],
+      }),
+    ).toBe('8s · 2 轮 · 内容搜索')
+    expect(
+      formatSubagentLiveMeta({
+        durationMs: 1000,
+        toolCallCount: 3,
+      }),
+    ).toBe('1s · 3 次工具')
   })
 })

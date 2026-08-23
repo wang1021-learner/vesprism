@@ -160,4 +160,11 @@ describe('buildRunForest', () => {
     expect(orphan.phases[0].members.map((m) => m.agentId)).toEqual(['loose'])
     expect(orphan.runRequiresExpansion).toBe(true)
   })
+
+  it('散装成员带上最近工具', () => {
+    const forest = buildRunForest([], [
+      sub('x', { description: '查', status: 'running', toolsUsed: ['grep'] }),
+    ])
+    expect(forest[0].phases[0].members[0].toolsUsed).toEqual(['grep'])
+  })
 })

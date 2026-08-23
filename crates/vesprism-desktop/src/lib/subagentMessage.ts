@@ -5,6 +5,7 @@
  */
 import type { ChatMessage, SubagentRuntime, ToolCallData } from '../types'
 import { generateId } from './generateId'
+import { zhToolLabel } from './toolChinese'
 
 export const SUBAGENT_TOOL_PREFIX = 'subagent_'
 
@@ -36,7 +37,7 @@ function statusUi(s: SubagentRuntime['status']): {
 }
 
 function formatDuration(ms?: number): string {
-  if (ms == null || ms < 0) return ''
+  if (ms == null || ms <= 0) return ''
   if (ms < 1000) return `${ms}ms`
   const sec = Math.round(ms / 1000)
   if (sec < 60) return `${sec}s`
@@ -45,19 +46,49 @@ function formatDuration(ms?: number): string {
   return r ? `${m}m${r}s` : `${m}m`
 }
 
-/** 会话列表展示标题：子任务 · 描述 · 状态 · 轮次/耗时 */
+/** 会话列表展示标题：子任务 · 描述 · 状态（轮次/耗时/工具放 live meta，避免标题狂跳） */
 export function formatSubagentHeadline(s: SubagentRuntime): string {
   const name =
     (s.description || '').trim() ||
     (s.subagentType || '').trim() ||
     '子任务'
   const { label } = statusUi(s.status)
-  const bits = [label]
+  return `子任务 · ${name} · ${label}`
+}
+
+/** 最近用过的工具，从尾部去重，最多 max 个。 */
+export function formatRecentTools(tools?: string[] | null, max = 3): string {
+  if (!tools?.length) return ''
+  const unique: string[] = []
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const raw = (tools[i] || '').trim()
+    if (!raw) continue
+    const label = zhToolLabel(raw) || raw.replace(/_/g, ' ')
+    if (unique.includes(label)) continue
+    unique.push(label)
+    if (unique.length >= max) break
+  }
+  return unique.join(', ')
+}
+
+/** 进行中/结束后的一行摘要：耗时 · 轮次 · 最近工具。空则返回 ''。 */
+export function formatSubagentLiveMeta(
+  s: Pick<SubagentRuntime, 'durationMs' | 'turnCount' | 'toolCallCount' | 'toolsUsed'>,
+  elapsedMs?: number,
+): string {
+  const ms = elapsedMs ?? s.durationMs
+  const bits: string[] = []
+  const elapsed = formatDuration(ms)
+  if (elapsed) bits.push(elapsed)
   if (typeof s.turnCount === 'number' && s.turnCount > 0) {
     bits.push(`${s.turnCount} 轮`)
   }
-  if (s.durationMs) bits.push(formatDuration(s.durationMs))
-  return `子任务 · ${name} · ${bits.join(' · ')}`
+  const tools = formatRecentTools(s.toolsUsed)
+  if (tools) bits.push(tools)
+  else if (typeof s.toolCallCount === 'number' && s.toolCallCount > 0) {
+    bits.push(`${s.toolCallCount} 次工具`)
+  }
+  return bits.join(' · ')
 }
 
 export function subagentToToolData(s: SubagentRuntime): ToolCallData {

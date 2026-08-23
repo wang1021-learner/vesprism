@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
-import { $goalInfo } from '../store'
+import { $goalInfo, $sessionPhase, pushToast } from '../store'
 import type { GoalInfoDto } from '../lib/composition'
+import { sendEngineSlash } from '../lib/engineSlash'
 
 const STATUS_LABEL: Record<string, string> = {
   active: '进行中',
@@ -46,6 +47,15 @@ export function GoalStrip() {
 }
 
 function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
+  const ready = useStore($sessionPhase) === 'ready'
+  const act = async (cmd: string, ok: string) => {
+    try {
+      await sendEngineSlash(cmd)
+      pushToast(ok, 'success')
+    } catch (e) {
+      pushToast(String(e), 'error')
+    }
+  }
   const pct =
     goal.tokenBudget != null && goal.tokenBudget > 0
       ? Math.min(100, Math.round((goal.tokensUsed / goal.tokenBudget) * 100))
@@ -86,6 +96,37 @@ function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
           {goal.pauseMessage && <span className="goal-pause">{goal.pauseMessage}</span>}
         </div>
       )}
+      {goal.status !== 'cleared' && goal.status !== 'complete' ? (
+        <div className="work-panel-actions" style={{ marginTop: 8 }}>
+          {goal.status === 'user_paused' || goal.status.endsWith('_paused') ? (
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={!ready}
+              onClick={() => void act('/goal resume', '已继续目标')}
+            >
+              继续
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={!ready}
+              onClick={() => void act('/goal pause', '已暂停目标')}
+            >
+              暂停
+            </button>
+          )}
+          <button
+            type="button"
+            className="skills-btn"
+            disabled={!ready}
+            onClick={() => void act('/goal clear', '已清除目标')}
+          >
+            清除
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

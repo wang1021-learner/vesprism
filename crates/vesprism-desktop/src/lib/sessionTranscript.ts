@@ -50,6 +50,7 @@ export type TranscriptEvent = {
   /** 问卷已解答时的摘要 */
   answer_preview?: string
   outcome?: string
+  plan_content?: string | null
 }
 
 function toolId(t: {
@@ -176,8 +177,45 @@ export function applyTranscriptEvent(
         preview,
       })
     }
+    case 'exit_plan_mode_request': {
+      const toolCallId = ev.tool_call_id || `plan_${ev.request_id ?? generateId('plan_')}`
+      const hasPlan = Boolean((ev.plan_content || '').trim())
+      return upsertTool(sealStreamingTail(messages, bgTaskIds), {
+        toolCallId,
+        kind: 'plan_mode',
+        status: 'pending',
+        title: 'Plan',
+        detail: hasPlan ? '计划稿待审批' : '还没写计划稿',
+        preview: '',
+        timing: { start: Date.now() },
+      })
+    }
+    case 'exit_plan_mode_resolved': {
+      const toolCallId = ev.tool_call_id
+      if (!toolCallId) return messages
+      return patchTool(messages, {
+        toolCallId,
+        kind: 'plan_mode',
+        status: 'completed',
+        title: 'Plan',
+        preview: formatPlanOutcomePreview(ev.outcome),
+      })
+    }
     default:
       return messages
+  }
+}
+
+export function formatPlanOutcomePreview(outcome?: string): string {
+  switch ((outcome || '').trim().toLowerCase()) {
+    case 'approved':
+      return '已批准，开始动手'
+    case 'abandoned':
+      return '已放弃计划'
+    case 'cancelled':
+      return '要改：继续规划'
+    default:
+      return outcome || '已处理'
   }
 }
 

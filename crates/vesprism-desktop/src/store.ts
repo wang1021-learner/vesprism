@@ -18,6 +18,8 @@ import type {
   SubagentRuntime,
   TerminalRuntime,
   UserQuestionRequest,
+  ExitPlanModeRequest,
+  PlanPhase,
 } from './types'
 import { upsertSubagentMessage } from './lib/subagentMessage'
 import type { SecurityPolicy } from './lib/executionPolicy'
@@ -52,6 +54,16 @@ export interface TabState {
   permission: PermissionRequest | null
   /** 挂起的 AI 问卷 */
   userQuestion: UserQuestionRequest | null
+  /** 计划模式生命周期 */
+  planPhase: PlanPhase
+  /** 挂起的计划稿审批 */
+  planApproval: ExitPlanModeRequest | null
+  /** 预览卡是否打开（审批中或 /view-plan） */
+  planPreviewOpen: boolean
+  /** 最近一份计划稿（交稿或只读重开） */
+  lastPlanContent: string
+  lastPlanHasBody: boolean
+  lastPlanToolCallId: string
   /** 当前会话下的子 agent 列表 */
   subagents: SubagentRuntime[]
   /** 顶部标题（原 $chatTitle） */
@@ -87,6 +99,30 @@ export interface TabState {
   terminals: Record<string, TerminalRuntime>
   /** 官方 prompt 队列（尚未开跑的 follow-up） */
   queuedPrompts: QueuedPrompt[]
+  /** 最近一次 token_usage（上下文用量条） */
+  totalTokens: number
+  /** 官方 MemoryFiles */
+  memoryFiles: MemoryFileInfo[]
+  /** 本会话定时任务 */
+  scheduledTasks: ScheduledTaskInfo[]
+}
+
+export type MemoryFileInfo = {
+  path: string
+  source: string
+  sizeBytes: number
+  modifiedEpochSecs?: number | null
+}
+
+export type ScheduledTaskInfo = {
+  taskId: string
+  prompt: string
+  humanSchedule: string
+  nextFireAt?: string | null
+  lastFiredAt?: string | null
+  fireCount?: number
+  /** 已发 /loop、引擎 ScheduledTaskCreated 还没到 */
+  pending?: boolean
 }
 
 export type QueuedPrompt = {
@@ -97,7 +133,16 @@ export type QueuedPrompt = {
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
-export type UtilityKind = 'mcp' | 'skills' | 'tools' | 'workflows' | 'flow-canvas' | 'flow-run' | 'agents'
+export type UtilityKind =
+  | 'mcp'
+  | 'skills'
+  | 'tools'
+  | 'workflows'
+  | 'flow-canvas'
+  | 'flow-run'
+  | 'agents'
+  | 'memory'
+  | 'plugins'
 
 export function emptyTabState(): TabState {
   return {
@@ -108,6 +153,12 @@ export function emptyTabState(): TabState {
     phase: 'idle',
     permission: null,
     userQuestion: null,
+    planPhase: 'off',
+    planApproval: null,
+    planPreviewOpen: false,
+    lastPlanContent: '',
+    lastPlanHasBody: false,
+    lastPlanToolCallId: '',
     subagents: [],
     chatTitle: '',
     composerInput: '',
@@ -123,6 +174,9 @@ export function emptyTabState(): TabState {
     workflows: {},
     terminals: {},
     queuedPrompts: [],
+    totalTokens: 0,
+    memoryFiles: [],
+    scheduledTasks: [],
   }
 }
 
@@ -140,7 +194,7 @@ export type TabActivity = 'idle' | 'working' | 'permission' | 'error'
 
 export function deriveTabActivity(s: TabState): TabActivity {
   if (s.phase === 'failed' || (s.error && s.error.trim().length > 0)) return 'error'
-  if (s.permission || s.userQuestion) return 'permission'
+  if (s.permission || s.userQuestion || s.planApproval) return 'permission'
   const hasRunningSubagent = s.subagents.some((a) => a.status === 'running')
   // 不把 loading / restarting / initializing 算作 working，避免切会话、开历史时绿灯闪一下
   if (hasRunningSubagent || s.status === 'generating' || s.queuedPrompts.length > 0) {
@@ -354,6 +408,12 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('phase' in patch) $sessionPhase.set(patch.phase!)
   if ('permission' in patch) $permission.set(patch.permission!)
   if ('userQuestion' in patch) $userQuestion.set(patch.userQuestion!)
+  if ('planPhase' in patch) $planPhase.set(patch.planPhase ?? 'off')
+  if ('planApproval' in patch) $planApproval.set(patch.planApproval ?? null)
+  if ('planPreviewOpen' in patch) $planPreviewOpen.set(Boolean(patch.planPreviewOpen))
+  if ('lastPlanContent' in patch) $lastPlanContent.set(patch.lastPlanContent ?? '')
+  if ('lastPlanHasBody' in patch) $lastPlanHasBody.set(Boolean(patch.lastPlanHasBody))
+  if ('lastPlanToolCallId' in patch) $lastPlanToolCallId.set(patch.lastPlanToolCallId ?? '')
   if ('subagents' in patch) $subagents.set(patch.subagents!)
   if ('chatTitle' in patch) $chatTitle.set(patch.chatTitle!)
   if ('composerInput' in patch) $composerInput.set(patch.composerInput!)
@@ -369,6 +429,9 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('workflows' in patch) $workflows.set(patch.workflows ?? {})
   if ('terminals' in patch) $terminals.set(patch.terminals ?? {})
   if ('queuedPrompts' in patch) $queuedPrompts.set(patch.queuedPrompts ?? [])
+  if ('totalTokens' in patch) $totalTokens.set(patch.totalTokens ?? 0)
+  if ('memoryFiles' in patch) $memoryFiles.set(patch.memoryFiles ?? [])
+  if ('scheduledTasks' in patch) $scheduledTasks.set(patch.scheduledTasks ?? [])
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -383,6 +446,12 @@ function projectTab(id: string): void {
     phase: s.phase,
     permission: s.permission,
     userQuestion: s.userQuestion,
+    planPhase: s.planPhase,
+    planApproval: s.planApproval,
+    planPreviewOpen: s.planPreviewOpen,
+    lastPlanContent: s.lastPlanContent,
+    lastPlanHasBody: s.lastPlanHasBody,
+    lastPlanToolCallId: s.lastPlanToolCallId,
     subagents: s.subagents,
     chatTitle: s.chatTitle,
     composerInput: s.composerInput,
@@ -398,6 +467,9 @@ function projectTab(id: string): void {
     workflows: s.workflows,
     terminals: s.terminals,
     queuedPrompts: s.queuedPrompts,
+    totalTokens: s.totalTokens,
+    memoryFiles: s.memoryFiles,
+    scheduledTasks: s.scheduledTasks,
   })
 }
 
@@ -411,6 +483,12 @@ function resetProjection(): void {
     phase: 'idle',
     permission: null,
     userQuestion: null,
+    planPhase: 'off',
+    planApproval: null,
+    planPreviewOpen: false,
+    lastPlanContent: '',
+    lastPlanHasBody: false,
+    lastPlanToolCallId: '',
     subagents: [],
     chatTitle: '',
     composerInput: '',
@@ -425,6 +503,9 @@ function resetProjection(): void {
     workflows: {},
     terminals: {},
     queuedPrompts: [],
+    totalTokens: 0,
+    memoryFiles: [],
+    scheduledTasks: [],
   })
 }
 
@@ -478,7 +559,7 @@ function isRecyclableBlank(st: TabState): boolean {
     return false
   }
   if (st.subagents.length > 0) return false
-  if (st.permission || st.userQuestion) return false
+  if (st.permission || st.userQuestion || st.planApproval) return false
   return true
 }
 
@@ -502,6 +583,12 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     composerInput: '',
     permission: null,
     userQuestion: null,
+    planPhase: 'off',
+    planApproval: null,
+    planPreviewOpen: false,
+    lastPlanContent: '',
+    lastPlanHasBody: false,
+    lastPlanToolCallId: '',
     subagents: [],
     backgroundTasks: {},
     error: '',
@@ -512,6 +599,9 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     status: 'initializing',
     utilityKind: null,
     queuedPrompts: [],
+    totalTokens: 0,
+    memoryFiles: [],
+    scheduledTasks: [],
     ...(workCwd ? { cwd: workCwd } : {}),
   })
 }
@@ -540,10 +630,22 @@ export function switchTab(id: string): void {
 export const $activeSessionId = atom('')
 export const $messages = atom<ChatMessage[]>([])
 export const $queuedPrompts = atom<QueuedPrompt[]>([])
+export const $totalTokens = atom(0)
+export const $memoryFiles = atom<MemoryFileInfo[]>([])
+export const $scheduledTasks = atom<ScheduledTaskInfo[]>([])
+export const $sessionInsightOpen = atom(false)
+/** 当前对话的定时任务卡（挂在本会话，不开新 Tab） */
+export const $sessionScheduleOpen = atom(false)
 export const $permission = atom<PermissionRequest | null>(null)
 /** 内嵌审批条是否在视口内（Permission.tsx 的 IntersectionObserver 维护；浮层兜底读它） */
 export const $permissionInlineVisible = atom(true)
 export const $userQuestion = atom<UserQuestionRequest | null>(null)
+export const $planPhase = atom<PlanPhase>('off')
+export const $planApproval = atom<ExitPlanModeRequest | null>(null)
+export const $planPreviewOpen = atom(false)
+export const $lastPlanContent = atom('')
+export const $lastPlanHasBody = atom(false)
+export const $lastPlanToolCallId = atom('')
 export const $subagents = atom<SubagentRuntime[]>([])
 export const $error = atom('')
 export const $engineStatus = atom<SessionStatus>('unknown')
@@ -618,6 +720,8 @@ export const $reasoningEffort = atom('medium')
 // ── 工作区（$workspaceCwd 是当前 tab 投影；历史列表全局） ──
 export const $workspaceCwd = atom('')
 export const $workspaceOptions = atom<string[]>([])
+/** 用户钉住的仓库根（侧栏项目表）；与会话 cwd 分组互补，空仓库也能列出来。 */
+export const $registeredProjects = atom<string[]>([])
 /**
  * 用户「主工作区」（设置/Composer 显式切换）。
  * 侧栏分组置顶、默认展开用它——勿用当前 Tab 的 cwd，
@@ -654,6 +758,15 @@ export const $chatTitle = atom('') // TabState.chatTitle 投影
 export const $composerInput = atom('') // TabState.composerInput 投影
 /** 专用面板类型投影（mcp / skills / tools） */
 export const $utilityKind = atom<UtilityKind | null>(null)
+
+/** 最近一次官方 MCP 推送（面板用来改状态 / 刷新列表） */
+export type McpPushEvent = {
+  tabId: string
+  method: string
+  payload: Record<string, unknown>
+  seq: number
+}
+export const $mcpPush = atom<McpPushEvent | null>(null)
 
 // ── 右侧栏 ──
 export type RightPanelTab = 'files' | 'output' | 'diff'

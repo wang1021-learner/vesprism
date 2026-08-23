@@ -95,6 +95,16 @@
   background: #334155;
 }
 
+.chat-timeline-tick-mark.is-plan {
+  width: 10px;
+  background: #64748b;
+}
+
+.chat-timeline-tick-mark.is-plan.is-awaiting {
+  width: 12px;
+  background: #475569;
+}
+
 /* 预览列表：贴在刻度左侧 */
 .chat-timeline-popover {
   position: relative;

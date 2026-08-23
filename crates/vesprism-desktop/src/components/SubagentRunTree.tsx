@@ -3,7 +3,9 @@ import { useStore } from '@nanostores/react'
 import { $subagents, $workflows, pushToast } from '../store'
 import type { SubagentRuntime } from '../types'
 import type { WorkflowInfoDto } from '../lib/composition'
+import { cancelSubagentChild } from '../lib/cancelSubagentChild'
 import { openSubagentTab, refreshSubagentTabMessages } from '../lib/openSubagentTab'
+import { formatSubagentLiveMeta } from '../lib/subagentMessage'
 import {
   RESULT_EXPAND_MAX,
   fmtWorkflowElapsed,
@@ -20,7 +22,7 @@ import {
   type RunTree,
 } from '../lib/subagentRunTree'
 
-/** 会话区三层树：run → phase → 子代理。有 workflow 才画；散装 spawn 见顶栏目录。 */
+/** 会话区三层树：run → phase → 子代理。散装 spawn 合成「派生子代理」。 */
 export function SubagentRunTree({
   workflows,
   subagents,
@@ -153,8 +155,25 @@ function PhaseView({ phase, readonly }: { phase: PhaseGroup; readonly: boolean }
 
 function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
   const [opening, setOpening] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [bodyOpen, setBodyOpen] = useState(false)
   const preview = m.output ? workflowResultHeadline(m.output) : ''
+  const live = dotState(m.state) === 'ongoing'
+  const liveMeta = formatSubagentLiveMeta({
+    durationMs: m.durationMs,
+    turnCount: m.turnCount,
+    toolCallCount: m.toolCallCount,
+    toolsUsed: m.toolsUsed,
+  })
+  const onCancel = async () => {
+    if (!m.agentId || cancelling || !live) return
+    setCancelling(true)
+    try {
+      await cancelSubagentChild(m.agentId)
+    } finally {
+      setCancelling(false)
+    }
+  }
   const onOpen = async () => {
     if (!m.childSessionId || opening) return
     setOpening(true)
@@ -202,6 +221,17 @@ function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
             {bodyOpen ? '收起' : '结果'}
           </button>
         ) : null}
+        {live && !readonly ? (
+          <button
+            type="button"
+            className="st-action is-cancel"
+            disabled={cancelling}
+            onClick={() => void onCancel()}
+            title="只停这个帮手"
+          >
+            {cancelling ? '…' : '取消'}
+          </button>
+        ) : null}
         {m.childSessionId ? (
           <button
             type="button"
@@ -214,6 +244,11 @@ function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
           </button>
         ) : null}
       </div>
+      {live && liveMeta ? (
+        <div className="st-member-preview" title={liveMeta}>
+          {liveMeta}
+        </div>
+      ) : null}
       {!bodyOpen && preview ? <div className="st-member-preview">{preview}</div> : null}
       {bodyOpen && m.output ? (
         <pre className="st-member-output">

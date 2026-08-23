@@ -57,6 +57,9 @@ export const setSecurityPolicy = (policy: SecurityPolicyDto) =>
 export const enableTabSandbox = (tabId: string) =>
   invoke('enable_tab_sandbox', { tabId })
 
+export const disableTabSandbox = (tabId: string) =>
+  invoke('disable_tab_sandbox', { tabId })
+
 export type SandboxStatusDto = {
   active: boolean
   origin_cwd: string
@@ -135,6 +138,36 @@ export const listSessions = (cwd: string, limit?: number) =>
     }>
   >('list_sessions', {
     cwd,
+    limit: limit ?? null,
+  })
+
+export type ProjectRow = {
+  root: string
+  display_name: string
+  updated_at_ms: number
+}
+
+/** 把仓库根钉进侧栏项目表（不改审批）。 */
+export const addProject = (root: string) =>
+  invoke<ProjectRow>('add_project', { root })
+
+export const removeProject = (root: string) =>
+  invoke<void>('remove_project', { root })
+
+export const listProjects = () => invoke<ProjectRow[]>('list_projects')
+
+export const listSessionsForProject = (root: string, limit?: number) =>
+  invoke<
+    Array<{
+      id: string
+      title: string
+      updated_at: string
+      cwd: string
+      num_messages?: number
+      preview?: string
+    }>
+  >('list_sessions_for_project', {
+    root,
     limit: limit ?? null,
   })
 
@@ -269,6 +302,32 @@ export const saveModelSettings = (defaultId: string, models: ModelInfo[]) =>
 
 export const reloadModels = (tabId: string) => invoke('reload_models', { tabId })
 
+export type ProbeModelResult = {
+  ok: boolean
+  status: number
+  message: string
+  models: string[]
+}
+
+export const probeModelEndpoint = (args: {
+  baseUrl: string
+  extraHeaders?: Record<string, string>
+  queryParams?: Record<string, string>
+  envHttpHeaders?: Record<string, string>
+  envKey?: string
+  apiKey?: string
+}) =>
+  invoke<ProbeModelResult>('probe_model_endpoint', {
+    args: {
+      baseUrl: args.baseUrl,
+      extraHeaders: args.extraHeaders ?? {},
+      queryParams: args.queryParams ?? {},
+      envHttpHeaders: args.envHttpHeaders ?? {},
+      envKey: args.envKey ?? '',
+      apiKey: args.apiKey ?? '',
+    },
+  })
+
 export type EnginePrefs = {
   session_search: boolean
   memory_enabled: boolean
@@ -331,6 +390,15 @@ export const respondUserQuestion = (
   responseJson: string,
 ) => invoke('respond_user_question', { tabId, requestId, responseJson })
 
+export const setSessionMode = (tabId: string, modeId: string) =>
+  invoke('set_session_mode', { tabId, modeId })
+
+export const respondExitPlanMode = (
+  tabId: string,
+  requestId: number,
+  responseJson: string,
+) => invoke('respond_exit_plan_mode', { tabId, requestId, responseJson })
+
 // ── 子 agent ──
 export const cancelSubagent = (tabId: string, subagentId: string) =>
   invoke<Record<string, unknown>>('cancel_subagent', { tabId, subagentId })
@@ -384,6 +452,37 @@ export const deleteMcpServer = (tabId: string, serverName: string) =>
     serverName,
   })
 
+export const toggleMcpTool = (
+  tabId: string,
+  serverName: string,
+  toolName: string,
+  enabled: boolean,
+) =>
+  invoke<Record<string, unknown>>('toggle_mcp_tool', {
+    tabId,
+    serverName,
+    toolName,
+    enabled,
+  })
+
+export const mcpAuthTrigger = (tabId: string, serverName: string) =>
+  invoke<{
+    status?: string
+    setup?: McpSetupDto | null
+    error?: string | null
+  }>('mcp_auth_trigger', { tabId, serverName })
+
+export const mcpSetup = (
+  tabId: string,
+  serverName: string,
+  values: Record<string, string>,
+) =>
+  invoke<{ ok?: boolean }>('mcp_setup', {
+    tabId,
+    serverName,
+    values,
+  })
+
 /** 当前会话工具 + 斜杠命令 / 技能（官方 x.ai/commands/list） */
 export const listSessionCommands = (tabId: string, cwd?: string | null) =>
   invoke<{
@@ -416,6 +515,31 @@ export const listWorkflows = (tabId: string) =>
     tabId,
   })
 
+/** 通用官方扩展（自动带 sessionId） */
+export const sessionExt = (
+  tabId: string,
+  method: string,
+  params?: Record<string, unknown> | null,
+) =>
+  invoke<Record<string, unknown>>('session_ext', {
+    tabId,
+    method,
+    params: params ?? null,
+  })
+
+export type McpSetupFieldDto = {
+  id: string
+  label: string
+  type?: string
+  required?: boolean
+  default?: string | null
+  options?: Array<{ label: string; value: string }>
+}
+
+export type McpSetupDto = {
+  fields?: McpSetupFieldDto[]
+}
+
 /** 与官方 McpServerEntry 对齐的前端 DTO（字段宽松） */
 export type McpServerDto = {
   name: string
@@ -428,6 +552,8 @@ export type McpServerDto = {
   url?: string
   command?: string
   args?: string[]
+  env?: Array<{ name?: string; value?: string }> | Record<string, string>
+  setup?: McpSetupDto | null
   session?: {
     enabled?: boolean
     status?: string | null
@@ -459,8 +585,27 @@ export const envFileLocation = () => invoke<string>('env_file_location')
 export const listDir = (path: string) =>
   invoke<Array<{ name: string; is_dir: boolean }>>('list_dir', { path })
 
+export const searchWorkspaceFiles = (
+  root: string,
+  query: string,
+  limit?: number,
+) =>
+  invoke<Array<{ path: string; rel: string; is_dir: boolean }>>(
+    'search_workspace_files',
+    { root, query, limit: limit ?? 24 },
+  )
+
+export const savePasteImage = (base64: string, mime: string) =>
+  invoke<string>('save_paste_image', { base64, mime })
+
 export const readFileText = (path: string) =>
   invoke<string>('read_file_text', { path })
+
+export const readMemoryFile = (path: string) =>
+  invoke<string>('read_memory_file', { path })
+
+export const deleteMemoryPath = (path: string, source: string) =>
+  invoke('delete_memory_path', { path, source })
 
 /** 右栏「差异」：工作区文件相对 git HEAD */
 export type FileWorkingDiff = {
@@ -498,6 +643,14 @@ export type SkillInfoDto = {
   pluginName?: string | null
   plugin_name?: string | null
   enabled?: boolean
+  userInvocable?: boolean
+  user_invocable?: boolean
+  disableModelInvocation?: boolean
+  disable_model_invocation?: boolean
+  allowedTools?: string[] | null
+  allowed_tools?: string[] | null
+  configSource?: { type?: string } | null
+  config_source?: { type?: string } | null
 }
 
 export const listSkills = (tabId: string, cwd: string) =>
@@ -640,6 +793,9 @@ export interface SessionEventPayload {
     options: Array<{ label: string; description?: string; preview?: string | null }>
     multiSelect?: boolean | null
   }>
+  /** CurrentModeUpdate / exit_plan_mode */
+  mode_id?: string
+  plan_content?: string | null
   // ── Goal / 工作流进度（后端 camelCase DTO）──
   goal?: GoalInfoDto
   workflow?: WorkflowInfoDto
@@ -649,6 +805,24 @@ export interface SessionEventPayload {
   signal?: string | null
   truncated?: boolean
   killed?: boolean
+  /** 官方 MCP 推送 */
+  method?: string
+  payload?: Record<string, unknown>
+  files?: Array<{
+    path?: string
+    source?: string
+    sizeBytes?: number
+    size_bytes?: number
+    modifiedEpochSecs?: number | null
+    modified_epoch_secs?: number | null
+  }>
+  kind?: string
+  result?: string
+  path?: string | null
+  op?: string
+  prompt?: string
+  human_schedule?: string
+  next_fire_at?: string | null
 }
 
 let _unlisten: UnlistenFn | null = null

@@ -184,7 +184,6 @@ export const CanvasComposer = memo(function CanvasComposer({
         onSwitchModel={onSwitchModel}
         onSwitchReasoningEffort={onSwitchReasoningEffort}
         onSelectWorkspace={() => {}}
-        onBrowseWorkspace={() => {}}
         queuedPrompts={queued}
         onSend={(t, a, mode) => void onSend(t, a, mode)}
         onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}

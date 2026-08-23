@@ -1,10 +1,26 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import type { ChatMessage, ToolCallData } from '../../types'
-import { $activeTabId, $backgroundTasks, $permission, openRewind, pushToast, removeBackgroundTask } from '../../store'
+import {
+  $activeTabId,
+  $backgroundTasks,
+  $permission,
+  $subagents,
+  openRewind,
+  pushToast,
+  removeBackgroundTask,
+} from '../../store'
 import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
+import { DiffLines } from './DiffLines'
 import { forkCurrentSession } from '../../lib/forkSession'
+import { retryAssistantTurn } from '../../lib/retryAssistantTurn'
+import { cancelSubagentChild } from '../../lib/cancelSubagentChild'
+import {
+  formatSubagentLiveMeta,
+  parseSubagentIdFromToolCallId,
+} from '../../lib/subagentMessage'
+import { isHiddenUserMessage } from '../../lib/userMessage'
 import { writingToolLabel } from '../../lib/writingToolLabel'
 import { killTask } from '../../bridge'
 
@@ -97,6 +113,7 @@ type ScaffoldIconKind =
   | 'edit'
   | 'search'
   | 'ask'
+  | 'plan'
   | 'agent'
 
 function toolIconKind(tool: ToolCallData): ScaffoldIconKind {
@@ -104,6 +121,7 @@ function toolIconKind(tool: ToolCallData): ScaffoldIconKind {
   const blob = `${tool.title || ''} ${tool.detail || ''}`.toLowerCase()
   if (k === 'subagent') return 'agent'
   if (k === 'ask_user') return 'ask'
+  if (k === 'plan_mode' || /exit_plan_mode|enter_plan_mode/.test(blob)) return 'plan'
   if (k === 'execute') return 'terminal'
   if (
     k === 'fetch' ||
@@ -196,6 +214,14 @@ const ScaffoldTypeIcon = memo(function ScaffoldTypeIcon({
           <path d="M12 17h.01" />
         </svg>
       )
+    case 'plan':
+      return (
+        <svg {...common}>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <path d="M14 2v6h6" />
+          <path d="M8 13h8M8 17h5" />
+        </svg>
+      )
     case 'agent':
       // 分支 / 子任务
       return (
@@ -225,6 +251,7 @@ const ICON_TITLE: Record<ScaffoldIconKind, string> = {
   edit: '编辑',
   search: '搜索',
   ask: '提问',
+  plan: '计划稿',
   agent: '子任务',
 }
 
@@ -273,10 +300,16 @@ const ScaffoldGlyph = memo(function ScaffoldGlyph({
 interface MessageItemProps {
   message: ChatMessage
   streaming?: boolean
+  /** 整轮仍在生成（不只是本行 live） */
+  sessionBusy?: boolean
   /** 点击「Ask · 待回答」工具行时聚焦问卷面板 */
   onFocusUserQuestion?: (toolCallId: string) => void
+  /** 点击计划稿工具行时打开预览 */
+  onFocusPlan?: (toolCallId: string) => void
   /** 该行是当前权限审批的发起行：工具行下方渲染内嵌审批条 */
   isPermissionOrigin?: boolean
+  /** 最新助手条：复制栏里的重试才可点，按钮始终占位避免高度跳 */
+  canRetry?: boolean
 }
 
 /** 内嵌审批条包装：读当前 tab 投影，有审批才渲染 */
@@ -289,6 +322,8 @@ function InlinePermissionBarWrap() {
 function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
   if (prev.isPermissionOrigin !== next.isPermissionOrigin) return false
   if (prev.streaming !== next.streaming) return false
+  if (prev.sessionBusy !== next.sessionBusy) return false
+  if (prev.canRetry !== next.canRetry) return false
   if (!next.streaming && !prev.streaming) {
     return prev.message === next.message
   }
@@ -303,7 +338,8 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
       (a.toolCall?.status === b.toolCall?.status &&
         a.toolCall?.preview === b.toolCall?.preview &&
         a.toolCall?.detail === b.toolCall?.detail &&
-        a.toolCall?.title === b.toolCall?.title))
+        a.toolCall?.title === b.toolCall?.title &&
+        a.toolCall?.diffs === b.toolCall?.diffs))
   )
 }
 
@@ -328,6 +364,18 @@ function formatToolPreview(raw: string): string {
   return raw
 }
 
+/** 进行中每秒刷新耗时；不写 scrollTop，只改这一行文字。 */
+function useTickingMs(start: number | undefined, live: boolean): number | undefined {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!live || !start) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [live, start])
+  if (!start) return undefined
+  return Math.max(0, (live ? now : Date.now()) - start)
+}
+
 /** 子任务行：对话内 scaffold（须在 MessageItem 前声明） */
 function SubagentToolLine({
   tool,
@@ -338,8 +386,14 @@ function SubagentToolLine({
 }) {
   const [expanded, setExpanded] = useState(false)
   const [opening, setOpening] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [copied, setCopied] = useState(false)
   const copyTimerRef = useRef<number | undefined>(undefined)
+  const subagents = useStore($subagents)
+  const subId = parseSubagentIdFromToolCallId(tool.toolCallId)
+  const runtime = subId
+    ? subagents.find((s) => s.subagentId === subId)
+    : undefined
 
   useEffect(() => {
     return () => {
@@ -347,9 +401,12 @@ function SubagentToolLine({
     }
   }, [])
 
-  const failed = tool.status === 'failed'
+  const cancelled = runtime?.status === 'cancelled'
+  const failed = tool.status === 'failed' && !cancelled
   const finished =
-    tool.status === 'completed' || tool.status === 'failed'
+    tool.status === 'completed' ||
+    tool.status === 'failed' ||
+    cancelled
   const live =
     !finished &&
     (tool.status === 'pending' ||
@@ -358,7 +415,21 @@ function SubagentToolLine({
   const rawPreview = tool.preview?.trim() || ''
   const formattedPreview = useMemo(() => formatToolPreview(rawPreview), [rawPreview])
   const childSid = tool.detail?.trim() || ''
+  const elapsedMs = useTickingMs(tool.timing?.start, live)
   const duration = formatDuration(tool.timing)
+  const liveMeta = formatSubagentLiveMeta(
+    {
+      durationMs: runtime?.durationMs,
+      turnCount: runtime?.turnCount,
+      toolCallCount: runtime?.toolCallCount,
+      toolsUsed: runtime?.toolsUsed,
+    },
+    live
+      ? elapsedMs != null && elapsedMs >= 1000
+        ? elapsedMs
+        : undefined
+      : runtime?.durationMs,
+  )
   const headline = toolHeadline(tool)
 
   const onCopy = useCallback(async () => {
@@ -394,6 +465,16 @@ function SubagentToolLine({
     }
   }, [childSid, opening, tool.title, formattedPreview])
 
+  const onCancel = useCallback(async () => {
+    if (!subId || cancelling || !live) return
+    setCancelling(true)
+    try {
+      await cancelSubagentChild(subId)
+    } finally {
+      setCancelling(false)
+    }
+  }, [cancelling, live, subId])
+
   return (
     <div
       className={[
@@ -402,6 +483,7 @@ function SubagentToolLine({
         live ? 'is-live' : '',
         expanded ? 'is-open' : '',
         failed ? 'is-error' : '',
+        cancelled ? 'is-cancelled' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -427,8 +509,8 @@ function SubagentToolLine({
               <span className="scaffold-label" title={headline}>
                 {headline}
               </span>
-              {!live && duration ? (
-                <span className="scaffold-meta">{duration}</span>
+              {!live && (liveMeta || duration) ? (
+                <span className="scaffold-meta">{liveMeta || duration}</span>
               ) : null}
               {formattedPreview ? (
                 <span className={`scaffold-caret${expanded ? ' is-open' : ''}`} aria-hidden>
@@ -436,6 +518,20 @@ function SubagentToolLine({
                 </span>
               ) : null}
             </button>
+            {live && subId ? (
+              <button
+                type="button"
+                className="subagent-inline-open is-cancel"
+                disabled={cancelling}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  void onCancel()
+                }}
+                title="只停这个帮手，主对话继续"
+              >
+                {cancelling ? '…' : '取消'}
+              </button>
+            ) : null}
             {childSid ? (
               <button
                 type="button"
@@ -451,6 +547,11 @@ function SubagentToolLine({
               </button>
             ) : null}
           </div>
+          {live && liveMeta ? (
+            <div className="subagent-live-meta" title={liveMeta}>
+              {liveMeta}
+            </div>
+          ) : null}
           {expanded && formattedPreview ? (
             <div className="scaffold-body tool-body">
               <button
@@ -478,8 +579,11 @@ function SubagentToolLine({
 export const MessageItem = memo(function MessageItem({
   message,
   streaming = false,
+  sessionBusy = false,
   onFocusUserQuestion,
+  onFocusPlan,
   isPermissionOrigin = false,
+  canRetry = false,
 }: MessageItemProps) {
   switch (message.role) {
     case 'system':
@@ -490,8 +594,8 @@ export const MessageItem = memo(function MessageItem({
       )
 
     case 'user':
-      // 子任务 instruction 不当作用户气泡展示（竞品也不露完整派发词）
-      if (isSubagentTaskPrompt(message.text || '')) return null
+      // 子任务 instruction 不当作用户气泡展示
+      if (isHiddenUserMessage(message.text || '')) return null
       return <UserBubble text={message.text} />
 
     case 'thought':
@@ -514,6 +618,14 @@ export const MessageItem = memo(function MessageItem({
           <AskUserToolLine
             tool={tool}
             onFocus={onFocusUserQuestion}
+          />
+        )
+      }
+      if (tool.kind === 'plan_mode') {
+        return (
+          <PlanToolLine
+            tool={tool}
+            onFocus={onFocusPlan}
           />
         )
       }
@@ -542,11 +654,12 @@ export const MessageItem = memo(function MessageItem({
       const live = streaming || Boolean(message.isStreaming)
       // 不显示 Assistant 角标：左右气泡/活动行已能区分角色，角标冗余
       return (
-        <div className={`message-row assistant-row${live ? ' is-streaming' : ''}`}>
-          <div className="assistant-content md-body">
-            <AssistantMarkdown text={message.text} />
-          </div>
-        </div>
+        <AssistantReply
+          messageId={message.id}
+          text={message.text}
+          live={live}
+          canRetry={canRetry && !sessionBusy && !live}
+        />
       )
     }
 
@@ -591,12 +704,12 @@ const ThoughtLine = memo(function ThoughtLine({
   const open = userOpen ?? streaming
   const duration = formatDuration(streaming ? undefined : timing)
   const title = streaming
-    ? 'Thinking…'
+    ? '思考中…'
     : duration
-      ? `Thinking for ${duration}`
+      ? `想了 ${duration}`
       : timing?.end && timing.start && (timing.end - timing.start) / 1000 < 1
-        ? 'Thinking briefly'
-        : 'Thinking'
+        ? '略想了一下'
+        : '已思考'
   const expandRef = useRef<HTMLDivElement>(null)
   const canExpand = text.trim().length > 0
   /**
@@ -708,6 +821,8 @@ function toolHeadline(tool: ToolCallData, live = false): string {
   switch (tool.kind) {
     case 'ask_user':
       return `Ask · ${label}`
+    case 'plan_mode':
+      return `Plan · ${label}`
     case 'execute':
       return `Run ${label}`
     case 'read':
@@ -724,6 +839,52 @@ function toolHeadline(tool: ToolCallData, live = false): string {
       return `Run ${label}`
   }
 }
+
+/** 计划稿工具卡：Plan · 待审批 / 已处理 */
+const PlanToolLine = memo(function PlanToolLine({
+  tool,
+  onFocus,
+}: {
+  tool: ToolCallData
+  onFocus?: (toolCallId: string) => void
+}) {
+  const pending =
+    tool.status === 'pending' || tool.status === 'in_progress'
+  const detail = tool.detail?.trim() || tool.title || '计划稿'
+  const short =
+    detail.length > 48 ? `${detail.slice(0, 46)}…` : detail
+  const answer = tool.preview?.trim() || ''
+  const statusText = pending ? '待审批' : answer || '已处理'
+
+  return (
+    <div
+      className={`message-row scaffold-row tool-row kind-plan${pending ? ' is-awaiting is-live' : ''}`}
+      data-tool-call-id={tool.toolCallId}
+      data-tool-kind="plan_mode"
+      data-conversation-scaffold=""
+    >
+      <div className="scaffold-line">
+        <ScaffoldGlyph tone="thought" live={pending} iconKind="plan" />
+        <div className="scaffold-main">
+          <button
+            type="button"
+            className="scaffold-toggle"
+            onClick={() => onFocus?.(tool.toolCallId)}
+            title={pending ? '打开计划稿' : answer || detail}
+            aria-label={pending ? `待审批计划稿：${detail}` : `计划稿：${detail}`}
+          >
+            <span className="scaffold-label" title={detail}>
+              Plan · {short}
+            </span>
+            <span className={`ask-user-badge${pending ? ' is-pending' : ' is-done'}`}>
+              {statusText}
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
 
 /** AI 问卷工具卡：Ask · 摘要 · 待回答 / 已回答 */
 const AskUserToolLine = memo(function AskUserToolLine({
@@ -796,8 +957,7 @@ const ToolLine = memo(function ToolLine({
   tool: ToolCallData
   streaming: boolean
 }) {
-  // 会话内不展示 diff（后续迁移到独立侧边栏），工具行只说明「正在修改文件」：
-  // 默认折叠为一行摘要（Edit 文件 + 状态 + +N −M 徽标），点开看工具输出 preview。
+  // 默认折叠：展开才挂 diff/preview，流式时不把列表高度顶飞。
   // todo_write 例外：任务清单默认展开（实时勾选进度是它的核心价值）。
   const [expanded, setExpanded] = useState(() => Boolean(tool.todo?.todos?.length))
   const duration = formatDuration(tool.timing)
@@ -812,8 +972,8 @@ const ToolLine = memo(function ToolLine({
       streaming)
   const rawPreview = tool.preview?.trim() || ''
   const formattedPreview = useMemo(() => formatToolPreview(rawPreview), [rawPreview])
-  // 会话内不展示 diff：可展开内容只有工具输出 preview
-  const hasBody = formattedPreview.length > 0
+  const diffs = tool.diffs?.length ? tool.diffs : null
+  const hasBody = formattedPreview.length > 0 || Boolean(diffs)
   const headline = toolHeadline(tool, live)
   const tone: ActivityTone = failed ? 'tool-failed' : 'tool'
   const iconKind = useMemo(
@@ -844,15 +1004,26 @@ const ToolLine = memo(function ToolLine({
   }, [])
 
   const onCopy = useCallback(async () => {
+    const diffText = diffs
+      ? diffs
+          .map((d) => {
+            const oldL = (d.oldText || '').split('\n').map((l) => `-${l}`).join('\n')
+            const newL = (d.newText || '').split('\n').map((l) => `+${l}`).join('\n')
+            return `${d.path}\n${oldL}\n${newL}`
+          })
+          .join('\n\n')
+      : ''
     try {
-      await navigator.clipboard.writeText(formattedPreview || tool.detail || tool.title)
+      await navigator.clipboard.writeText(
+        formattedPreview || diffText || tool.detail || tool.title,
+      )
       setCopied(true)
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
       copyTimerRef.current = window.setTimeout(() => setCopied(false), 1200)
     } catch {
       /* clipboard 不可用时静默 */
     }
-  }, [formattedPreview, tool.detail, tool.title])
+  }, [diffs, formattedPreview, tool.detail, tool.title])
 
   // bash 后台任务（x.ai/task_backgrounded）：工具行显示徽标 + 终止入口
   const bgTasks = useStore($backgroundTasks)
@@ -970,7 +1141,7 @@ const ToolLine = memo(function ToolLine({
           ) : null}
           {expanded && hasBody ? (
             <div className="scaffold-body tool-body">
-              {formattedPreview ? (
+              {formattedPreview || diffs ? (
                 <button
                   type="button"
                   className={`tool-copy-btn${copied ? ' is-copied' : ''}`}
@@ -980,7 +1151,18 @@ const ToolLine = memo(function ToolLine({
                   {copied ? '✓' : '⧉'}
                 </button>
               ) : null}
-              {formattedPreview ? (
+              {diffs ? (
+                <div className="tool-diff-stack">
+                  {diffs.map((d) => (
+                    <div className="tool-diff-block" key={d.path}>
+                      <div className="tool-diff-path" title={d.path}>
+                        {d.path}
+                      </div>
+                      <DiffLines oldText={d.oldText || ''} newText={d.newText} />
+                    </div>
+                  ))}
+                </div>
+              ) : formattedPreview ? (
                 <>
                   <div className="scaffold-section-label">output</div>
                   <pre className="scaffold-pre tool-output-pre">
@@ -998,16 +1180,97 @@ const ToolLine = memo(function ToolLine({
   )
 })
 
-/** 子 agent 任务提示（父派发的完整 instruction）不渲染为用户气泡 — 对齐安静 scaffold */
-function isSubagentTaskPrompt(text: string): boolean {
-  const t = (text || "").trim()
-  if (!t) return false
-  // 子agent 任务 instruction
-  if (/的子\s*agent/i.test(t) && t.length > 40) return true
-  if (/^你是负责.+子\s*agent/i.test(t)) return true
-  if (/you are a sub-?agent/i.test(t) && t.length > 40) return true
-  return false
-}
+const AssistantReply = memo(function AssistantReply({
+  messageId,
+  text,
+  live,
+  canRetry,
+}: {
+  messageId: string
+  text: string
+  live: boolean
+  canRetry: boolean
+}) {
+  const textRef = useRef(text)
+  textRef.current = text
+  const getText = useCallback(() => textRef.current, [])
+  return (
+    <div className={`message-row assistant-row${live ? ' is-streaming' : ''}`}>
+      <div className="assistant-content md-body">
+        <AssistantMarkdown text={text} />
+      </div>
+      <AssistantActions canRetry={canRetry} getText={getText} messageId={messageId} />
+    </div>
+  )
+})
+
+const AssistantActions = memo(function AssistantActions({
+  messageId,
+  getText,
+  canRetry,
+}: {
+  messageId: string
+  getText: () => string
+  canRetry: boolean
+}) {
+  const [copied, setCopied] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const copyTimerRef = useRef<number | undefined>(undefined)
+  const retryingRef = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
+  const onCopy = useCallback(async () => {
+    const text = getText()
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      pushToast('复制失败', 'error')
+    }
+  }, [getText])
+
+  const onRetry = useCallback(async () => {
+    if (!canRetry || retryingRef.current) return
+    retryingRef.current = true
+    setRetrying(true)
+    try {
+      await retryAssistantTurn(messageId)
+    } finally {
+      retryingRef.current = false
+      setRetrying(false)
+    }
+  }, [canRetry, messageId])
+
+  return (
+    <div className="assistant-actions">
+      <button
+        type="button"
+        title="复制回复"
+        aria-label="复制回复"
+        onClick={() => void onCopy()}
+      >
+        {copied ? '已复制' : '复制'}
+      </button>
+      <button
+        type="button"
+        title={canRetry ? '按原提问重新生成' : '仅最新回复可重试'}
+        aria-label="重新生成"
+        disabled={!canRetry || retrying}
+        onClick={() => void onRetry()}
+      >
+        {retrying ? '重试中' : '重试'}
+      </button>
+    </div>
+  )
+})
 
 const UserBubble = memo(function UserBubble({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false)

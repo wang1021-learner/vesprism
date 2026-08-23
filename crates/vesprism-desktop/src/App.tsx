@@ -2,6 +2,8 @@ import { useStore } from '@nanostores/react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { SandboxBanner } from './components/SandboxBanner'
+import { PlanBanner } from './components/PlanBanner'
+import { AppPlanApproval } from './components/PlanApproval'
 import { MessageList } from './components/Chat/MessageList'
 import { WindowChrome } from './components/WindowChrome'
 import { CommandPalette } from './components/CommandPalette'
@@ -20,6 +22,13 @@ import { ToastHost } from './components/Toast'
 import { RewindPicker } from './components/RewindPicker'
 import { CompositionPanel } from './components/CompositionPanel'
 import { GoalStrip } from './components/GoalStrip'
+import { TodoStrip } from './components/TodoStrip'
+import { BgTaskBar } from './components/BgTaskBar'
+import { SessionInsight } from './components/SessionInsight'
+import { SchedulePanel } from './components/SchedulePanel'
+import { ScheduleStrip } from './components/ScheduleStrip'
+import { MemoryPanel } from './components/MemoryPanel'
+import { PluginsPanel } from './components/PluginsPanel'
 import { SessionTermDock } from './components/SessionTermDock'
 import { syncWindowTitle, titleForWindow } from './lib/windowTitle'
 import {
@@ -42,6 +51,7 @@ const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 import {
+  addProject,
   getModelSettings, isTauriRuntime, listSessions,
   listenSessionEvents, openTab, removeQueuedPrompt, setCurrentModel,
   startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
@@ -51,6 +61,11 @@ import { sendSessionPrompt } from './lib/sendSessionPrompt'
 import { cancelActiveTurn } from './lib/cancelActiveTurn'
 import { handleSessionEvent } from './lib/sessionEvents'
 import { policyFromDto } from './lib/executionPolicy'
+import {
+  refreshRegisteredProjects,
+  registerAndSwitchWorkspace,
+} from './lib/workspaceSwitch'
+import { dedupeWorkspacePaths } from './lib/workspacePath'
 
 /** 独立订阅，避免顶栏切 Tab 时整棵 DesktopApp（侧栏+消息区）跟着重绘 */
 function WindowTitleSync() {
@@ -204,9 +219,21 @@ async function bootstrap() {
     }
     const chats = await listSessions(cwd, 80)
     $chats.set(chats.map(c => ({ id: c.id, title: c.title, cwd: c.cwd, updatedAt: c.updated_at })))
-    const wsSet = new Set(chats.map(c => c.cwd))
-    if (cwd) wsSet.add(cwd)
-    $workspaceOptions.set([...wsSet])
+    $workspaceOptions.set(
+      dedupeWorkspacePaths([...chats.map((c) => c.cwd), cwd].filter(Boolean)),
+    )
+    if (cwd) {
+      try {
+        await addProject(cwd)
+      } catch {
+        /* 钉项目失败不挡启动 */
+      }
+    }
+    try {
+      await refreshRegisteredProjects()
+    } catch {
+      /* 项目表不可用时侧栏仍按会话 cwd 分组 */
+    }
     listenSessionEvents(handleSessionEvent)
     const tabId = await openTab()
     const { modelId, reasoningEffort } = resolveNewTabModel()
@@ -283,6 +310,12 @@ function AppMainBody() {
   if (kind === 'skills') {
     return <SkillsPanel />
   }
+  if (kind === 'memory') {
+    return <MemoryPanel />
+  }
+  if (kind === 'plugins') {
+    return <PluginsPanel />
+  }
   if (kind === 'workflows') {
     return <WorkflowsPanel />
   }
@@ -317,11 +350,18 @@ function AppMainBody() {
           )}
         >
           <GoalStrip />
+          <PlanBanner />
+          <TodoStrip />
+          <ScheduleStrip />
           <AppMessages />
         </ErrorBoundary>
         <AppUserQuestion />
+        <AppPlanApproval />
+        <SessionInsight />
+        <SchedulePanel />
         <AppPermission />
         <SandboxBanner />
+        <BgTaskBar />
         <AppComposer />
       </div>
       <SessionTermDock />
@@ -338,12 +378,18 @@ function AppMessages() {
       new CustomEvent('jike:focus-user-question', { detail: { toolCallId } }),
     )
   }, [])
+  const onFocusPlan = useCallback((toolCallId: string) => {
+    window.dispatchEvent(
+      new CustomEvent('jike:focus-plan', { detail: { toolCallId } }),
+    )
+  }, [])
   return (
     <MessageList
       messages={msgs}
       streaming={streaming}
       permission={perm}
       onFocusUserQuestion={onFocusUserQuestion}
+      onFocusPlan={onFocusPlan}
     />
   )
 }
@@ -431,39 +477,11 @@ function AppComposer() {
   const onSelectWorkspace = useCallback(async (newCwd: string) => {
     if (newCwd === cwd) return
     try {
-      const { setWorkspaceCwd, restartSession } = await import('./bridge')
-      const applied = await setWorkspaceCwd(newCwd)
-      $preferredWorkspaceCwd.set(applied)
-      patchActiveTab({ cwd: applied, phase: 'restarting' })
-      $workspaceOptions.set([...new Set([...$workspaceOptions.get(), applied])])
-      try {
-        $securityPolicy.set(policyFromDto(await getSecurityPolicy(applied)))
-      } catch {
-        /* 沿用当前策略 */
-      }
-      const tabId = $activeTabId.get()
-      const st = getTabState(tabId)
-      await restartSession(tabId, applied, {
-        modelId: st?.modelId,
-        reasoningEffort: st?.reasoningEffort,
-      })
-      patchActiveTab({ phase: 'ready', status: 'idle' })
+      await registerAndSwitchWorkspace(newCwd, { restartTab: true })
     } catch (e) {
       patchActiveTab({ error: String(e), phase: 'ready' })
     }
   }, [cwd])
-
-  const onBrowseWorkspace = useCallback(async () => {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const selected = await open({ directory: true, defaultPath: cwd || undefined })
-      if (typeof selected === 'string' && selected.trim()) {
-        await onSelectWorkspace(selected.trim())
-      }
-    } catch (e) {
-      patchActiveTab({ error: String(e) })
-    }
-  }, [cwd, onSelectWorkspace])
 
   const setComposerInput = useCallback((v: string) => {
     patchActiveTab({ composerInput: v })
@@ -486,7 +504,6 @@ function AppComposer() {
       onSwitchModel={onSwitchModel}
       onSwitchReasoningEffort={onSwitchReasoningEffort}
       onSelectWorkspace={(c) => void onSelectWorkspace(c)}
-      onBrowseWorkspace={() => void onBrowseWorkspace()}
       queuedPrompts={queued}
       onSend={(t, a, mode) => void onSend(t, a, mode)}
       onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}

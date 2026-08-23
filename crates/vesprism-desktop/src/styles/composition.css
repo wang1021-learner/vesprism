@@ -266,6 +266,9 @@
   opacity: 0.5;
   cursor: default;
 }
+.st-action.is-cancel:hover:not(:disabled) {
+  color: var(--danger, #dc2626);
+}
 .st-member-preview {
   margin: 1px 0 0 23px;
   font-size: 11px;

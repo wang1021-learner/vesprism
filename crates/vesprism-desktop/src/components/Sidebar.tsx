@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from 'react'
 import {
@@ -37,6 +38,7 @@ import {
   switchTab,
   $workspaceCwd,
   $preferredWorkspaceCwd,
+  $registeredProjects,
   $scratchCwd,
   isScratchCwd,
   type ChatSummary,
@@ -50,6 +52,7 @@ import {
   listSessions,
   loadSession,
   openTab,
+  removeProject,
   renameSession,
   restartSession,
   searchSessions,
@@ -68,6 +71,12 @@ import {
 } from '../lib/sessionOpen'
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
+import { openSessionSchedule } from '../lib/engineSlash'
+import { normalizeWorkspacePath, workspaceFolderName } from '../lib/workspacePath'
+import {
+  refreshRegisteredProjects,
+  registerAndSwitchWorkspace,
+} from '../lib/workspaceSwitch'
 import { openWorkbenchHistory } from '../lib/openWorkbenchSession'
 import { reconcileRunningSubagents } from '../lib/reconcileRunningSubagents'
 import {
@@ -234,6 +243,24 @@ function McpIcon() {
   )
 }
 
+function MemoryIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M6 7h12v12H6z" />
+      <path d="M9 7V5h6v2M9 12h6M9 16h4" />
+    </svg>
+  )
+}
+
+function PluginIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M9 7V4h6v3" />
+      <path d="M8 7h8v6l-2 2v5H10v-5l-2-2V7Z" />
+    </svg>
+  )
+}
+
 function WorkflowIcon() {
   return (
     <svg {...iconProps}>
@@ -241,6 +268,15 @@ function WorkflowIcon() {
       <circle cx="17" cy="12" r="2" />
       <circle cx="7" cy="16" r="2" />
       <path d="M9 8h4.5a3.5 3.5 0 0 1 3.5 3.5M9 16h4.5A3.5 3.5 0 0 0 17 12.5" />
+    </svg>
+  )
+}
+
+function ScheduleIcon() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="12" cy="12" r="7.5" />
+      <path d="M12 8.5v4l2.5 1.5" />
     </svg>
   )
 }
@@ -335,7 +371,7 @@ function CollapsibleWorkspaceBody({
 }
 
 function normalizeCwdKey(cwd: string | undefined): string {
-  return (cwd || '').trim().replace(/\\/g, '/').replace(/\/+$/, '') || '(未知工作空间)'
+  return normalizeWorkspacePath(cwd || '') || '(未知工作空间)'
 }
 
 /** 工作台分组（有产物绑定的画布/编制干活会话）专用 key，不参与 cwd 分组。 */
@@ -347,8 +383,7 @@ function workspaceDisplayName(cwd: string): string {
   const key = normalizeCwdKey(cwd)
   if (key === '(未知工作空间)') return key
   if (isScratchCwd(cwd)) return '闲聊'
-  const parts = key.split('/').filter(Boolean)
-  return parts[parts.length - 1] || key
+  return workspaceFolderName(cwd)
 }
 
 type WorkspaceGroup = {
@@ -356,6 +391,8 @@ type WorkspaceGroup = {
   label: string
   fullPath: string
   isCurrent: boolean
+  /** 钉在项目表里，可从侧栏摘掉（会话还在磁盘上）。 */
+  registered: boolean
   /** 仅按工作区分组；组内按更新时间降序 */
   chats: ChatSummary[]
 }
@@ -371,6 +408,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const MAX_TABS = 12
   const chats = useStore($chats)
   const cwd = useStore($workspaceCwd)
+  const registeredProjects = useStore($registeredProjects)
   /** 主工作区：侧栏置顶/默认展开；勿用当前 Tab cwd（点历史会误把整组拖到最上面） */
   const preferredCwd = useStore($preferredWorkspaceCwd)
   const scratchCwd = useStore($scratchCwd)
@@ -443,6 +481,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     if (!preferredCwd) return
     void refreshChats(preferredCwd)
   }, [preferredCwd, refreshChats])
+
+  useEffect(() => {
+    void refreshRegisteredProjects().catch(() => { })
+  }, [])
 
   useEffect(() => {
     void refreshWorkbenchChats()
@@ -591,6 +633,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         label: '工作台',
         fullPath: '',
         isCurrent: true,
+        registered: false,
         chats: [...workbenchChats].sort(
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
         ),
@@ -602,11 +645,15 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         label: '闲聊',
         fullPath: scratchCwd || '',
         isCurrent: true,
+        registered: false,
         chats: [...casual].sort(
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
         ),
       })
     }
+    const registeredKeys = new Set(
+      registeredProjects.map((root) => normalizeCwdKey(root)).filter((k) => k !== '(未知工作空间)'),
+    )
     for (const [key, list] of byWs) {
       const sorted = [...list].sort(
         (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
@@ -616,7 +663,21 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         label: workspaceDisplayName(key),
         fullPath: key,
         isCurrent: Boolean(pinKey) && key === pinKey,
+        registered: registeredKeys.has(key),
         chats: sorted,
+      })
+    }
+    for (const root of registeredProjects) {
+      if (isScratchCwd(root, scratchCwd)) continue
+      const key = normalizeCwdKey(root)
+      if (key === '(未知工作空间)' || byWs.has(key)) continue
+      groups.push({
+        cwdKey: key,
+        label: workspaceDisplayName(root),
+        fullPath: root,
+        isCurrent: Boolean(pinKey) && key === pinKey,
+        registered: true,
+        chats: [],
       })
     }
     groups.sort((a, b) => {
@@ -631,7 +692,39 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       return a.label.localeCompare(b.label, 'zh')
     })
     return groups
-  }, [chats, workbenchChats, preferredCwd, cwd, scratchCwd, workbenchBindings])
+  }, [chats, workbenchChats, preferredCwd, cwd, scratchCwd, workbenchBindings, registeredProjects])
+
+  const onWorkspaceTitleClick = (ws: WorkspaceGroup) => {
+    toggleWorkspace(ws)
+  }
+
+  /** 添加项目：系统文件夹选择，不弹已有仓库列表。 */
+  const browseProjectFolder = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const selected = await open({
+        directory: true,
+        defaultPath: preferredCwd || cwd || undefined,
+      })
+      if (typeof selected !== 'string' || !selected.trim()) return
+      await registerAndSwitchWorkspace(selected.trim())
+      await refreshChats()
+    } catch (e) {
+      patchActiveTab({ error: String(e) })
+    }
+  }
+
+  const onRemoveProject = async (ws: WorkspaceGroup, e: MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      await removeProject(ws.fullPath)
+      await refreshRegisteredProjects()
+      await refreshChats()
+    } catch (err) {
+      patchActiveTab({ error: String(err) })
+    }
+  }
 
   const toggleWorkspace = (ws: WorkspaceGroup) => {
     setCollapsedWorkspaces((prev) => {
@@ -1084,7 +1177,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
   /** 侧栏「技能 / 工具 / MCP / 自动化任务 / 流程画布」：各开一个带标题的专用 Tab */
   const onOpenUtilityTab = useCallback(
-    async (kind: 'skills' | 'tools' | 'mcp' | 'workflows' | 'flow-canvas' | 'agents') => {
+    async (
+      kind: 'skills' | 'tools' | 'mcp' | 'workflows' | 'flow-canvas' | 'agents' | 'memory' | 'plugins',
+    ) => {
       const title =
         kind === 'skills'
           ? '技能'
@@ -1092,11 +1187,15 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             ? '工具'
             : kind === 'mcp'
               ? 'MCP'
-              : kind === 'flow-canvas'
-                ? '流程画布'
-                : kind === 'agents'
-                  ? 'Agent 编制'
-                  : '自动化任务'
+              : kind === 'memory'
+                ? '记忆'
+                : kind === 'plugins'
+                  ? '插件'
+                  : kind === 'flow-canvas'
+                    ? '流程画布'
+                    : kind === 'agents'
+                      ? 'Agent 编制'
+                      : '自动化任务'
       setMenuOpenChatId(null)
       await openChatTab({ title, utilityKind: kind })
     },
@@ -1107,6 +1206,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     { kind: 'skills' as const, label: '技能', Icon: SkillIcon },
     { kind: 'tools' as const, label: '工具', Icon: ToolIcon },
     { kind: 'mcp' as const, label: 'MCP', Icon: McpIcon },
+    { kind: 'memory' as const, label: '记忆', Icon: MemoryIcon },
+    { kind: 'plugins' as const, label: '插件', Icon: PluginIcon },
+    { kind: 'schedule' as const, label: '定时任务', Icon: ScheduleIcon },
     { kind: 'workflows' as const, label: '任务', Icon: WorkflowIcon },
     { kind: 'flow-canvas' as const, label: '流程画布', Icon: FlowCanvasIcon },
     { kind: 'agents' as const, label: 'Agent 编制', Icon: AgentsIcon },
@@ -1128,7 +1230,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                   ? 'Agent 编制'
                   : label
           }
-          onClick={() => void onOpenUtilityTab(kind)}
+          onClick={() => {
+            if (kind === 'schedule') openSessionSchedule()
+            else void onOpenUtilityTab(kind)
+          }}
         >
           <Icon />
           <span>
@@ -1154,6 +1259,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             key={ws.cwdKey}
             className={`sidebar-workspace${ws.isCurrent ? ' is-current' : ''}${folded ? ' is-collapsed' : ''}${ws.cwdKey === CASUAL_GROUP_KEY ? ' is-casual' : ''}${ws.cwdKey === WORKBENCH_GROUP_KEY ? ' is-workbench' : ''}`}
           >
+            <div className="sidebar-workspace-title-row">
             <button
               type="button"
               className="sidebar-workspace-title"
@@ -1165,14 +1271,29 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                     : ws.fullPath
               }
               aria-expanded={!folded}
-              onClick={() => toggleWorkspace(ws)}
+              onClick={() => void onWorkspaceTitleClick(ws)}
             >
               <FolderIcon open={!folded} />
               <span className="sidebar-workspace-name">{ws.label}</span>
               <span className="sidebar-workspace-count">{ws.chats.length}</span>
             </button>
+            {ws.registered ? (
+              <button
+                type="button"
+                className="sidebar-workspace-remove"
+                title="从项目列表移除（不删除会话）"
+                aria-label={`移除项目 ${ws.label}`}
+                onClick={(e) => void onRemoveProject(ws, e)}
+              >
+                ×
+              </button>
+            ) : null}
+            </div>
             <CollapsibleWorkspaceBody open={!folded}>
               <div className="sidebar-group">
+                {ws.chats.length === 0 ? (
+                  <p className="sidebar-group-empty">此项目还没有会话</p>
+                ) : null}
                 {ws.chats.map((chat) => (
                   <ChatRow
                     key={chat.id}
@@ -1204,7 +1325,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         )
       })}
       {workspaceGroups.length === 0 && (
-        <p className="sidebar-empty-hint">暂无历史会话</p>
+        <p className="sidebar-empty-hint">暂无历史会话。点上方 + 添加项目。</p>
       )}
     </div>
   )
@@ -1248,6 +1369,15 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
       <div className="sidebar-section-label">
         <span>会话</span>
+        <button
+          type="button"
+          className="sidebar-section-add"
+          title="添加项目"
+          aria-label="添加项目"
+          onClick={() => void browseProjectFolder()}
+        >
+          +
+        </button>
       </div>
 
       {renderSessionList()}
@@ -1334,6 +1464,30 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
               onClick={() => void onOpenUtilityTab('mcp')}
             >
               <McpIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title="记忆"
+              onClick={() => void onOpenUtilityTab('memory')}
+            >
+              <MemoryIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title="插件"
+              onClick={() => void onOpenUtilityTab('plugins')}
+            >
+              <PluginIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title="定时任务"
+              onClick={() => openSessionSchedule()}
+            >
+              <ScheduleIcon />
             </button>
             <button
               type="button"
