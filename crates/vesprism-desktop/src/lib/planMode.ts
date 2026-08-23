@@ -22,8 +22,21 @@ export const EMPTY_PLAN_PLACEHOLDER = `\
 - **放弃** — 丢掉这份稿并关掉计划模式
 `
 
+export type SessionModeId = 'default' | 'plan' | 'ask'
+
+export function parseSessionMode(modeId: string | null | undefined): SessionModeId {
+  const m = (modeId || '').trim().toLowerCase()
+  if (m === 'plan') return 'plan'
+  if (m === 'ask') return 'ask'
+  return 'default'
+}
+
 export function isPlanModeId(modeId: string | null | undefined): boolean {
-  return (modeId || '').trim().toLowerCase() === 'plan'
+  return parseSessionMode(modeId) === 'plan'
+}
+
+export function isAskModeId(modeId: string | null | undefined): boolean {
+  return parseSessionMode(modeId) === 'ask'
 }
 
 export function planChipLabel(
@@ -169,12 +182,40 @@ export async function togglePlanMode(): Promise<void> {
       ? 'active'
       : 'pending'
   const modeId = on ? 'default' : 'plan'
-  patchTab(tabId, { planPhase: nextPhase })
+  patchTab(tabId, {
+    planPhase: nextPhase,
+    sessionMode: on ? 'default' : 'plan',
+  })
   try {
     await setSessionMode(tabId, modeId)
   } catch (e) {
-    patchTab(tabId, { planPhase: st.planPhase })
+    patchTab(tabId, { planPhase: st.planPhase, sessionMode: st.sessionMode })
     pushToast(`切换计划模式失败 · ${String(e)}`, 'error')
+  }
+}
+
+/** 问答模式：只问不改文件。与计划互斥，走同一套 session/set_mode。 */
+export async function toggleAskMode(): Promise<void> {
+  const tabId = $activeTabId.get()
+  if (!tabId) return
+  const st = getTabState(tabId)
+  if (!st) return
+  if (st.planApproval) {
+    pushToast('先处理计划稿审批', 'info')
+    patchTab(tabId, { planPreviewOpen: true })
+    return
+  }
+  const on = st.sessionMode === 'ask'
+  const modeId = on ? 'default' : 'ask'
+  patchTab(tabId, {
+    sessionMode: on ? 'default' : 'ask',
+    planPhase: on ? st.planPhase : 'off',
+  })
+  try {
+    await setSessionMode(tabId, modeId)
+  } catch (e) {
+    patchTab(tabId, { sessionMode: st.sessionMode, planPhase: st.planPhase })
+    pushToast(`切换问答模式失败 · ${String(e)}`, 'error')
   }
 }
 

@@ -823,6 +823,9 @@ export interface SessionEventPayload {
   prompt?: string
   human_schedule?: string
   next_fire_at?: string | null
+  summary?: string
+  auto?: boolean
+  event_text?: string
 }
 
 let _unlisten: UnlistenFn | null = null

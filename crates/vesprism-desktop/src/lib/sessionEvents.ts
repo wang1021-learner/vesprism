@@ -47,7 +47,7 @@ import {
   pickDeny,
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
-import { applyModeUpdate } from './planMode'
+import { applyModeUpdate, parseSessionMode } from './planMode'
 import { keepTail } from './terminalCards'
 import { cleanSessionTitle } from './sessionTitle'
 import { applyScheduledTask } from './scheduleLoop'
@@ -273,7 +273,8 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     case 'current_mode_update': {
       const st = getTabState(tabId)
       const next = applyModeUpdate(ev.mode_id || '', st?.planPhase ?? 'off')
-      const patch: Parameters<typeof patchTab>[1] = { planPhase: next }
+      const sessionMode = parseSessionMode(ev.mode_id)
+      const patch: Parameters<typeof patchTab>[1] = { planPhase: next, sessionMode }
       if (next === 'off' && !st?.planApproval) {
         patch.planPreviewOpen = false
       }
@@ -325,6 +326,37 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         path ? `记忆已${kind} · ${path}` : `记忆${kind}：${ev.result || '完成'}`,
         'success',
       )
+      break
+    }
+    case 'recap': {
+      const summary = String(ev.summary || '').trim()
+      if (summary) {
+        patchTab(tabId, { lastRecap: { summary, auto: Boolean(ev.auto) } })
+      }
+      break
+    }
+    case 'recap_unavailable':
+      pushToast('现在还写不出回顾，先聊几轮再试', 'info')
+      break
+    case 'monitor_event': {
+      const taskId = String(ev.task_id || '')
+      const line = String(ev.event_text || '').trim()
+      if (!taskId || !line) break
+      const st = getTabState(tabId)
+      const tasks = { ...(st?.backgroundTasks ?? {}) }
+      let key = Object.keys(tasks).find((k) => tasks[k].taskId === taskId)
+      if (!key) key = `monitor:${taskId}`
+      const prev = tasks[key]
+      const lastEvents = [...(prev?.lastEvents ?? []), line].slice(-24)
+      tasks[key] = {
+        taskId,
+        command: prev?.command || '',
+        outputFile: prev?.outputFile,
+        monitorDescription: String(ev.description || prev?.monitorDescription || '监视'),
+        description: prev?.description,
+        lastEvents,
+      }
+      patchTab(tabId, { backgroundTasks: tasks })
       break
     }
     case 'scheduled_task': {

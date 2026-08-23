@@ -5,6 +5,7 @@ import {
   formatPlanComments,
   formatPlanFeedback,
   markPlanActivated,
+  parseSessionMode,
   planChipLabel,
   planPreviewBody,
 } from './planMode'
@@ -35,6 +36,15 @@ describe('applyModeUpdate', () => {
   it('exit_pending 等到 default 才关', () => {
     expect(applyModeUpdate('plan', 'exit_pending')).toBe('exit_pending')
     expect(applyModeUpdate('default', 'exit_pending')).toBe('off')
+  })
+})
+
+describe('parseSessionMode', () => {
+  it('plan / ask / 其余 default', () => {
+    expect(parseSessionMode('plan')).toBe('plan')
+    expect(parseSessionMode('ASK')).toBe('ask')
+    expect(parseSessionMode('default')).toBe('default')
+    expect(parseSessionMode('')).toBe('default')
   })
 })
 

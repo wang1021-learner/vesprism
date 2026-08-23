@@ -92,6 +92,22 @@ describe('turn_ended status', () => {
     expect(getTabState('tab-1')?.planApproval?.requestId).toBe(7)
   })
 
+  it('recap 写入 lastRecap；ask 模式落到 sessionMode', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'recap',
+      summary: '刚才在改登录',
+      auto: false,
+    })
+    expect(getTabState('tab-1')?.lastRecap).toEqual({
+      summary: '刚才在改登录',
+      auto: false,
+    })
+    handleSessionEvent({ tab_id: 'tab-1', type: 'current_mode_update', mode_id: 'ask' })
+    expect(getTabState('tab-1')?.sessionMode).toBe('ask')
+    expect(getTabState('tab-1')?.planPhase).toBe('off')
+  })
+
   it('scheduled_task 创建写入本 tab，删除清掉', () => {
     handleSessionEvent({
       tab_id: 'tab-1',

@@ -21,6 +21,7 @@ import type {
   ExitPlanModeRequest,
   PlanPhase,
 } from './types'
+import type { SessionModeId } from './lib/planMode'
 import { upsertSubagentMessage } from './lib/subagentMessage'
 import type { SecurityPolicy } from './lib/executionPolicy'
 import { DEFAULT_SECURITY_POLICY } from './lib/executionPolicy'
@@ -37,6 +38,8 @@ export interface BackgroundTaskInfo {
   outputFile?: string
   monitorDescription?: string | null
   description?: string | null
+  /** 监视任务最近若干行 stdout */
+  lastEvents?: string[]
 }
 
 export interface TabState {
@@ -54,6 +57,12 @@ export interface TabState {
   permission: PermissionRequest | null
   /** 挂起的 AI 问卷 */
   userQuestion: UserQuestionRequest | null
+  /** 官方 session/set_mode：default / plan / ask */
+  sessionMode: SessionModeId
+  /** 最近一次 /recap，不进模型上下文 */
+  lastRecap: { summary: string; auto: boolean } | null
+  /** 本会话记忆是否打开（/memory on|off） */
+  memoryEnabled: boolean
   /** 计划模式生命周期 */
   planPhase: PlanPhase
   /** 挂起的计划稿审批 */
@@ -153,6 +162,9 @@ export function emptyTabState(): TabState {
     phase: 'idle',
     permission: null,
     userQuestion: null,
+    sessionMode: 'default',
+    lastRecap: null,
+    memoryEnabled: true,
     planPhase: 'off',
     planApproval: null,
     planPreviewOpen: false,
@@ -408,6 +420,9 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('phase' in patch) $sessionPhase.set(patch.phase!)
   if ('permission' in patch) $permission.set(patch.permission!)
   if ('userQuestion' in patch) $userQuestion.set(patch.userQuestion!)
+  if ('sessionMode' in patch) $sessionMode.set(patch.sessionMode ?? 'default')
+  if ('lastRecap' in patch) $lastRecap.set(patch.lastRecap ?? null)
+  if ('memoryEnabled' in patch) $memoryEnabled.set(patch.memoryEnabled ?? true)
   if ('planPhase' in patch) $planPhase.set(patch.planPhase ?? 'off')
   if ('planApproval' in patch) $planApproval.set(patch.planApproval ?? null)
   if ('planPreviewOpen' in patch) $planPreviewOpen.set(Boolean(patch.planPreviewOpen))
@@ -446,6 +461,9 @@ function projectTab(id: string): void {
     phase: s.phase,
     permission: s.permission,
     userQuestion: s.userQuestion,
+    sessionMode: s.sessionMode,
+    lastRecap: s.lastRecap,
+    memoryEnabled: s.memoryEnabled,
     planPhase: s.planPhase,
     planApproval: s.planApproval,
     planPreviewOpen: s.planPreviewOpen,
@@ -483,6 +501,9 @@ function resetProjection(): void {
     phase: 'idle',
     permission: null,
     userQuestion: null,
+    sessionMode: 'default',
+    lastRecap: null,
+    memoryEnabled: true,
     planPhase: 'off',
     planApproval: null,
     planPreviewOpen: false,
@@ -583,6 +604,9 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     composerInput: '',
     permission: null,
     userQuestion: null,
+    sessionMode: 'default',
+    lastRecap: null,
+    memoryEnabled: true,
     planPhase: 'off',
     planApproval: null,
     planPreviewOpen: false,
@@ -640,6 +664,12 @@ export const $permission = atom<PermissionRequest | null>(null)
 /** 内嵌审批条是否在视口内（Permission.tsx 的 IntersectionObserver 维护；浮层兜底读它） */
 export const $permissionInlineVisible = atom(true)
 export const $userQuestion = atom<UserQuestionRequest | null>(null)
+export const $sessionMode = atom<SessionModeId>('default')
+export const $lastRecap = atom<{ summary: string; auto: boolean } | null>(null)
+export const $memoryEnabled = atom(true)
+export const $chatFindOpen = atom(false)
+export const $chatFindQuery = atom('')
+export const $chatFindIndex = atom(-1)
 export const $planPhase = atom<PlanPhase>('off')
 export const $planApproval = atom<ExitPlanModeRequest | null>(null)
 export const $planPreviewOpen = atom(false)
