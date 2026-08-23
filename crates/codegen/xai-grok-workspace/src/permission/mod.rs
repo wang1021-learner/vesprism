@@ -1,5 +1,6 @@
 pub mod auto_mode;
 pub mod bash_command_splitting;
+pub(crate) mod canonicalize;
 pub mod claude_settings;
 mod exec_risk;
 mod gate_preflight;

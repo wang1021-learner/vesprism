@@ -8,6 +8,9 @@ use crate::permission::bash_command_splitting::{
     BashCommandHighlights, PlainCommand, is_setup_command, primary_command_from_script,
     try_parse_shell, try_parse_word_only_commands_sequence, unwrap_wrappers,
 };
+use crate::permission::canonicalize::{
+    extra_persist_keys, extra_persist_keys_from_words, is_banned_grant_key,
+};
 use crate::permission::state::PermissionState;
 
 /// Whether accepting the always-allow row at scope `n` (the first `n`
@@ -119,9 +122,19 @@ pub(super) fn persist_bash_always_allow(state: &mut PermissionState, cmd: &str, 
     let labeled_words_verified = (min_scope..=words.len())
         .any(|n| words_join_unambiguously(&words[..n]) && words[..n].join(" ") == prefix);
     if labeled_words_verified {
-        state.allowed_bash_commands.insert(prefix.to_owned());
+        if !is_banned_grant_key(prefix) {
+            state.allowed_bash_commands.insert(prefix.to_owned());
+        }
+        if let Some(n) = (min_scope..=words.len()).find(|&n| words[..n].join(" ") == prefix) {
+            state
+                .allowed_bash_commands
+                .extend(extra_persist_keys_from_words(&words[..n]));
+        }
     } else if h.prefix.is_empty() && h.suffix.is_empty() && words.join(" ") == prefix {
-        state.allowed_bash_commands.insert(cmd.to_owned());
+        if !is_banned_grant_key(cmd) {
+            state.allowed_bash_commands.insert(cmd.to_owned());
+        }
+        state.allowed_bash_commands.extend(extra_persist_keys(cmd));
     }
 }
 
@@ -272,6 +285,23 @@ mod tests {
         assert!(!evaluate_bash(COLLIDING_CHAIN, &state, true).exact_grant);
         // The silent per-segment mint must refuse the join too.
         assert!(bash_grant_segments(CMD).is_empty());
+    }
+
+    #[test]
+    fn always_allow_bash_lc_persists_inner_command() {
+        let mut state = PermissionState::default();
+        persist_bash_always_allow(&mut state, "bash -lc 'git status'", "bash -lc git status");
+        assert!(
+            state.allowed_bash_commands.contains("git status"),
+            "应落盘内层 git status 授权，实际 {:?}",
+            state.allowed_bash_commands
+        );
+        assert!(!state.allowed_bash_commands.iter().any(|k| k == "bash"));
+        let evaluation = evaluate_bash("bash -lc 'git status'", &state, true);
+        assert!(
+            evaluation.all_segments_granted,
+            "包了一层 shell 的调用应能用内层授权重放"
+        );
     }
 
     #[test]

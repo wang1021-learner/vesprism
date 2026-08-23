@@ -16,6 +16,9 @@ use crate::permission::auto_mode::{
 use crate::permission::bash_command_splitting::{
     is_setup_command, try_parse_shell, try_parse_word_only_commands_sequence, unwrap_wrappers,
 };
+use crate::permission::canonicalize::{
+    extra_persist_keys, is_banned_grant_key, words_covered_by_grants,
+};
 use crate::permission::exec_risk::{
     AmbientScanPlan, SAFE_GIT_SUBCOMMANDS, ambient_exec_risk_from_plan,
     ambient_scan_plan_from_segments, git_words_are_read_only_query,
@@ -694,11 +697,13 @@ fn evaluate_bash(cmd: &str, state: &PermissionState, honor_safe_lists: bool) -> 
         // stronger rule 2 below.
         let matched_command_grant = if crate::permission::policy::head_is_exec_vehicle(words) {
             state.allowed_bash_commands.contains(s.as_str())
+                || words_covered_by_grants(words, state)
         } else {
             state
                 .allowed_bash_commands
                 .iter()
                 .any(|a| matches_whitelist_prefix(&s, a))
+                || words_covered_by_grants(words, state)
         };
         let matched_grant = matched_command_grant
             || state
@@ -2406,8 +2411,11 @@ fn spawn_permission_manager_with_pin(
                                     // a future `a` or `b`. Persist per-segment grants too;
                                     // the raw script stays the exact-grant key for floored
                                     // requests.
-                                    state.allowed_bash_commands.insert(cmd.clone());
+                                    if !is_banned_grant_key(cmd) {
+                                        state.allowed_bash_commands.insert(cmd.clone());
+                                    }
                                     state.allowed_bash_commands.extend(bash_grant_segments(cmd));
+                                    state.allowed_bash_commands.extend(extra_persist_keys(cmd));
                                     persist_state(&cwd, &state, client_id_ref).await;
                                     Decision::Allow
                                 }
