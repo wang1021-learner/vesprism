@@ -31,7 +31,7 @@ export function emptyModelEntry(partial?: Partial<ModelInfo>): ModelInfo {
     name: model || (partial?.name ?? ''),
     model,
     base_url: partial?.base_url ?? '',
-    env_key: partial?.env_key ?? autoEnvKey(id),
+    env_key: partial?.env_key !== undefined ? String(partial.env_key) : autoEnvKey(id),
     context_window: partial?.context_window ?? 128_000,
     system_prompt_label: partial?.system_prompt_label ?? '',
     api_backend: partial?.api_backend || 'chat_completions',
@@ -40,6 +40,8 @@ export function emptyModelEntry(partial?: Partial<ModelInfo>): ModelInfo {
     top_p: partial?.top_p ?? null,
     max_completion_tokens: partial?.max_completion_tokens ?? null,
     extra_headers: partial?.extra_headers ?? {},
+    query_params: partial?.query_params ?? {},
+    env_http_headers: partial?.env_http_headers ?? {},
     api_base_url: partial?.api_base_url ?? '',
     max_retries: partial?.max_retries ?? 0,
     inference_idle_timeout_secs: partial?.inference_idle_timeout_secs ?? 0,
@@ -67,7 +69,7 @@ export function normalizeModelFromDisk(raw: Partial<ModelInfo> & { id: string })
     id: raw.id,
     model,
     name: model || raw.name || raw.id,
-    env_key: raw.env_key || autoEnvKey(raw.id),
+    env_key: raw.env_key ?? '',
     context_window:
       typeof raw.context_window === 'number' && raw.context_window > 0
         ? raw.context_window
@@ -144,7 +146,7 @@ export function prepareModelsForSave(models: ModelInfo[]): ModelInfo[] {
       id,
       model,
       name: model,
-      env_key: resolveEnvKey({ id, env_key: m.env_key }),
+      env_key: (m.env_key || '').trim(),
       base_url: m.base_url.trim(),
       system_prompt_label:
         (m.system_prompt_label || '').trim() || autoSystemPromptLabel(model),
@@ -158,6 +160,8 @@ export function prepareModelsForSave(models: ModelInfo[]): ModelInfo[] {
           ? m.max_completion_tokens
           : null,
       extra_headers: m.extra_headers || {},
+      query_params: m.query_params || {},
+      env_http_headers: m.env_http_headers || {},
       api_base_url: (m.api_base_url || '').trim(),
       max_retries: m.max_retries > 0 ? m.max_retries : 0,
       inference_idle_timeout_secs:
