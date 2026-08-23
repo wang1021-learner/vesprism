@@ -168,12 +168,77 @@
 }
 
 .settings-label {
-  display: block;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.15rem;
   font-size: 12px;
   font-weight: 550;
   color: var(--text-secondary);
   margin-top: 10px;
   margin-bottom: 5px;
+}
+
+.settings-label-text {
+  min-width: 0;
+}
+
+.settings-help {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.settings-help-mark {
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-muted, #f5f5f5);
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.settings-help-mark:hover,
+.settings-help:focus-within .settings-help-mark {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-secondary) 40%, var(--border-solid));
+}
+
+.settings-help-tip {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  top: calc(100% + 6px);
+  width: max-content;
+  max-width: min(18rem, 70vw);
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 450;
+  line-height: 1.45;
+  box-shadow: var(--shadow-md, 0 8px 20px rgba(0, 0, 0, 0.12));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+}
+
+.settings-help:hover .settings-help-tip,
+.settings-help:focus-within .settings-help-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
 }
 
 .settings-row {

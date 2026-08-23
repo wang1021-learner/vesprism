@@ -1,4 +1,5 @@
 import type { ModelInfo } from '../types'
+import { SettingsLabel } from './SettingsHelp'
 
 /** 温度 / top_p / max_completion_tokens（null = 不设置） */
 export function ModelSamplingFields({
@@ -11,7 +12,9 @@ export function ModelSamplingFields({
   return (
     <div className="settings-field-grid settings-field-grid-3">
       <div className="settings-field">
-        <label className="settings-label">温度 (temperature)</label>
+        <SettingsLabel help="越大输出越跳、越有变化；越小越死板。空着表示不改对方默认。范围大约 0–2。">
+          温度
+        </SettingsLabel>
         <input
           type="number"
           min={0}
@@ -32,7 +35,9 @@ export function ModelSamplingFields({
         />
       </div>
       <div className="settings-field">
-        <label className="settings-label">核采样 (top_p)</label>
+        <SettingsLabel help="只从概率加起来靠前的词里抽。空着表示不设置。一般和温度只调一个。">
+          核采样
+        </SettingsLabel>
         <input
           type="number"
           min={0}
@@ -53,7 +58,9 @@ export function ModelSamplingFields({
         />
       </div>
       <div className="settings-field">
-        <label className="settings-label">最大生成长度 (max_completion_tokens)</label>
+        <SettingsLabel help="单次回答最多生成多少 token。空着表示不限制（仍受上下文窗口约束）。">
+          最大生成长度
+        </SettingsLabel>
         <input
           type="number"
           min={0}

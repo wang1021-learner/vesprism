@@ -7,6 +7,7 @@ import {
   type EnginePrefs,
   type WorktreeStatusInfo,
 } from '../bridge'
+import { SettingsHelp, SettingsLabel } from './SettingsHelp'
 
 function parseDomainLines(text: string): string[] {
   return text
@@ -130,6 +131,7 @@ export function EngineSettings({
             onChange={(e) => setPrefs({ ...prefs, session_search: e.target.checked })}
           />
           启用会话搜索索引（默认开）
+          <SettingsHelp text="给历史会话建本地全文索引，侧栏搜索会用到。多进程共用同一 GROK_HOME 时可关掉，避免抢索引。" />
         </label>
       </section>
 
@@ -148,6 +150,7 @@ export function EngineSettings({
             onChange={(e) => setPrefs({ ...prefs, memory_enabled: e.target.checked })}
           />
           启用跨会话记忆（默认开）
+          <SettingsHelp text="新对话会带上相关旧记忆，结束时存摘要。关掉后已有记忆文件不会删。" />
         </label>
         <p className="settings-hint">保存后新会话生效；关掉后已存的记忆文件不会被删除。</p>
       </section>
@@ -189,9 +192,9 @@ export function EngineSettings({
         </div>
         {wsMode === 'allow' && (
           <>
-            <label className="settings-label" htmlFor="ws-allow">
+            <SettingsLabel htmlFor="ws-allow" help="网页搜索只许访问这些域名。和排除列表不能同时用。">
               允许域名（每行一个）
-            </label>
+            </SettingsLabel>
             <textarea
               id="ws-allow"
               className="settings-input settings-textarea"
@@ -205,9 +208,9 @@ export function EngineSettings({
         )}
         {wsMode === 'exclude' && (
           <>
-            <label className="settings-label" htmlFor="ws-deny">
+            <SettingsLabel htmlFor="ws-deny" help="网页搜索不要去这些域名。和白名单不能同时用。">
               排除域名（每行一个）
-            </label>
+            </SettingsLabel>
             <textarea
               id="ws-deny"
               className="settings-input settings-textarea"
@@ -230,9 +233,9 @@ export function EngineSettings({
           官方 <code>[tools.media_gen]</code>：模型单步最多能请求几次生成，避免刷爆。
         </p>
         <div className="settings-row">
-          <label className="settings-label" htmlFor="img-cap">
+          <SettingsLabel htmlFor="img-cap" help="模型一步里最多能同时点几次文生图，防止刷爆配额。">
             图像并行上限
-          </label>
+          </SettingsLabel>
           <input
             id="img-cap"
             type="number"
@@ -250,9 +253,9 @@ export function EngineSettings({
           />
         </div>
         <div className="settings-row">
-          <label className="settings-label" htmlFor="vid-cap">
+          <SettingsLabel htmlFor="vid-cap" help="模型一步里最多能同时点几次视频生成。">
             视频并行上限
-          </label>
+          </SettingsLabel>
           <input
             id="vid-cap"
             type="number"
