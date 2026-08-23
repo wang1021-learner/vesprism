@@ -609,6 +609,9 @@ pub(crate) struct PreparedToolCall {
     dispatch_target_name: Option<String>,
     /// Read-only per `ToolKind`; decides whether the call takes the per-file lock.
     is_read_only: bool,
+    /// `ToolKind::Execute`（bash 等）拿并行闸写锁，避免和改文件并行；
+    /// 编辑仍走共享闸 + 同路径文件锁。
+    exclusive: bool,
 }
 impl PreparedToolCall {
     /// The tool name hooks see: the resolved dispatch target, else the wire name.

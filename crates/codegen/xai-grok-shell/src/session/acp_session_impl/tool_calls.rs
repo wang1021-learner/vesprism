@@ -62,6 +62,11 @@ fn record_tool_span_outcome(
     span.record("tool_result_size_bytes", result_size);
     success
 }
+/// bash / Shell 等 `Execute` 拿并行闸写锁；编辑仍共享，靠同路径文件锁互斥。
+fn parallel_gate_exclusive(kind: Option<xai_grok_tools::types::tool::ToolKind>) -> bool {
+    matches!(kind, Some(xai_grok_tools::types::tool::ToolKind::Execute))
+}
+
 /// Blocking wait tools that should abort when a mid-turn interjection is pending.
 fn is_interruptible_wait_tool(tool_name: &str, args: &serde_json::Value) -> bool {
     match tool_name {
@@ -401,10 +406,45 @@ impl SessionActor {
         }
         self.drain_interjections_at_safe_point().await;
         self.flush_pending_skill_reminders().await;
+        self.inject_turn_edit_summary().await;
         if let Some(final_result) = final_result {
             return Ok(final_result);
         }
         Ok(ToolLoop::Continue)
+    }
+
+    /// 把本回合已落地的文件改动摘要喂回模型，避免下一轮再通读磁盘。
+    /// 同一 `prompt_index` 下已注入过的 hunk 会跳过，换回合则重新计。
+    async fn inject_turn_edit_summary(&self) {
+        let prompt_index = self.chat_state_handle.get_prompt_index().await;
+        let Some(delta) = self
+            .tool_context
+            .hunk_tracker_handle
+            .snapshot_turn_delta(prompt_index)
+            .await
+        else {
+            return;
+        };
+        let mut injected = self
+            .tool_context
+            .injected_turn_hunks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if injected.0 != prompt_index {
+            injected.0 = prompt_index;
+            injected.1.clear();
+        }
+        let Some((body, new_ids)) =
+            format_turn_edit_summary(self.session_info.cwd.as_str(), &delta, &injected.1)
+        else {
+            return;
+        };
+        injected.1.extend(new_ids);
+        drop(injected);
+        self.chat_state_handle
+            .push_user_message(ConversationItem::system_reminder(format!(
+                "<system-reminder>\n{body}\n</system-reminder>"
+            )));
     }
     /// Per-name media-gen counts that exceed this session's cap.
     pub(super) fn media_gen_over_cap(
@@ -608,6 +648,8 @@ impl SessionActor {
             }
             map
         };
+        // bash（Execute）拿写锁，与改文件互斥；编辑走读锁，不同路径仍可并行。
+        let parallel_gate = Arc::new(tokio::sync::RwLock::new(()));
         let shared_recovery = Arc::new(tokio::sync::OnceCell::<bool>::const_new());
         let workspace_ops = self.workspace_ops.clone();
         let pending_interjections = self.pending_interjections.clone();
@@ -631,12 +673,25 @@ impl SessionActor {
                     is_interruptible_wait_tool(&prepared.tool_name, &prepared.parsed_args);
                 let lock = lock_path_for_args(&prepared.parsed_args)
                     .and_then(|fp| file_locks.get(fp).cloned());
+                let exclusive = prepared.exclusive;
+                let parallel_gate = Arc::clone(&parallel_gate);
                 let tools_execute_span = tracing::Span::current();
                 let flow_cwd = flow_cwd.clone();
                 let flow_manager = flow_manager.clone();
                 let flow_mounted = flow_mounted.clone();
                 let flow_inflight = flow_inflight.clone();
                 async move {
+                    let exclusive_guard;
+                    let shared_guard;
+                    if exclusive {
+                        exclusive_guard = Some(parallel_gate.write().await);
+                        shared_guard = None;
+                    } else {
+                        exclusive_guard = None;
+                        shared_guard = Some(parallel_gate.read().await);
+                    }
+                    let _exclusive_guard = exclusive_guard;
+                    let _shared_guard = shared_guard;
                     let exec_start = std::time::Instant::now();
                     let tool_span = tool_execution_span(
                         &tools_execute_span,
@@ -727,9 +782,22 @@ impl SessionActor {
             .collect();
         tokio::task::yield_now().await;
         let mut dispatch_stream = futures::stream::FuturesUnordered::new();
+        let mut spawn_aborts = Vec::new();
         for fut in dispatch_futures {
-            dispatch_stream.push(fut);
+            let handle = tokio::spawn(fut.in_current_span());
+            spawn_aborts.push(handle.abort_handle());
+            dispatch_stream.push(handle);
         }
+        // 批次 future 被取消时一并 abort 已 spawn 的工具任务，避免改文件/bash 在后台继续。
+        struct AbortSpawned(Vec<tokio::task::AbortHandle>);
+        impl Drop for AbortSpawned {
+            fn drop(&mut self) {
+                for h in &self.0 {
+                    h.abort();
+                }
+            }
+        }
+        let _abort_spawned = AbortSpawned(spawn_aborts);
         let mut approved_slots: Vec<Option<PreparedToolCall>> =
             approved.into_iter().map(Some).collect();
         let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::unbounded_channel::<(
@@ -739,7 +807,15 @@ impl SessionActor {
         )>();
         let drainer = tokio::spawn(
             async move {
-                while let Some(item) = dispatch_stream.next().await {
+                while let Some(joined) = dispatch_stream.next().await {
+                    let item = match joined {
+                        Ok(item) => item,
+                        Err(err) if err.is_cancelled() => continue,
+                        Err(err) => {
+                            tracing::error!(?err, "tool task join failed");
+                            continue;
+                        }
+                    };
                     if dispatch_tx.send(item).is_err() {
                         break;
                     }
@@ -1549,11 +1625,12 @@ impl SessionActor {
                 "[exit_plan_mode] cursor SwitchMode(agent) with empty plan — skipping intercept"
             );
         }
-        let is_read_only = self
+        let kind = self
             .agent
             .borrow()
             .tool_bridge()
-            .tool_kind(&call.function.name)
+            .tool_kind(&call.function.name);
+        let is_read_only = kind
             .map(|k| {
                 use xai_grok_tools::types::tool::ToolKind;
                 matches!(
@@ -1573,6 +1650,7 @@ impl SessionActor {
                 )
             })
             .unwrap_or(false);
+        let exclusive = parallel_gate_exclusive(kind);
         let prepared = PreparedToolCall {
             call_id: call.id.clone(),
             tool_call_id,
@@ -1583,6 +1661,7 @@ impl SessionActor {
             concatenated_json_count,
             dispatch_target_name,
             is_read_only,
+            exclusive,
         };
         Ok(Ok(prepared))
     }
@@ -3029,6 +3108,213 @@ fn execute_tool_call_parts(
         ))],
     )
 }
+
+const TURN_EDIT_SUMMARY_MAX_CHARS: usize = 8_000;
+
+fn truncate_chars(s: &str, max: usize) -> &str {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
+}
+
+/// 把本回合 agent 写出的 hunk 收成短摘要；没有新内容则 `None`。
+/// `skip` 里已喂过的 hunk 不再写入，避免同一回合多批工具重复注入。
+fn format_turn_edit_summary(
+    cwd: &str,
+    delta: &xai_hunk_tracker::HunkTurnDelta,
+    skip: &std::collections::HashSet<xai_hunk_tracker::HunkId>,
+) -> Option<(String, Vec<xai_hunk_tracker::HunkId>)> {
+    if delta.hunk_ids.is_empty() {
+        return None;
+    }
+    let mut selected: Vec<(&std::path::Path, &xai_hunk_tracker::Hunk)> = Vec::new();
+    let mut new_ids = Vec::new();
+    let mut files: Vec<_> = delta.file_states.iter().collect();
+    files.sort_by(|a, b| a.0.cmp(b.0));
+    for (path, state) in files {
+        for h in &state.hunks {
+            if delta.hunk_ids.contains(&h.id) && h.source.is_agent_edit() && !skip.contains(&h.id) {
+                selected.push((path.as_path(), h));
+                new_ids.push(h.id.clone());
+            }
+        }
+    }
+    let body = format_turn_edit_hunks(cwd, &selected)?;
+    Some((body, new_ids))
+}
+
+fn format_turn_edit_hunks(
+    cwd: &str,
+    hunks: &[(&std::path::Path, &xai_hunk_tracker::Hunk)],
+) -> Option<String> {
+    if hunks.is_empty() {
+        return None;
+    }
+    let cwd_norm = cwd.replace('\\', "/");
+    let cwd_norm = cwd_norm.trim_end_matches('/');
+    let mut body = String::from("本回合文件改动：\n");
+    let mut last_path: Option<&std::path::Path> = None;
+    for (path, h) in hunks {
+        if last_path != Some(*path) {
+            last_path = Some(*path);
+            let shown = path.to_string_lossy().replace('\\', "/");
+            let shown = shown
+                .strip_prefix(cwd_norm)
+                .map(|s| s.trim_start_matches('/'))
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or(shown);
+            body.push_str(&shown);
+            body.push('\n');
+        }
+        let fragment = h
+            .patch
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(h.new_text.as_str());
+        let take = truncate_chars(fragment, 1_200);
+        body.push_str(take);
+        if !take.ends_with('\n') {
+            body.push('\n');
+        }
+        if body.chars().count() > TURN_EDIT_SUMMARY_MAX_CHARS {
+            let keep = truncate_chars(&body, TURN_EDIT_SUMMARY_MAX_CHARS).to_string();
+            body = keep;
+            body.push_str("\n…（已截断）\n");
+            break;
+        }
+    }
+    Some(body)
+}
+
+#[cfg(test)]
+mod turn_edit_summary_tests {
+    use super::{format_turn_edit_hunks, format_turn_edit_summary};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+    use xai_hunk_tracker::{Hunk, HunkId, HunkLineInfo, HunkSource, HunkTurnDelta};
+
+    fn agent_hunk(id: &str, path: &str, patch: &str) -> Hunk {
+        Hunk {
+            id: HunkId::from_string(id.to_string()),
+            path: PathBuf::from(path),
+            line_info: HunkLineInfo {
+                old_start: 1,
+                old_count: 1,
+                new_start: 1,
+                new_count: 1,
+            },
+            source: HunkSource::AgentEdit { prompt_index: 1 },
+            old_text: Some("old".into()),
+            new_text: "new".into(),
+            patch: Some(patch.to_string()),
+            created_at: chrono::Utc::now(),
+            selected: false,
+        }
+    }
+
+    fn delta_from_hunks(hunks: Vec<Hunk>) -> HunkTurnDelta {
+        let hunk_ids = hunks.iter().map(|h| h.id.clone()).collect();
+        let mut file_states: std::collections::HashMap<
+            PathBuf,
+            xai_hunk_tracker::FileHunkStateSnapshot,
+        > = std::collections::HashMap::new();
+        for hunk in hunks {
+            file_states
+                .entry(hunk.path.clone())
+                .or_insert_with(|| {
+                    serde_json::from_value(serde_json::json!({
+                        "baseline": "Missing",
+                        "current_content": "Missing",
+                        "hunks": [],
+                        "is_agent_file": true,
+                        "baseline_accepted": false
+                    }))
+                    .expect("empty file snapshot")
+                })
+                .hunks
+                .push(hunk);
+        }
+        HunkTurnDelta {
+            prompt_index: 1,
+            file_states,
+            hunk_ids,
+        }
+    }
+
+    #[test]
+    fn empty_hunks_yield_none() {
+        assert!(format_turn_edit_hunks("/proj", &[]).is_none());
+    }
+
+    #[test]
+    fn strips_cwd_and_prefers_patch() {
+        let hunk = agent_hunk("h1", "/proj/src/lib.rs", "@@ -1,1 +1,1 @@\n-old\n+new\n");
+        let body = format_turn_edit_hunks("/proj", &[(Path::new("/proj/src/lib.rs"), &hunk)])
+            .expect("summary");
+        assert!(body.contains("src/lib.rs"), "{body}");
+        assert!(!body.contains("/proj/src/lib.rs"), "{body}");
+        assert!(body.contains("-old"), "{body}");
+        assert!(body.contains("+new"), "{body}");
+    }
+
+    #[test]
+    fn skips_already_injected_and_external() {
+        let agent = agent_hunk("h1", "/proj/a.rs", "@@\n+agent\n");
+        let mut external = agent_hunk("h2", "/proj/b.rs", "@@\n+ext\n");
+        external.source = HunkSource::External;
+        let mut delta = delta_from_hunks(vec![agent.clone(), external]);
+        delta.hunk_ids.insert(agent.id.clone());
+        let skip = HashSet::from([agent.id.clone()]);
+        assert!(format_turn_edit_summary("/proj", &delta, &skip).is_none());
+        let (body, ids) =
+            format_turn_edit_summary("/proj", &delta, &HashSet::new()).expect("new hunks");
+        assert_eq!(ids, vec![agent.id]);
+        assert!(body.contains("a.rs"), "{body}");
+        assert!(!body.contains("b.rs"), "{body}");
+    }
+
+    #[test]
+    fn truncates_long_hunk_fragment() {
+        let big = "x".repeat(10_000);
+        let hunk = agent_hunk("h1", "/proj/big.rs", &big);
+        let body =
+            format_turn_edit_hunks("/proj", &[(Path::new("/proj/big.rs"), &hunk)]).expect("summary");
+        assert!(body.contains("big.rs"), "{body}");
+        assert!(body.chars().count() < 2_000, "{}", body.chars().count());
+        assert!(!body.contains(&"x".repeat(1_300)));
+    }
+
+    #[test]
+    fn truncates_oversized_body() {
+        let chunk = "y".repeat(1_200);
+        let hunks: Vec<_> = (0..10)
+            .map(|i| agent_hunk(&format!("h{i}"), &format!("/proj/f{i}.rs"), &chunk))
+            .collect();
+        let pairs: Vec<_> = hunks.iter().map(|h| (h.path.as_path(), h)).collect();
+        let body = format_turn_edit_hunks("/proj", &pairs).expect("summary");
+        assert!(body.contains("…（已截断）"), "{body}");
+        assert!(body.chars().count() < 8_000 + 20, "{}", body.chars().count());
+    }
+}
+
+#[cfg(test)]
+mod parallel_gate_exclusive_tests {
+    use super::parallel_gate_exclusive;
+    use xai_grok_tools::types::tool::ToolKind;
+
+    #[test]
+    fn only_execute_takes_write_lock() {
+        assert!(parallel_gate_exclusive(Some(ToolKind::Execute)));
+        assert!(!parallel_gate_exclusive(Some(ToolKind::Edit)));
+        assert!(!parallel_gate_exclusive(Some(ToolKind::Write)));
+        assert!(!parallel_gate_exclusive(Some(ToolKind::Read)));
+        assert!(!parallel_gate_exclusive(Some(ToolKind::SearchTool)));
+        assert!(!parallel_gate_exclusive(None));
+    }
+}
+
 #[cfg(test)]
 mod execute_tool_call_parts_tests {
     use super::execute_tool_call_parts;

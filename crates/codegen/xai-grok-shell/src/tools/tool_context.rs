@@ -9,13 +9,13 @@
 //! Note: Could be renamed to `SessionConfig` or flattened onto `SessionActor` in a future PR.
 use crate::terminal::AsyncTerminalRunner;
 use agent_client_protocol as acp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use xai_acp_lib::AcpAgentGatewaySender as GatewaySender;
 use xai_grok_paths::AbsPathBuf;
 use xai_grok_workspace::file_system::{AsyncFileSystem, AsyncFsWrapper};
 use xai_grok_workspace::session::file_state::FileStateHandle;
-use xai_hunk_tracker::HunkTrackerHandle;
+use xai_hunk_tracker::{HunkId, HunkTrackerHandle};
 use xai_tty_utils::ProcessScope;
 #[derive(Debug, Clone, Default)]
 pub struct TaskOutputTokenBudget {
@@ -221,6 +221,8 @@ pub struct ToolContext {
     /// Same Arc as `SessionRegistry`'s retained heal lock so the actor tick
     /// and tray `list_running` cannot double-emit `SubagentFinished`.
     pub(crate) live_orphan_heal_lock: Arc<tokio::sync::Mutex<()>>,
+    /// 已喂回模型的本回合 hunk。换 `prompt_index` 时清空，避免同一轮多次注入重复摘要。
+    pub(crate) injected_turn_hunks: Arc<std::sync::Mutex<(usize, HashSet<HunkId>)>>,
 }
 impl ToolContext {
     pub(crate) fn clamp_task_model_request(
@@ -306,6 +308,7 @@ impl ToolContext {
             sampler_retry_only_before_output: false,
             process_scope: None,
             live_orphan_heal_lock: Arc::new(tokio::sync::Mutex::new(())),
+            injected_turn_hunks: Arc::new(std::sync::Mutex::new((0, HashSet::new()))),
         }
     }
     pub(crate) fn with_file_state_handle(mut self, handle: FileStateHandle) -> Self {
@@ -397,6 +400,10 @@ mod tests {
                 sampler_retry_only_before_output: false,
                 process_scope: None,
                 live_orphan_heal_lock: Arc::new(tokio::sync::Mutex::new(())),
+                injected_turn_hunks: Arc::new(std::sync::Mutex::new((
+                    0,
+                    std::collections::HashSet::new(),
+                ))),
             }
         }
     }
