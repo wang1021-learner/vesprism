@@ -17,6 +17,8 @@ export interface FlowToolbarProps {
   onCopy: () => void
   onDelete: () => void
   onRun: () => void
+  minimapOn: boolean
+  onToggleMinimap: () => void
 }
 
 export const FlowToolbar = React.memo(function FlowToolbar({
@@ -33,6 +35,8 @@ export const FlowToolbar = React.memo(function FlowToolbar({
   onCopy,
   onDelete,
   onRun,
+  minimapOn,
+  onToggleMinimap,
 }: FlowToolbarProps) {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
@@ -81,7 +85,7 @@ export const FlowToolbar = React.memo(function FlowToolbar({
             草稿
           </span>
         )}
-        {draft.dirty && (
+        {draft.dirty && draft.id !== 'demo-linear' && (
           <span className="flow-badge dirty" title="有未保存改动">
             未保存
           </span>
@@ -111,6 +115,16 @@ export const FlowToolbar = React.memo(function FlowToolbar({
         <div className="flow-action-group tool-group">
           <button type="button" className="flow-btn icon-btn" title="一键拓扑分层整理布局" onClick={onAutoLayout}>
             <span>◫</span> 整理
+          </button>
+          <button
+            type="button"
+            className={`flow-btn icon-btn map-btn${minimapOn ? ' is-active' : ''}`}
+            title={minimapOn ? '隐藏小地图' : '显示小地图'}
+            aria-pressed={minimapOn}
+            onClick={onToggleMinimap}
+          >
+            <span className="map-btn-swatch" aria-hidden />
+            地图
           </button>
 
           {/* 多格式导出菜单 */}

@@ -15,6 +15,8 @@ export interface NodeInspectorProps {
   onRerunFromNode: (nodeId: string) => void
   /** 当前节点的上游节点（点选式变量绑定用） */
   upstreamNodes: { id: string; label: string }[]
+  /** 打开子流程（flow 节点） */
+  openFlow?: (id: string) => void
 }
 
 function FlowNumField({
@@ -128,6 +130,7 @@ export const NodeInspector = memo(function NodeInspector({
   openPromote,
   onRerunFromNode,
   upstreamNodes,
+  openFlow,
 }: NodeInspectorProps) {
   if (!selected) return null
 
@@ -596,15 +599,26 @@ export const NodeInspector = memo(function NodeInspector({
       )}
 
       {data.nodeType === 'flow' && (
-        <label className="flow-field">
-          <span>引用已发布流程 ID</span>
-          <input
-            placeholder="输入或下拉选择子流程 ID"
-            value={String((data as { flowId?: string }).flowId ?? '')}
-            onChange={(e) => patchSelected({ flowId: e.target.value } as Partial<FlowRfData>)}
-            list="flow-id-options"
-          />
-        </label>
+        <>
+          <label className="flow-field">
+            <span>引用已发布流程 ID</span>
+            <input
+              placeholder="输入或下拉选择子流程 ID"
+              value={String((data as { flowId?: string }).flowId ?? '')}
+              onChange={(e) => patchSelected({ flowId: e.target.value } as Partial<FlowRfData>)}
+              list="flow-id-options"
+            />
+          </label>
+          {String((data as { flowId?: string }).flowId ?? '').trim() && openFlow ? (
+            <button
+              type="button"
+              className="flow-btn"
+              onClick={() => openFlow(String((data as { flowId?: string }).flowId).trim())}
+            >
+              打开子流程
+            </button>
+          ) : null}
+        </>
       )}
 
       {data.nodeType === 'branch' && (

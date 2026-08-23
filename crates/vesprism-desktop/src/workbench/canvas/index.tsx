@@ -16,31 +16,14 @@ import {
   useNodesState,
   useReactFlow,
   type Connection,
-  type Edge,
-  type Node,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useStore } from '@nanostores/react'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import {
-  IconBooks,
   IconChevronDown,
   IconChevronUp,
-  IconCircleDot,
-  IconCode,
-  IconDatabase,
-  IconGitBranch,
-  IconGitFork,
-  IconGitMerge,
-  IconHierarchy2,
-  IconHttpDelete,
-  IconPlayerPlay,
-  IconRepeat,
   IconSearch,
-  IconSparkles,
-  IconSquareRoundedCheck,
-  IconTerminal2,
-  IconVariable,
   IconX,
 } from '@tabler/icons-react'
 import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
@@ -52,7 +35,6 @@ import { openChatTab } from '../../lib/openChatTab'
 import {
   deleteFlow,
   exportFlow,
-  getAgent,
   getFlow,
   importFlow,
   listAgents,
@@ -64,38 +46,29 @@ import {
 } from '../bridge'
 import {
   FLOW_RETRY_STRICT,
-  NODE_LIBRARY,
   bumpVersion,
   collectPromptsMarkdown,
-  compileInlinedRhai,
-  compileToRhai,
   createDemoDraft,
   createNodeId,
   defaultParams,
   draftHasAbsolutePath,
   isValidFlowId,
   layoutDraft,
-  layoutGraph,
   subgraphFrom,
   testInputTemplate,
   type FlowDraft,
-  type FlowGraphNode,
   type FlowListItem,
   type FlowNodeType,
   type FlowRunStep,
   type GraphSnap,
-  type PresetResolve,
   type SchemaField,
   applySnap,
   historyCap,
   pushCapped,
   saveHash,
   takeSnap,
-  topologyHash,
 } from '../flow'
 import {
-  AGENT_CAPABILITY_LABEL,
-  AGENT_CAPABILITY_OFFICIAL,
   emptyAgent,
   isValidAgentId,
   slugifyAgentId,
@@ -105,16 +78,36 @@ import {
 import { requestAgentsFocus } from '../agents/focus'
 import { $flowStaleEpoch, clearFlowStale, staleForFlow } from '../agents/stale'
 import { bindWorkbenchArtifact } from '../bindings'
-import { $flowFocusId, clearFlowFocus } from '../flow/focus'
+import { $flowFocusId, clearFlowFocus, requestFlowFocus } from '../flow/focus'
 import { WorkbenchDock } from './workbench-dock'
 import { CanvasComposer } from './CanvasComposer'
 import { FlowCanvasContext } from './context'
 import { FlowNode, type FlowRfData } from './nodes'
-import { stripRfRuntime } from './rfRuntime'
 import { FlowToolbar } from './components/FlowToolbar'
+import { FlowPalette } from './components/FlowPalette'
 import { NodeInspector } from './components/NodeInspector'
 import { PublishFlowModal } from './components/PublishFlowModal'
 import { PromoteAgentModal } from './components/PromoteAgentModal'
+import { FlowRunSync } from './FlowRunSync'
+import { type SubmittedRun } from './runSync'
+import {
+  agentNodeData,
+  fromRf,
+  getAncestors,
+  patchExecStatuses,
+  testKey,
+  toRfEdges,
+  toRfNodes,
+  type RfEdge,
+  type RfNode,
+} from './rfGraph'
+import {
+  compileDraftRhai,
+  draftAfterPersist,
+  enqueueFlowWrite,
+  pendingFlowWrites,
+  shouldSkipDraftPersist,
+} from './persistFlow'
 
 const flowNodeTypes = {
   start: FlowNode,
@@ -134,133 +127,6 @@ const flowNodeTypes = {
   end: FlowNode,
 }
 
-function getAncestors(targetId: string, edges: Array<{ from: string; to: string }>): Set<string> {
-  const ancestors = new Set<string>()
-  const queue = [targetId]
-  while (queue.length > 0) {
-    const curr = queue.shift()!
-    const incoming = edges.filter((e) => e.to === curr)
-    for (const edge of incoming) {
-      if (!ancestors.has(edge.from)) {
-        ancestors.add(edge.from)
-        queue.push(edge.from)
-      }
-    }
-  }
-  return ancestors
-}
-
-type RfNode = Node<FlowRfData>
-type RfEdge = Edge
-
-function ensurePositions(nodes: FlowDraft['nodes'], edges: FlowDraft['edges']): FlowDraft['nodes'] {
-  if (nodes.every((n) => n.position)) return nodes
-  return layoutGraph({
-    nodes: nodes.map(({ id, type, params }) => ({ id, type, params })),
-    edges: edges.map(({ from, to, label }) => ({ from, to, label })),
-  })
-}
-
-function execStatusOf(
-  step?: { status: string },
-): 'running' | 'done' | 'failed' | undefined {
-  const raw = step?.status
-  if (raw === 'completed' || raw === 'done') return 'done'
-  if (raw === 'running') return 'running'
-  if (raw === 'failed') return 'failed'
-  return undefined
-}
-
-function toRfNodes(
-  draft: FlowDraft,
-  stepOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
-): RfNode[] {
-  return ensurePositions(draft.nodes, draft.edges).map((n) => ({
-    id: n.id,
-    type: n.type,
-    position: n.position ?? { x: 80, y: 80 },
-    data: {
-      ...n.params,
-      nodeType: n.type,
-      execStatus: execStatusOf(stepOutputs?.[n.id]),
-    },
-  }))
-}
-
-function patchExecStatuses(
-  ns: RfNode[],
-  stepOutputs: Record<string, { output: unknown; status: string; timestamp: number }>,
-): RfNode[] {
-  let changed = false
-  const next = ns.map((n) => {
-    const status = execStatusOf(stepOutputs[n.id])
-    if (n.data.execStatus === status) return n
-    changed = true
-    return { ...n, data: { ...n.data, execStatus: status } }
-  })
-  return changed ? next : ns
-}
-
-function toRfEdges(draft: FlowDraft): RfEdge[] {
-  return draft.edges.map((e, idx) => {
-    let edgeLabel = e.label
-    if (!edgeLabel && e.sourceHandle) {
-      if (e.sourceHandle === 'success') edgeLabel = '成功'
-      else if (e.sourceHandle === 'failure') edgeLabel = '失败'
-      else edgeLabel = e.sourceHandle
-    }
-    return {
-      id: e.id || `e-${e.from}-${e.to}-${idx}`,
-      source: e.from,
-      target: e.to,
-      label: edgeLabel,
-      labelStyle: { fill: '#4b5563', fontSize: 10.5, fontWeight: 550 },
-      labelBgStyle: { fill: '#ffffff', stroke: '#e5e7eb', strokeWidth: 1, rx: 4, ry: 4 },
-      labelBgPadding: [5, 2] as [number, number],
-      sourceHandle: e.sourceHandle,
-      targetHandle: e.targetHandle,
-      animated: false,
-    }
-  })
-}
-
-function fromRf(ns: RfNode[], es: RfEdge[], base: FlowDraft): FlowDraft {
-  const nodes: FlowGraphNode[] = ns.map((n) => {
-    const raw = n.data as FlowRfData
-    const params = stripRfRuntime(raw as Record<string, unknown>)
-    return {
-      id: n.id,
-      type: raw.nodeType,
-      params,
-      position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
-    }
-  })
-  const edges = es.map((e) => ({
-    id: e.id,
-    from: e.source,
-    to: e.target,
-    label: typeof e.label === 'string' ? e.label : undefined,
-    sourceHandle: e.sourceHandle ?? undefined,
-    targetHandle: e.targetHandle ?? undefined,
-  }))
-  return { ...base, nodes, edges, dirty: true }
-}
-
-function testKey(flowId: string): string {
-  return `vesprism.flow-test-input.${flowId}`
-}
-
-function agentNodeData(a: AgentListItem): FlowRfData {
-  return {
-    nodeType: 'agent',
-    label: a.name || a.id,
-    presetId: a.id,
-    model: a.model,
-    prompt: '',
-    role: '',
-  }
-}
-
 export function FlowCanvas() {
   return (
     <ReactFlowProvider>
@@ -271,10 +137,19 @@ export function FlowCanvas() {
 
 function FlowCanvasInner() {
   const tabId = useStore($activeTabId)
-  const workflows = useStore($workflows)
   const focusFlowId = useStore($flowFocusId)
   const { screenToFlowPosition, fitView } = useReactFlow()
   const [rfBusy, setRfBusy] = useState(false)
+  const [minimapOn, setMinimapOn] = useState(() => {
+    try {
+      const v = localStorage.getItem('vesprism.flow-canvas.minimap')
+      if (v === '0') return false
+      if (v === '1') return true
+    } catch {
+      /* ignore */
+    }
+    return true
+  })
 
   const [draft, setDraft] = useState<FlowDraft>(createDemoDraft)
   const [nodes, setNodes, onNodesChange] = useNodesState<RfNode>(toRfNodes(createDemoDraft()))
@@ -309,9 +184,8 @@ function FlowCanvasInner() {
   const [searchIdx, setSearchIdx] = useState(0)
   const saveTimer = useRef<number>(0)
   const ephemeralRunId = useRef<string | null>(null)
-  /** 本次试跑提交时的 workflows 快照（key=runId 集合 + 流程名）：
-   * 回填只认提交后新出现的本流程 run，旧 run 的迟到 phase 事件不再污染新 run 状态。 */
-  const submittedRunRef = useRef<{ keys: Set<string>; name: string } | null>(null)
+  /** 本次试跑提交基线：按流程 id / runId 认，不靠显示名撞车。 */
+  const submittedRunRef = useRef<SubmittedRun | null>(null)
   const draftRef = useRef(draft)
   draftRef.current = draft
   const nodesRef = useRef(nodes)
@@ -320,6 +194,10 @@ function FlowCanvasInner() {
   edgesRef.current = edges
   const lastSaveHash = useRef('')
   const rhaiCache = useRef<{ key: string; rhai: string } | null>(null)
+  const persistRef = useRef<(
+    d: FlowDraft,
+    extra?: { publish?: boolean; stage?: boolean; bind?: boolean; ephemeral?: boolean },
+  ) => Promise<unknown>>(async () => {})
 
   const matchedNodes = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -411,10 +289,20 @@ function FlowCanvasInner() {
   const startRunRef = useRef<(nodeId?: string) => Promise<void>>(async () => {})
   const historyRef = useRef<GraphSnap[]>([])
   const futureRef = useRef<GraphSnap[]>([])
+  const editKeyRef = useRef<string | null>(null)
 
   const pushHistory = useCallback((prev: FlowDraft) => {
     pushCapped(historyRef.current, takeSnap(prev), historyCap(prev.nodes.length))
     futureRef.current = []
+    editKeyRef.current = null
+  }, [])
+
+  const beginEdit = useCallback((key: string) => {
+    if (editKeyRef.current === key) return
+    const cur = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+    pushCapped(historyRef.current, takeSnap(cur), historyCap(cur.nodes.length))
+    futureRef.current = []
+    editKeyRef.current = key
   }, [])
 
   const onRunFromHere = useCallback((nodeId: string) => {
@@ -493,16 +381,18 @@ function FlowCanvasInner() {
   const onAutoLayout = useCallback(() => {
     setDraft((curDraft) => {
       const current = fromRf(nodesRef.current, edgesRef.current, curDraft)
+      pushHistory(current)
       const laid = layoutDraft(current)
       setNodes(toRfNodes(laid))
       setEdges(toRfEdges(laid))
       pushToast('已自动整理拓扑布局', 'success')
       return laid
     })
-  }, [setEdges, setNodes])
+  }, [pushHistory, setEdges, setNodes])
 
   const applyDraft = useCallback(
     (next: FlowDraft, markDirty = true) => {
+      editKeyRef.current = null
       const d = { ...next, dirty: markDirty ? true : next.dirty }
       setDraft(d)
       setNodes(toRfNodes(d))
@@ -569,7 +459,7 @@ function FlowCanvasInner() {
         markDirty,
       )
     },
-    [applyDraft],
+    [applyDraft, tabId],
   )
 
   const reloadList = useCallback(async () => {
@@ -598,6 +488,14 @@ function FlowCanvasInner() {
   useEffect(() => {
     if (!focusFlowId) return
     void (async () => {
+      const cur = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+      if (cur.id !== focusFlowId && cur.dirty && !shouldSkipDraftPersist(cur.id)) {
+        try {
+          await persistRef.current(cur)
+        } catch {
+          /* 切走仍加载目标 */
+        }
+      }
       try {
         const rec = await getFlow(focusFlowId)
         applyFlowRecord(rec, false)
@@ -620,6 +518,8 @@ function FlowCanvasInner() {
     let cancelled = false
     void (async () => {
       try {
+        await pendingFlowWrites()
+        if (cancelled) return
         const rec = await getFlow(flowId)
         if (cancelled) return
         if (rec && Array.isArray(rec.nodes) && rec.nodes.length) {
@@ -638,112 +538,74 @@ function FlowCanvasInner() {
 
   const persist = useCallback(
     async (d: FlowDraft, extra?: { publish?: boolean; stage?: boolean; bind?: boolean; ephemeral?: boolean }) => {
-      let rhai: string | null = null
-      if (extra?.publish || extra?.stage) {
-        const topo = topologyHash(d)
-        if (rhaiCache.current?.key === topo) {
-          rhai = rhaiCache.current.rhai
-        } else {
-        const catalog: Record<string, { nodes: FlowDraft['nodes']; edges: FlowDraft['edges'] }> = {}
-        for (const it of list) {
-          if (it.id === d.id) continue
-          try {
-            const rec = await getFlow(it.id)
-            if (Array.isArray(rec.nodes) && rec.nodes.length) {
-              catalog[it.id] = {
-                nodes: rec.nodes as FlowDraft['nodes'],
-                edges: (rec.edges ?? []) as FlowDraft['edges'],
-              }
-            }
-          } catch {
-            /* 列表项可能已删 */
-          }
-        }
-        const presets: Record<string, PresetResolve> = {}
-        try {
-          const agents = await listAgents()
-          for (const a of agents) {
-            let systemPrompt = a.systemPrompt || a.system_prompt || ''
-            if (!systemPrompt) {
-              try {
-                const detail = await getAgent(a.id)
-                systemPrompt = detail.systemPrompt || detail.system_prompt || ''
-              } catch {
-                /* ignore */
-              }
-            }
-            presets[a.id] = {
-              name: a.name || a.id,
-              description: a.description || undefined,
-              systemPrompt: systemPrompt || undefined,
-              model: a.model || undefined,
-              agentType: (a.agentType || a.agent_type) || undefined,
-              capability: a.capability ? AGENT_CAPABILITY_OFFICIAL[a.capability] : undefined,
-              isolation: a.isolation,
-              outputSchema: (a.outputSchema ?? a.output_schema) ?? undefined,
-              disabledTools: (a.disabledTools ?? a.disabled_tools) ?? [],
-              permissionRules: (a.permissionRules ?? a.permission_rules) ?? [],
-              skills: a.skills || [],
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-        const compiled = compileInlinedRhai(d, catalog, (next) => compileToRhai(next, { presets }))
-        if (!compiled.ok) throw new Error(compiled.error)
-        rhai = compiled.rhai
-        rhaiCache.current = { key: topo, rhai }
-        }
+      if (shouldSkipDraftPersist(d.id, extra)) {
+        lastSaveHash.current = saveHash(d)
+        return d
       }
-      const saved = await saveFlow({
-        id: d.id,
-        name: d.name,
-        description: d.description,
-        version: d.version,
-        input_schema: d.input_schema,
-        output_schema: d.output_schema,
-        nodes: d.nodes,
-        edges: d.edges,
-        publish: extra?.publish ?? false,
-        stage: extra?.stage ?? false,
-        ephemeral: extra?.ephemeral ?? false,
-        rhai,
-        prompts: collectPromptsMarkdown(d),
+      return enqueueFlowWrite(async () => {
+        let rhai: string | null = null
+        if (extra?.publish || extra?.stage) {
+          rhai = await compileDraftRhai(d, getFlow, listAgents, rhaiCache)
+        }
+        const saved = await saveFlow({
+          id: d.id,
+          name: d.name,
+          description: d.description,
+          version: d.version,
+          input_schema: d.input_schema,
+          output_schema: d.output_schema,
+          nodes: d.nodes,
+          edges: d.edges,
+          publish: extra?.publish ?? false,
+          stage: extra?.stage ?? false,
+          ephemeral: extra?.ephemeral ?? false,
+          rhai,
+          prompts: collectPromptsMarkdown(d),
+        })
+        if (!extra?.ephemeral) {
+          localStorage.setItem('vesprism.flow-canvas.lastId', saved.id)
+          if (tabId) patchTab(tabId, { flowId: saved.id })
+        }
+        const shouldBind = extra?.bind !== false && !extra?.ephemeral
+        const st = tabId ? getTabState(tabId) : undefined
+        const sessionId = st?.sessionId || st?.chatId
+        if (shouldBind && sessionId) {
+          void bindWorkbenchArtifact(sessionId, { kind: 'flow', id: saved.id }, 'flow-canvas').catch(() => {})
+        }
+        if (!extra?.ephemeral) {
+          lastSaveHash.current = saveHash(d)
+          const live = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+          setDraft((prev) => draftAfterPersist(prev, d, saved, saveHash(live)))
+        }
+        await reloadList()
+        return saved
       })
-      if (!extra?.ephemeral) {
-        localStorage.setItem('vesprism.flow-canvas.lastId', saved.id)
-        if (tabId) patchTab(tabId, { flowId: saved.id })
-      }
-      const shouldBind = extra?.bind !== false && !extra?.ephemeral
-      const st = tabId ? getTabState(tabId) : undefined
-      const sessionId = st?.sessionId || st?.chatId
-      if (shouldBind && sessionId) {
-        void bindWorkbenchArtifact(sessionId, { kind: 'flow', id: saved.id }, 'flow-canvas').catch(() => {})
-      }
-      lastSaveHash.current = saveHash(d)
-      setDraft((prev) => ({
-        ...prev,
-        dirty: prev.dirty && prev.nodes !== d.nodes,
-        published: saved.published,
-        version: saved.version,
-      }))
-      await reloadList()
-      return saved
     },
-    [list, reloadList, tabId],
+    [reloadList, tabId],
   )
+  persistRef.current = persist
 
   useEffect(() => {
+    if (shouldSkipDraftPersist(draft.id)) return
     if (!draft.dirty) return
     if (saveHash(draft) === lastSaveHash.current) return
     window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
-      const latest = draftRef.current
+      const latest = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+      if (shouldSkipDraftPersist(latest.id)) return
       if (!latest.dirty || saveHash(latest) === lastSaveHash.current) return
-      void persist(latest).catch((e) => pushToast(`保存草稿失败：${String(e)}`, 'error'))
+      void persistRef.current(latest).catch((e) => pushToast(`保存草稿失败：${String(e)}`, 'error'))
     }, 900)
     return () => window.clearTimeout(saveTimer.current)
-  }, [draft, persist])
+  }, [draft])
+
+  useEffect(() => () => {
+    window.clearTimeout(saveTimer.current)
+    const latest = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+    if (shouldSkipDraftPersist(latest.id)) return
+    if (!latest.dirty || saveHash(latest) === lastSaveHash.current) return
+    void persistRef.current(latest).catch((e) => pushToast(`保存草稿失败：${String(e)}`, 'error'))
+  }, [])
 
   const onConnect = useCallback(
     (c: Connection) => {
@@ -773,14 +635,24 @@ function FlowCanvasInner() {
     [pushHistory, setEdges, setNodes],
   )
 
-  const commitGraph = useCallback((ns: RfNode[], es: RfEdge[]) => {
-    setDraft((d) => fromRf(ns, es, d))
-  }, [])
+  const commitGraph = useCallback((ns: RfNode[], es: RfEdge[], recordHistory = true) => {
+    setDraft((d) => {
+      const next = fromRf(ns, es, d)
+      if (recordHistory && saveHash(next) !== saveHash(d)) {
+        pushHistory(d)
+      }
+      return next
+    })
+  }, [pushHistory])
 
-  const onNodeDragStart = useCallback(() => setRfBusy(true), [])
+  const onNodeDragStart = useCallback(() => {
+    setRfBusy(true)
+    beginEdit('drag')
+  }, [beginEdit])
   const onNodeDragStop = useCallback(() => {
     setRfBusy(false)
-    commitGraph(nodesRef.current, edgesRef.current)
+    commitGraph(nodesRef.current, edgesRef.current, false)
+    editKeyRef.current = null
   }, [commitGraph])
   const onPaneMoveStart = useCallback(() => setRfBusy(true), [])
   const onPaneMoveEnd = useCallback(() => setRfBusy(false), [])
@@ -868,10 +740,11 @@ function FlowCanvasInner() {
 
   const patchSelected = (patch: Partial<FlowRfData>) => {
     if (!selected) return
+    beginEdit(`node:${selected.id}`)
     setNodes((ns) => {
       const next = ns.map((n) => (n.id === selected.id ? { ...n, data: { ...n.data, ...patch } } : n))
       setEdges((es) => {
-        commitGraph(next, es)
+        commitGraph(next, es, false)
         return es
       })
       return next
@@ -1012,9 +885,10 @@ function FlowCanvasInner() {
       if (fromNodeId) ephemeralRunId.current = current.id
       const arg = Object.keys(input as object).length ? ` ${JSON.stringify(input)}` : ''
       await sendPrompt(tabId, `/${fromNodeId ? current.id : draft.id}${arg}`)
-      // 记录提交基线：此后 workflows 里新出现的「本流程」run 才回填到 runSteps。
       submittedRunRef.current = {
         keys: new Set(Object.keys($workflows.get())),
+        id: current.id,
+        baseId: draft.id,
         name: draft.name,
       }
       setRunSteps((prev) => prev.map((s) => (s.type === 'start' ? { ...s, status: 'running', startedAt: Date.now() } : s)))
@@ -1048,40 +922,6 @@ function FlowCanvasInner() {
     }
     await startRun(nextNodeId, updatedOutputs)
   }
-
-  useEffect(() => {
-    const submitted = submittedRunRef.current
-    if (!submitted) return
-    // 只认「提交基线之后新出现」且流程名匹配的 run：
-    // 旧 run（重复试跑/聊天区 run）的迟到 phase 事件不再污染本画布 runSteps。
-    const items = Object.values(workflows).filter(
-      (w) => w.name === submitted.name && !submitted.keys.has(w.runId),
-    )
-    if (items.length === 0 || runSteps.length === 0) return
-    const latest = items[items.length - 1]
-    setRunSteps((prev) =>
-      prev.map((s) => {
-        const phase = latest.phases.find((p) => p.title === s.label || p.title.includes(s.nodeId))
-        if (!phase) return s
-        const status =
-          phase.state === 'completed'
-            ? 'completed'
-            : phase.state === 'running'
-              ? 'running'
-              : phase.state === 'failed'
-                ? 'failed'
-                : s.status
-        const output = latest.lastEventDetail || s.output
-        if (phase.state === 'completed' && output !== undefined) {
-          setStepOutputs((cur) => ({
-            ...cur,
-            [s.nodeId]: { output, status: 'completed', timestamp: Date.now() },
-          }))
-        }
-        return { ...s, status, output }
-      }),
-    )
-  }, [workflows, runSteps.length])
 
   useEffect(() => {
     const id = ephemeralRunId.current
@@ -1280,35 +1120,34 @@ function FlowCanvasInner() {
     [list],
   )
 
-  const filteredAgents = agents
-  const filteredLibrary = NODE_LIBRARY
+  const setDraftFromToolbar = useCallback<React.Dispatch<React.SetStateAction<FlowDraft>>>(
+    (updater) => {
+      beginEdit('name')
+      setDraft(updater)
+    },
+    [beginEdit],
+  )
 
-  const PALETTE_META: Record<
-    FlowNodeType,
-    { icon: React.ReactNode }
-  > = {
-    start: { icon: <IconPlayerPlay size={18} stroke={2} /> },
-    agent: { icon: <IconSparkles size={18} stroke={2} /> },
-    tool: { icon: <IconTerminal2 size={18} stroke={2} /> },
-    http: { icon: <IconHttpDelete size={18} stroke={2} /> },
-    database: { icon: <IconDatabase size={18} stroke={2} /> },
-    knowledge: { icon: <IconBooks size={18} stroke={2} /> },
-    variable: { icon: <IconVariable size={18} stroke={2} /> },
-    transform: { icon: <IconCode size={18} stroke={2} /> },
-    loop: { icon: <IconRepeat size={18} stroke={2} /> },
-    loop_end: { icon: <IconCircleDot size={18} stroke={2} /> },
-    flow: { icon: <IconHierarchy2 size={18} stroke={2} /> },
-    branch: { icon: <IconGitBranch size={18} stroke={2} /> },
-    parallel: { icon: <IconGitFork size={18} stroke={2} /> },
-    join: { icon: <IconGitMerge size={18} stroke={2} /> },
-    end: { icon: <IconSquareRoundedCheck size={18} stroke={2} /> },
-  }
+  const onToggleMinimap = useCallback(() => {
+    const next = !minimapOn
+    setMinimapOn(next)
+    try {
+      localStorage.setItem('vesprism.flow-canvas.minimap', next ? '1' : '0')
+    } catch {
+      /* ignore */
+    }
+    pushToast(next ? '已打开小地图' : '已关闭小地图', 'info')
+  }, [minimapOn])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
         const current = fromRf(nodes, edges, draft)
+        if (shouldSkipDraftPersist(current.id)) {
+          pushToast('示例流程不写入本地，请先复制再保存', 'info')
+          return
+        }
         void persist(current).then(() => {
           pushToast('已保存流程草稿', 'success')
         })
@@ -1323,15 +1162,17 @@ function FlowCanvasInner() {
         if (e.shiftKey) {
           const next = futureRef.current.pop()
           if (next) {
-            pushCapped(historyRef.current, takeSnap(draft), historyCap(draft.nodes.length))
-            applyDraft(applySnap(draft, next), true)
+            const current = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+            pushCapped(historyRef.current, takeSnap(current), historyCap(current.nodes.length))
+            applyDraft(applySnap(current, next), true)
             pushToast('已重做', 'info')
           }
         } else {
           const prev = historyRef.current.pop()
           if (prev) {
-            pushCapped(futureRef.current, takeSnap(draft), historyCap(draft.nodes.length))
-            applyDraft(applySnap(draft, prev), true)
+            const current = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+            pushCapped(futureRef.current, takeSnap(current), historyCap(current.nodes.length))
+            applyDraft(applySnap(current, prev), true)
             pushToast('已撤销', 'info')
           }
         }
@@ -1345,8 +1186,9 @@ function FlowCanvasInner() {
         e.preventDefault()
         const next = futureRef.current.pop()
         if (next) {
-          pushCapped(historyRef.current, takeSnap(draft), historyCap(draft.nodes.length))
-          applyDraft(applySnap(draft, next), true)
+          const current = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+          pushCapped(historyRef.current, takeSnap(current), historyCap(current.nodes.length))
+          applyDraft(applySnap(current, next), true)
           pushToast('已重做', 'info')
         }
         return
@@ -1437,9 +1279,15 @@ function FlowCanvasInner() {
           编制「{stale.agentId}」已更新，本流程已发布包仍是旧权限。请重新发布后再跑。
         </div>
       ) : null}
+      <FlowRunSync
+        submittedRef={submittedRunRef}
+        runSteps={runSteps}
+        setRunSteps={setRunSteps}
+        setStepOutputs={setStepOutputs}
+      />
       <FlowToolbar
         draft={draft}
-        setDraft={setDraft}
+        setDraft={setDraftFromToolbar}
         dockOpen={dockOpen}
         setDockOpen={setDockOpen}
         mounted={mounted}
@@ -1451,77 +1299,12 @@ function FlowCanvasInner() {
         onCopy={onToolbarCopy}
         onDelete={onToolbarDelete}
         onRun={onToolbarRun}
+        minimapOn={minimapOn}
+        onToggleMinimap={onToggleMinimap}
       />
 
       <div className="flow-body">
-        <aside className="flow-palette" aria-label="节点库">
-          <div className="flow-palette-header">
-            <span className="flow-palette-title">节点库</span>
-          </div>
-          <div className="flow-palette-list">
-            {filteredAgents.length > 0 && (
-              <>
-                <div className="flow-palette-section">编制员工</div>
-                {filteredAgents.map((agent) => {
-                  const label = agent.name || agent.id
-                  const capability = agent.capability ? AGENT_CAPABILITY_LABEL[agent.capability] : '继承权限'
-                  const hint = [capability, agent.model].filter(Boolean).join(' · ')
-                  return (
-                    <button
-                      key={agent.id}
-                      type="button"
-                      className="flow-palette-item flow-palette-agent"
-                      draggable
-                      title={`点击或拖拽添加：${label} (${agent.id})`}
-                      data-label={label}
-                      onClick={() => addNode('agent', agent)}
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData('application/vesprism-agent', agent.id)
-                        e.dataTransfer.effectAllowed = 'move'
-                      }}
-                    >
-                      <div className="flow-palette-item-head">
-                        <span className="flow-palette-item-icon">
-                          <IconSparkles size={18} stroke={2} />
-                        </span>
-                        <strong className="flow-palette-item-label">{label}</strong>
-                      </div>
-                      <span className="flow-palette-item-hint">{hint}</span>
-                    </button>
-                  )
-                })}
-                <div className="flow-palette-section flow-palette-section-muted">通用节点</div>
-              </>
-            )}
-            {filteredAgents.length === 0 && filteredLibrary.length === 0 && (
-              <p className="flow-palette-empty">没有匹配的节点</p>
-            )}
-            {filteredLibrary.map((item) => {
-              const meta = PALETTE_META[item.type]
-              return (
-                <button
-                  key={item.type}
-                  type="button"
-                  className="flow-palette-item"
-                  draggable
-                  title={`点击或拖拽添加：${item.label} — ${item.hint}`}
-                  data-label={item.label}
-                  onClick={() => addNode(item.type)}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('application/vesprism-node', item.type)
-                    e.dataTransfer.effectAllowed = 'move'
-                  }}
-                >
-                  <div className="flow-palette-item-head">
-                    <span className="flow-palette-item-icon">{meta.icon}</span>
-                    <strong className="flow-palette-item-label">{item.label}</strong>
-                  </div>
-                  <span className="flow-palette-item-hint">{item.hint}</span>
-                </button>
-              )
-            })}
-          </div>
-        </aside>
+        <FlowPalette agents={agents} onAdd={addNode} />
 
         <div className="flow-stage">
           <CanvasGraphApplier
@@ -1567,7 +1350,7 @@ function FlowCanvasInner() {
                   lineWidth={1}
                   color="color-mix(in srgb, var(--border-solid, #e5e7eb) 75%, transparent)"
                 />
-                {!rfBusy && nodes.length <= 80 ? (
+                {minimapOn && !rfBusy ? (
                   <MiniMap position="top-right" pannable zoomable />
                 ) : null}
                 <Controls showFitView={false} showInteractive={false} />
@@ -1685,6 +1468,7 @@ function FlowCanvasInner() {
             openPromote={openPromote}
             onRerunFromNode={(nodeId) => void startRun(nodeId)}
             upstreamNodes={upstreamNodesOf(selected?.id)}
+            openFlow={requestFlowFocus}
           />
         </div>
 
@@ -1725,6 +1509,7 @@ function FlowCanvasInner() {
                   openPromote={openPromote}
                   onRerunFromNode={(nodeId) => void startRun(nodeId)}
                   upstreamNodes={upstreamNodesOf(dblSelected.id)}
+                  openFlow={requestFlowFocus}
                 />
               </div>
             </div>

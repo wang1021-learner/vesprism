@@ -256,6 +256,41 @@
   font-weight: 550;
 }
 
+.flow-btn.map-btn .map-btn-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1.5px solid currentColor;
+  background: transparent;
+  flex: 0 0 auto;
+}
+
+.flow-btn.map-btn:not(.is-active) {
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.flow-btn.map-btn:not(.is-active):hover:not(:disabled) {
+  color: var(--text-secondary, #4b5563);
+}
+
+.flow-btn.map-btn.is-active {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+  font-weight: 550;
+}
+
+.flow-btn.map-btn.is-active .map-btn-swatch {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+.flow-btn.map-btn.is-active:hover:not(:disabled) {
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+  color: #3730a3;
+}
+
 /* ──── 工具栏下拉菜单 (Flow Toolbar Dropdown) ──── */
 .flow-dropdown-wrap {
   position: relative;
