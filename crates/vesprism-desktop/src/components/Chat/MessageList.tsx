@@ -11,7 +11,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStickToBottom } from 'use-stick-to-bottom'
 import { useStore } from '@nanostores/react'
 import type { ChatMessage, PermissionRequest } from '../../types'
-import { $activeChatId, $sessionPhase } from '../../store'
+import { $activeChatId, $chatFindIndex, $chatFindOpen, $chatFindQuery, $sessionPhase } from '../../store'
+import { findMessageHits } from '../../lib/chatFind'
 import {
   canRetryAssistant,
   lastAssistantId,
@@ -155,7 +156,14 @@ export const MessageList = memo(function MessageList({
 }: MessageListProps) {
   const phase = useStore($sessionPhase)
   const activeChatId = useStore($activeChatId)
+  const findOpen = useStore($chatFindOpen)
+  const findQuery = useStore($chatFindQuery)
+  const findIndex = useStore($chatFindIndex)
   const loadingHistory = phase === 'loading'
+  const findHits = useMemo(
+    () => (findOpen ? findMessageHits(messages, findQuery) : []),
+    [findOpen, findQuery, messages],
+  )
 
   const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom({
     initial: 'instant',
@@ -261,6 +269,11 @@ export const MessageList = memo(function MessageList({
   })
 
   const totalSize = virtualizer.getTotalSize()
+
+  useEffect(() => {
+    if (!findOpen || findIndex < 0) return
+    virtualizer.scrollToIndex(findIndex, { align: 'center' })
+  }, [findOpen, findIndex, virtualizer])
 
   // 流式尾条：只抬 totalSize / 测高，scrollTop 交给 stick 库（ResizeObserver）
   useLayoutEffect(() => {
@@ -499,7 +512,7 @@ export const MessageList = memo(function MessageList({
                 key={msg.id}
                 data-index={vr.index}
                 ref={virtualizer.measureElement}
-                className="message-virtual-row"
+                className={`message-virtual-row${findHits.includes(vr.index) ? ' is-find-hit' : ''}${findIndex === vr.index ? ' is-find-on' : ''}`}
                 style={{
                   position: 'absolute',
                   top: 0,

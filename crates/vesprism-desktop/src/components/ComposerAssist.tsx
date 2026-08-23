@@ -19,8 +19,8 @@ import {
   type ComposerCommand,
 } from '../lib/composerCommands'
 import { attachKindFromPath, enableSessionSandbox } from '../lib/sessionSandbox'
-import { openPlanPreview } from '../lib/planMode'
-import { openSessionInsight, openSessionSchedule, sendEngineSlash } from '../lib/engineSlash'
+import { openPlanPreview, toggleAskMode } from '../lib/planMode'
+import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, sendEngineSlash } from '../lib/engineSlash'
 
 type Item = ComposerCommand
 
@@ -55,6 +55,15 @@ const LOCAL_SLASH: Item[] = [
     label: '/plan',
     hint: '只读规划，先出方案再改代码',
     insert: '/plan ',
+  },
+  {
+    id: 'ask',
+    label: '/ask',
+    hint: '问答模式：只问不改文件',
+    insert: '',
+    run: () => {
+      void toggleAskMode()
+    },
   },
   {
     id: 'view-plan',
@@ -138,6 +147,22 @@ const LOCAL_SLASH: Item[] = [
     hint: '按间隔反复执行同一条指令',
     insert: '',
     run: () => openSessionSchedule(),
+  },
+  {
+    id: 'recap',
+    label: '/recap',
+    hint: '回顾这场对话进行到哪',
+    insert: '',
+    run: () => {
+      void requestRecap()
+    },
+  },
+  {
+    id: 'find',
+    label: '/find',
+    hint: '在对话里搜索',
+    insert: '',
+    run: () => openChatFind(),
   },
 ]
 
@@ -244,6 +269,18 @@ export function useComposerAssist(
           }
           if (name === 'loop') {
             return { ...c, insert: '', run: () => openSessionSchedule() }
+          }
+          if (name === 'ask') {
+            return { ...c, insert: '', run: () => void toggleAskMode() }
+          }
+          if (name === 'recap' || name === 'summarize') {
+            return { ...c, insert: '', run: () => void requestRecap() }
+          }
+          if (name === 'find') {
+            return { ...c, insert: '', run: () => openChatFind() }
+          }
+          if (name === 'compact-mode') {
+            return { ...c, insert: '', run: () => openSessionInsight() }
           }
           return c
         }),

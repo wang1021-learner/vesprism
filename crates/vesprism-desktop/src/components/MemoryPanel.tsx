@@ -5,9 +5,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import {
   $activeTabId,
+  $memoryEnabled,
   $memoryFiles,
   $sessionPhase,
   $workspaceCwd,
+  patchActiveTab,
   pushToast,
 } from '../store'
 import { deleteMemoryPath, readMemoryFile, sessionExt } from '../bridge'
@@ -25,6 +27,7 @@ export function MemoryPanel() {
   const files = useStore($memoryFiles)
   const ready = useStore($sessionPhase) === 'ready'
   const cwd = useStore($workspaceCwd)
+  const memoryOn = useStore($memoryEnabled)
   const [query, setQuery] = useState('')
   const [sel, setSel] = useState('')
   const [body, setBody] = useState('')
@@ -127,13 +130,34 @@ export function MemoryPanel() {
             </p>
           </div>
           <div className="work-panel-actions">
+            <button
+              type="button"
+              className={`skills-btn${memoryOn ? ' is-on' : ''}`}
+              disabled={!ready || Boolean(busy)}
+              title={memoryOn ? '本会话记忆开着，点此关闭' : '本会话记忆关着，点此打开'}
+              onClick={() => {
+                const next = !memoryOn
+                patchActiveTab({ memoryEnabled: next })
+                void sendEngineSlash(next ? '/memory on' : '/memory off').then((id) => {
+                  if (!id) {
+                    patchActiveTab({ memoryEnabled: !next })
+                    pushToast('没发出去', 'error')
+                    return
+                  }
+                  pushToast(next ? '本会话已打开记忆' : '本会话已关闭记忆', 'success')
+                  if (next) refresh()
+                })
+              }}
+            >
+              {memoryOn ? '记忆开' : '记忆关'}
+            </button>
             <button type="button" className="skills-btn" onClick={refresh} disabled={!ready}>
               刷新
             </button>
             <button
               type="button"
               className="skills-btn"
-              disabled={!ready || Boolean(busy)}
+              disabled={!ready || !memoryOn || Boolean(busy)}
               onClick={() => void run('flush')}
             >
               {busy === 'flush' ? '写入中…' : '立刻写入'}
@@ -141,7 +165,7 @@ export function MemoryPanel() {
             <button
               type="button"
               className="skills-btn"
-              disabled={!ready || Boolean(busy)}
+              disabled={!ready || !memoryOn || Boolean(busy)}
               onClick={() => void run('dream')}
             >
               {busy === 'dream' ? '整理中…' : '整理'}
@@ -269,14 +293,14 @@ export function MemoryPanel() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') void run('remember')
             }}
-            disabled={!ready}
+            disabled={!ready || !memoryOn}
           />
         </label>
         <div className="insight-actions">
           <button
             type="button"
             className="insight-btn is-primary"
-            disabled={!ready || Boolean(busy)}
+            disabled={!ready || !memoryOn || Boolean(busy)}
             onClick={() => void run('remember')}
           >
             记一条

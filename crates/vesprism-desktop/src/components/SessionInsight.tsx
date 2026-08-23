@@ -5,12 +5,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import {
   $activeTabId,
+  $defaultModelId,
   $messages,
+  $models,
   $sessionInsightOpen,
   $sessionPhase,
   pushToast,
 } from '../store'
-import { sessionExt } from '../bridge'
+import { getModelSettings, saveModelSettings, sessionExt } from '../bridge'
+import { requestRecap } from '../lib/engineSlash'
 import {
   contextBarParts,
   exportTranscriptMarkdown,
@@ -37,6 +40,8 @@ export function SessionInsight() {
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState('')
+  const models = useStore($models)
+  const modelId = useStore($defaultModelId)
 
   const load = useCallback(async () => {
     if (!tabId || !ready) return
@@ -188,6 +193,54 @@ export function SessionInsight() {
               <p className="insight-warn">接近自动压缩阈值，可先手动压缩并留下要点。</p>
             ) : null}
             <label className="insight-note">
+              <span>自动压缩阈值（当前模型，0 为关）</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={ctx.autoCompactAt}
+                disabled={!ready || Boolean(busy)}
+                onChange={(e) => {
+                  const n = Math.max(0, Math.min(100, Number(e.target.value) || 0))
+                  setInfo((prev) =>
+                    prev
+                      ? { ...prev, context: { ...prev.context, autoCompactAt: n } }
+                      : prev,
+                  )
+                }}
+              />
+            </label>
+            <div className="insight-actions" style={{ justifyContent: 'flex-start' }}>
+              <button
+                type="button"
+                className="insight-btn"
+                disabled={!ready || Boolean(busy) || !modelId}
+                onClick={() => {
+                  const n = Math.max(0, Math.min(100, ctx.autoCompactAt))
+                  void (async () => {
+                    setBusy('thresh')
+                    try {
+                      const s = await getModelSettings()
+                      const next = (s.models.length ? s.models : models).map((m) =>
+                        m.id === modelId ? { ...m, auto_compact_threshold_percent: n } : m,
+                      )
+                      await saveModelSettings(s.default_id || modelId, next)
+                      pushToast(
+                        n > 0 ? `自动压缩 ${n}%` : '已关掉自动压缩',
+                        'success',
+                      )
+                    } catch (e) {
+                      pushToast(String(e), 'error')
+                    } finally {
+                      setBusy('')
+                    }
+                  })()
+                }}
+              >
+                {busy === 'thresh' ? '保存中…' : '保存阈值'}
+              </button>
+            </div>
+            <label className="insight-note">
               <span>压缩时务必留下（可选）</span>
               <input
                 value={note}
@@ -295,6 +348,14 @@ export function SessionInsight() {
               ) : null}
             </dl>
             <div className="insight-actions">
+              <button
+                type="button"
+                className="insight-btn"
+                disabled={!ready}
+                onClick={() => void requestRecap()}
+              >
+                写回顾
+              </button>
               <button
                 type="button"
                 className="insight-btn"

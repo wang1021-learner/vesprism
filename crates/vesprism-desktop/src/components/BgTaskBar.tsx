@@ -27,7 +27,11 @@ export function BgTaskBar() {
     <div className="bg-task-bar" aria-label="后台命令">
       {list.map(([toolCallId, t]) => (
         <div key={toolCallId} className="bg-task-pill">
-          <span title={t.command}>{t.description || t.command || t.taskId}</span>
+          {t.monitorDescription ? <span className="bg-task-tag">监视</span> : null}
+          <span title={t.command || t.monitorDescription || ''}>
+            {t.monitorDescription || t.description || t.command || t.taskId}
+            {t.lastEvents?.length ? ` · ${t.lastEvents[t.lastEvents.length - 1]}` : ''}
+          </span>
           <button
             type="button"
             disabled={busy === t.taskId}

@@ -3,6 +3,9 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { SandboxBanner } from './components/SandboxBanner'
 import { PlanBanner } from './components/PlanBanner'
+import { AskBanner } from './components/AskBanner'
+import { RecapBanner } from './components/RecapBanner'
+import { ChatFindBar } from './components/ChatFindBar'
 import { AppPlanApproval } from './components/PlanApproval'
 import { MessageList } from './components/Chat/MessageList'
 import { WindowChrome } from './components/WindowChrome'
@@ -351,8 +354,11 @@ function AppMainBody() {
         >
           <GoalStrip />
           <PlanBanner />
+          <AskBanner />
+          <RecapBanner />
           <TodoStrip />
           <ScheduleStrip />
+          <ChatFindBar />
           <AppMessages />
         </ErrorBoundary>
         <AppUserQuestion />

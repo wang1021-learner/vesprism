@@ -17,6 +17,7 @@ import { useComposerAssist } from './ComposerAssist'
 import {
   $planApproval,
   $planPhase,
+  $sessionMode,
   $sandboxCwd,
   $scratchCwd,
   $securityPolicy,
@@ -33,7 +34,7 @@ import {
   COMPOSER_POLICY_OPTIONS,
 } from '../lib/sessionSandbox'
 import { clipboardImageFiles, persistImageFile } from '../lib/pasteImage'
-import { planChipLabel, togglePlanMode } from '../lib/planMode'
+import { planChipLabel, toggleAskMode, togglePlanMode } from '../lib/planMode'
 import { openSessionInsight } from '../lib/engineSlash'
 import { useStore } from '@nanostores/react'
 import type { PromptAttach } from '../bridge'
@@ -314,7 +315,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const totalTokens = useStore($totalTokens)
   const planPhase = useStore($planPhase)
   const planApproval = useStore($planApproval)
+  const sessionMode = useStore($sessionMode)
   const planChip = planChipLabel(planPhase, Boolean(planApproval))
+  const askOn = sessionMode === 'ask'
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -953,6 +956,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               }}
             >
               <span className="chip-label">{planChip.label}</span>
+            </button>
+            <button
+              type="button"
+              className={`composer-chip ask-chip${askOn ? ' is-on' : ''}`}
+              title={askOn ? '问答模式开着：只回答不改文件' : '进入问答模式：只问不改'}
+              aria-pressed={askOn}
+              disabled={!shellReady}
+              onClick={() => {
+                setWsOpen(false)
+                setModelOpen(false)
+                setAttachOpen(false)
+                setPolicyOpen(false)
+                void toggleAskMode()
+              }}
+            >
+              <span className="chip-label">{askOn ? '问答 · 开' : '问答'}</span>
             </button>
             {contextPct != null ? (
               <button

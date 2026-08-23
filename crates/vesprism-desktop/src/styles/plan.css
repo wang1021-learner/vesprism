@@ -337,10 +337,18 @@
   opacity: 0.8;
 }
 
-.composer-chip.plan-chip.is-on {
+.composer-chip.plan-chip.is-on,
+.composer-chip.ask-chip.is-on {
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--cta) 45%, var(--border-solid));
   background: color-mix(in srgb, var(--cta) 12%, transparent);
+}
+
+.recap-banner .plan-banner-hint {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .tool-row.kind-plan.is-awaiting {

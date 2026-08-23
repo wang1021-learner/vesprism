@@ -12,7 +12,7 @@ import {
   type ChatSummary,
 } from '../../store'
 import { searchSessions } from '../../bridge'
-import { openSessionInsight, openSessionSchedule } from '../../lib/engineSlash'
+import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap } from '../../lib/engineSlash'
 import { openChatTab } from '../../lib/openChatTab'
 
 type SearchHit = ChatSummary & { snippet?: string }
@@ -240,6 +240,22 @@ export function CommandPalette() {
       subtitle: '按间隔反复执行同一条指令（/loop）',
       action: () => {
         openSessionSchedule()
+      },
+    },
+    {
+      id: 'cmd-recap',
+      title: '回顾',
+      subtitle: '这场对话进行到哪（/recap）',
+      action: () => {
+        void requestRecap()
+      },
+    },
+    {
+      id: 'cmd-find',
+      title: '在对话里找',
+      subtitle: '搜索当前会话消息（Ctrl+F）',
+      action: () => {
+        openChatFind()
       },
     },
   ].filter((c) => !commandFilter || c.title.toLowerCase().includes(commandFilter) || c.subtitle.toLowerCase().includes(commandFilter))

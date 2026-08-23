@@ -416,6 +416,67 @@
   color: var(--text-muted);
 }
 
+.diff-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.diff-pane-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+}
+
+.hunk-review {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  flex: 1;
+}
+
+.hunk-review-hint {
+  margin: 0 12px 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.hunk-file-body {
+  padding: 0 8px 8px;
+}
+
+.hunk-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.hunk-block {
+  margin-top: 8px;
+  border: 1px solid var(--border-solid);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.hunk-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+
+.hunk-block-head button + button {
+  margin-left: 4px;
+}
+
 /* 差异：绑定当前打开源码 vs git HEAD */
 .right-panel-diff-wrap {
   display: flex;

@@ -15,6 +15,7 @@ import {
 } from '../../store'
 import { fileWorkingDiff, listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
 import { DiffLines } from '../Chat/DiffLines'
+import { HunkReview } from '../HunkReview'
 
 const MIN_W = 260
 const MAX_RATIO = 0.55
@@ -402,10 +403,39 @@ function DiffView() {
   )
 }
 
+function DiffPane() {
+  const [kind, setKind] = useState<'hunk' | 'git'>('hunk')
+  return (
+    <div className="diff-pane">
+      <div className="diff-pane-tabs" role="tablist" aria-label="改动来源">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={kind === 'hunk'}
+          className={`right-panel-tab${kind === 'hunk' ? ' active' : ''}`}
+          onClick={() => setKind('hunk')}
+        >
+          审阅
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={kind === 'git'}
+          className={`right-panel-tab${kind === 'git' ? ' active' : ''}`}
+          onClick={() => setKind('git')}
+        >
+          工作区
+        </button>
+      </div>
+      {kind === 'hunk' ? <HunkReview /> : <DiffView />}
+    </div>
+  )
+}
+
 function PanelBody() {
   const tab = useStore($rightPanelTab)
   if (tab === 'files') return <FileTree />
-  if (tab === 'diff') return <DiffView />
+  if (tab === 'diff') return <DiffPane />
   return <OutputView />
 }
 

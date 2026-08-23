@@ -1603,3 +1603,47 @@
 .tool-todo-content {
   word-break: break-word;
 }
+
+.chat-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(var(--chat-column-width, 90%), var(--chat-column-max-width, 48.75rem));
+  margin: 0 auto 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-solid);
+  border-radius: 8px;
+  background: var(--surface-elevated, #fff);
+}
+
+.chat-find-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-solid);
+  border-radius: 6px;
+  background: var(--bg-canvas, #f5f5f5);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.chat-find-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  min-width: 3.5rem;
+  text-align: right;
+}
+
+.message-virtual-row.is-find-hit {
+  outline: 1px solid color-mix(in srgb, var(--cta) 35%, transparent);
+  outline-offset: -1px;
+  border-radius: 8px;
+}
+
+.message-virtual-row.is-find-on {
+  outline-width: 2px;
+  background: color-mix(in srgb, var(--cta) 8%, transparent);
+}

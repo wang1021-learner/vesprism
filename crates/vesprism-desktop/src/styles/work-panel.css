@@ -222,6 +222,13 @@
   max-width: 100%;
 }
 
+.bg-task-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
 .bg-task-pill span {
   overflow: hidden;
   text-overflow: ellipsis;
