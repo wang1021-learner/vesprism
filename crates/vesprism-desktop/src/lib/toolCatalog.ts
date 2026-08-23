@@ -238,6 +238,11 @@ const META: ToolMeta[] = [
 
 const BY_NAME = new Map(META.map((m) => [m.name, m]))
 
+/** 内置工具目录（对齐官方 grok_build toolset 展示名）。 */
+export function builtinToolCatalog(): readonly ToolMeta[] {
+  return META
+}
+
 export const CATEGORY_LABEL: Record<ToolCategory, string> = {
   file: '文件',
   search: '搜索 / 代码智能',

@@ -3,8 +3,11 @@ import {
   agentFromDraft,
   draftFromAgent,
   emptyFormDraft,
+  formFingerprint,
+  isFormDirty,
   parseCapability,
   splitToolList,
+  toggleNamed,
   validateAgentForm,
 } from './form'
 import { emptyAgent } from '../types'
@@ -91,5 +94,23 @@ describe('Agent 编制表单', () => {
     expect(back.agent_type).toBe('explore')
     expect(back.flows).toEqual(['pr-review'])
     expect(back.capability).toBe('read_only')
+  })
+
+  it('指纹：改人设算脏，raw 里不编的字段不算', () => {
+    const rec = emptyAgent('pr-reviewer', 'PR 审查员')
+    const d = draftFromAgent(rec, 'system')
+    const base = formFingerprint(d)
+    expect(isFormDirty(d, base)).toBe(false)
+    d.systemPrompt = 'system v2'
+    expect(isFormDirty(d, base)).toBe(true)
+    d.systemPrompt = 'system'
+    d.raw = { ...rec, model: 'other' }
+    expect(isFormDirty(d, base)).toBe(false)
+  })
+
+  it('toggleNamed 增删去重', () => {
+    expect(toggleNamed('web_search, grep', 'grep')).toBe('web_search')
+    expect(toggleNamed('web_search', 'grep')).toBe('web_search, grep')
+    expect(toggleNamed('', 'web_search')).toBe('web_search')
   })
 })

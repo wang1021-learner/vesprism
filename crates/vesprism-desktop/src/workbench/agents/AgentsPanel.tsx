@@ -3,39 +3,54 @@
  */
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { pushToast } from '../../store'
+import { listSkills } from '../../bridge'
+import { parseOfficialSkills } from '../../lib/skillRows'
+import { openChatTab } from '../../lib/openChatTab'
+import { $activeTabId, $workspaceCwd, getTabState, pushToast } from '../../store'
 import { deleteAgent, getAgent, listAgents, saveFlow, saveAgent } from '../bridge'
 import type { AgentListItem } from '../types'
 import type { FlowRecord } from '../flow'
 import { AGENT_CAPABILITY_LABEL } from '../types'
+import { requestFlowFocus } from '../flow/focus'
 import { $agentsFocusId, clearAgentsFocus } from './focus'
 import { findFlowsUsingAgent } from './refs'
 import { markFlowsStale } from './stale'
+import { SkillMountChips, ToolDisableChips } from './chips'
 import {
   CAPABILITY_OPTIONS,
   agentFromDraft,
   draftFromAgent,
   emptyFormDraft,
+  formFingerprint,
+  isFormDirty,
   parseCapability,
+  toggleNamed,
   validateAgentForm,
   type AgentFormDraft,
 } from './form'
 
 export default function AgentsPanel() {
   const focusId = useStore($agentsFocusId)
+  const tabId = useStore($activeTabId)
+  const cwd = useStore($workspaceCwd)
   const [list, setList] = useState<AgentListItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState<AgentFormDraft>(emptyFormDraft)
+  const [baseline, setBaseline] = useState(formFingerprint(emptyFormDraft()))
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [focusFailed, setFocusFailed] = useState<string | null>(null)
   const [usedByFlows, setUsedByFlows] = useState<Array<{ id: string; name: string }>>([])
+  const [skillOptions, setSkillOptions] = useState<Array<{ name: string; label: string }>>([])
   const [deletionConflict, setDeletionConflict] = useState<{
     agentId: string
     flows: Array<{ id: string; name: string }>
     detailedFlows: FlowRecord[]
   } | null>(null)
+  const dirty = isFormDirty(draft, baseline)
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
 
   const reload = useCallback(async () => {
     try {
@@ -49,6 +64,33 @@ export default function AgentsPanel() {
     void reload()
   }, [reload])
 
+  useEffect(() => {
+    const sid = tabId
+    if (!sid) return
+    const sessionCwd = getTabState(sid)?.cwd || cwd || '.'
+    void listSkills(sid, sessionCwd)
+      .then((resp) => {
+        const rows = parseOfficialSkills(Array.isArray(resp?.skills) ? resp.skills : [])
+        setSkillOptions(rows.map((s) => ({ name: s.name, label: s.displayName || s.name })))
+      })
+      .catch(() => setSkillOptions([]))
+  }, [tabId, cwd])
+
+  useEffect(() => {
+    const onBefore = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBefore)
+    return () => window.removeEventListener('beforeunload', onBefore)
+  }, [])
+
+  const confirmLeave = () => {
+    if (!dirtyRef.current) return true
+    return window.confirm('有未保存的编制改动，离开将丢失。确定离开？')
+  }
+
   const loadTokenRef = useRef(0)
 
   const loadOne = useCallback(async (id: string): Promise<boolean> => {
@@ -59,7 +101,9 @@ export default function AgentsPanel() {
       if (token !== loadTokenRef.current) return false
       const prompt = detail.systemPrompt ?? detail.system_prompt ?? ''
       setCreating(false)
-      setDraft(draftFromAgent(detail.agent, prompt))
+      const next = draftFromAgent(detail.agent, prompt)
+      setDraft(next)
+      setBaseline(formFingerprint(next))
       setSelectedId(id)
       setFocusFailed(null)
 
@@ -91,16 +135,23 @@ export default function AgentsPanel() {
 
   useEffect(() => {
     if (!focusId) return
+    if (dirtyRef.current && !window.confirm('有未保存的编制改动，打开另一位员工将丢失。确定离开？')) {
+      clearAgentsFocus(focusId)
+      return
+    }
     void loadOne(focusId).then((ok) => {
       if (ok) clearAgentsFocus(focusId)
     })
   }, [focusId, loadOne])
 
   const onNew = () => {
+    if (!confirmLeave()) return
     loadTokenRef.current++
     setCreating(true)
     setSelectedId(null)
-    setDraft(emptyFormDraft())
+    const blank = emptyFormDraft()
+    setDraft(blank)
+    setBaseline(formFingerprint(blank))
     setUsedByFlows([])
   }
 
@@ -121,7 +172,9 @@ export default function AgentsPanel() {
       const saved = await saveAgent(agentFromDraft(draft), draft.systemPrompt)
       setCreating(false)
       setSelectedId(saved.id)
-      setDraft(draftFromAgent(saved, draft.systemPrompt))
+      const next = draftFromAgent(saved, draft.systemPrompt)
+      setDraft(next)
+      setBaseline(formFingerprint(next))
       await reload()
       const refs = await findFlowsUsingAgent(saved.id)
       setUsedByFlows(refs.map((f) => ({ id: f.id, name: f.name })))
@@ -146,13 +199,16 @@ export default function AgentsPanel() {
   }
 
   const onCancel = () => {
+    if (dirty && !window.confirm('放弃未保存的编制改动？')) return
     if (selectedId && !creating) {
       void loadOne(selectedId)
       return
     }
     setCreating(false)
     setSelectedId(null)
-    setDraft(emptyFormDraft())
+    const blank = emptyFormDraft()
+    setDraft(blank)
+    setBaseline(formFingerprint(blank))
   }
 
   const onDelete = async () => {
@@ -186,7 +242,9 @@ export default function AgentsPanel() {
       pushToast(`已删除 ${id}`, 'success')
       setSelectedId(null)
       setCreating(false)
-      setDraft(emptyFormDraft())
+      const blank = emptyFormDraft()
+      setDraft(blank)
+      setBaseline(formFingerprint(blank))
       setDeletionConflict(null)
       await reload()
     } catch (e) {
@@ -274,6 +332,8 @@ export default function AgentsPanel() {
                     if (a.error) {
                       pushToast(`Agent 档案损坏：${a.error}`, 'error')
                     }
+                    if (selectedId === a.id && !creating) return
+                    if (!confirmLeave()) return
                     void loadOne(a.id)
                   }}
                   title={a.error ? `档案损坏：${a.error}` : undefined}
@@ -368,22 +428,34 @@ export default function AgentsPanel() {
               />
               <span>在隔离区执行（隔离 git worktree，不碰主仓库）</span>
             </label>
-            <label className="agents-field">
-              <span>停用工具（官方函数名，逗号分隔）</span>
+            <div className="agents-field">
+              <span>停用工具（勾选即写入 disabled_tools）</span>
+              <ToolDisableChips
+                value={draft.disabledToolsText}
+                extraNames={[]}
+                onToggle={(name) => patch({ disabledToolsText: toggleNamed(draft.disabledToolsText, name) })}
+              />
               <input
                 value={draft.disabledToolsText}
                 onChange={(e) => patch({ disabledToolsText: e.target.value })}
-                placeholder="如：web_search, grep"
+                placeholder="也可手填官方函数名，逗号分隔"
+                aria-label="停用工具名单"
               />
-            </label>
-            <label className="agents-field">
-              <span>挂载技能（Skills 列表，逗号分隔）</span>
+            </div>
+            <div className="agents-field">
+              <span>挂载技能（勾选写入 skills）</span>
+              <SkillMountChips
+                value={draft.skillsText}
+                options={skillOptions}
+                onToggle={(name) => patch({ skillsText: toggleNamed(draft.skillsText, name) })}
+              />
               <input
                 value={draft.skillsText}
                 onChange={(e) => patch({ skillsText: e.target.value })}
-                placeholder="如：git-workflow, rust-test, code-review"
+                placeholder="也可手填技能名，逗号分隔"
+                aria-label="挂载技能名单"
               />
-            </label>
+            </div>
             <div className="agents-field">
               <span>deny 规则（kind:glob，如 edit:**/.env）</span>
               <div className="agents-rules">
@@ -432,24 +504,19 @@ export default function AgentsPanel() {
                 ) : (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
                     {usedByFlows.map((f) => (
-                      <span
+                      <button
                         key={f.id}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          padding: '3px 8px',
-                          borderRadius: '6px',
-                          background: 'var(--surface-muted, #f3f4f6)',
-                          border: '1px solid var(--border-solid, #e5e7eb)',
-                          fontSize: '11px',
-                          fontWeight: 550,
-                          color: 'var(--brand-primary, #4f46e5)',
+                        type="button"
+                        className="agents-flow-chip"
+                        title={`打开流程 ${f.id}`}
+                        onClick={() => {
+                          if (!confirmLeave()) return
+                          requestFlowFocus(f.id)
+                          void openChatTab({ title: '流程画布', utilityKind: 'flow-canvas' })
                         }}
-                        title={`流程 ID: ${f.id}`}
                       >
-                        🔗 {f.name} <span style={{ color: 'var(--text-tertiary, #9ca3af)', fontWeight: 400 }}>({f.id})</span>
-                      </span>
+                        🔗 {f.name} <span className="agents-flow-chip-id">({f.id})</span>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -474,10 +541,11 @@ export default function AgentsPanel() {
                 </button>
               ) : null}
               <div className="agents-foot-spacer" />
+              {dirty ? <span className="agents-dirty">未保存</span> : null}
               <button type="button" className="agents-btn" disabled={busy} onClick={onCancel}>
                 取消
               </button>
-              <button type="button" className="agents-btn primary" disabled={busy} onClick={() => void onSave()}>
+              <button type="button" className="agents-btn primary" disabled={busy || !dirty} onClick={() => void onSave()}>
                 {busy ? '保存中…' : '保存'}
               </button>
             </footer>

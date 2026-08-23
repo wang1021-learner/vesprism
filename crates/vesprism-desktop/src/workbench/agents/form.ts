@@ -111,6 +111,37 @@ export function agentFromDraft(d: AgentFormDraft): AgentRecord {
   }
 }
 
+/** 勾选/取消一项，写回逗号分隔文本。 */
+export function toggleNamed(text: string, name: string): string {
+  const n = name.trim()
+  if (!n) return text
+  const cur = splitToolList(text)
+  const i = cur.indexOf(n)
+  if (i >= 0) cur.splice(i, 1)
+  else cur.push(n)
+  return joinToolList(cur)
+}
+
+/** 脏检查指纹：不含 raw（YAML 里面板不编的字段）。 */
+export function formFingerprint(d: AgentFormDraft): string {
+  return JSON.stringify({
+    id: d.id.trim(),
+    name: d.name,
+    version: d.version,
+    description: d.description,
+    capability: d.capability,
+    isolation: d.isolation,
+    disabledTools: splitToolList(d.disabledToolsText),
+    skills: splitToolList(d.skillsText),
+    permissionRules: d.permissionRules.map((r) => r.trim()),
+    systemPrompt: d.systemPrompt,
+  })
+}
+
+export function isFormDirty(d: AgentFormDraft, baseline: string): boolean {
+  return formFingerprint(d) !== baseline
+}
+
 /** 返回首条错误；通过则 null。 */
 export function validateAgentForm(d: AgentFormDraft): string | null {
   if (!isValidAgentId(d.id.trim())) {
