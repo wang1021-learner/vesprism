@@ -30,6 +30,7 @@ import {
   respondExitPlanMode,
   respondPermission,
   respondUserQuestion,
+  sessionCaps,
   setCurrentModel,
   startSession,
 } from '../bridge'
@@ -50,6 +51,7 @@ import {
 import { evaluatePermission } from './executionPolicy'
 import { applyModeUpdate, parseSessionMode } from './planMode'
 import { keepTail } from './terminalCards'
+import { notifyChatsChanged, upsertLiveChat } from './recordSessionInSidebar'
 import { cleanSessionTitle } from './sessionTitle'
 import { applyScheduledTask } from './scheduleLoop'
 
@@ -143,6 +145,48 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         userQuestion: null,
         mcpElicit: null,
       })
+      notifyChatsChanged()
+      break
+    }
+    case 'context_overflow': {
+      patchTab(tabId, {
+        status: 'idle',
+        sessionAlert: {
+          kind: 'overflow',
+          message: ev.message || '上下文已满，请压缩会话或新开对话。',
+        },
+      })
+      pushToast('上下文超限', 'error')
+      break
+    }
+    case 'rate_limit_exceeded': {
+      patchTab(tabId, {
+        status: 'idle',
+        sessionAlert: {
+          kind: 'rate',
+          message: ev.message || '请求过于频繁，请稍后再试。',
+        },
+      })
+      pushToast('请求过于频繁', 'error')
+      break
+    }
+    case 'auth_expired': {
+      patchTab(tabId, {
+        status: 'idle',
+        sessionAlert: {
+          kind: 'auth',
+          message: ev.message || '鉴权已过期，请到设置里更新 API Key。',
+        },
+      })
+      pushToast('鉴权已过期', 'error')
+      break
+    }
+    case 'session_reconnecting': {
+      pushToast(
+        `会话断开，正在恢复（第 ${ev.attempt ?? 1} 次）`,
+        'info',
+      )
+      void replayTabAfterCrash(tabId)
       break
     }
     case 'error': {
@@ -500,6 +544,17 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       if (kind && kind !== 'flow-canvas' && kind !== 'agents') break
       const title = cleanSessionTitle(ev.title, '')
       if (title) patchTab(tabId, { chatTitle: title })
+      const after = getTabState(tabId)
+      const sid = (after?.chatId || after?.sessionId || '').trim()
+      if (title && sid && after && !after.utilityKind) {
+        upsertLiveChat({
+          id: sid,
+          title,
+          cwd: after.cwd || '',
+          updatedAt: new Date().toISOString(),
+        })
+      }
+      if (title && sid) notifyChatsChanged()
       break
     }
     // 终态错误（后端已映射事件，前端此前无 UI）：置 error banner + toast
@@ -569,6 +624,9 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         patchTab(tabId, {
           sessionId: ev.session_id,
         })
+        void sessionCaps(tabId)
+          .then((caps) => patchTab(tabId, { sessionCaps: caps }))
+          .catch(() => {})
         // 工具面板（画布/编制等）会话不进主聊天历史；绑过产物的进侧栏「工作台」
         if (prev?.utilityKind) {
           void markToolSession(ev.session_id).catch(() => {})

@@ -32,7 +32,7 @@ export type WorkbenchSessionSummary = {
   num_messages?: number
 }
 
-/** 侧栏「工作台」会话记录（有产物绑定的画布/编制干活会话）。 */
+/** 侧栏「工作台」会话记录（画布/编制开口或已绑定产物）。 */
 export async function listWorkbenchSessions(
   limit?: number,
 ): Promise<WorkbenchSessionSummary[]> {
@@ -65,6 +65,23 @@ export async function unmarkToolSession(sessionId: string): Promise<void> {
 
 export const isToolSession = (sessionId: string) =>
   invoke<boolean>('is_tool_session', { sessionId })
+
+/** 工作台第一次开口：不依赖已保存 Flow/Agent。 */
+export async function touchWorkbenchSession(
+  sessionId: string,
+  view: 'flow-canvas' | 'agents',
+  title?: string,
+  cwd?: string,
+): Promise<void> {
+  const sid = sessionId.trim()
+  if (!sid) return
+  await invoke('touch_workbench_session', {
+    sessionId: sid,
+    view,
+    title: (title || '').trim(),
+    cwd: (cwd || '').trim(),
+  })
+}
 
 export async function bindWorkbenchArtifact(
   sessionId: string,

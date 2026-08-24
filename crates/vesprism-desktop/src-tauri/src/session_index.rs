@@ -87,7 +87,7 @@ fn open_db() -> Result<Connection, String> {
          CREATE INDEX IF NOT EXISTS idx_thread_workbench_artifacts_session
            ON thread_workbench_artifacts(session_id, updated_at_ms DESC);
          -- 工具会话（flow-canvas / agents / mcp / skills / tools / workflows）标记：
-         -- 不进主聊天历史。已绑定 Flow / Agent 的走 list_workbench_threads，进侧栏「工作台」。
+         -- 不进主聊天历史。画布/编制开口或已绑定产物的走 list_workbench_threads，进侧栏「工作台」。
          CREATE TABLE IF NOT EXISTS thread_tool_sessions (
            id TEXT PRIMARY KEY
          );
@@ -340,26 +340,36 @@ pub fn list_threads(current_cwd: &str, limit: Option<u32>) -> Result<Vec<ThreadR
     })
 }
 
-/// 侧栏「工作台」分组：有 Flow / Agent 产物绑定的干活会话。
-/// 与 `list_threads` 分开，不和主聊天混排、不受主列表 LIMIT 挤掉。
+/// 侧栏「工作台」分组：画布/编制干活会话。
+/// 第一次开口就会挂 binding；保存 Flow / Agent 后另有产物行。不和主聊天混排。
+const WORKBENCH_THREAD_WHERE: &str = "id IN (SELECT DISTINCT session_id FROM thread_workbench_artifacts)
+             OR id IN (
+               SELECT id FROM thread_workbench_bindings
+               WHERE active_workbench_view IN ('flow-canvas', 'agents')
+             )";
+
 pub fn list_workbench_threads(limit: Option<u32>) -> Result<Vec<ThreadRow>, String> {
     let _ = mark_legacy_canvas_sessions();
     with_db(|conn| {
         let lim = limit.filter(|n| *n > 0).map(|n| n as i64);
         let sql = if lim.is_some() {
-            "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
+            format!(
+                "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
              FROM threads
-             WHERE id IN (SELECT DISTINCT session_id FROM thread_workbench_artifacts)
+             WHERE {WORKBENCH_THREAD_WHERE}
              ORDER BY updated_at_ms DESC
              LIMIT ?1"
+            )
         } else {
-            "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
+            format!(
+                "SELECT id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path
              FROM threads
-             WHERE id IN (SELECT DISTINCT session_id FROM thread_workbench_artifacts)
+             WHERE {WORKBENCH_THREAD_WHERE}
              ORDER BY updated_at_ms DESC"
+            )
         };
 
-        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
         let rows = if let Some(n) = lim {
             stmt.query_map(params![n], map_thread_row)
                 .map_err(|e| e.to_string())?
@@ -372,6 +382,64 @@ pub fn list_workbench_threads(limit: Option<u32>) -> Result<Vec<ThreadRow>, Stri
                 .collect()
         };
         Ok(rows)
+    })
+}
+
+/// 工作台第一次开口：不依赖已保存 Flow/Agent，侧栏「干活会话」也能看见。
+pub fn touch_workbench_session(
+    session_id: &str,
+    view: &str,
+    title: &str,
+    cwd: &str,
+) -> Result<(), String> {
+    let sid = session_id.trim();
+    let view = view.trim();
+    if sid.is_empty() {
+        return Ok(());
+    }
+    if view != "flow-canvas" && view != "agents" {
+        return Err(format!("未知工作台视图: {view}"));
+    }
+    mark_tool_session(sid)?;
+    let title = title.trim();
+    let cwd_n = normalize_workspace_path(cwd);
+    let now = now_ms();
+    let updated_at = chrono::DateTime::from_timestamp(now / 1000, 0)
+        .map(|t| t.to_rfc3339())
+        .unwrap_or_default();
+    with_db(|conn| {
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO thread_workbench_bindings (id, active_workbench_view, updated_at_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+               active_workbench_view = CASE
+                 WHEN excluded.active_workbench_view = '' THEN thread_workbench_bindings.active_workbench_view
+                 ELSE excluded.active_workbench_view
+               END,
+               updated_at_ms = excluded.updated_at_ms",
+            params![sid, view, now],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO threads
+             (id, title, preview, cwd, updated_at, updated_at_ms, num_messages, transcript_path)
+             VALUES (?1, ?2, '', ?3, ?4, ?5, 1, '')
+             ON CONFLICT(id) DO UPDATE SET
+               updated_at = excluded.updated_at,
+               updated_at_ms = excluded.updated_at_ms,
+               cwd = CASE WHEN excluded.cwd = '' THEN threads.cwd ELSE excluded.cwd END,
+               title = CASE
+                 WHEN excluded.title = '' THEN threads.title
+                 WHEN threads.title = '' THEN excluded.title
+                 ELSE threads.title
+               END,
+               num_messages = CASE WHEN threads.num_messages < 1 THEN 1 ELSE threads.num_messages END",
+            params![sid, title, cwd_n, updated_at, now],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(())
     })
 }
 

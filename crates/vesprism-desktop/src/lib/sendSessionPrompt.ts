@@ -9,10 +9,12 @@ import {
   $messages,
   $queuedPrompts,
   patchActiveTab,
+  patchTab,
 } from '../store'
 import { interjectPrompt, sendPrompt, type PromptAttach } from '../bridge'
 import { generateId } from './generateId'
 import { markPlanActivatedOnSend } from './planMode'
+import { recordLiveSession } from './recordSessionInSidebar'
 import { removeUserMessageByPromptId } from './sessionTranscript'
 
 export type SendSessionPromptOpts = {
@@ -24,6 +26,8 @@ export type SendSessionPromptOpts = {
   hidden?: boolean
   /** 预发 id，便于画布在 IPC 返回前就开始认图 */
   promptId?: string
+  /** 指定 Tab；默认当前活跃 Tab */
+  tabId?: string
 }
 
 export async function sendSessionPrompt(
@@ -40,16 +44,17 @@ export async function sendSessionPrompt(
     ? `${msg}${msg ? '\n\n' : ''}[附件] ${names.join('、')}`
     : msg
   const wire = (opts.wireText ?? msg).trim() || display
-  const tabId = $activeTabId.get()
+  const tabId = (opts.tabId || $activeTabId.get()).trim()
+  if (!tabId) return null
   if (!opts.hidden) markPlanActivatedOnSend(tabId)
   if (opts.hidden) {
     if (!wire) return null
     try {
-      patchActiveTab({ status: 'generating', error: '' })
+      patchTab(tabId, { status: 'generating', error: '' })
       await sendPrompt(tabId, wire, promptId, attach)
       return promptId
     } catch (e) {
-      patchActiveTab({
+      patchTab(tabId, {
         error: String(e),
         status: wasGenerating ? 'generating' : 'idle',
       })
@@ -77,6 +82,7 @@ export async function sendSessionPrompt(
       })
       return null
     }
+    void recordLiveSession(tabId, display)
     return promptId
   }
 
@@ -107,5 +113,6 @@ export async function sendSessionPrompt(
     })
     return null
   }
+  void recordLiveSession(tabId, display)
   return promptId
 }

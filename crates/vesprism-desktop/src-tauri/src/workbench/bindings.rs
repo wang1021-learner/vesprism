@@ -55,7 +55,7 @@ pub struct WorkbenchSessionDto {
     pub num_messages: usize,
 }
 
-/// 侧栏「工作台」会话记录：有产物绑定的画布/编制干活会话，不和主聊天混。
+/// 侧栏「工作台」会话记录：画布/编制开口或已绑定产物的干活会话，不和主聊天混。
 #[tauri::command]
 pub fn list_workbench_sessions(limit: Option<u32>) -> Result<Vec<WorkbenchSessionDto>, String> {
     let listed = crate::session_index::list_workbench_threads(limit)?;
@@ -83,6 +83,22 @@ pub fn list_workbench_bindings(
         }
     }
     Ok(out)
+}
+
+/// 工作台第一次向 AI 说话：挂上画布/编制视图，侧栏立刻能列出。
+#[tauri::command]
+pub fn touch_workbench_session(
+    session_id: String,
+    view: String,
+    title: Option<String>,
+    cwd: Option<String>,
+) -> Result<(), String> {
+    crate::session_index::touch_workbench_session(
+        &session_id,
+        &view,
+        title.as_deref().unwrap_or(""),
+        cwd.as_deref().unwrap_or(""),
+    )
 }
 
 #[tauri::command]

@@ -9,6 +9,20 @@ vi.mock('../bridge', () => ({
   respondExitPlanMode: vi.fn(),
   setCurrentModel: vi.fn(),
   startSession: vi.fn(),
+  sessionCaps: vi.fn().mockResolvedValue({
+    recap: true,
+    askMode: true,
+    memory: true,
+    hunks: true,
+    rewind: true,
+    gitWrite: true,
+    imagine: true,
+    schedule: true,
+    queueEdit: true,
+    plugins: true,
+    hooks: true,
+    compact: true,
+  }),
 }))
 
 import { handleSessionEvent } from './sessionEvents'
@@ -146,5 +160,34 @@ describe('turn_ended status', () => {
     handleSessionEvent({ tab_id: 'tab-1', type: 'turn_ended' })
     const st = getTabState('tab-1')
     expect(st?.status).toBe('generating')
+  })
+
+  it('上下文超限写入会话横幅并置 idle', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'context_overflow',
+      message: 'too long',
+    })
+    const st = getTabState('tab-1')
+    expect(st?.status).toBe('idle')
+    expect(st?.sessionAlert).toEqual({ kind: 'overflow', message: 'too long' })
+  })
+
+  it('限流与鉴权过期各写一种横幅', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'rate_limit_exceeded',
+      message: 'slow down',
+    })
+    expect(getTabState('tab-1')?.sessionAlert?.kind).toBe('rate')
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'auth_expired',
+      message: 'login',
+    })
+    expect(getTabState('tab-1')?.sessionAlert).toEqual({
+      kind: 'auth',
+      message: 'login',
+    })
   })
 })
