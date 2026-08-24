@@ -98,7 +98,7 @@ export const FlowToolbar = React.memo(function FlowToolbar({
             type="button"
             className={`flow-btn ${mounted ? 'is-active' : ''}`}
             onClick={onMountToSession}
-            title={mounted ? '已挂载至当前会话工具链' : '热挂载到当前会话，右侧输入框即可直接作为 /命令 调起'}
+            title={mounted ? '已挂到编码对话，可用 /流程id 调用' : '挂到编码对话，之后可用 /流程id 调用'}
           >
             {mounted ? '已挂载' : '挂载至会话'}
           </button>
@@ -200,9 +200,9 @@ export const FlowToolbar = React.memo(function FlowToolbar({
           type="button"
           className={`flow-btn dock-btn${dockOpen ? ' is-active' : ''}`}
           onClick={() => setDockOpen((v) => !v)}
-          title={dockOpen ? '收起工作栏' : '打开工作栏'}
+          title={dockOpen ? '收起试跑状态' : '打开试跑状态'}
         >
-          <span className="flow-btn-icon">💬</span> 工作栏
+          试跑状态
         </button>
       </div>
     </header>

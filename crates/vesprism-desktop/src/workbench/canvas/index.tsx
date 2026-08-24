@@ -8,7 +8,6 @@ import {
   BackgroundVariant,
   Controls,
   MiniMap,
-  Panel,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
@@ -26,6 +25,7 @@ import {
   IconSearch,
   IconX,
 } from '@tabler/icons-react'
+import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
 import { sendPrompt } from '../../bridge'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
@@ -80,7 +80,7 @@ import { $flowStaleEpoch, clearFlowStale, staleForFlow } from '../agents/stale'
 import { bindWorkbenchArtifact } from '../bindings'
 import { $flowFocusId, clearFlowFocus, requestFlowFocus } from '../flow/focus'
 import { WorkbenchDock } from './workbench-dock'
-import { CanvasComposer } from './CanvasComposer'
+import { FlowTalkPanel } from './FlowTalkPanel'
 import { FlowCanvasContext } from './context'
 import { FlowNode, type FlowRfData } from './nodes'
 import { FlowToolbar } from './components/FlowToolbar'
@@ -156,7 +156,7 @@ function FlowCanvasInner() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<RfEdge>(toRfEdges(createDemoDraft()))
   const [list, setList] = useState<FlowListItem[]>([])
   const [agents, setAgents] = useState<AgentListItem[]>([])
-  const [dockOpen, setDockOpen] = useState(true)
+  const [dockOpen, setDockOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [publishOpen, setPublishOpen] = useState(false)
   const [pubDesc, setPubDesc] = useState('')
@@ -264,12 +264,9 @@ function FlowCanvasInner() {
     if (!tabId) return
     const st = getTabState(tabId)
     if (st?.utilityKind === 'flow-canvas') {
-      const current = (st.chatTitle || '').trim()
-      if (!current || current === '流程画布') {
-        const flowTitle = draft.name.trim() || '流程画布'
-        if (current !== flowTitle) {
-          patchTab(tabId, { chatTitle: flowTitle })
-        }
+      const flowTitle = draft.name.trim() || '流程画布'
+      if ((st.chatTitle || '').trim() !== flowTitle) {
+        patchTab(tabId, { chatTitle: flowTitle })
       }
     }
   }, [tabId, draft.name, draft.id])
@@ -799,6 +796,7 @@ function FlowCanvasInner() {
     fromNodeId?: string,
     overrideOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
   ) => {
+    setDockOpen(true)
     // 试跑只走本 Tab 开会话时的 cwd，禁止用全局 workspace_cwd 把画布拽到主聊天项目。
     resetCanvasGraphWait()
     let current = fromRf(nodes, edges, draft)
@@ -1354,18 +1352,6 @@ function FlowCanvasInner() {
                   <MiniMap position="top-right" pannable zoomable />
                 ) : null}
                 <Controls showFitView={false} showInteractive={false} />
-                <Panel
-                  position="bottom-center"
-                  className="flow-canvas-composer-panel nowheel nopan nodrag"
-                >
-                  <CanvasComposer
-                    flowName={draft.name}
-                    flowId={draft.id}
-                    nodeIds={dockNodeIds}
-                    error={aiError}
-                    onRetryStrict={onDockRetry}
-                  />
-                </Panel>
               </ReactFlow>
             </FlowCanvasContext.Provider>
             {selectedIds.length > 1 && (
@@ -1458,18 +1444,39 @@ function FlowCanvasInner() {
                 </button>
               </div>
             )}
+            <NodeInspector
+              selected={selected}
+              patchSelected={patchSelected}
+              agents={agents}
+              openBoundAgent={openBoundAgent}
+              demoteToTrial={demoteToTrial}
+              openPromote={openPromote}
+              onRerunFromNode={(nodeId) => void startRun(nodeId)}
+              upstreamNodes={upstreamNodesOf(selected?.id)}
+              openFlow={requestFlowFocus}
+            />
+            <WorkbenchDock
+              dockOpen={dockOpen}
+              flowId={draft.id}
+              runSteps={runSteps}
+              replayOpen={replayOpen}
+              setReplayOpen={setReplayOpen}
+              onToggleDock={onDockClose}
+              onOpenDetails={onDockDetails}
+              onRerunFromMock={onDockRerunMock}
+              testInput={testInput}
+              onTestInputChange={setTestInput}
+            />
+            <ErrorBoundary name="流程对话">
+              <FlowTalkPanel
+                flowName={draft.name}
+                flowId={draft.id}
+                nodeIds={dockNodeIds}
+                error={aiError}
+                onRetryStrict={onDockRetry}
+              />
+            </ErrorBoundary>
           </div>
-          <NodeInspector
-            selected={selected}
-            patchSelected={patchSelected}
-            agents={agents}
-            openBoundAgent={openBoundAgent}
-            demoteToTrial={demoteToTrial}
-            openPromote={openPromote}
-            onRerunFromNode={(nodeId) => void startRun(nodeId)}
-            upstreamNodes={upstreamNodesOf(selected?.id)}
-            openFlow={requestFlowFocus}
-          />
         </div>
 
         {(() => {
@@ -1516,18 +1523,6 @@ function FlowCanvasInner() {
           )
         })()}
 
-        <WorkbenchDock
-          dockOpen={dockOpen}
-          flowId={draft.id}
-          runSteps={runSteps}
-          replayOpen={replayOpen}
-          setReplayOpen={setReplayOpen}
-          onToggleDock={onDockClose}
-          onOpenDetails={onDockDetails}
-          onRerunFromMock={onDockRerunMock}
-          testInput={testInput}
-          onTestInputChange={setTestInput}
-        />
       </div>
 
       <datalist id="flow-id-options">

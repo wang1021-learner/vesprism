@@ -80,14 +80,19 @@ interface ComposerProps {
   queuedPrompts?: QueuedPrompt[]
   onSend: (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => void
   onRemoveQueued?: (id: string, version: number) => void
+  onEditQueued?: (id: string, text: string) => void
+  combineQueued?: boolean
+  onToggleCombineQueued?: (enabled: boolean) => void
   onCancel: () => void
   /** 画布第二主聊天关掉 /goal /sandbox，避免和试跑 `/流程id` 撞车 */
   enableSlash?: boolean
   placeholder?: string
   /** dock：铺满工作栏，不显示底部免责声明 */
   variant?: 'default' | 'dock'
-  /** 画布输入不展示工作区芯片 */
+  /** 是否展示工作区芯片 */
   showWorkspace?: boolean
+  /** 精简工具条：只留附件 / @ / 发送 */
+  compactActions?: boolean
   extraActions?: ReactNode
 }
 
@@ -250,11 +255,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     queuedPrompts = [],
     onSend,
     onRemoveQueued,
+    onEditQueued,
+    combineQueued = false,
+    onToggleCombineQueued,
     onCancel,
     enableSlash = true,
     placeholder,
     variant = 'default',
     showWorkspace = true,
+    compactActions = false,
     extraActions,
   }: ComposerProps,
   ref,
@@ -308,6 +317,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
   const [attachChips, setAttachChips] = useState<AttachChip[]>([])
   const [dragging, setDragging] = useState(false)
+  const [editQueuedId, setEditQueuedId] = useState<string | null>(null)
+  const [editQueuedText, setEditQueuedText] = useState('')
   const attachMenuRef = useRef<HTMLDivElement>(null)
   const securityPolicy = useStore($securityPolicy)
   const policyOverride = useStore($sessionPolicyOverride)
@@ -573,13 +584,55 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {queuedPrompts.length > 0 ? (
         <div className="composer-queue" aria-label="排队中的消息">
           <span className="composer-queue-label">排队 {queuedPrompts.length}</span>
+          {onToggleCombineQueued ? (
+            <label className="composer-queue-combine">
+              <input
+                type="checkbox"
+                checked={combineQueued}
+                onChange={(e) => onToggleCombineQueued(e.target.checked)}
+              />
+              合并连续提问
+            </label>
+          ) : null}
           <ul className="composer-queue-list">
             {queuedPrompts.map((q, i) => (
               <li key={q.id} className="composer-queue-item">
                 <span className="composer-queue-idx">{i + 1}</span>
-                <span className="composer-queue-text" title={q.text}>
-                  {q.text.trim() || '（附件）'}
-                </span>
+                {editQueuedId === q.id ? (
+                  <input
+                    className="composer-queue-edit"
+                    value={editQueuedText}
+                    autoFocus
+                    onChange={(e) => setEditQueuedText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        const text = editQueuedText
+                        setEditQueuedId(null)
+                        onEditQueued?.(q.id, text)
+                      }
+                      if (e.key === 'Escape') setEditQueuedId(null)
+                    }}
+                    onBlur={() => {
+                      const text = editQueuedText
+                      setEditQueuedId(null)
+                      if (text !== q.text) onEditQueued?.(q.id, text)
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="composer-queue-text"
+                    title="点击改稿"
+                    onClick={() => {
+                      if (!onEditQueued) return
+                      setEditQueuedId(q.id)
+                      setEditQueuedText(q.text)
+                    }}
+                  >
+                    {q.text.trim() || '（附件）'}
+                  </button>
+                )}
                 {onRemoveQueued ? (
                   <button
                     type="button"
@@ -888,6 +941,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </span>
           </div>
           <div className="toolbar-right">
+            {!compactActions ? (
+            <>
             <div className="model-picker" ref={policyPickerRef}>
               <button
                 type="button"
@@ -1098,6 +1153,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 )}
               </div>
             )}
+            </>
+            ) : null}
 
             {extraActions}
             {isGenerating && canSubmit ? (

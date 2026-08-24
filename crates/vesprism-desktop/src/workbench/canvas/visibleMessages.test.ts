@@ -48,7 +48,7 @@ describe('visibleCanvasMessages', () => {
     expect(rows[1].text).toBe('已根据对话更新画布。')
   })
 
-  it('思考和工具行留在对话里', () => {
+  it('思考留下，工具行不进对话', () => {
     const rows = visibleCanvasMessages([
       msg('user', '画一个外呼流程'),
       {
@@ -72,10 +72,37 @@ describe('visibleCanvasMessages', () => {
       },
       msg('assistant', '已根据对话更新画布。'),
     ])
-    expect(rows.map((m) => m.role)).toEqual(['user', 'thought', 'tool', 'assistant'])
+    expect(rows.map((m) => m.role)).toEqual(['user', 'thought', 'assistant'])
   })
 
-  it('JSON 前的一两句设计说明留在工作栏', () => {
+  it('试跑斜杠及其后回复不进对话', () => {
+    const rows = visibleCanvasMessages([
+      msg('user', '加一个审查节点'),
+      msg('assistant', '```json\n{"nodes":[],"edges":[]}\n```'),
+      msg('user', '/demo-linear {"input":"1"}'),
+      msg('assistant', '开始试跑……输出一堆运行日志'),
+      msg('user', '把审查改成只读'),
+    ])
+    expect(rows.map((m) => m.text)).toEqual([
+      '加一个审查节点',
+      '已根据对话更新画布。',
+      '把审查改成只读',
+    ])
+  })
+
+  it('长说明保留 markdown，交给对话样式渲染', () => {
+    const rows = visibleCanvasMessages([
+      msg('user', '设计外呼'),
+      msg(
+        'assistant',
+        '先确认身份再分流。成功办结，失败转人工。\n\n## 四、关键设计点\n\n| 设计点 | 说明 |\n| --- | --- |\n| 分支 | keyPress |',
+      ),
+    ])
+    expect(rows[1].text).toContain('先确认身份再分流。成功办结，失败转人工。')
+    expect(rows[1].text).toContain('关键设计点')
+  })
+
+  it('JSON 前的设计说明留在对话里', () => {
     const rows = visibleCanvasMessages([
       msg('user', '加并行测试'),
       msg(

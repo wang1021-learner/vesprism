@@ -1,21 +1,27 @@
 /**
- * 画布第二主聊天：同一套 Composer（附件 / @ / 多行 / 排队 / 插话 / 切模型）。
- * 浮在画布底部中间；工作区只读；关掉斜杠命令。发给引擎时包编排说明书。
+ * 画布底部输入：与编码同一套 Composer（附件 / @ / 斜杠 / 模型 / 发送）。
+ * 不展示工作区芯片——这里编的是流程，不是切仓库；@ 仍用当前会话目录。
+ * 发给引擎时仍包编排说明书。
  */
-import { memo, useCallback, type PointerEvent, type WheelEvent } from 'react'
+import { memo, useCallback, useEffect, useState, type PointerEvent, type WheelEvent } from 'react'
 import { useStore } from '@nanostores/react'
 import { Composer } from '../../components/Composer'
+import { McpElicitPanel } from '../../components/McpElicit'
 import { PendingApprovalFallback } from '../../components/Permission'
+import { AppPlanApproval } from '../../components/PlanApproval'
+import { UserQuestionPanel } from '../../components/UserQuestion'
 import {
   $composerInput,
   $defaultModelId,
   $generating,
+  $mcpElicit,
   $models,
-  $permission,
   $queuedPrompts,
   $reasoningEffort,
+  $sessionCaps,
   $sessionPhase,
   $shellReady,
+  $userQuestion,
   $workspaceCwd,
   $workspaceOptions,
   patchActiveTab,
@@ -25,10 +31,18 @@ import {
   getTabState,
   tabWorkspaceCwd,
 } from '../../store'
-import { removeQueuedPrompt, setCurrentModel, type PromptAttach } from '../../bridge'
+import {
+  editQueuedPrompt,
+  getEnginePrefs,
+  removeQueuedPrompt,
+  setCurrentModel,
+  setEnginePrefs,
+  type PromptAttach,
+} from '../../bridge'
 import { cancelActiveTurn } from '../../lib/cancelActiveTurn'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
 import { generateId } from '../../lib/generateId'
+import { useActivePermission } from '../../lib/useActivePermission'
 import {
   buildDialoguePrompt,
   isCanvasContractPrimed,
@@ -70,7 +84,18 @@ export const CanvasComposer = memo(function CanvasComposer({
   const cwd = tabWorkspaceCwd(tabId) || projectedCwd
   const wsOptions = useStore($workspaceOptions)
   const queued = useStore($queuedPrompts)
-  const permission = useStore($permission)
+  const permission = useActivePermission()
+  const caps = useStore($sessionCaps)
+  const userQuestion = useStore($userQuestion)
+  const mcpElicit = useStore($mcpElicit)
+  const [combineQueued, setCombineQueued] = useState(false)
+  const [questionFocusKey, setQuestionFocusKey] = useState(0)
+
+  useEffect(() => {
+    const onFocus = () => setQuestionFocusKey((k) => k + 1)
+    window.addEventListener('jike:focus-user-question', onFocus)
+    return () => window.removeEventListener('jike:focus-user-question', onFocus)
+  }, [])
 
   const onSend = useCallback(
     async (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => {
@@ -120,8 +145,38 @@ export const CanvasComposer = memo(function CanvasComposer({
     [tabId],
   )
 
+  const onEditQueued = useCallback(
+    async (id: string, text: string) => {
+      const targetTabId = tabId || $activeTabId.get()
+      if (!targetTabId) return
+      try {
+        await editQueuedPrompt(targetTabId, id, text)
+      } catch (e) {
+        pushToast(String(e), 'error')
+      }
+    },
+    [tabId],
+  )
+
   const onCancel = useCallback(async () => {
     await cancelActiveTurn()
+  }, [])
+
+  useEffect(() => {
+    void getEnginePrefs()
+      .then((p) => setCombineQueued(Boolean(p.combine_queued_prompts)))
+      .catch(() => {})
+  }, [])
+
+  const onToggleCombineQueued = useCallback(async (enabled: boolean) => {
+    setCombineQueued(enabled)
+    try {
+      const prev = await getEnginePrefs()
+      await setEnginePrefs({ ...prev, combine_queued_prompts: enabled })
+    } catch (e) {
+      setCombineQueued(!enabled)
+      pushToast(String(e), 'error')
+    }
   }, [])
 
   const onSwitchModel = useCallback((id: string) => {
@@ -164,11 +219,14 @@ export const CanvasComposer = memo(function CanvasComposer({
       onWheel={stopCanvasWheel}
       onPointerDown={stopCanvasPointer}
     >
+      <UserQuestionPanel request={userQuestion} focusKey={questionFocusKey} />
+      <McpElicitPanel request={mcpElicit} />
+      <AppPlanApproval />
       <PendingApprovalFallback permission={permission} force />
       <Composer
-        enableSlash={false}
+        variant="dock"
         showWorkspace={false}
-        placeholder="输入消息…  + 附文件  @ 引用路径"
+        placeholder="描述流程，或说要改哪一步…"
         input={input}
         setInput={(v) => patchActiveTab({ composerInput: v })}
         canSend={ready}
@@ -187,6 +245,9 @@ export const CanvasComposer = memo(function CanvasComposer({
         queuedPrompts={queued}
         onSend={(t, a, mode) => void onSend(t, a, mode)}
         onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
+        onEditQueued={caps.queueEdit ? (id, text) => void onEditQueued(id, text) : undefined}
+        combineQueued={combineQueued}
+        onToggleCombineQueued={(v) => void onToggleCombineQueued(v)}
         onCancel={() => void onCancel()}
       />
       {error ? (

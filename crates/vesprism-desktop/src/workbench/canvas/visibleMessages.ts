@@ -3,6 +3,7 @@
  */
 import type { ChatMessage } from '../../types'
 import { innermostUserQuery } from '../../lib/sessionTitle'
+import { isFlowRunUserText } from './applyCanvasOutput'
 
 const GENERATE_MARKERS = [
   '你是 Vesprism 流程画布的图生成器',
@@ -60,7 +61,7 @@ export function isGraphOnlyAssistant(text: string): boolean {
   return graphJsonBody(text) !== null && !assistantGraphProse(text)
 }
 
-/** JSON 围栏前的 1～2 句设计说明；纯 JSON 时为空。 */
+/** JSON 围栏前的说明；纯 JSON 时为空。 */
 export function assistantGraphProse(text: string): string {
   const t = (text || '').trim()
   if (!t || !graphJsonBody(t)) return ''
@@ -69,6 +70,21 @@ export function assistantGraphProse(text: string): string {
   if (head) return head
   if (t.startsWith('{')) return ''
   return ''
+}
+
+/** 压成一两句（预览用）；对话正文走编码 Markdown，不再裁。 */
+export function clipAssistantProse(text: string, max = 160): string {
+  let t = (text || '').trim()
+  if (!t) return ''
+  t = t.replace(/```[\s\S]*?```/g, '').trim()
+  t = t.replace(/^\|.*\|$/gm, '').trim()
+  t = t.replace(/^#{1,6}\s+.*$/gm, '').trim()
+  t = t.split(/\n{2,}/)[0]?.trim() ?? ''
+  const parts = t.split(/(?<=[。！？.!?])\s+/).filter((p) => p.trim())
+  let out = parts.slice(0, 2).join('')
+  if (!out) out = t
+  if (out.length > max) out = `${out.slice(0, max).replace(/\s+\S*$/, '')}…`
+  return out.trim()
 }
 
 function isNoiseThought(m: ChatMessage): boolean {
@@ -86,20 +102,26 @@ function isNoiseThought(m: ChatMessage): boolean {
 
 export function visibleCanvasMessages(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = []
+  let inRun = false
   for (const m of messages) {
     if (m.role === 'user') {
+      if (isFlowRunUserText(m.text)) {
+        inRun = true
+        continue
+      }
       const text = unwrapCanvasUserText(m.text)
       if (!text) continue
+      inRun = false
       out.push({ ...m, text })
       continue
     }
+    if (inRun) continue
     if (m.role === 'thought') {
       if (isNoiseThought(m)) continue
       out.push(m)
       continue
     }
     if (m.role === 'tool' && (m.toolCall || m.tool || m.text)) {
-      out.push(m)
       continue
     }
     if (m.role === 'assistant' && m.text) {

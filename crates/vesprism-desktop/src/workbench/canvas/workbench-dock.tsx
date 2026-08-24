@@ -1,9 +1,11 @@
 /**
- * 画布工作栏：运行状态与对话协同。输入框浮在画布底部。
+ * 试跑浮层与对话记录。改图输入在画布底部浮动卡片。
  */
 import { useStore } from '@nanostores/react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { $messages } from '../../store'
+import { MessageItem } from '../../components/Chat/MessageItem'
+import { canRecallUser, canRetryAssistant } from '../../lib/userMessage'
+import { $generating, $messages } from '../../store'
 import type { ChatMessage } from '../../types'
 import { visibleCanvasMessages } from './visibleMessages'
 
@@ -14,102 +16,39 @@ type FlowRunStepLike = {
   output?: unknown
 }
 
-function isRunMsg(text: string): boolean {
-  return /^\//.test(text.trim())
-}
-
-function formatThoughtDuration(timing?: { start: number; end?: number }): string | null {
-  if (!timing?.start || !timing.end || timing.end < timing.start) return null
-  const sec = (timing.end - timing.start) / 1000
-  if (sec < 0.05) return null
-  if (sec < 10) return `${sec.toFixed(1).replace(/\.0$/, '')}s`
-  return `${Math.round(sec)}s`
-}
-
-const ThoughtRow = memo(function ThoughtRow({ message }: { message: ChatMessage }) {
-  const streaming = Boolean(message.isStreaming)
-  const [userOpen, setUserOpen] = useState<boolean | null>(null)
-  const open = userOpen ?? streaming
-  const body = (message.text || '').trim()
-  const duration = formatThoughtDuration(streaming ? undefined : message.thoughtTiming)
-  const title = streaming
-    ? '思考中…'
-    : duration
-      ? `思考了 ${duration}`
-      : '思考'
-  return (
-    <div className={`wb-msg is-thought${streaming ? ' is-live' : ''}${open ? ' is-open' : ''}`}>
-      <button
-        type="button"
-        className="wb-thought-toggle"
-        onClick={() => body && setUserOpen(!open)}
-        aria-expanded={open}
-        disabled={!body}
-      >
-        <span className={`wb-thought-label${streaming ? ' is-shimmer' : ''}`}>{title}</span>
-        {body ? <span className={`wb-thought-caret${open ? ' is-open' : ''}`}>›</span> : null}
-      </button>
-      {open && body ? <pre className="wb-thought-body">{body}</pre> : null}
-    </div>
-  )
-})
-
-const MessageRow = memo(function MessageRow({ message }: { message: ChatMessage }) {
-  if (message.role === 'user') {
-    const isRun = isRunMsg(message.text)
-    return (
-      <div className={`wb-msg is-user${isRun ? ' is-run' : ''}`}>
-        <span className="wb-msg-label">{isRun ? '试跑' : '你'}</span>
-        <span className="wb-msg-text">{isRun ? message.text.trim().split('\n')[0] : message.text}</span>
-      </div>
-    )
-  }
-  if (message.role === 'thought') {
-    return <ThoughtRow message={message} />
-  }
-  if (message.role === 'tool') {
-    const tool = message.toolCall
-    const name = tool?.title || message.tool || '工具'
-    const status = tool?.status || ''
-    return (
-      <div className={`wb-msg is-tool is-${status || 'done'}`}>
-        <span className="wb-msg-label">工具</span>
-        <span className="wb-msg-text">
-          {name}
-          {status === 'in_progress' || status === 'pending' ? ' · 进行中' : ''}
-        </span>
-      </div>
-    )
-  }
-  if (message.role === 'assistant' && message.text) {
-    return (
-      <div className="wb-msg is-ai">
-        <span className="wb-msg-label">AI</span>
-        <span className="wb-msg-text">{message.text}</span>
-      </div>
-    )
-  }
-  return null
-})
-
 function stopWheel(e: React.WheelEvent) {
   e.stopPropagation()
 }
 
-function DockChatList({
+function focusUserQuestion(toolCallId: string) {
+  window.dispatchEvent(new CustomEvent('jike:focus-user-question', { detail: { toolCallId } }))
+}
+
+function focusPlan(toolCallId: string) {
+  window.dispatchEvent(new CustomEvent('jike:focus-plan', { detail: { toolCallId } }))
+}
+
+export function CanvasTalkLog({
   messages,
-  chatOpen,
-  setChatOpen,
+  limit,
+  fadedTop,
 }: {
   messages?: ChatMessage[]
-  chatOpen: boolean
-  setChatOpen: (v: boolean | ((c: boolean) => boolean)) => void
+  /** 只渲染最近 N 条；不传则全文。 */
+  limit?: number
+  fadedTop?: boolean
 }) {
   const liveMessages = useStore($messages)
+  const generating = useStore($generating)
   const resolvedMessages = messages ?? liveMessages
-  const chatMessages = useMemo(() => visibleCanvasMessages(resolvedMessages), [resolvedMessages])
+  const chatMessages = useMemo(() => {
+    const all = visibleCanvasMessages(resolvedMessages)
+    if (typeof limit === 'number' && limit >= 0) return all.slice(-limit)
+    return all
+  }, [resolvedMessages, limit])
   const lastMsg = chatMessages[chatMessages.length - 1]
   const lastMsgContent = lastMsg?.text ?? ''
+  const lastIdx = chatMessages.length - 1
   const scrollRef = useRef<HTMLDivElement>(null)
   const isStickToBottomRef = useRef(true)
 
@@ -121,59 +60,59 @@ function DockChatList({
   }, [])
 
   useLayoutEffect(() => {
-    if (!chatOpen) return
     const el = scrollRef.current
     if (!el) return
     if (isStickToBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [chatMessages.length, lastMsgContent, chatOpen])
+  }, [chatMessages.length, lastMsgContent])
 
   return (
-    <section className={`wb-section wb-chat${chatOpen ? '' : ' is-collapsed'}`} aria-label="普通聊天">
-      <button
-        type="button"
-        className="wb-chat-head"
-        onClick={() => setChatOpen((v) => !v)}
-        aria-expanded={chatOpen}
-      >
-        <span className="wb-run-head-left">
-          <span className="wb-head-chevron">{chatOpen ? '▾' : '▸'}</span>
-          <span className="wb-head-title">对话协同</span>
-        </span>
-      </button>
-      {chatOpen && (
-        <div
-          className="wb-convo-list scrollbar-dt nowheel"
-          ref={scrollRef}
-          onScroll={handleScroll}
-          onWheel={stopWheel}
-          role="log"
-          aria-label="对话记录"
-        >
-          {chatMessages.length === 0 ? (
-            <div className="wb-empty">
-              <span className="wb-empty-title">还没有对话</span>
-              <span className="wb-empty-hint">
-                在画布下方描述流程或 Agent。
-                <br />
-                + 附项目文件，@ 引用路径。
-              </span>
-            </div>
-          ) : (
-            chatMessages.map((message, index) => (
-              <MessageRow key={message.id || `${message.role}-${index}`} message={message} />
-            ))
-          )}
+    <div
+      className={`flow-talk-log messages-container scrollbar-dt nowheel${fadedTop ? ' is-clipped' : ''}`}
+      ref={scrollRef}
+      onScroll={handleScroll}
+      onWheel={stopWheel}
+      role="log"
+      aria-label="对话记录"
+    >
+      {chatMessages.length === 0 ? (
+        <div className="wb-empty">
+          <span className="wb-empty-title">还没有对话</span>
+          <span className="wb-empty-hint">描述流程，或说要改哪一步。</span>
         </div>
+      ) : (
+        chatMessages.map((message, index) => {
+          const isLive =
+            Boolean(message.isStreaming) ||
+            (generating &&
+              index === lastIdx &&
+              (message.role === 'thought' || message.role === 'assistant'))
+          return (
+            <MessageItem
+              key={message.id || `${message.role}-${index}`}
+              message={message}
+              streaming={isLive}
+              sessionBusy={generating}
+              canRetry={
+                message.role === 'assistant' &&
+                canRetryAssistant(resolvedMessages, message.id, generating)
+              }
+              canRecall={
+                message.role === 'user' &&
+                canRecallUser(resolvedMessages, message.id, generating)
+              }
+              onFocusUserQuestion={focusUserQuestion}
+              onFocusPlan={focusPlan}
+            />
+          )
+        })
       )}
-    </section>
+    </div>
   )
 }
 
 export type WorkbenchDockProps = {
-  /** 不传则自己订 $messages，避免画布父组件跟聊天流一起重绘 */
-  messages?: ChatMessage[]
   dockOpen: boolean
   flowId: string
   runSteps: FlowRunStepLike[]
@@ -188,7 +127,6 @@ export type WorkbenchDockProps = {
 }
 
 export const WorkbenchDock = memo(function WorkbenchDock({
-  messages,
   dockOpen,
   flowId,
   runSteps,
@@ -200,8 +138,7 @@ export const WorkbenchDock = memo(function WorkbenchDock({
   testInput,
   onTestInputChange,
 }: WorkbenchDockProps) {
-  const [runOpen, setRunOpen] = useState(runSteps.length > 0)
-  const [chatOpen, setChatOpen] = useState(true)
+  const [runOpen, setRunOpen] = useState(true)
 
   useEffect(() => {
     if (runSteps.length > 0) setRunOpen(true)
@@ -214,20 +151,20 @@ export const WorkbenchDock = memo(function WorkbenchDock({
   const running = runSteps.some((s) => s.status === 'running')
   const runStatus = failed ? '失败' : running ? '运行中' : runSteps.length > 0 ? '完成' : '待运行'
 
-  if (!dockOpen) return null
+  if (!dockOpen && runSteps.length === 0) return null
 
   return (
     <aside
-      className="wb-dock wb-unified-dock nowheel"
-      aria-label="工作栏"
+      className="wb-run-overlay nowheel"
+      aria-label="试跑状态"
       onWheel={stopWheel}
     >
       <div className="wb-head">
         <div className="wb-head-main">
-          <span className="wb-title">工作栏</span>
-          <span className="wb-head-meta">运行状态 · 对话</span>
+          <span className="wb-title">试跑</span>
+          <span className="wb-head-meta">运行状态</span>
         </div>
-        <button type="button" className="wb-close" onClick={onToggleDock} title="收起工作栏">
+        <button type="button" className="wb-close" onClick={onToggleDock} title="收起试跑">
           ›
         </button>
       </div>
@@ -374,7 +311,6 @@ export const WorkbenchDock = memo(function WorkbenchDock({
         )}
       </section>
 
-      <DockChatList messages={messages} chatOpen={chatOpen} setChatOpen={setChatOpen} />
     </aside>
   )
 })

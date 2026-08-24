@@ -4,16 +4,17 @@ import type { ChatMessage, ToolCallData } from '../../types'
 import {
   $activeTabId,
   $backgroundTasks,
-  $permission,
   $subagents,
   openRewind,
   pushToast,
   removeBackgroundTask,
 } from '../../store'
+import { useActivePermission } from '../../lib/useActivePermission'
 import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { DiffLines } from './DiffLines'
 import { forkCurrentSession } from '../../lib/forkSession'
+import { recallUserTurn } from '../../lib/recallUserTurn'
 import { retryAssistantTurn } from '../../lib/retryAssistantTurn'
 import { cancelSubagentChild } from '../../lib/cancelSubagentChild'
 import {
@@ -310,11 +311,13 @@ interface MessageItemProps {
   isPermissionOrigin?: boolean
   /** 最新助手条：复制栏里的重试才可点，按钮始终占位避免高度跳 */
   canRetry?: boolean
+  /** 最新用户条：撤回才可点，按钮始终占位避免高度跳 */
+  canRecall?: boolean
 }
 
 /** 内嵌审批条包装：读当前 tab 投影，有审批才渲染 */
 function InlinePermissionBarWrap() {
-  const permission = useStore($permission)
+  const permission = useActivePermission()
   if (!permission) return null
   return <InlinePermissionBar permission={permission} />
 }
@@ -324,6 +327,7 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
   if (prev.streaming !== next.streaming) return false
   if (prev.sessionBusy !== next.sessionBusy) return false
   if (prev.canRetry !== next.canRetry) return false
+  if (prev.canRecall !== next.canRecall) return false
   if (!next.streaming && !prev.streaming) {
     return prev.message === next.message
   }
@@ -584,6 +588,7 @@ export const MessageItem = memo(function MessageItem({
   onFocusPlan,
   isPermissionOrigin = false,
   canRetry = false,
+  canRecall = false,
 }: MessageItemProps) {
   switch (message.role) {
     case 'system':
@@ -596,7 +601,13 @@ export const MessageItem = memo(function MessageItem({
     case 'user':
       // 子任务 instruction 不当作用户气泡展示
       if (isHiddenUserMessage(message.text || '')) return null
-      return <UserBubble text={message.text} />
+      return (
+        <UserBubble
+          text={message.text}
+          messageId={message.id}
+          canRecall={canRecall && !sessionBusy}
+        />
+      )
 
     case 'thought':
       // 空/纯空白思考不渲染（交错噪声）
@@ -1272,11 +1283,53 @@ const AssistantActions = memo(function AssistantActions({
   )
 })
 
-const UserBubble = memo(function UserBubble({ text }: { text: string }) {
+const UserBubble = memo(function UserBubble({
+  text,
+  messageId,
+  canRecall,
+}: {
+  text: string
+  messageId: string
+  canRecall: boolean
+}) {
   const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [recalling, setRecalling] = useState(false)
+  const copyTimerRef = useRef<number | undefined>(undefined)
+  const recallingRef = useRef(false)
   const isLong = text.length > USER_BUBBLE_FOLD_THRESHOLD
   const displayText =
     isLong && !expanded ? text.split('\n').slice(0, 3).join('\n') : text
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
+  const onCopy = useCallback(async () => {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1200)
+    } catch {
+      pushToast('复制失败', 'error')
+    }
+  }, [text])
+
+  const onRecall = useCallback(async () => {
+    if (!canRecall || recallingRef.current) return
+    recallingRef.current = true
+    setRecalling(true)
+    try {
+      await recallUserTurn(messageId)
+    } finally {
+      recallingRef.current = false
+      setRecalling(false)
+    }
+  }, [canRecall, messageId])
 
   return (
     <div className="message-row user-row">
@@ -1296,6 +1349,29 @@ const UserBubble = memo(function UserBubble({ text }: { text: string }) {
           ) : null}
         </div>
         <div className="bubble-actions">
+          <button
+            type="button"
+            className="bubble-copy-btn"
+            title="复制提问"
+            aria-label="复制提问"
+            onClick={() => void onCopy()}
+          >
+            {copied ? '已复制' : '复制'}
+          </button>
+          <button
+            type="button"
+            className="bubble-recall-btn"
+            title={
+              canRecall
+                ? '撤回本条提问（对话回到这条之前，原文填回输入框）'
+                : '仅最新提问可撤回'
+            }
+            aria-label="撤回提问"
+            disabled={!canRecall || recalling}
+            onClick={() => void onRecall()}
+          >
+            {recalling ? '撤回中' : '撤回'}
+          </button>
           <button
             type="button"
             className="bubble-fork-btn"
