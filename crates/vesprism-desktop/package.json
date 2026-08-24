@@ -7,15 +7,18 @@
   "type": "module",
   "main": "dist/index.html",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 9527",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 9527",
-    "typecheck": "tsc -p . --noEmit",
+    "dev": "node scripts/with-node.cjs vite --host 127.0.0.1 --port 9527",
+    "build": "node scripts/with-node.cjs node scripts/build.cjs",
+    "preview": "node scripts/with-node.cjs vite preview --host 127.0.0.1 --port 9527",
+    "typecheck": "node scripts/with-node.cjs tsc -p . --noEmit",
     "lint": "oxlint",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "desktop": "cargo tauri dev",
-    "desktop:build": "cargo tauri build"
+    "test": "node scripts/with-node.cjs vitest run",
+    "test:watch": "node scripts/with-node.cjs vitest",
+    "desktop": "node scripts/with-node.cjs cargo tauri dev",
+    "desktop:build": "node scripts/with-node.cjs cargo tauri build"
+  },
+  "engines": {
+    "node": ">=20.12"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.14.23",
