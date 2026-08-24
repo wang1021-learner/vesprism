@@ -11,17 +11,24 @@ import { applyComposition, getComposition, saveComposition } from '../bridge'
 import {
   compositionToYaml,
   emptyComposition,
+  formatMcpServerLine,
+  parseMcpServerLine,
   type CompositionData,
   type PermissionMode,
   type PermissionRule,
   type Policy,
 } from '../lib/composition'
 
-type Section = 'tools' | 'permissions' | 'flows'
+type Section = 'model' | 'persona' | 'tools' | 'skills' | 'permissions' | 'mcp' | 'plugins' | 'flows'
 
 const SECTIONS: { id: Section; label: string }[] = [
+  { id: 'model', label: '模型' },
+  { id: 'persona', label: '人设段落' },
   { id: 'tools', label: '工具' },
+  { id: 'skills', label: '技能' },
   { id: 'permissions', label: '权限' },
+  { id: 'mcp', label: 'MCP' },
+  { id: 'plugins', label: '插件目录' },
   { id: 'flows', label: '流程' },
 ]
 
@@ -83,7 +90,7 @@ function CompositionPanelInner() {
         ...draft,
         flows: Array.isArray(draft.flows) ? draft.flows : [],
       })
-      pushToast('已应用：模型 / 工具停用 / 权限 / 流程', 'success')
+      pushToast('组装单已应用到当前会话', 'success')
       close()
     } catch (e) {
       pushToast(`应用失败：${String(e)}`, 'error')
@@ -116,7 +123,7 @@ function CompositionPanelInner() {
         <header className="comp-head">
           <span className="comp-title">会话组装单</span>
           <span className="comp-subtitle">
-            会话级热生效：工具停用 · 权限 · 流程。人设 / 技能 / MCP / 插件由工作台 Agent 资产承载（YAML 组装单兼容读取）
+            应用到当前会话：模型、人设段落、工具、技能、权限、MCP、插件目录、流程。
           </span>
           <button type="button" className="comp-close" onClick={close} title="关闭">
             ✕
@@ -176,6 +183,89 @@ function SectionBody({
   patch: (p: Partial<CompositionData>) => void
 }) {
   switch (section) {
+    case 'model':
+      return (
+        <>
+          <label className="comp-field">
+            <span className="comp-label">模型 id（官方 catalog 名）</span>
+            <input
+              className="comp-input"
+              value={draft.model.name ?? ''}
+              placeholder="留空则不改当前模型"
+              onChange={(e) =>
+                patch({
+                  model: {
+                    ...draft.model,
+                    name: e.target.value.trim() || null,
+                  },
+                })
+              }
+            />
+          </label>
+          <label className="comp-field">
+            <span className="comp-label">推理强度</span>
+            <select
+              className="comp-input"
+              value={draft.model.reasoning_effort ?? ''}
+              onChange={(e) =>
+                patch({
+                  model: {
+                    ...draft.model,
+                    reasoning_effort: e.target.value || null,
+                  },
+                })
+              }
+            >
+              <option value="">不改</option>
+              <option value="none">none</option>
+              <option value="minimal">minimal</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+            </select>
+          </label>
+          <label className="comp-field">
+            <span className="comp-label">人设标签（官方 systemPromptLabel）</span>
+            <input
+              className="comp-input"
+              value={draft.persona.label ?? ''}
+              placeholder="随模型走的人设名，可空"
+              onChange={(e) =>
+                patch({
+                  persona: {
+                    ...draft.persona,
+                    label: e.target.value.trim() || null,
+                  },
+                })
+              }
+            />
+          </label>
+        </>
+      )
+    case 'persona':
+      return (
+        <label className="comp-field">
+          <span className="comp-label">人设段落（写入系统提示专用规则块，一段一行）</span>
+          <textarea
+            className="comp-input"
+            rows={8}
+            value={draft.persona.sections.join('\n')}
+            placeholder="例如：回复使用中文。先给方案再动手。"
+            onChange={(e) =>
+              patch({
+                persona: {
+                  ...draft.persona,
+                  sections: e.target.value
+                    .split('\n')
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                },
+              })
+            }
+          />
+        </label>
+      )
     case 'tools':
       return (
         <label className="comp-field">
@@ -187,6 +277,33 @@ function SectionBody({
             onChange={(e) => patch({ tools: { ...draft.tools, disable: splitList(e.target.value) } })}
           />
         </label>
+      )
+    case 'skills':
+      return (
+        <>
+          <label className="comp-field">
+            <span className="comp-label">可见作用域（local/repo/user/server/bundled/plugin；空=不限）</span>
+            <input
+              className="comp-input"
+              value={draft.skills.scopes.join(', ')}
+              placeholder="如：user, repo"
+              onChange={(e) =>
+                patch({ skills: { ...draft.skills, scopes: splitList(e.target.value) } })
+              }
+            />
+          </label>
+          <label className="comp-field">
+            <span className="comp-label">排除技能名（支持 * 通配）</span>
+            <input
+              className="comp-input"
+              value={draft.skills.exclude.join(', ')}
+              placeholder="如：web-*"
+              onChange={(e) =>
+                patch({ skills: { ...draft.skills, exclude: splitList(e.target.value) } })
+              }
+            />
+          </label>
+        </>
       )
     case 'permissions':
       return (
@@ -266,6 +383,63 @@ function SectionBody({
             </button>
           </div>
         </>
+      )
+    case 'mcp':
+      return (
+        <>
+          <label className="comp-field">
+            <span className="comp-label">服务器（每行：名称 | command 或 url）</span>
+            <textarea
+              className="comp-input"
+              rows={5}
+              value={draft.mcp.servers.map(formatMcpServerLine).join('\n')}
+              placeholder={'brave | npx -y @modelcontextprotocol/server-brave-search'}
+              onChange={(e) => {
+                const servers = e.target.value
+                  .split('\n')
+                  .map((line) => parseMcpServerLine(line))
+                  .filter((s): s is NonNullable<typeof s> => s != null)
+                patch({ mcp: { ...draft.mcp, servers } })
+              }}
+            />
+          </label>
+          <label className="comp-field">
+            <span className="comp-label">停用 MCP 工具（server:tool，逗号分隔）</span>
+            <input
+              className="comp-input"
+              value={Object.entries(draft.mcp.disabled_tools)
+                .flatMap(([server, tools]) => tools.map((t) => `${server}:${t}`))
+                .join(', ')}
+              placeholder="如：brave:search"
+              onChange={(e) => {
+                const disabled_tools: Record<string, string[]> = {}
+                for (const item of splitList(e.target.value)) {
+                  const idx = item.indexOf(':')
+                  if (idx <= 0) continue
+                  const server = item.slice(0, idx).trim()
+                  const tool = item.slice(idx + 1).trim()
+                  if (!server || !tool) continue
+                  disabled_tools[server] = [...(disabled_tools[server] || []), tool]
+                }
+                patch({ mcp: { ...draft.mcp, disabled_tools } })
+              }}
+            />
+          </label>
+        </>
+      )
+    case 'plugins':
+      return (
+        <label className="comp-field">
+          <span className="comp-label">插件目录（绝对路径或相对工作区，逗号分隔）</span>
+          <input
+            className="comp-input"
+            value={draft.plugins.dirs.join(', ')}
+            placeholder="如：./plugins"
+            onChange={(e) =>
+              patch({ plugins: { ...draft.plugins, dirs: splitList(e.target.value) } })
+            }
+          />
+        </label>
       )
     case 'flows':
       return (

@@ -117,6 +117,10 @@ export interface TabState {
   memoryFiles: MemoryFileInfo[]
   /** 本会话定时任务 */
   scheduledTasks: ScheduledTaskInfo[]
+  /** 超限 / 限流 / 鉴权过期（会话区横幅，不进对话） */
+  sessionAlert: SessionAlert | null
+  /** 当前后端能力（缺省当 Grok 全开） */
+  sessionCaps: SessionCaps
 }
 
 export type MemoryFileInfo = {
@@ -142,6 +146,39 @@ export type QueuedPrompt = {
   version: number
   text: string
   position: number
+}
+
+export type SessionAlertKind = 'overflow' | 'rate' | 'auth'
+export type SessionAlert = { kind: SessionAlertKind; message: string }
+
+export type SessionCaps = {
+  recap: boolean
+  askMode: boolean
+  memory: boolean
+  hunks: boolean
+  rewind: boolean
+  gitWrite: boolean
+  imagine: boolean
+  schedule: boolean
+  queueEdit: boolean
+  plugins: boolean
+  hooks: boolean
+  compact: boolean
+}
+
+export const GROK_SESSION_CAPS: SessionCaps = {
+  recap: true,
+  askMode: true,
+  memory: true,
+  hunks: true,
+  rewind: true,
+  gitWrite: true,
+  imagine: true,
+  schedule: true,
+  queueEdit: true,
+  plugins: true,
+  hooks: true,
+  compact: true,
 }
 
 /** 侧栏工具入口对应的专用面板类型 */
@@ -193,6 +230,8 @@ export function emptyTabState(): TabState {
     totalTokens: 0,
     memoryFiles: [],
     scheduledTasks: [],
+    sessionAlert: null,
+    sessionCaps: GROK_SESSION_CAPS,
   }
 }
 
@@ -324,6 +363,107 @@ export function resolveNewTabCwd(): string {
   return resolveWorkspaceCwd()
 }
 
+/** 编码对话 vs 工作台（画布 / 编制 / 试跑 / 自动化任务）。 */
+export type AppShell = 'coding' | 'workbench'
+
+const APP_SHELL_KEY = 'vesprism.appShell'
+
+function readStoredAppShell(): AppShell {
+  try {
+    if (typeof localStorage === 'undefined') return 'coding'
+    return localStorage.getItem(APP_SHELL_KEY) === 'workbench' ? 'workbench' : 'coding'
+  } catch {
+    return 'coding'
+  }
+}
+
+function persistAppShell(shell: AppShell): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(APP_SHELL_KEY, shell)
+  } catch {
+    /* ignore */
+  }
+}
+
+export const $appShell = atom<AppShell>(readStoredAppShell())
+
+const lastShellTab: Record<AppShell, string> = { coding: '', workbench: '' }
+
+export function shellForUtility(kind: UtilityKind | null | undefined): AppShell {
+  if (
+    kind === 'flow-canvas' ||
+    kind === 'agents' ||
+    kind === 'flow-run' ||
+    kind === 'workflows'
+  ) {
+    return 'workbench'
+  }
+  return 'coding'
+}
+
+/** 画布 / 编制 / 试跑 / 自动化任务：设置里的 MCP 等不能绑它们。 */
+export function isWorkbenchUtility(kind: UtilityKind | null | undefined): boolean {
+  return shellForUtility(kind) === 'workbench'
+}
+
+export function tabsForShell(shell: AppShell, tabs = $tabs.get()): TabInfo[] {
+  return tabs.filter((t) => shellForUtility(getTabState(t.id)?.utilityKind) === shell)
+}
+
+function rememberShellTab(id: string): void {
+  const st = tabStates.get(id)
+  if (!st) return
+  lastShellTab[shellForUtility(st.utilityKind)] = id
+}
+
+export function setAppShell(next: AppShell): void {
+  const active = $activeTabId.get()
+  if (active) rememberShellTab(active)
+  if ($appShell.get() !== next) {
+    $appShell.set(next)
+    persistAppShell(next)
+  }
+  if (active) {
+    const st = tabStates.get(active)
+    if (st && shellForUtility(st.utilityKind) === next) return
+  }
+  const last = lastShellTab[next]
+  if (
+    last &&
+    tabStates.has(last) &&
+    shellForUtility(tabStates.get(last)?.utilityKind) === next
+  ) {
+    switchTab(last)
+    return
+  }
+  if (next === 'coding') {
+    const id = findNormalChatTab(false)
+    if (id) switchTab(id)
+    return
+  }
+  for (const kind of ['flow-canvas', 'agents', 'workflows', 'flow-run'] as UtilityKind[]) {
+    const id = findTabByUtilityKind(kind)
+    if (id) {
+      switchTab(id)
+      return
+    }
+  }
+}
+
+/** 设置里技能/工具/MCP 用的编码会话 Tab：优先当前，否则任意已就绪的非工作台 Tab。 */
+export function findReadyCodingTabId(): string {
+  const usable = (st: TabState) =>
+    !isWorkbenchUtility(st.utilityKind) &&
+    (st.phase === 'ready' || Boolean(st.sessionId))
+  const active = $activeTabId.get()
+  const ast = active ? tabStates.get(active) : undefined
+  if (ast && usable(ast)) return active
+  for (const [id, st] of tabStates) {
+    if (usable(st)) return id
+  }
+  return active
+}
+
 /**
  * 找普通对话 Tab：优先「空白新会话」（无 chatId、无消息），否则任意非 utility 的 Tab。
  * 侧栏 New chat 在专用面板里应切回这类 Tab，而不是把面板改成对话。
@@ -401,6 +541,9 @@ export function resetTabsForTests(): void {
   $activeTabId.set('')
   $ptyAlive.set({})
   $ptyEpoch.set({})
+  $appShell.set('coding')
+  lastShellTab.coding = ''
+  lastShellTab.workbench = ''
   resetProjection()
 }
 
@@ -452,6 +595,8 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('totalTokens' in patch) $totalTokens.set(patch.totalTokens ?? 0)
   if ('memoryFiles' in patch) $memoryFiles.set(patch.memoryFiles ?? [])
   if ('scheduledTasks' in patch) $scheduledTasks.set(patch.scheduledTasks ?? [])
+  if ('sessionAlert' in patch) $sessionAlert.set(patch.sessionAlert ?? null)
+  if ('sessionCaps' in patch) $sessionCaps.set(patch.sessionCaps ?? GROK_SESSION_CAPS)
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -494,6 +639,8 @@ function projectTab(id: string): void {
     totalTokens: s.totalTokens,
     memoryFiles: s.memoryFiles,
     scheduledTasks: s.scheduledTasks,
+    sessionAlert: s.sessionAlert,
+    sessionCaps: s.sessionCaps,
   })
 }
 
@@ -534,6 +681,8 @@ function resetProjection(): void {
     totalTokens: 0,
     memoryFiles: [],
     scheduledTasks: [],
+    sessionAlert: null,
+    sessionCaps: GROK_SESSION_CAPS,
   })
 }
 
@@ -634,22 +783,38 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     totalTokens: 0,
     memoryFiles: [],
     scheduledTasks: [],
+    sessionAlert: null,
+    sessionCaps: GROK_SESSION_CAPS,
     ...(workCwd ? { cwd: workCwd } : {}),
   })
 }
 
 /** 切换活跃 tab：先切 id 再投影（事件在两者之间到达时按新 id 路由，投影幂等） */
-export function switchTab(id: string): void {
+export function switchTab(id: string, opts?: { syncShell?: boolean }): void {
   if (!tabStates.has(id)) return
   const prev = $activeTabId.get()
   if (prev === id) return
+  if (prev) rememberShellTab(prev)
   $activeTabId.set(id)
+  rememberShellTab(id)
+  if (opts?.syncShell !== false) {
+    const nextShell = shellForUtility(tabStates.get(id)?.utilityKind)
+    if ($appShell.get() !== nextShell) {
+      $appShell.set(nextShell)
+      persistAppShell(nextShell)
+    }
+  }
   projectTab(id)
   // 切走时自动回收空白 tab（保留至少 1 个；生成中/加载中/有任务的一律不回收）
   // 注意：须在切完之后回收，否则 removeTab(prev) 会把 active 置空并清投影
   if (prev && prev !== id && tabStates.size > 1) {
     const prevState = tabStates.get(prev)
-    if (prevState && isRecyclableBlank(prevState)) {
+    const nextState = tabStates.get(id)
+    if (
+      prevState &&
+      isRecyclableBlank(prevState) &&
+      shellForUtility(prevState.utilityKind) === shellForUtility(nextState?.utilityKind)
+    ) {
       removeTab(prev)
     }
   }
@@ -687,6 +852,8 @@ export const $lastPlanHasBody = atom(false)
 export const $lastPlanToolCallId = atom('')
 export const $subagents = atom<SubagentRuntime[]>([])
 export const $error = atom('')
+export const $sessionAlert = atom<SessionAlert | null>(null)
+export const $sessionCaps = atom<SessionCaps>(GROK_SESSION_CAPS)
 export const $engineStatus = atom<SessionStatus>('unknown')
 export const $sessionPhase = atom<SessionPhase>('idle')
 
@@ -781,6 +948,24 @@ export const $sidebarCollapsed = atom(false)
 export const $sidebarAutoCollapsed = atom(false)
 export const $commandPaletteOpen = atom(false)
 export const $settingsOpen = atom(false)
+/** 设置弹窗当前页（含技能/工具/MCP/记忆/插件） */
+export type SettingsSection =
+  | 'general'
+  | 'models'
+  | 'security'
+  | 'engine'
+  | 'hooks'
+  | 'skills'
+  | 'tools'
+  | 'mcp'
+  | 'memory'
+  | 'plugins'
+export const $settingsSection = atom<SettingsSection>('models')
+
+export function openSettings(section?: SettingsSection): void {
+  if (section) $settingsSection.set(section)
+  $settingsOpen.set(true)
+}
 
 // ── 聊天列表（全局） ──
 export interface ChatSummary {

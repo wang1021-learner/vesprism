@@ -4,7 +4,7 @@
  */
 import { useStore } from '@nanostores/react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   $activeTabId,
   $defaultModelId,
@@ -12,6 +12,7 @@ import {
   $models,
   $reasoningEffort,
   $settingsOpen,
+  $settingsSection,
   $workspaceCwd,
   $preferredWorkspaceCwd,
   $securityPolicy,
@@ -58,9 +59,19 @@ import {
 } from './settingsHelpers'
 import { EngineSettings } from './EngineSettings'
 import { HooksSettings } from './HooksSettings'
+import { McpPanel } from './McpPanel'
+import { ToolsPanel } from './ToolsPanel'
+import { SkillsPanel } from './SkillsPanel'
+import { MemoryPanel } from './MemoryPanel'
+import { PluginsPanel } from './PluginsPanel'
+import type { SettingsSection } from '../store'
 
 function shortId(): string {
   return Math.random().toString(36).slice(2, 10)
+}
+
+function SettingsSessionGate({ children }: { children: ReactNode }) {
+  return <div className="settings-embed">{children}</div>
 }
 
 export function SettingsModal() {
@@ -68,7 +79,10 @@ export function SettingsModal() {
   const messages = useStore($messages)
   const canSwitchWorkspace = !messages.some((m) => m.role === 'user')
 
-  const [tab, setTab] = useState<SettingsTab>('models')
+  const tab = useStore($settingsSection) as SettingsTab
+  const setTab = (next: SettingsTab) => $settingsSection.set(next as SettingsSection)
+  const CAPABILITY_TABS: SettingsTab[] = ['skills', 'tools', 'mcp', 'memory', 'plugins']
+  const isCapability = CAPABILITY_TABS.includes(tab)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(
     null,
@@ -443,7 +457,7 @@ export function SettingsModal() {
         <div className="settings-shell-header">
           <div className="settings-shell-heading">
             <h2 id="settings-title">设置</h2>
-            <p className="settings-shell-sub">工作区与模型（对齐官方 config.toml）</p>
+            <p className="settings-shell-sub">工作区、模型与能力（对齐官方 config.toml）</p>
           </div>
           <button type="button" className="close-btn" onClick={onClose} aria-label="关闭">
             ✕
@@ -507,6 +521,62 @@ export function SettingsModal() {
                 <path d="M18 9a9 9 0 0 1-9 9" />
               </svg>
               Hooks
+            </button>
+            <div className="settings-nav-sep" aria-hidden />
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'skills' ? ' active' : ''}`}
+              onClick={() => setTab('skills')}
+            >
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 6h16M4 12h16M4 18h10" />
+              </svg>
+              技能
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'tools' ? ' active' : ''}`}
+              onClick={() => setTab('tools')}
+            >
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M14.7 6.3a1 1 0 0 0-1.4 0L8 11.6 12.4 16l5.3-5.3a1 1 0 0 0 0-1.4z" />
+                <path d="m8 16-3 3" />
+              </svg>
+              工具
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'mcp' ? ' active' : ''}`}
+              onClick={() => setTab('mcp')}
+            >
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="7" cy="12" r="3" />
+                <circle cx="17" cy="12" r="3" />
+                <path d="M10 12h4" />
+              </svg>
+              MCP
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'memory' ? ' active' : ''}`}
+              onClick={() => setTab('memory')}
+            >
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="5" y="4" width="14" height="16" rx="2" />
+                <path d="M9 8h6M9 12h6M9 16h4" />
+              </svg>
+              记忆
+            </button>
+            <button
+              type="button"
+              className={`settings-nav-item${tab === 'plugins' ? ' active' : ''}`}
+              onClick={() => setTab('plugins')}
+            >
+              <svg className="settings-nav-svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M9 7V4h6v3" />
+                <path d="M8 7h8v6l-2 2v5h-4v-5l-2-2V7Z" />
+              </svg>
+              插件
             </button>
           </nav>
 
@@ -574,6 +644,32 @@ export function SettingsModal() {
                   if (type === 'success') setTimeout(() => setToast(null), 1600)
                 }}
               />
+            )}
+
+            {tab === 'skills' && (
+              <SettingsSessionGate>
+                <SkillsPanel />
+              </SettingsSessionGate>
+            )}
+            {tab === 'tools' && (
+              <SettingsSessionGate>
+                <ToolsPanel />
+              </SettingsSessionGate>
+            )}
+            {tab === 'mcp' && (
+              <SettingsSessionGate>
+                <McpPanel />
+              </SettingsSessionGate>
+            )}
+            {tab === 'memory' && (
+              <SettingsSessionGate>
+                <MemoryPanel />
+              </SettingsSessionGate>
+            )}
+            {tab === 'plugins' && (
+              <SettingsSessionGate>
+                <PluginsPanel />
+              </SettingsSessionGate>
             )}
 
             {tab === 'security' && (
@@ -1480,8 +1576,9 @@ export function SettingsModal() {
             disabled={savingSettings}
             onClick={onClose}
           >
-            取消
+            {isCapability ? '关闭' : '取消'}
           </button>
+          {isCapability ? null : (
           <button
             type="button"
             className="btn-primary"
@@ -1514,6 +1611,7 @@ export function SettingsModal() {
           >
             {savingSettings ? '保存中…' : '保存'}
           </button>
+          )}
         </div>
       </div>
     </div>

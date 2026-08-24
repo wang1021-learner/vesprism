@@ -82,6 +82,35 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-queue-edit {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  font-size: 12px;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 4px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+}
+
+.composer-queue-combine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-top: 3px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .composer-queue-remove {

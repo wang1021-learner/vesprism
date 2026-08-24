@@ -51,6 +51,61 @@ export function emptyComposition(): CompositionData {
   }
 }
 
+/** 按空格拆命令行，保留引号内片段。 */
+export function splitCommandLine(line: string): string[] {
+  const parts: string[] = []
+  let cur = ''
+  let quote: string | null = null
+  for (const ch of line) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else cur += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (cur) {
+        parts.push(cur)
+        cur = ''
+      }
+      continue
+    }
+    cur += ch
+  }
+  if (cur) parts.push(cur)
+  return parts
+}
+
+/** 组装单 MCP 行：`名称 | command args` 或 `名称 | https://…`。 */
+export function parseMcpServerLine(line: string): McpServerRefData | null {
+  const trimmed = line.trim()
+  if (!trimmed) return null
+  const pipe = trimmed.indexOf('|')
+  const name = (pipe >= 0 ? trimmed.slice(0, pipe) : trimmed).trim()
+  const rest = pipe >= 0 ? trimmed.slice(pipe + 1).trim() : ''
+  if (!name) return null
+  if (/^https?:\/\//i.test(rest)) {
+    return { name, url: rest, command: null, args: null, env: null }
+  }
+  const parts = splitCommandLine(rest)
+  return {
+    name,
+    url: null,
+    command: parts[0] || null,
+    args: parts.length > 1 ? parts.slice(1) : null,
+    env: null,
+  }
+}
+
+export function formatMcpServerLine(s: McpServerRefData): string {
+  if (s.url) return `${s.name} | ${s.url}`
+  const cmd = [s.command, ...(s.args || [])].filter(Boolean).join(' ')
+  return cmd ? `${s.name} | ${cmd}` : s.name
+}
+
 /** Goal 编排进度（后端 GoalInfoDto camelCase 投影）。 */
 export interface GoalInfoDto {
   goalId: string
@@ -166,13 +221,27 @@ export function compositionToYaml(c: CompositionData): string {
     }
   }
   const mcp = c.mcp
-  if (mcp.servers.length > 0) {
+  if (mcp.servers.length > 0 || Object.keys(mcp.disabled_tools || {}).length > 0) {
     lines.push('mcp:')
-    lines.push('  servers:')
-    for (const server of mcp.servers) {
-      lines.push(`    - name: ${JSON.stringify(server.name)}`)
-      if (server.url) lines.push(`      url: ${JSON.stringify(server.url)}`)
-      if (server.command) lines.push(`      command: ${JSON.stringify(server.command)}`)
+    if (mcp.servers.length > 0) {
+      lines.push('  servers:')
+      for (const server of mcp.servers) {
+        lines.push(`    - name: ${JSON.stringify(server.name)}`)
+        if (server.url) lines.push(`      url: ${JSON.stringify(server.url)}`)
+        if (server.command) lines.push(`      command: ${JSON.stringify(server.command)}`)
+        if (server.args && server.args.length > 0) {
+          lines.push('      args:')
+          for (const arg of server.args) lines.push(`        - ${JSON.stringify(arg)}`)
+        }
+      }
+    }
+    const disabled = Object.entries(mcp.disabled_tools || {})
+    if (disabled.length > 0) {
+      lines.push('  disabled_tools:')
+      for (const [server, tools] of disabled) {
+        lines.push(`    ${JSON.stringify(server)}:`)
+        for (const t of tools) lines.push(`      - ${JSON.stringify(t)}`)
+      }
     }
   }
   const plugins = c.plugins.dirs

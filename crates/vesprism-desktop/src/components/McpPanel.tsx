@@ -3,9 +3,11 @@
  */
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { $activeTabId, $mcpPush, $shellReady, pushToast } from '../store'
+import { $mcpPush, pushToast } from '../store'
+import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
 import {
   deleteMcpServer,
+  listCatalogMcp,
   listMcpServers,
   mcpAuthTrigger,
   mcpSetup,
@@ -45,8 +47,8 @@ const EMPTY_FORM = {
 }
 
 export function McpPanel() {
-  const tabId = useStore($activeTabId)
-  const ready = useStore($shellReady)
+  const tabId = useCodingSessionTabId()
+  const ready = codingSessionReady(tabId)
   const mcpPush = useStore($mcpPush)
   const [rows, setRows] = useState<McpRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -68,13 +70,22 @@ export function McpPanel() {
 
   const load = useCallback(
     async (force = false) => {
-      if (!tabId) return
       setLoading(true)
       setError('')
       try {
-        const resp = await listMcpServers(tabId, !force)
-        const list = Array.isArray(resp?.servers) ? resp.servers : []
-        setRows(list.map(normalizeMcpServer))
+        const cat = await listCatalogMcp()
+        const fromDisk = (Array.isArray(cat?.servers) ? cat.servers : []).map(normalizeMcpServer)
+        const byName = new Map(fromDisk.map((r) => [r.name, r]))
+        if (tabId && ready) {
+          try {
+            const resp = await listMcpServers(tabId, !force)
+            const live = (Array.isArray(resp?.servers) ? resp.servers : []).map(normalizeMcpServer)
+            for (const r of live) byName.set(r.name, r)
+          } catch {
+            /* 无会话时只用 config.toml */
+          }
+        }
+        setRows([...byName.values()])
       } catch (e) {
         setError(String(e))
         setRows([])
@@ -82,11 +93,10 @@ export function McpPanel() {
         setLoading(false)
       }
     },
-    [tabId],
+    [tabId, ready],
   )
 
   useEffect(() => {
-    if (!tabId) return
     void load(false)
   }, [tabId, load])
 

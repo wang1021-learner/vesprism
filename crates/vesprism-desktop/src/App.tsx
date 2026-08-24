@@ -5,6 +5,7 @@ import { SandboxBanner } from './components/SandboxBanner'
 import { PlanBanner } from './components/PlanBanner'
 import { AskBanner } from './components/AskBanner'
 import { RecapBanner } from './components/RecapBanner'
+import { SessionAlertBanner } from './components/SessionAlertBanner'
 import { ChatFindBar } from './components/ChatFindBar'
 import { AppPlanApproval } from './components/PlanApproval'
 import { MessageList } from './components/Chat/MessageList'
@@ -42,7 +43,8 @@ import {
   $permission, $userQuestion, $mcpElicit, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
-  $preferredWorkspaceCwd, $scratchCwd, $securityPolicy,
+  $appShell, isWorkbenchUtility,
+  $preferredWorkspaceCwd, $scratchCwd, $securityPolicy, $sessionCaps,
   createTab, getTabState, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast,
 } from './store'
@@ -50,6 +52,7 @@ import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
+import { WorkbenchHome } from './components/WorkbenchHome'
 
 const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
@@ -57,7 +60,8 @@ const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'
 import {
   addProject,
   getModelSettings, isTauriRuntime, listSessions,
-  listenSessionEvents, openTab, removeQueuedPrompt, setCurrentModel,
+  listenSessionEvents, openTab, removeQueuedPrompt, editQueuedPrompt, setCurrentModel,
+  getEnginePrefs, setEnginePrefs,
   startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
   type PromptAttach,
 } from './bridge'
@@ -137,10 +141,16 @@ function DesktopApp() {
             </div>
           </ErrorBoundary>
         </div>
-        <RightPanel />
+        <AppRightPanel />
       </div>
     </div>
   )
+}
+
+function AppRightPanel() {
+  const shell = useStore($appShell)
+  if (shell === 'workbench') return null
+  return <RightPanel />
 }
 
 /** 网页打开时的全屏拦截页（本产品是 Tauri 桌面端，不是 Web 应用） */
@@ -304,7 +314,11 @@ function AppError() {
 
 /** 普通对话 vs MCP / 工具等专用面板 */
 function AppMainBody() {
+  const shell = useStore($appShell)
   const kind = useStore($utilityKind)
+  if (shell === 'workbench' && !isWorkbenchUtility(kind)) {
+    return <WorkbenchHome />
+  }
   if (kind === 'mcp') {
     return <McpPanel />
   }
@@ -357,6 +371,7 @@ function AppMainBody() {
           <PlanBanner />
           <AskBanner />
           <RecapBanner />
+          <SessionAlertBanner />
           <TodoStrip />
           <ScheduleStrip />
           <ChatFindBar />
@@ -414,6 +429,8 @@ function AppComposer() {
   const wsOptions = useStore($workspaceOptions)
   const messages = useStore($messages)
   const queued = useStore($queuedPrompts)
+  const caps = useStore($sessionCaps)
+  const [combineQueued, setCombineQueued] = useState(false)
   const canSend = ready
   const canSwitchWs = ready && !generating && !messages.some((m) => m.role === 'user')
 
@@ -425,6 +442,12 @@ function AppComposer() {
     await sendSessionPrompt({ text, attachments, mode })
   }, [])
 
+  useEffect(() => {
+    void getEnginePrefs()
+      .then((p) => setCombineQueued(Boolean(p.combine_queued_prompts)))
+      .catch(() => {})
+  }, [])
+
   const onRemoveQueued = useCallback(async (id: string, version: number) => {
     const targetTabId = $activeTabId.get()
     if (!targetTabId) return
@@ -434,6 +457,27 @@ function AppComposer() {
       await removeQueuedPrompt(targetTabId, id, version)
     } catch (e) {
       patchTab(targetTabId, { queuedPrompts: prev, error: String(e) })
+    }
+  }, [])
+
+  const onEditQueued = useCallback(async (id: string, text: string) => {
+    const targetTabId = $activeTabId.get()
+    if (!targetTabId) return
+    try {
+      await editQueuedPrompt(targetTabId, id, text)
+    } catch (e) {
+      pushToast(String(e), 'error')
+    }
+  }, [])
+
+  const onToggleCombineQueued = useCallback(async (enabled: boolean) => {
+    setCombineQueued(enabled)
+    try {
+      const prev = await getEnginePrefs()
+      await setEnginePrefs({ ...prev, combine_queued_prompts: enabled })
+    } catch (e) {
+      setCombineQueued(!enabled)
+      pushToast(String(e), 'error')
     }
   }, [])
 
@@ -515,6 +559,9 @@ function AppComposer() {
       queuedPrompts={queued}
       onSend={(t, a, mode) => void onSend(t, a, mode)}
       onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
+      onEditQueued={caps.queueEdit ? (id, text) => void onEditQueued(id, text) : undefined}
+      combineQueued={combineQueued}
+      onToggleCombineQueued={(v) => void onToggleCombineQueued(v)}
       onCancel={() => void onCancel()}
     />
   )

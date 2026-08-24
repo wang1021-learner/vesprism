@@ -1,5 +1,5 @@
 /**
- * 当前对话的定时任务：官方 /loop + x.ai/scheduler/delete。
+ * 当前对话的定时任务：官方 /loop + scheduler_delete。
  * 必须挂在本会话，不能另开专用 Tab（否则任务会建到空会话上）。
  */
 import { useEffect, useMemo, useState } from 'react'
@@ -12,7 +12,7 @@ import {
   patchActiveTab,
   pushToast,
 } from '../store'
-import { sessionExt } from '../bridge'
+import { schedulerDelete } from '../bridge'
 import { sendSessionPrompt } from '../lib/sendSessionPrompt'
 import { closeSessionSchedule } from '../lib/engineSlash'
 import {
@@ -120,7 +120,7 @@ export function SchedulePanel() {
     }
     setBusy(taskId)
     try {
-      await sessionExt(tabId, 'x.ai/scheduler/delete', { taskId })
+      await schedulerDelete(tabId, taskId)
       pushToast('已取消定时', 'success')
       setConfirmId('')
     } catch (e) {

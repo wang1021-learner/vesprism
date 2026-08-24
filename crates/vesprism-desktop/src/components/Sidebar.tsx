@@ -41,6 +41,8 @@ import {
   $registeredProjects,
   $scratchCwd,
   isScratchCwd,
+  $appShell,
+  $utilityKind,
   type ChatSummary,
 } from '../store'
 import { clearSessionAllowed } from '../lib/permissionMemory'
@@ -77,7 +79,12 @@ import {
   refreshRegisteredProjects,
   registerAndSwitchWorkspace,
 } from '../lib/workspaceSwitch'
+import { ShellSwitch } from './ShellSwitch'
 import { openWorkbenchHistory } from '../lib/openWorkbenchSession'
+import {
+  CHATS_CHANGED_EVENT,
+  preserveActiveLiveChat,
+} from '../lib/recordSessionInSidebar'
 import { reconcileRunningSubagents } from '../lib/reconcileRunningSubagents'
 import {
   getWorkbenchBinding,
@@ -214,51 +221,6 @@ const iconProps = {
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
   'aria-hidden': true as const,
-}
-
-function SkillIcon() {
-  return (
-    <svg {...iconProps}>
-      <path d="M7 6.5h10M7 12h10M7 17.5h7" />
-    </svg>
-  )
-}
-
-function ToolIcon() {
-  return (
-    <svg {...iconProps}>
-      <path d="M14.2 6.2 8 12.4l3.6 3.6 6.2-6.2a2.6 2.6 0 0 0-3.6-3.6Z" />
-      <path d="M9.2 14.8 6 18" />
-    </svg>
-  )
-}
-
-function McpIcon() {
-  return (
-    <svg {...iconProps}>
-      <circle cx="8" cy="12" r="2.4" />
-      <circle cx="16" cy="12" r="2.4" />
-      <path d="M10.4 12h3.2" />
-    </svg>
-  )
-}
-
-function MemoryIcon() {
-  return (
-    <svg {...iconProps}>
-      <path d="M6 7h12v12H6z" />
-      <path d="M9 7V5h6v2M9 12h6M9 16h4" />
-    </svg>
-  )
-}
-
-function PluginIcon() {
-  return (
-    <svg {...iconProps}>
-      <path d="M9 7V4h6v3" />
-      <path d="M8 7h8v6l-2 2v5H10v-5l-2-2V7Z" />
-    </svg>
-  )
 }
 
 function WorkflowIcon() {
@@ -412,6 +374,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   /** 主工作区：侧栏置顶/默认展开；勿用当前 Tab cwd（点历史会误把整组拖到最上面） */
   const preferredCwd = useStore($preferredWorkspaceCwd)
   const scratchCwd = useStore($scratchCwd)
+  const appShell = useStore($appShell)
+  const utilityKind = useStore($utilityKind)
 
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set())
   const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null)
@@ -463,12 +427,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       ])
       if (list) {
         $chats.set(
-          list.map((c) => ({
-            id: c.id,
-            title: c.title || '新对话',
-            cwd: c.cwd,
-            updatedAt: c.updated_at,
-          })),
+          preserveActiveLiveChat(
+            list.map((c) => ({
+              id: c.id,
+              title: c.title || '新对话',
+              cwd: c.cwd,
+              updatedAt: c.updated_at,
+            })),
+          ),
         )
       }
     } catch (e) {
@@ -489,6 +455,21 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   useEffect(() => {
     void refreshWorkbenchChats()
   }, [refreshWorkbenchChats])
+
+  useEffect(() => {
+    let timer = 0
+    const onChanged = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        void refreshChats()
+      }, 160)
+    }
+    window.addEventListener(CHATS_CHANGED_EVENT, onChanged)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener(CHATS_CHANGED_EVENT, onChanged)
+    }
+  }, [refreshChats])
 
   useEffect(() => {
     let cancelled = false
@@ -1177,76 +1158,45 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     $settingsOpen.set(true)
   }
 
-  /** 侧栏「技能 / 工具 / MCP / 自动化任务 / 流程画布」：各开一个带标题的专用 Tab */
+  /** 侧栏「自动化任务 / 流程画布 / Agent 编制」：各开一个带标题的专用 Tab */
   const onOpenUtilityTab = useCallback(
-    async (
-      kind: 'skills' | 'tools' | 'mcp' | 'workflows' | 'flow-canvas' | 'agents' | 'memory' | 'plugins',
-    ) => {
+    async (kind: 'workflows' | 'flow-canvas' | 'agents') => {
       const title =
-        kind === 'skills'
-          ? '技能'
-          : kind === 'tools'
-            ? '工具'
-            : kind === 'mcp'
-              ? 'MCP'
-              : kind === 'memory'
-                ? '记忆'
-                : kind === 'plugins'
-                  ? '插件'
-                  : kind === 'flow-canvas'
-                    ? '流程画布'
-                    : kind === 'agents'
-                      ? 'Agent 编制'
-                      : '自动化任务'
+        kind === 'flow-canvas'
+          ? '流程画布'
+          : kind === 'agents'
+            ? 'Agent 编制'
+            : '自动化任务'
       setMenuOpenChatId(null)
       await openChatTab({ title, utilityKind: kind })
     },
     [],
   )
 
-  const utilityEntries = [
-    { kind: 'skills' as const, label: '技能', Icon: SkillIcon },
-    { kind: 'tools' as const, label: '工具', Icon: ToolIcon },
-    { kind: 'mcp' as const, label: 'MCP', Icon: McpIcon },
-    { kind: 'memory' as const, label: '记忆', Icon: MemoryIcon },
-    { kind: 'plugins' as const, label: '插件', Icon: PluginIcon },
-    { kind: 'schedule' as const, label: '定时任务', Icon: ScheduleIcon },
-    { kind: 'workflows' as const, label: '任务', Icon: WorkflowIcon },
-    { kind: 'flow-canvas' as const, label: '流程画布', Icon: FlowCanvasIcon },
-    { kind: 'agents' as const, label: 'Agent 编制', Icon: AgentsIcon },
-  ]
+  const utilityEntries =
+    appShell === 'workbench'
+      ? [
+          { kind: 'workflows' as const, label: '自动化任务', Icon: WorkflowIcon },
+          { kind: 'flow-canvas' as const, label: '流程画布', Icon: FlowCanvasIcon },
+          { kind: 'agents' as const, label: 'Agent 编制', Icon: AgentsIcon },
+        ]
+      : [{ kind: 'schedule' as const, label: '定时任务', Icon: ScheduleIcon }]
 
   const renderUtilityGrid = () => (
-    <nav className="sidebar-compose-nav" aria-label="能力入口">
+    <nav className="sidebar-compose-nav" aria-label={appShell === 'workbench' ? '工作台入口' : '能力入口'}>
       {utilityEntries.map(({ kind, label, Icon }) => (
         <button
           key={kind}
           type="button"
-          className="sidebar-compose-link"
-          title={
-            kind === 'workflows'
-              ? '自动化任务'
-              : kind === 'flow-canvas'
-                ? '流程画布'
-                : kind === 'agents'
-                  ? 'Agent 编制'
-                  : label
-          }
+          className={`sidebar-compose-link${utilityKind === kind ? ' is-active' : ''}`}
+          title={label}
           onClick={() => {
             if (kind === 'schedule') openSessionSchedule()
             else void onOpenUtilityTab(kind)
           }}
         >
           <Icon />
-          <span>
-            {kind === 'workflows'
-              ? '自动化任务'
-              : kind === 'flow-canvas'
-                ? '流程画布'
-                : kind === 'agents'
-                  ? 'Agent 编制'
-                  : label}
-          </span>
+          <span>{label}</span>
         </button>
       ))}
     </nav>
@@ -1254,7 +1204,13 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
   const renderSessionList = () => (
     <div className="sidebar-recent-list" ref={listRef}>
-      {workspaceGroups.map((ws) => {
+      {workspaceGroups
+        .filter((ws) =>
+          appShell === 'workbench'
+            ? ws.cwdKey === WORKBENCH_GROUP_KEY
+            : ws.cwdKey !== WORKBENCH_GROUP_KEY,
+        )
+        .map((ws) => {
         const folded = isWorkspaceCollapsed(ws)
         return (
           <div
@@ -1326,43 +1282,56 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
           </div>
         )
       })}
-      {workspaceGroups.length === 0 && (
-        <p className="sidebar-empty-hint">暂无历史会话。点上方 + 添加项目。</p>
+      {workspaceGroups.filter((ws) =>
+        appShell === 'workbench'
+          ? ws.cwdKey === WORKBENCH_GROUP_KEY
+          : ws.cwdKey !== WORKBENCH_GROUP_KEY,
+      ).length === 0 && (
+        <p className="sidebar-empty-hint">
+          {appShell === 'workbench'
+            ? '还没有画布或编制会话。'
+            : '暂无历史会话。点上方 + 添加项目。'}
+        </p>
       )}
     </div>
   )
 
-  /** 展开态 / peek 共用：顶栏（新对话 + 搜索/收起） → 能力入口 → 会话 → 设置 */
+  /** 展开态 / peek 共用：壳切换 → 新对话 → 能力入口 → 会话 → 设置 */
   const renderExpandedPanel = () => (
     <>
-      <div className="sidebar-top-bar">
-        <button
-          type="button"
-          className="sidebar-compose-new"
-          onClick={() => void onNewChat()}
-          title="新建对话"
-        >
-          <PlusIcon />
-          <span>新对话</span>
-        </button>
-        <div className="sidebar-top-actions">
-          <button
-            type="button"
-            className="sidebar-icon-btn"
-            title="搜索会话 (⌘K)"
-            onClick={openSearch}
-          >
-            <SearchIcon />
-          </button>
-          <button
-            type="button"
-            className="sidebar-icon-btn"
-            title={collapsed ? '关闭预览' : '收起边栏'}
-            onClick={onHeaderCollapseClick}
-          >
-            <CollapseIcon />
-          </button>
+      <div className="sidebar-head">
+        <div className="sidebar-top-bar">
+          <ShellSwitch />
+          <div className="sidebar-top-actions">
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title="搜索会话 (⌘K)"
+              onClick={openSearch}
+            >
+              <SearchIcon />
+            </button>
+            <button
+              type="button"
+              className="sidebar-icon-btn"
+              title={collapsed ? '关闭预览' : '收起边栏'}
+              onClick={onHeaderCollapseClick}
+            >
+              <CollapseIcon />
+            </button>
+          </div>
         </div>
+        {appShell === 'coding' && (
+          <button
+            type="button"
+            className="sidebar-compose-new"
+            onClick={() => void onNewChat()}
+            title="新建对话"
+          >
+            <PlusIcon />
+            <span>新对话</span>
+          </button>
+        )}
       </div>
 
       <div className="sidebar-compose">
@@ -1370,7 +1339,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       </div>
 
       <div className="sidebar-section-label">
-        <span>会话</span>
+        <span>{appShell === 'workbench' ? '干活会话' : '会话'}</span>
+        {appShell === 'coding' && (
         <button
           type="button"
           className="sidebar-section-add"
@@ -1380,6 +1350,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         >
           +
         </button>
+        )}
       </div>
 
       {renderSessionList()}
@@ -1423,6 +1394,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             onMouseLeave={handlePeekZoneLeave}
           >
             <div className="sidebar-rail-divider" />
+            {appShell === 'coding' ? (
+              <>
             <button
               type="button"
               className="sidebar-icon-btn"
@@ -1446,51 +1419,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             <button
               type="button"
               className="sidebar-icon-btn"
-              title="技能"
-              onClick={() => void onOpenUtilityTab('skills')}
-            >
-              <SkillIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="工具"
-              onClick={() => void onOpenUtilityTab('tools')}
-            >
-              <ToolIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="MCP"
-              onClick={() => void onOpenUtilityTab('mcp')}
-            >
-              <McpIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="记忆"
-              onClick={() => void onOpenUtilityTab('memory')}
-            >
-              <MemoryIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="插件"
-              onClick={() => void onOpenUtilityTab('plugins')}
-            >
-              <PluginIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
               title="定时任务"
               onClick={() => openSessionSchedule()}
             >
               <ScheduleIcon />
             </button>
+              </>
+            ) : (
+              <>
             <button
               type="button"
               className="sidebar-icon-btn"
@@ -1515,6 +1451,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             >
               <AgentsIcon />
             </button>
+              </>
+            )}
             <div className="sidebar-spacer" />
             <button
               type="button"

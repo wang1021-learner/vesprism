@@ -116,6 +116,61 @@ export const removeQueuedPrompt = (tabId: string, id: string, expectedVersion?: 
     id,
     expectedVersion: expectedVersion ?? 0,
   })
+export const editQueuedPrompt = (tabId: string, id: string, newText: string) =>
+  invoke('edit_queued_prompt', { tabId, id, newText })
+
+export type SessionCapsDto = {
+  recap: boolean
+  askMode: boolean
+  memory: boolean
+  hunks: boolean
+  rewind: boolean
+  gitWrite: boolean
+  imagine: boolean
+  schedule: boolean
+  queueEdit: boolean
+  plugins: boolean
+  hooks: boolean
+  compact: boolean
+}
+export const sessionCaps = (tabId: string) => invoke<SessionCapsDto>('session_caps', { tabId })
+export const sessionRecap = (tabId: string, auto = false) =>
+  invoke<Record<string, unknown>>('session_recap', { tabId, auto })
+export const sessionMemoryFlush = (tabId: string) =>
+  invoke<Record<string, unknown>>('session_memory_flush', { tabId })
+export const sessionMemoryRewrite = (tabId: string, params: Record<string, unknown>) =>
+  invoke<Record<string, unknown>>('session_memory_rewrite', { tabId, params })
+export const sessionSetMemory = (tabId: string, enabled: boolean) =>
+  invoke('session_set_memory', { tabId, enabled })
+export const hunkCall = (
+  tabId: string,
+  action: string,
+  params?: Record<string, unknown> | null,
+) =>
+  invoke<Record<string, unknown>>('hunk_call', {
+    tabId,
+    action,
+    params: params ?? null,
+  })
+export const pluginsList = (tabId: string) =>
+  invoke<Record<string, unknown>>('plugins_list', { tabId })
+export const pluginsAction = (tabId: string, action: Record<string, unknown>) =>
+  invoke<Record<string, unknown>>('plugins_action', { tabId, action })
+export const hooksList = (tabId: string) =>
+  invoke<Record<string, unknown>>('hooks_list', { tabId })
+export const hooksAction = (tabId: string, action: Record<string, unknown>) =>
+  invoke<Record<string, unknown>>('hooks_action', { tabId, action })
+export const schedulerDelete = (tabId: string, taskId: string) =>
+  invoke<Record<string, unknown>>('scheduler_delete', { tabId, taskId })
+export const sessionInfo = (tabId: string) =>
+  invoke<Record<string, unknown>>('session_info', { tabId })
+export const sessionUsage = (tabId: string) =>
+  invoke<Record<string, unknown>>('session_usage', { tabId })
+export const compactConversation = (tabId: string, userContext?: string) =>
+  invoke<Record<string, unknown>>('compact_conversation', {
+    tabId,
+    userContext: userContext ?? null,
+  })
 export const cancelTurn = (tabId: string) => invoke('cancel_turn', { tabId })
 export const restartSession = (tabId: string, cwd: string, opts?: SessionSpawnOpts) =>
   invoke('restart_session', {
@@ -335,6 +390,7 @@ export type EnginePrefs = {
   web_search_excluded: string[]
   max_parallel_image_gen_calls: number
   max_parallel_video_gen_calls: number
+  combine_queued_prompts: boolean
 }
 
 export const getEnginePrefs = () => invoke<EnginePrefs>('get_engine_prefs')
@@ -515,7 +571,7 @@ export const listWorkflows = (tabId: string) =>
     tabId,
   })
 
-/** 通用官方扩展（自动带 sessionId） */
+/** 未收编官方扩展的逃生口。面板新功能走具名命令，不要再喊 x.ai/*。 */
 export const sessionExt = (
   tabId: string,
   method: string,
@@ -652,6 +708,21 @@ export type SkillInfoDto = {
   configSource?: { type?: string } | null
   config_source?: { type?: string } | null
 }
+
+/** 设置页全量目录：不绑会话，读盘 / config.toml */
+export const listCatalogMcp = () =>
+  invoke<{ servers?: McpServerDto[] }>('list_catalog_mcp')
+
+export const listCatalogSkills = (cwd?: string | null) =>
+  invoke<{ skills?: SkillInfoDto[] }>('list_catalog_skills', { cwd: cwd ?? null })
+
+export const listCatalogMemory = () =>
+  invoke<{ files?: Array<{ path: string; source: string; sizeBytes: number }> }>(
+    'list_catalog_memory',
+  )
+
+export const listCatalogPlugins = (cwd?: string | null) =>
+  invoke<{ plugins?: unknown[] }>('list_catalog_plugins', { cwd: cwd ?? null })
 
 export const listSkills = (tabId: string, cwd: string) =>
   invoke<{ skills?: SkillInfoDto[] }>('list_skills', { tabId, cwd })

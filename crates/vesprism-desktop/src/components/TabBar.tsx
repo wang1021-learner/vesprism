@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { IconAdjustmentsHorizontal } from '@tabler/icons-react'
 import {
   $activeTabId,
+  $appShell,
   $compositionOpen,
   $rightPanelOpen,
   $tabs,
@@ -10,6 +11,7 @@ import {
   isBlankNewChat,
   patchActiveTab,
   switchTab,
+  tabsForShell,
 } from '../store'
 import { restartTab } from '../bridge'
 import { closeChatTab } from '../lib/closeChatTab'
@@ -24,10 +26,13 @@ function formatTabTitle(raw: string | undefined | null): string {
  * 状态层（$tabs + TabState map）已由 store 分片提供，本组件只做展示与命令编排。
  */
 export function TabBar() {
-  const tabs = useStore($tabs)
+  const allTabs = useStore($tabs)
+  const shell = useStore($appShell)
+  const tabs = tabsForShell(shell, allTabs)
   const activeId = useStore($activeTabId)
   const compOpen = useStore($compositionOpen)
   const [busy, setBusy] = useState(false)
+  const workbench = shell === 'workbench'
 
   const onNewTab = async () => {
     if (busy) return
@@ -129,11 +134,13 @@ export function TabBar() {
             </div>
           )
         })}
+        {!workbench && (
         <button type="button" className="tabbar-new" title="新建会话" disabled={busy} onClick={() => void onNewTab()}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
+        )}
       </div>
     </div>
   )

@@ -23,6 +23,25 @@ async fn send_cmd(
     reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
+async fn send_value<T: Send>(
+    state: &AppState,
+    tab_id: &str,
+    make: impl FnOnce(oneshot::Sender<Result<T, String>>) -> ActorCommand,
+) -> Result<T, String> {
+    let cmd_tx = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard
+            .get(tab_id)
+            .cloned()
+            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
+    };
+    let (reply_tx, reply_rx) = oneshot::channel();
+    cmd_tx
+        .send(make(reply_tx))
+        .map_err(|_| "会话线程已退出".to_string())?;
+    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
+}
+
 /// 打开一个新 tab（Supervisor 分配 tab_id 并启动对应 TabActor）。
 #[tauri::command]
 pub async fn open_tab(state: State<'_, AppState>) -> Result<String, String> {
@@ -500,6 +519,155 @@ pub async fn remove_queued_prompt(
     send_cmd(&state, &tab_id, |reply| ActorCommand::RemoveQueuedPrompt {
         id,
         expected_version: expected_version.unwrap_or(0),
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn edit_queued_prompt(
+    tab_id: String,
+    id: String,
+    new_text: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::EditQueuedPrompt {
+        id,
+        new_text,
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn session_caps(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<grok_session::SessionCaps, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::SessionCaps { reply }).await
+}
+
+#[tauri::command]
+pub async fn session_recap(
+    tab_id: String,
+    auto: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::Recap {
+        auto: auto.unwrap_or(false),
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn session_memory_flush(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::MemoryFlush { reply }).await
+}
+
+#[tauri::command]
+pub async fn session_memory_rewrite(
+    tab_id: String,
+    params: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::MemoryRewrite { params, reply }).await
+}
+
+#[tauri::command]
+pub async fn session_set_memory(
+    tab_id: String,
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::SetMemoryEnabled { enabled, reply }).await
+}
+
+#[tauri::command]
+pub async fn hunk_call(
+    tab_id: String,
+    action: String,
+    params: Option<serde_json::Value>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::HunkCall {
+        action,
+        params: params.unwrap_or(serde_json::Value::Null),
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn plugins_list(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::PluginsList { reply }).await
+}
+
+#[tauri::command]
+pub async fn plugins_action(
+    tab_id: String,
+    action: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::PluginsAction { action, reply }).await
+}
+
+#[tauri::command]
+pub async fn hooks_list(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::HooksList { reply }).await
+}
+
+#[tauri::command]
+pub async fn hooks_action(
+    tab_id: String,
+    action: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::HooksAction { action, reply }).await
+}
+
+#[tauri::command]
+pub async fn scheduler_delete(
+    tab_id: String,
+    task_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::SchedulerDelete { task_id, reply }).await
+}
+
+#[tauri::command]
+pub async fn session_info(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::SessionInfo { reply }).await
+}
+
+#[tauri::command]
+pub async fn session_usage(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::SessionUsage { reply }).await
+}
+
+#[tauri::command]
+pub async fn compact_conversation(
+    tab_id: String,
+    user_context: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::CompactConversation {
+        user_context,
         reply,
     })
     .await
@@ -2783,8 +2951,44 @@ pub async fn apply_composition(
     .await
 }
 
-/// 读取指定会话当前生效的组装单（会话覆盖优先，其次工作区 `.grok/agent.yml`，
-/// 最后内置默认）。返回 camelCase JSON 供面板编辑。
+/// 四级合并：用户级（extends 链）→ 工作区 `.grok/agent.yml` → 会话覆盖。
+pub(crate) fn resolve_session_composition(
+    session_id: Option<&str>,
+    cwd: &str,
+) -> Result<grok_session::composition::Composition, String> {
+    let overlay = match session_id.filter(|s| !s.is_empty()) {
+        Some(sid) => crate::session_index::get_thread_composition(sid)?
+            .map(|json| {
+                let mut v: serde_json::Value = serde_json::from_str(&json)?;
+                if let Some(obj) = v.as_object_mut() {
+                    obj.remove("workflows");
+                }
+                serde_json::from_value::<grok_session::composition::Composition>(v)
+            })
+            .transpose()
+            .map_err(|e| format!("解析会话组装单失败: {e}"))?,
+        None => None,
+    };
+    let user_root = desktop_home_dir();
+    let user_name = overlay.as_ref().and_then(|c| {
+        let name = c
+            .extends
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| c.id.as_deref().filter(|s| !s.is_empty()))?;
+        let path = user_root.join("compositions").join(format!("{name}.yml"));
+        path.is_file().then_some(name.to_string())
+    });
+    grok_session::composition::resolve_composition(
+        user_name.as_deref(),
+        std::path::Path::new(cwd),
+        overlay.as_ref(),
+        &user_root,
+    )
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// 读取指定会话当前生效的组装单（四级合并）。返回供面板编辑。
 #[tauri::command]
 pub async fn get_composition(
     session_id: Option<String>,
@@ -2792,28 +2996,7 @@ pub async fn get_composition(
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let _ = &state;
-    let overlay = match session_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(sid) => crate::session_index::get_thread_composition(sid)?
-            .map(|json| {
-                let mut v: serde_json::Value = serde_json::from_str(&json)?;
-                if let Some(obj) = v.as_object_mut() {
-                    obj.remove("workflows");
-                }
-                serde_json::from_value(v)
-            })
-            .transpose()
-            .map_err(|e| format!("解析会话组装单失败: {e}"))?,
-        None => None,
-    };
-    let composition = match overlay {
-        Some(c) => c,
-        None => {
-            let workspace =
-                grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
-                    .map_err(|e| format!("{e:#}"))?;
-            workspace.unwrap_or_default()
-        }
-    };
+    let composition = resolve_session_composition(session_id.as_deref(), &cwd)?;
     serde_json::to_value(&composition).map_err(|e| format!("序列化组装单失败: {e}"))
 }
 

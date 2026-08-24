@@ -16,6 +16,7 @@ import { findMessageHits } from '../../lib/chatFind'
 import {
   canRetryAssistant,
   lastAssistantId,
+  lastVisibleUserId,
   stickyUserIndex,
   stickyUserPreview,
 } from '../../lib/userMessage'
@@ -373,6 +374,7 @@ export const MessageList = memo(function MessageList({
   }, [virtualizer, count])
 
   const latestAssistantId = useMemo(() => lastAssistantId(messages), [messages])
+  const latestUserId = useMemo(() => lastVisibleUserId(messages), [messages])
 
   const [pinnedUserIdx, setPinnedUserIdx] = useState(-1)
   useEffect(() => {
@@ -459,6 +461,7 @@ export const MessageList = memo(function MessageList({
       : canRetryAssistant(messages, latestAssistantId, false)
         ? latestAssistantId
         : ''
+  const recallUserId = streaming ? '' : latestUserId || ''
 
   return (
     <div className="chat-viewport-wrapper" ref={wrapperRef}>
@@ -527,6 +530,7 @@ export const MessageList = memo(function MessageList({
                   streaming={isLive}
                   sessionBusy={streaming}
                   canRetry={msg.role === 'assistant' && msg.id === retryAssistantId}
+                  canRecall={msg.role === 'user' && msg.id === recallUserId}
                   onFocusUserQuestion={onFocusUserQuestion}
                   onFocusPlan={onFocusPlan}
                   isPermissionOrigin={

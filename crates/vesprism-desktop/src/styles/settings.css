@@ -28,13 +28,15 @@
 
 /* ──── 设置页 ──── */
 .settings-backdrop {
-  padding: 20px;
+  padding: 0;
 }
 
 .settings-shell {
   position: relative;
-  width: min(1080px, 96vw);
-  height: min(820px, 92vh);
+  width: 80%;
+  height: 80%;
+  max-width: none;
+  max-height: none;
   background: var(--surface-elevated);
   border-radius: 12px;
   border: 1px solid var(--border-solid);
@@ -126,14 +128,15 @@
 }
 
 .settings-nav {
-  width: 170px;
+  width: 184px;
   flex-shrink: 0;
   border-right: 1px solid var(--border-solid);
   background: var(--surface-muted, #f8f9fa);
-  padding: 14px 10px;
+  padding: 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  overflow-y: auto;
 }
 
 .settings-nav-item {
@@ -181,6 +184,111 @@
   color: var(--accent, #2563eb);
 }
 
+.settings-nav-sep {
+  height: 1px;
+  margin: 8px 8px;
+  background: var(--border-solid);
+  flex-shrink: 0;
+}
+
+.settings-embed {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-embed .mcp-panel,
+.settings-embed .tools-panel,
+.settings-embed .skills-panel,
+.settings-embed .memory-panel,
+.settings-embed .plugins-panel,
+.settings-embed .work-panel {
+  background: transparent;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-embed .mcp-panel-inner,
+.settings-embed .tools-panel-inner,
+.settings-embed .skills-panel-inner,
+.settings-embed .memory-panel-inner,
+.settings-embed .work-panel-inner {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 18px 22px 16px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-embed .work-panel-head,
+.settings-embed .work-panel-inner > .insight-note,
+.settings-embed .work-panel-inner > .insight-actions {
+  flex-shrink: 0;
+}
+
+.settings-embed .work-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.settings-embed .work-list,
+.settings-embed .work-preview {
+  max-height: none;
+  min-height: 0;
+  height: 100%;
+}
+
+.settings-embed .work-list {
+  overflow: hidden;
+}
+
+.settings-embed .work-rows,
+.settings-embed .work-preview {
+  overflow: auto;
+}
+
+.settings-embed .work-preview {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-embed .work-preview pre {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.settings-embed .work-rows::-webkit-scrollbar,
+.settings-embed .work-preview::-webkit-scrollbar,
+.settings-embed .work-preview pre::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.settings-embed .work-rows::-webkit-scrollbar-thumb,
+.settings-embed .work-preview::-webkit-scrollbar-thumb,
+.settings-embed .work-preview pre::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+}
+
+.settings-embed .work-rows::-webkit-scrollbar-track,
+.settings-embed .work-preview::-webkit-scrollbar-track,
+.settings-embed .work-preview pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .settings-panel {
   flex: 1;
   min-width: 0;
@@ -213,7 +321,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 20px;
+  padding: 10px 20px;
   border-top: 1px solid var(--border-solid);
   flex-shrink: 0;
   background: var(--surface-elevated);

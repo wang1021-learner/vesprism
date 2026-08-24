@@ -4,15 +4,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import {
-  $activeTabId,
   $memoryEnabled,
   $memoryFiles,
-  $sessionPhase,
   $workspaceCwd,
+  getTabState,
   patchActiveTab,
   pushToast,
+  type MemoryFileInfo,
 } from '../store'
-import { deleteMemoryPath, readMemoryFile, sessionExt } from '../bridge'
+import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
+import {
+  deleteMemoryPath,
+  listCatalogMemory,
+  readMemoryFile,
+  sessionMemoryFlush,
+  sessionMemoryRewrite,
+  sessionSetMemory,
+} from '../bridge'
 import { sendEngineSlash } from '../lib/engineSlash'
 import { memoryRowTitle, workspaceFolderName } from '../lib/memoryRows'
 
@@ -23,22 +31,42 @@ function fmtSize(n: number): string {
 }
 
 export function MemoryPanel() {
-  const tabId = useStore($activeTabId)
-  const files = useStore($memoryFiles)
-  const ready = useStore($sessionPhase) === 'ready'
+  const tabId = useCodingSessionTabId()
+  const filesLive = useStore($memoryFiles)
+  const memoryOnLive = useStore($memoryEnabled)
+  const st = getTabState(tabId)
+  const ready = codingSessionReady(tabId)
   const cwd = useStore($workspaceCwd)
-  const memoryOn = useStore($memoryEnabled)
+  const memoryOn = st?.memoryEnabled ?? memoryOnLive
   const [query, setQuery] = useState('')
   const [sel, setSel] = useState('')
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState('')
   const [confirmDel, setConfirmDel] = useState('')
+  const [diskFiles, setDiskFiles] = useState<MemoryFileInfo[]>([])
+
+  const files = useMemo(() => {
+    const live = st?.memoryFiles?.length ? st.memoryFiles : filesLive
+    if (live.length) return live
+    return diskFiles
+  }, [st?.memoryFiles, filesLive, diskFiles])
 
   const refresh = useCallback(() => {
-    if (!ready) return
-    void sendEngineSlash('/memory')
-  }, [ready])
+    void listCatalogMemory()
+      .then((cat) => {
+        const list = Array.isArray(cat?.files) ? cat.files : []
+        setDiskFiles(
+          list.map((f) => ({
+            path: f.path,
+            source: f.source,
+            sizeBytes: f.sizeBytes,
+          })),
+        )
+      })
+      .catch(() => setDiskFiles([]))
+    if (ready && tabId) void sendEngineSlash('/memory', tabId)
+  }, [ready, tabId])
 
   useEffect(() => {
     refresh()
@@ -85,7 +113,7 @@ export function MemoryPanel() {
     setBusy(kind)
     try {
       if (kind === 'flush') {
-        await sessionExt(tabId, 'x.ai/memory/flush', {})
+        await sessionMemoryFlush(tabId)
         pushToast('正在把本会话写入记忆', 'success')
       } else if (kind === 'dream') {
         await sendEngineSlash('/dream')
@@ -96,7 +124,7 @@ export function MemoryPanel() {
           pushToast('先写一句要记住的话', 'info')
           return
         }
-        const rewritten = await sessionExt(tabId, 'x.ai/memory/rewrite', {
+        const rewritten = await sessionMemoryRewrite(tabId, {
           rawText: text,
           contextSummary: cwd || '',
         })
@@ -138,15 +166,15 @@ export function MemoryPanel() {
               onClick={() => {
                 const next = !memoryOn
                 patchActiveTab({ memoryEnabled: next })
-                void sendEngineSlash(next ? '/memory on' : '/memory off').then((id) => {
-                  if (!id) {
+                void sessionSetMemory(tabId, next)
+                  .then(() => {
+                    pushToast(next ? '本会话已打开记忆' : '本会话已关闭记忆', 'success')
+                    if (next) refresh()
+                  })
+                  .catch((e) => {
                     patchActiveTab({ memoryEnabled: !next })
-                    pushToast('没发出去', 'error')
-                    return
-                  }
-                  pushToast(next ? '本会话已打开记忆' : '本会话已关闭记忆', 'success')
-                  if (next) refresh()
-                })
+                    pushToast(String(e), 'error')
+                  })
               }}
             >
               {memoryOn ? '记忆开' : '记忆关'}

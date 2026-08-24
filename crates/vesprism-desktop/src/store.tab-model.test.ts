@@ -18,7 +18,13 @@ import {
   isScratchCwd,
   workspaceLabel,
   findNormalChatTab,
+  findReadyCodingTabId,
   findTabByUtilityKind,
+  isWorkbenchUtility,
+  $appShell,
+  setAppShell,
+  shellForUtility,
+  tabsForShell,
   getTabState,
   isBlankNewChat,
   looksAbsolutePath,
@@ -250,10 +256,43 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('workflows')).toBeUndefined()
   })
 
+  it('findReadyCodingTabId 跳过画布 Tab，绑到已就绪对话', () => {
+    createTab('tab-flow', { utilityKind: 'flow-canvas', phase: 'idle' })
+    createTab('tab-chat', { utilityKind: null, phase: 'ready', sessionId: 's1' })
+    $activeTabId.set('tab-flow')
+    expect(isWorkbenchUtility('flow-canvas')).toBe(true)
+    expect(isWorkbenchUtility('workflows')).toBe(true)
+    expect(isWorkbenchUtility(null)).toBe(false)
+    expect(findReadyCodingTabId()).toBe('tab-chat')
+    $activeTabId.set('tab-chat')
+    expect(findReadyCodingTabId()).toBe('tab-chat')
+  })
+
   it('findTabByUtilityKind 可复用 agents 专用 Tab', () => {
     createTab('tab-agents', { utilityKind: 'agents', chatTitle: 'Agent 编制' })
     expect(findTabByUtilityKind('agents')).toBe('tab-agents')
     expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
+  })
+
+  it('编码/工作台壳：切 tab 跟着换壳，标签按壳过滤', () => {
+    createTab('tab-chat', { utilityKind: null, chatTitle: '对话' })
+    createTab('tab-flow', { utilityKind: 'flow-canvas', chatTitle: '流程画布' })
+    $tabs.set([
+      { id: 'tab-chat', title: '对话' },
+      { id: 'tab-flow', title: '流程画布' },
+    ])
+    expect(shellForUtility(null)).toBe('coding')
+    expect(shellForUtility('agents')).toBe('workbench')
+    switchTab('tab-chat')
+    expect($appShell.get()).toBe('coding')
+    expect(tabsForShell('coding').map((t) => t.id)).toEqual(['tab-chat'])
+    switchTab('tab-flow')
+    expect($appShell.get()).toBe('workbench')
+    expect(tabsForShell('workbench').map((t) => t.id)).toEqual(['tab-flow'])
+    setAppShell('coding')
+    expect($activeTabId.get()).toBe('tab-chat')
+    setAppShell('workbench')
+    expect($activeTabId.get()).toBe('tab-flow')
   })
 
   it('isScratchCwd / workspaceLabel 识别闲聊目录', () => {

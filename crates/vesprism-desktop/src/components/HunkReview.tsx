@@ -4,8 +4,8 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useStore } from '@nanostores/react'
-import { $activeTabId, $gitHeadRevision, $sessionPhase, $workspaceCwd, pushToast } from '../store'
-import { sessionExt } from '../bridge'
+import { $activeTabId, $gitHeadRevision, $sessionCaps, $sessionPhase, $workspaceCwd, pushToast } from '../store'
+import { hunkCall } from '../bridge'
 import { DiffLines } from './Chat/DiffLines'
 import {
   hunkActionOk,
@@ -20,6 +20,7 @@ export function HunkReview() {
   const tabId = useStore($activeTabId)
   const cwd = useStore($workspaceCwd)
   const ready = useStore($sessionPhase) === 'ready'
+  const caps = useStore($sessionCaps)
   const gitRev = useStore($gitHeadRevision)
   const [files, setFiles] = useState<HunkFileRow[]>([])
   const [hunks, setHunks] = useState<Record<string, HunkRow[]>>({})
@@ -34,7 +35,7 @@ export function HunkReview() {
     setLoading(true)
     setError('')
     try {
-      const raw = await sessionExt(tabId, 'x.ai/hunk-tracker/get-files', {})
+      const raw = await hunkCall(tabId, 'get-files', {})
       setFiles(parseHunkFiles(raw))
     } catch (e) {
       setError(String(e))
@@ -51,7 +52,7 @@ export function HunkReview() {
   const loadHunks = async (path: string) => {
     if (!tabId || hunks[path]) return
     try {
-      const raw = await sessionExt(tabId, 'x.ai/hunk-tracker/get-hunks', {
+      const raw = await hunkCall(tabId, 'get-hunks', {
         path,
         source: 'all',
       })
@@ -74,7 +75,7 @@ export function HunkReview() {
     }
     setBusy(key)
     try {
-      const raw = await sessionExt(tabId, method, params)
+      const raw = await hunkCall(tabId, method, params)
       const r = hunkActionOk(raw)
       if (!r.ok) {
         pushToast(r.error, 'error')
@@ -93,6 +94,9 @@ export function HunkReview() {
 
   if (!ready) {
     return <p className="right-panel-empty">会话未就绪。</p>
+  }
+  if (!caps.hunks) {
+    return <p className="right-panel-empty">当前会话后端不支持改动审阅。</p>
   }
 
   return (
@@ -120,7 +124,7 @@ export function HunkReview() {
               className="diff-refresh-btn"
               disabled={Boolean(busy)}
               onClick={() =>
-                void act('x.ai/hunk-tracker/all-action', { action: 'accept' }, 'all-a', '已接受')
+                void act('all-action', { action: 'accept' }, 'all-a', '已接受')
               }
             >
               {confirm === 'all-a' ? '再点确认全部接受' : '全部接受'}
@@ -130,7 +134,7 @@ export function HunkReview() {
               className="diff-refresh-btn"
               disabled={Boolean(busy)}
               onClick={() =>
-                void act('x.ai/hunk-tracker/all-action', { action: 'reject' }, 'all-r', '已打回')
+                void act('all-action', { action: 'reject' }, 'all-r', '已打回')
               }
             >
               {confirm === 'all-r' ? '再点确认全部打回' : '全部打回'}
@@ -183,7 +187,7 @@ export function HunkReview() {
                       disabled={Boolean(busy)}
                       onClick={() =>
                         void act(
-                          'x.ai/hunk-tracker/file-action',
+                          'file-action',
                           { path: f.path, action: 'accept' },
                           `f-a:${f.path}`,
                           '已接受此文件',
@@ -198,7 +202,7 @@ export function HunkReview() {
                       disabled={Boolean(busy)}
                       onClick={() =>
                         void act(
-                          'x.ai/hunk-tracker/file-action',
+                          'file-action',
                           { path: f.path, action: 'reject' },
                           `f-r:${f.path}`,
                           '已打回此文件',
@@ -225,7 +229,7 @@ export function HunkReview() {
                               disabled={Boolean(busy)}
                               onClick={() =>
                                 void act(
-                                  'x.ai/hunk-tracker/hunk-action',
+                                  'hunk-action',
                                   { hunkId: h.id, action: 'accept' },
                                   `h-a:${h.id}`,
                                   '已接受',
@@ -240,7 +244,7 @@ export function HunkReview() {
                               disabled={Boolean(busy)}
                               onClick={() =>
                                 void act(
-                                  'x.ai/hunk-tracker/hunk-action',
+                                  'hunk-action',
                                   { hunkId: h.id, action: 'reject' },
                                   `h-r:${h.id}`,
                                   '已打回',

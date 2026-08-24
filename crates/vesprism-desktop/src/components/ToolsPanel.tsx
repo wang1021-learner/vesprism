@@ -6,18 +6,18 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   $activeSessionId,
-  $activeTabId,
   $composerInput,
-  $shellReady,
   $tabs,
   $utilityKind,
   $workspaceCwd,
   patchActiveTab,
   pushToast,
 } from '../store'
+import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
 import { getComposition, listSessionCommands } from '../bridge'
 import {
   CATEGORY_LABEL,
+  builtinToolCatalog,
   categoryOrder,
   enrichToolName,
   type ToolCategory,
@@ -39,10 +39,10 @@ const KIND_LABEL: Record<string, string> = {
 }
 
 export function ToolsPanel() {
-  const tabId = useStore($activeTabId)
+  const tabId = useCodingSessionTabId()
   const sessionId = useStore($activeSessionId)
   const cwd = useStore($workspaceCwd)
-  const ready = useStore($shellReady)
+  const ready = codingSessionReady(tabId)
   const tabs = useStore($tabs)
   const chatCount = useMemo(
     () => listChatSessionTargets(cwd || '').length,
@@ -60,47 +60,53 @@ export function ToolsPanel() {
   const [busyTool, setBusyTool] = useState('')
 
   const load = useCallback(async () => {
-    if (!tabId) return
     setLoading(true)
     setError('')
+    const catalog = [...builtinToolCatalog()]
     try {
       const chats = listChatSessionTargets(cwd || '')
       const listTab = chats[0]?.tabId || tabId
       const compSession = chats[0]?.sessionId || sessionId || null
       const compCwd = chats[0]?.cwd || cwd || ''
-      const [resp, comp] = await Promise.all([
-        listSessionCommands(listTab),
-        getComposition(compSession, compCwd).catch(() => null),
-      ])
+      const comp = await getComposition(compSession, compCwd).catch(() => null)
       const disable = mergeComposition(comp).tools.disable
       setDisabled(disable)
 
-      const toolNames = Array.isArray(resp?.tools)
-        ? resp.tools.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-        : []
-      const seen = new Set(toolNames)
-      const listed = toolNames.map(enrichToolName)
-      for (const name of disable) {
+      let extra: string[] = []
+      let cmds: Parameters<typeof parseOfficialCommands>[0] = []
+      if (listTab && ready) {
+        try {
+          const resp = await listSessionCommands(listTab)
+          extra = Array.isArray(resp?.tools)
+            ? resp.tools.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+            : []
+          cmds = resp?.commands ?? []
+        } catch {
+          /* 无会话时只展示内置目录 */
+        }
+      }
+      const seen = new Set(catalog.map((t) => t.name))
+      const listed = [...catalog]
+      for (const name of [...extra, ...disable]) {
         if (!seen.has(name)) {
           listed.push(enrichToolName(name))
           seen.add(name)
         }
       }
       setTools(listed.sort((a, b) => a.name.localeCompare(b.name)))
-      setCommands(parseOfficialCommands(resp?.commands))
+      setCommands(parseOfficialCommands(cmds))
     } catch (e) {
       setError(String(e))
-      setTools([])
+      setTools(catalog)
       setCommands([])
     } finally {
       setLoading(false)
     }
-  }, [tabId, sessionId, cwd])
+  }, [tabId, sessionId, cwd, ready])
 
   useEffect(() => {
-    if (!tabId) return
     void load()
-  }, [tabId, load])
+  }, [load])
 
   const disabledSet = useMemo(() => new Set(disabled), [disabled])
 

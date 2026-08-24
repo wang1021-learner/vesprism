@@ -5,15 +5,16 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  $activeTabId,
   $composerInput,
   $utilityKind,
   $workspaceCwd,
   patchActiveTab,
   pushToast,
 } from '../store'
+import { useCodingSessionTabId } from '../lib/codingSession'
 import {
   addSkill,
+  listCatalogSkills,
   listSessionCommands,
   listSkills,
   readFileText,
@@ -35,7 +36,7 @@ import {
 type EnabledFilter = 'all' | 'on' | 'off'
 
 export function SkillsPanel() {
-  const tabId = useStore($activeTabId)
+  const tabId = useCodingSessionTabId()
   const cwd = useStore($workspaceCwd)
   const [skills, setSkills] = useState<SkillRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -56,34 +57,38 @@ export function SkillsPanel() {
   }
 
   const load = useCallback(async () => {
-    if (!tabId) return
     setLoading(true)
     setError('')
     try {
-      const official = await listSkills(tabId, cwd || '.')
-      const list = Array.isArray(official?.skills) ? official.skills : []
-      if (applyOfficial(list)) return
-      const resp = await listSessionCommands(tabId, cwd || undefined)
-      const cmds = Array.isArray(resp?.commands) ? resp.commands : []
-      setSkills(parseSkillsFromCommands(cmds))
-    } catch (e) {
-      try {
-        const resp = await listSessionCommands(tabId, cwd || undefined)
-        const cmds = Array.isArray(resp?.commands) ? resp.commands : []
-        setSkills(parseSkillsFromCommands(cmds))
-      } catch {
-        setError(String(e))
-        setSkills([])
+      if (tabId) {
+        try {
+          const official = await listSkills(tabId, cwd || '.')
+          const list = Array.isArray(official?.skills) ? official.skills : []
+          if (applyOfficial(list)) return
+          const resp = await listSessionCommands(tabId, cwd || undefined)
+          const cmds = Array.isArray(resp?.commands) ? resp.commands : []
+          if (cmds.length) {
+            setSkills(parseSkillsFromCommands(cmds))
+            return
+          }
+        } catch {
+          /* 无会话时扫磁盘 */
+        }
       }
+      const cat = await listCatalogSkills(cwd || null)
+      const list = Array.isArray(cat?.skills) ? cat.skills : []
+      if (!applyOfficial(list)) setSkills([])
+    } catch (e) {
+      setError(String(e))
+      setSkills([])
     } finally {
       setLoading(false)
     }
   }, [tabId, cwd])
 
   useEffect(() => {
-    if (!tabId) return
     void load()
-  }, [tabId, load])
+  }, [load])
 
   const scopesPresent = useMemo(() => {
     const s = new Set(skills.map((x) => x.scope))

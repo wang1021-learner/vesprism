@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../types'
 import {
+  canRecallUser,
   canRetryAssistant,
   isHiddenUserMessage,
   lastAssistantId,
+  lastVisibleUserId,
   originUserMessage,
   promptIndexForUserId,
   stickyUserIndex,
@@ -57,6 +59,13 @@ describe('prompt / origin / retry', () => {
   it('助手后再发用户条则不可重试旧回复', () => {
     const next = [...list, msg('u3', 'user', '第三问')]
     expect(canRetryAssistant(next, 'a2', false)).toBe(false)
+  })
+
+  it('仅最新提问且不在生成时可撤回', () => {
+    expect(lastVisibleUserId(list)).toBe('u2')
+    expect(canRecallUser(list, 'u2', false)).toBe(true)
+    expect(canRecallUser(list, 'u2', true)).toBe(false)
+    expect(canRecallUser(list, 'u1', false)).toBe(false)
   })
 })
 

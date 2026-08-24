@@ -7,13 +7,12 @@ import {
   $rightPanelOpen,
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
-  $settingsOpen,
+  openSettings,
   isScratchCwd,
   type ChatSummary,
 } from '../../store'
 import { searchSessions } from '../../bridge'
 import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap } from '../../lib/engineSlash'
-import { openChatTab } from '../../lib/openChatTab'
 
 type SearchHit = ChatSummary & { snippet?: string }
 
@@ -207,7 +206,31 @@ export function CommandPalette() {
       title: '打开设置',
       subtitle: '配置模型服务商与 API Key',
       action: () => {
-        $settingsOpen.set(true)
+        openSettings()
+      },
+    },
+    {
+      id: 'cmd-skills',
+      title: '技能',
+      subtitle: '在设置里浏览、启用技能',
+      action: () => {
+        openSettings('skills')
+      },
+    },
+    {
+      id: 'cmd-tools',
+      title: '工具',
+      subtitle: '在设置里查看当前会话工具',
+      action: () => {
+        openSettings('tools')
+      },
+    },
+    {
+      id: 'cmd-mcp',
+      title: 'MCP',
+      subtitle: '在设置里管理 MCP 服务器',
+      action: () => {
+        openSettings('mcp')
       },
     },
     {
@@ -223,7 +246,7 @@ export function CommandPalette() {
       title: '记忆',
       subtitle: '浏览、写入、整理跨会话记忆',
       action: () => {
-        void openChatTab({ title: '记忆', utilityKind: 'memory' })
+        openSettings('memory')
       },
     },
     {
@@ -231,7 +254,7 @@ export function CommandPalette() {
       title: '插件',
       subtitle: '安装、启停、更新插件',
       action: () => {
-        void openChatTab({ title: '插件', utilityKind: 'plugins' })
+        openSettings('plugins')
       },
     },
     {

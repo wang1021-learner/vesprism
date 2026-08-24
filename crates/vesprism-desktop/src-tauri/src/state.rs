@@ -64,6 +64,64 @@ pub enum ActorCommand {
         expected_version: u64,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 改一条尚未开跑的排队稿。
+    EditQueuedPrompt {
+        id: String,
+        new_text: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// 本后端能力表（桌面藏按钮用）。
+    SessionCaps {
+        reply: oneshot::Sender<Result<grok_session::SessionCaps, String>>,
+    },
+    Recap {
+        auto: bool,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    MemoryFlush {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    MemoryRewrite {
+        params: serde_json::Value,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    SetMemoryEnabled {
+        enabled: bool,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    HunkCall {
+        action: String,
+        params: serde_json::Value,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    PluginsList {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    PluginsAction {
+        action: serde_json::Value,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    HooksList {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    HooksAction {
+        action: serde_json::Value,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    SchedulerDelete {
+        task_id: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    SessionInfo {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    SessionUsage {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    CompactConversation {
+        user_context: Option<String>,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
     /// 取消当前生成。
     Cancel {
         reply: oneshot::Sender<Result<(), String>>,
@@ -314,6 +372,10 @@ pub enum FrontendEvent {
     /// 认证已失效，需要重新登录。
     AuthExpired {
         message: String,
+    },
+    /// ACP 会话断开，正在 resume（前端按 tab 状态重放，勿当 Ended）。
+    SessionReconnecting {
+        attempt: u32,
     },
     /// 正在自动重试中（非终态，仅用于前端展示进度）。
     RetryInProgress {
@@ -592,6 +654,7 @@ pub async fn run_tab_actor(
     // 待处理的权限 oneshot，key 为 request_id。
     let mut pending_permissions: HashMap<u64, oneshot::Sender<String>> = HashMap::new();
     let mut next_perm_id: u64 = 1;
+    let mut disconnect_tries: u32 = 0;
 
     loop {
         let has_session = session.is_some();
@@ -606,6 +669,9 @@ pub async fn run_tab_actor(
                     cmd, &app, &tab_id, &mut session, &mut status_rx,
                     &mut pending_permissions, &mut next_perm_id,
                 ).await;
+                if session.is_some() {
+                    disconnect_tries = 0;
+                }
             }
             // 消费会话流式事件并转发给前端（透传；合并由官方 ReplayBuffer 负责）。
             event = async {
@@ -623,16 +689,23 @@ pub async fn run_tab_actor(
                         );
                     }
                     None => {
-                        emit(&app, &tab_id, FrontendEvent::Error {
-                            message: "会话已断开".into(),
-                            prompt_id: None,
-                        });
-                        emit(&app, &tab_id, FrontendEvent::StatusChanged {
-                            status: SessionStatus::Ended,
-                        });
                         session = None;
                         status_rx = None;
                         pending_permissions.clear();
+                        disconnect_tries = disconnect_tries.saturating_add(1);
+                        if disconnect_tries <= 3 {
+                            emit(&app, &tab_id, FrontendEvent::SessionReconnecting {
+                                attempt: disconnect_tries,
+                            });
+                        } else {
+                            emit(&app, &tab_id, FrontendEvent::Error {
+                                message: "会话已断开，自动恢复失败".into(),
+                                prompt_id: None,
+                            });
+                            emit(&app, &tab_id, FrontendEvent::StatusChanged {
+                                status: SessionStatus::Ended,
+                            });
+                        }
                     }
                 }
             }
@@ -757,6 +830,228 @@ async fn handle_command(
             match s.remove_queued_prompt(&id, expected_version).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::EditQueuedPrompt {
+            id,
+            new_text,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.edit_queued_prompt(&id, &new_text).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::SessionCaps { reply } => {
+            let caps = session
+                .as_ref()
+                .map(|s| grok_session::SessionBackend::caps(s))
+                .unwrap_or(grok_session::SessionCaps::GROK);
+            let _ = reply.send(Ok(caps));
+        }
+        ActorCommand::Recap { auto, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.recap(auto).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::MemoryFlush { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.memory_flush().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::MemoryRewrite { params, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.memory_rewrite(params).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::SetMemoryEnabled { enabled, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            let text = if enabled { "/memory on" } else { "/memory off" };
+            let pid = format!(
+                "memory-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            match s.send_prompt(text, pid).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::HunkCall {
+            action,
+            params,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.hunk_call(&action, params).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::PluginsList { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.plugins_list().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::PluginsAction { action, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.plugins_action(action).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::HooksList { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.hooks_list().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::HooksAction { action, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.hooks_action(action).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::SchedulerDelete { task_id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.scheduler_delete(&task_id).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::SessionInfo { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.session_info().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::SessionUsage { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.session_usage().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::CompactConversation {
+            user_context,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.compact_conversation(user_context.as_deref()).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
                 }
                 Err(e) => {
                     let _ = reply.send(Err(e.to_string()));
@@ -1553,27 +1848,18 @@ async fn begin_fresh_session(
     }
 }
 
-/// attach / 开 Tab / 崩溃重放：回放 sqlite 会话覆盖，否则工作区 `.grok/agent.yml`。
+/// attach / 开 Tab / 崩溃重放：四级合并后再 apply。
 async fn replay_composition_on_session(s: &GrokSession, session_id: &str, cwd: &str) {
-    let overlay = crate::session_index::get_thread_composition(session_id)
-        .ok()
-        .flatten()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-        .and_then(|mut v| {
-            if let Some(obj) = v.as_object_mut() {
-                obj.remove("workflows");
-            }
-            serde_json::from_value::<grok_session::composition::Composition>(v).ok()
-        });
-    let composition = match overlay {
-        Some(c) => c,
-        None => {
-            match grok_session::composition::load_workspace_composition(std::path::Path::new(cwd)) {
-                Ok(Some(c)) => c,
-                _ => return,
-            }
+    let composition = match crate::commands::resolve_session_composition(Some(session_id), cwd) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[vesprism] 解析组装单失败: {e}");
+            return;
         }
     };
+    if composition == grok_session::composition::Composition::default() {
+        return;
+    }
     if let Err(e) = crate::workbench::flows::register_flows(&composition.flows) {
         eprintln!("[vesprism] 注册组装单流程失败: {e}");
     }

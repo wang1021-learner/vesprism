@@ -1,15 +1,17 @@
 /**
- * 插件：官方 x.ai/plugins/list + action。
+ * 插件：会话 plugins/list + plugins/action。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { $workspaceCwd, pushToast } from '../store'
 import { useStore } from '@nanostores/react'
-import { $activeTabId, $sessionPhase, pushToast } from '../store'
-import { sessionExt } from '../bridge'
+import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
+import { listCatalogPlugins, pluginsAction, pluginsList } from '../bridge'
 import { parsePluginList, scopeLabel, type PluginRow } from '../lib/pluginRows'
 
 export function PluginsPanel() {
-  const tabId = useStore($activeTabId)
-  const ready = useStore($sessionPhase) === 'ready'
+  const tabId = useCodingSessionTabId()
+  const ready = codingSessionReady(tabId)
+  const cwd = useStore($workspaceCwd)
   const [rows, setRows] = useState<PluginRow[]>([])
   const [query, setQuery] = useState('')
   const [source, setSource] = useState('')
@@ -18,16 +20,27 @@ export function PluginsPanel() {
   const [sel, setSel] = useState('')
 
   const load = useCallback(async () => {
-    if (!tabId || !ready) return
     setError('')
     try {
-      const raw = await sessionExt(tabId, 'x.ai/plugins/list', {})
-      setRows(parsePluginList(raw))
+      if (tabId && ready) {
+        try {
+          const raw = await pluginsList(tabId)
+          const rows = parsePluginList(raw)
+          if (rows.length) {
+            setRows(rows)
+            return
+          }
+        } catch {
+          /* 无会话时扫磁盘 */
+        }
+      }
+      const cat = await listCatalogPlugins(cwd || null)
+      setRows(parsePluginList(cat))
     } catch (e) {
       setError(String(e))
       setRows([])
     }
-  }, [tabId, ready])
+  }, [tabId, ready, cwd])
 
   useEffect(() => {
     void load()
@@ -50,7 +63,7 @@ export function PluginsPanel() {
     if (!tabId || busy) return
     setBusy('1')
     try {
-      const r = await sessionExt(tabId, 'x.ai/plugins/action', { action })
+      const r = await pluginsAction(tabId, action)
       const msg = typeof r?.message === 'string' ? r.message : ok
       pushToast(msg, 'success')
       await load()
@@ -72,7 +85,7 @@ export function PluginsPanel() {
             </p>
           </div>
           <div className="work-panel-actions">
-            <button type="button" className="skills-btn" onClick={() => void load()} disabled={!ready}>
+            <button type="button" className="skills-btn" onClick={() => void load()}>
               刷新
             </button>
             <button
@@ -117,7 +130,7 @@ export function PluginsPanel() {
               placeholder="搜索插件"
             />
             {filtered.length === 0 ? (
-              <p className="work-empty">{ready ? '还没有已装插件。' : '会话未就绪。'}</p>
+              <p className="work-empty">还没有已装插件。</p>
             ) : (
               <ul className="work-rows">
                 {filtered.map((r) => (

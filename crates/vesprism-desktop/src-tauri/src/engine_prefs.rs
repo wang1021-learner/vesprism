@@ -20,6 +20,8 @@ pub struct EnginePrefsDto {
     pub web_search_excluded: Vec<String>,
     pub max_parallel_image_gen_calls: i64,
     pub max_parallel_video_gen_calls: i64,
+    /// 官方 `[ui].combine_queued_prompts`：排队的连续提问合并成一轮。
+    pub combine_queued_prompts: bool,
 }
 
 fn table_mut<'a>(root: &'a mut Map<String, Value>, key: &str) -> Result<&'a mut Map<String, Value>, String> {
@@ -103,6 +105,12 @@ pub fn get_engine_prefs() -> Result<EnginePrefsDto, String> {
             .and_then(|v| v.as_integer())
             .unwrap_or(DEFAULT_VIDEO_GEN)
             .clamp(1, 16),
+        combine_queued_prompts: root
+            .get("ui")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("combine_queued_prompts"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     })
 }
 
@@ -187,6 +195,14 @@ pub fn set_engine_prefs(prefs: EnginePrefsDto) -> Result<EnginePrefsDto, String>
         media.insert(
             "max_parallel_video_gen_calls".into(),
             Value::Integer(prefs.max_parallel_video_gen_calls.clamp(1, 16)),
+        );
+    }
+
+    {
+        let ui = table_mut(root_tbl, "ui")?;
+        ui.insert(
+            "combine_queued_prompts".into(),
+            Value::Boolean(prefs.combine_queued_prompts),
         );
     }
 

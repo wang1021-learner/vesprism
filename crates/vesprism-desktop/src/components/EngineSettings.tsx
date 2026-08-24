@@ -156,6 +156,24 @@ export function EngineSettings({
       </section>
 
       <section className="settings-card">
+        <h3 className="settings-card-title">输入排队</h3>
+        <p className="settings-card-desc">
+          官方 <code>[ui].combine_queued_prompts</code>：生成中连续排队的普通提问合并成一轮发给模型。
+        </p>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={prefs.combine_queued_prompts}
+            onChange={(e) =>
+              setPrefs({ ...prefs, combine_queued_prompts: e.target.checked })
+            }
+          />
+          合并连续排队提问
+          <SettingsHelp text="只合并纯文本提问。改排队稿、带附件、斜杠命令不会并在一起。" />
+        </label>
+      </section>
+
+      <section className="settings-card">
         <h3 className="settings-card-title">Web 搜索域名</h3>
         <p className="settings-card-desc">
           写入 <code>[toolset.web_search]</code>。官方语义：白名单与排除列表互斥（同时存在时只认白名单，

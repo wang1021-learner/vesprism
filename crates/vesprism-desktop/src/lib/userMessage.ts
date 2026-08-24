@@ -48,6 +48,27 @@ export function lastAssistantId(messages: ChatMessage[]): string | null {
   return null
 }
 
+/** 最近一条可见用户提问 id（隐藏的子任务派发词不计）。 */
+export function lastVisibleUserId(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (isVisibleUserMessage(messages[i])) return messages[i].id
+  }
+  return null
+}
+
+/**
+ * 最新提问可撤回：整轮不在生成，且就是当前这条。
+ * 撤回会截断对话并填回输入框，避免误撤更早的提问。
+ */
+export function canRecallUser(
+  messages: ChatMessage[],
+  userId: string,
+  sessionBusy: boolean,
+): boolean {
+  if (sessionBusy || !userId) return false
+  return lastVisibleUserId(messages) === userId
+}
+
 /**
  * 最新助手回复可重试：其后不能再有用户/助手条，且整轮不在生成。
  * 避免「新提问已发出仍重试上一轮」把新话抹掉。

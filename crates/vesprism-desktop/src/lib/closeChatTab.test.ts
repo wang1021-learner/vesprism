@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   $activeTabId,
+  $appShell,
   $tabs,
   createTab,
   getTabState,
@@ -82,6 +83,17 @@ describe('closeChatTab', () => {
     expect(getTabState('tab-2')).toBeUndefined()
     expect(closeTab).toHaveBeenCalledWith('tab-2')
     expect(stopPty).toHaveBeenCalledWith('tab-2')
+  })
+
+  it('关掉最后一个工作台 Tab 仍留在工作台，不跳编码', () => {
+    createTab('tab-chat', { chatTitle: '对话' })
+    createTab('tab-flow', { utilityKind: 'flow-canvas', chatTitle: '流程画布' })
+    switchTab('tab-flow')
+    expect($appShell.get()).toBe('workbench')
+    expect(closeChatTab('tab-flow')).toBe(true)
+    expect($appShell.get()).toBe('workbench')
+    expect($activeTabId.get()).toBe('tab-chat')
+    expect($tabs.get().map((t) => t.id)).toEqual(['tab-chat'])
   })
 
   it('关闭时终止该 tab 登记的后台任务', () => {

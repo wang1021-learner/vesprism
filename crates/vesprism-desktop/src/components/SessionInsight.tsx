@@ -12,7 +12,13 @@ import {
   $sessionPhase,
   pushToast,
 } from '../store'
-import { getModelSettings, saveModelSettings, sessionExt } from '../bridge'
+import {
+  compactConversation,
+  getModelSettings,
+  saveModelSettings,
+  sessionInfo,
+  sessionUsage,
+} from '../bridge'
 import { requestRecap } from '../lib/engineSlash'
 import {
   contextBarParts,
@@ -49,8 +55,8 @@ export function SessionInsight() {
     setError('')
     try {
       const [infoRaw, usageRaw] = await Promise.all([
-        sessionExt(tabId, 'x.ai/session/info', {}),
-        sessionExt(tabId, 'x.ai/session/usage', {}),
+        sessionInfo(tabId),
+        sessionUsage(tabId),
       ])
       setInfo(parseSessionInfo(infoRaw))
       setUsage(parseSessionUsage(usageRaw))
@@ -85,9 +91,7 @@ export function SessionInsight() {
     if (!tabId || busy) return
     setBusy('compact')
     try {
-      await sessionExt(tabId, 'x.ai/compact_conversation', {
-        userContext: note.trim() || undefined,
-      })
+      await compactConversation(tabId, note.trim() || undefined)
       pushToast('正在压缩上下文', 'success')
       setNote('')
       await load()

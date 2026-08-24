@@ -8,10 +8,10 @@ import {
   $activeTabId,
   $tabs,
   openRewind,
+  openSettings,
   getTabState,
 } from '../store'
 import { listSessionCommands, searchWorkspaceFiles } from '../bridge'
-import { openChatTab } from '../lib/openChatTab'
 import {
   filterComposerCommands,
   mergeComposerCommands,
@@ -135,10 +135,10 @@ const LOCAL_SLASH: Item[] = [
   {
     id: 'memory',
     label: '/memory',
-    hint: '打开记忆面板',
+    hint: '打开记忆（设置）',
     insert: '',
     run: () => {
-      void openChatTab({ title: '记忆', utilityKind: 'memory' })
+      openSettings('memory')
     },
   },
   {
@@ -254,7 +254,7 @@ export function useComposerAssist(
               ...c,
               insert: '',
               run: () => {
-                void openChatTab({ title: '记忆', utilityKind: 'memory' })
+                openSettings('memory')
               },
             }
           }
@@ -263,7 +263,7 @@ export function useComposerAssist(
               ...c,
               insert: '',
               run: () => {
-                void openChatTab({ title: '插件', utilityKind: 'plugins' })
+                openSettings('plugins')
               },
             }
           }

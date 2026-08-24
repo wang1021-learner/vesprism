@@ -1,6 +1,6 @@
 import { sendSessionPrompt } from './sendSessionPrompt'
 import { openChatTab } from './openChatTab'
-import { sessionExt } from '../bridge'
+import { sessionRecap } from '../bridge'
 import {
   $activeTabId,
   $chatFindIndex,
@@ -80,7 +80,7 @@ export async function requestRecap(): Promise<void> {
   }
   if (!tabId) return
   try {
-    const r = await sessionExt(tabId, 'x.ai/recap', { auto: false })
+    const r = await sessionRecap(tabId, false)
     if (r && r.disabled) {
       pushToast('回顾未开启', 'info')
       return
@@ -97,8 +97,8 @@ export function dismissRecap(tabId?: string): void {
 }
 
 /** 发官方斜杠但不进用户气泡（Goal / 工作流按钮、/memory 拉列表）。 */
-export function sendEngineSlash(text: string): Promise<string | null> {
+export function sendEngineSlash(text: string, tabId?: string): Promise<string | null> {
   const cmd = text.trim()
   if (!cmd) return Promise.resolve(null)
-  return sendSessionPrompt({ text: cmd, hidden: true })
+  return sendSessionPrompt({ text: cmd, hidden: true, tabId })
 }

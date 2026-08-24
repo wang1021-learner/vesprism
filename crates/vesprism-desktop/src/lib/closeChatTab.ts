@@ -17,7 +17,9 @@ import {
   removeTab,
   resetTabToNewChat,
   resolveWorkspaceCwd,
+  shellForUtility,
   switchTab,
+  tabsForShell,
 } from '../store'
 import { closeTab, killTask, restartSession, startSession, stopPty } from '../bridge'
 
@@ -43,6 +45,7 @@ export function closeChatTab(id: string): boolean {
   if (isLast && blank) return false
 
   const wasActive = id === $activeTabId.get()
+  const closedShell = shellForUtility(st?.utilityKind)
 
   killTabBackgroundTasks(id)
   markPtyAlive(id, false)
@@ -63,8 +66,12 @@ export function closeChatTab(id: string): boolean {
   removeTab(id)
   if (wasActive) {
     const remaining = $tabs.get()
-    if (remaining.length > 0) {
-      switchTab(remaining[Math.min(idx, remaining.length - 1)].id)
+    const sameShell = tabsForShell(closedShell, remaining)
+    if (sameShell.length > 0) {
+      switchTab(sameShell[Math.min(idx, sameShell.length - 1)].id)
+    } else if (remaining.length > 0) {
+      // 本壳没 Tab 了：后台落到另一边，界面仍留在当前壳（工作台回入口页）。
+      switchTab(remaining[Math.min(idx, remaining.length - 1)].id, { syncShell: false })
     }
   }
   void closeTab(id).catch(() => {

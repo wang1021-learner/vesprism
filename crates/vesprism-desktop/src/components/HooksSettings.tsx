@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
-import { listConfigHooks, sessionExt, setConfigHooks, type HookGroup, type HookHandler } from '../bridge'
+import { hooksAction, hooksList, listConfigHooks, setConfigHooks, type HookGroup, type HookHandler } from '../bridge'
 import { $activeTabId, $sessionPhase, pushToast } from '../store'
 import { SettingsLabel } from './SettingsHelp'
 
@@ -222,7 +222,7 @@ function LiveHooksCard() {
   const load = async () => {
     if (!tabId || !ready) return
     try {
-      const raw = await sessionExt(tabId, 'x.ai/hooks/list', {})
+      const raw = await hooksList(tabId)
       const list = Array.isArray(raw.hooks) ? raw.hooks : []
       setTrusted(Boolean(raw.projectTrusted ?? raw.project_trusted))
       setHooks(
@@ -249,7 +249,7 @@ function LiveHooksCard() {
     if (!tabId || busy) return
     setBusy('1')
     try {
-      const r = await sessionExt(tabId, 'x.ai/hooks/action', { action })
+      const r = await hooksAction(tabId, action)
       pushToast(typeof r?.message === 'string' ? r.message : ok, 'success')
       await load()
     } catch (e) {
