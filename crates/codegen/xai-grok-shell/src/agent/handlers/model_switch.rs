@@ -31,6 +31,29 @@ pub(crate) async fn apply(
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
     });
+    // jike: 组装单 persona.sections → extraSystemSections 或 rules。
+    let extra_human_rules = args.meta.as_ref().and_then(|m| {
+        if let Some(arr) = m.get("extraSystemSections").and_then(|v| v.as_array()) {
+            let joined = arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if joined.is_empty() {
+                None
+            } else {
+                Some(joined)
+            }
+        } else {
+            m.get("rules")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        }
+    });
     let acp::SetSessionModelRequest {
         session_id,
         model_id,
@@ -227,9 +250,11 @@ pub(crate) async fn apply(
         is_family_switch,
         apply_prompt_override,
         // jike: 有 systemPromptLabel 时即使模型未变也要重渲人设。
-        skip_prompt_rewrite: did_rebuild || (model_unchanged && label_override.is_none()),
+        skip_prompt_rewrite: did_rebuild
+            || (model_unchanged && label_override.is_none() && extra_human_rules.is_none()),
         auto_compact_threshold_percent: new_threshold,
         system_prompt_label,
+        extra_human_rules,
         responds_to: tx,
     });
     let updated_model = rx

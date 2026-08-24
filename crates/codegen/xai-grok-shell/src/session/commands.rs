@@ -356,6 +356,8 @@ pub enum SessionCommand {
         /// prompt rewrite runs, the session agent re-renders so self-intro
         /// matches the newly selected model (A→B mid-session).
         system_prompt_label: Option<String>,
+        /// jike: 组装单 persona.sections，写入系统提示 `<human_rules source="vesprism-composition">`。
+        extra_human_rules: Option<String>,
         responds_to: oneshot::Sender<Result<acp::ModelId, acp::Error>>,
     },
     /// Zero-turn harness rebuild: build a brand-new `Agent` from the

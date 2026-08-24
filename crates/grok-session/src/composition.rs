@@ -33,7 +33,7 @@ const MAX_EXTENDS_DEPTH: usize = 8;
 // ---------------------------------------------------------------------------
 
 /// 人设配置：官方 `system_prompt_label` 桥。
-/// `sections` 在官方 extraSystemSections 落地前不注入（也不写 AGENTS.md）。
+/// `sections` 经 set_model `_meta.extraSystemSections` 写入专用 `<human_rules>`。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PersonaConfig {
@@ -114,6 +114,95 @@ pub fn canonicalize_tool_name(raw: &str) -> Result<String> {
         return Ok(name.to_string());
     }
     anyhow::bail!("未知工具名 {name:?}。请用官方函数名（如 run_terminal_command / web_search）")
+}
+
+/// 技能名是否命中组装单 `skills.exclude`（`*` 通配）。
+pub fn skill_name_excluded(name: &str, patterns: &[String]) -> bool {
+    let name = name.trim();
+    if name.is_empty() {
+        return false;
+    }
+    patterns.iter().any(|p| glob_match(p.trim(), name))
+}
+
+/// stdio MCP：`command` 带空格且没有独立 `args` 时拆成二进制 + 参数。
+pub fn split_stdio_command(command: &str, args: Option<&[String]>) -> (String, Vec<String>) {
+    let command = command.trim();
+    if let Some(args) = args {
+        return (
+            command.to_string(),
+            args.iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect(),
+        );
+    }
+    let parts = split_command_line(command);
+    match parts.split_first() {
+        Some((bin, rest)) => (bin.clone(), rest.to_vec()),
+        None => (String::new(), Vec::new()),
+    }
+}
+
+fn split_command_line(line: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in line.chars() {
+        match (quote, c) {
+            (Some(q), ch) if ch == q => quote = None,
+            (Some(_), ch) => cur.push(ch),
+            (None, '"' | '\'') => quote = Some(c),
+            (None, ch) if ch.is_whitespace() => {
+                if !cur.is_empty() {
+                    parts.push(std::mem::take(&mut cur));
+                }
+            }
+            (None, ch) => cur.push(ch),
+        }
+    }
+    if !cur.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
+fn glob_match(pat: &str, name: &str) -> bool {
+    if pat.is_empty() {
+        return false;
+    }
+    if pat == "*" || pat == "**" {
+        return true;
+    }
+    let parts: Vec<&str> = pat.split('*').collect();
+    if parts.len() == 1 {
+        return pat.eq_ignore_ascii_case(name);
+    }
+    let lower = name.to_ascii_lowercase();
+    let mut rest = lower.as_str();
+    for (i, part) in parts.iter().enumerate() {
+        let needle = part.to_ascii_lowercase();
+        if needle.is_empty() {
+            continue;
+        }
+        if i == 0 {
+            if !rest.starts_with(&needle) {
+                return false;
+            }
+            rest = &rest[needle.len()..];
+            continue;
+        }
+        if i == parts.len() - 1 {
+            return rest.ends_with(&needle);
+        }
+        if let Some(idx) = rest.find(&needle) {
+            rest = &rest[idx + needle.len()..];
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 /// 一个 MCP 服务器引用（stdio 或 HTTP 定义，映射官方 NewSessionRequest.mcp_servers）。
@@ -582,6 +671,36 @@ flows:
         assert!(
             err.contains("未知工具名") || err.contains("bash"),
             "err: {err}"
+        );
+    }
+
+    #[test]
+    fn skill_exclude_glob() {
+        assert!(skill_name_excluded("web-search", &["web-*".into()]));
+        assert!(skill_name_excluded("foo", &["*".into()]));
+        assert!(!skill_name_excluded("keep", &["drop-*".into()]));
+        assert!(skill_name_excluded("ReviewPR", &["review*".into()]));
+    }
+
+    #[test]
+    fn split_stdio_command_line() {
+        assert_eq!(
+            split_stdio_command("npx -y @modelcontextprotocol/server-brave-search", None),
+            (
+                "npx".into(),
+                vec![
+                    "-y".into(),
+                    "@modelcontextprotocol/server-brave-search".into()
+                ]
+            )
+        );
+        assert_eq!(
+            split_stdio_command("npx", Some(&["-y".into(), "pkg".into()])),
+            ("npx".into(), vec!["-y".into(), "pkg".into()])
+        );
+        assert_eq!(
+            split_stdio_command(r#""C:\Program Files\foo.exe" --flag"#, None),
+            ("C:\\Program Files\\foo.exe".into(), vec!["--flag".into()])
         );
     }
 }

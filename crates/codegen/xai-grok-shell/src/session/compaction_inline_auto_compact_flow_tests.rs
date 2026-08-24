@@ -773,6 +773,7 @@ async fn family_switch_compacts_lossy_with_new_model() {
                     true,
                     85,
                     None,
+                    None,
                 )
                 .await
                 .expect("compact failure is log-only; the switch must succeed");

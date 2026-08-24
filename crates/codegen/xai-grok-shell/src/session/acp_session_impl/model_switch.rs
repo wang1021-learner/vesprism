@@ -1,6 +1,29 @@
 use super::*;
 use crate::remote::DEFAULT_CONTEXT_WINDOW;
 use xai_chat_state::conversation_util::replace_or_insert_system_head;
+
+const VESPRISM_RULES_START: &str = "\n\n<human_rules source=\"vesprism-composition\">\n";
+const VESPRISM_RULES_END: &str = "\n</human_rules>";
+
+/// 幂等写入组装单人设段落，不碰官方 session/new 的其它 human_rules。
+fn merge_vesprism_human_rules(prompt: &str, rules: &str) -> String {
+    let rules = rules.trim();
+    let stripped = if let Some(start) = prompt.find(VESPRISM_RULES_START) {
+        let after = start + VESPRISM_RULES_START.len();
+        let end = prompt[after..]
+            .find(VESPRISM_RULES_END)
+            .map(|i| after + i + VESPRISM_RULES_END.len())
+            .unwrap_or(prompt.len());
+        format!("{}{}", &prompt[..start], &prompt[end..])
+    } else {
+        prompt.to_string()
+    };
+    if rules.is_empty() {
+        stripped
+    } else {
+        format!("{stripped}{VESPRISM_RULES_START}{rules}{VESPRISM_RULES_END}")
+    }
+}
 impl SessionActor {
     pub(super) async fn handle_set_session_model(
         self: &std::sync::Arc<Self>,
@@ -11,6 +34,7 @@ impl SessionActor {
         skip_prompt_rewrite: bool,
         auto_compact_threshold_percent: u8,
         system_prompt_label: Option<String>,
+        extra_human_rules: Option<String>,
     ) -> Result<acp::ModelId, acp::Error> {
         let model_id = acp::ModelId::new(sampling_config.model.clone());
         let new_context_window = self.compaction.context_window_override.unwrap_or_else(|| {
@@ -120,6 +144,26 @@ impl SessionActor {
                         sys.content =
                             std::sync::Arc::<str>::from(self.agent.borrow().system_prompt());
                     }
+                    // jike: 组装单人设段落，幂等替换专用 human_rules 块。
+                    if let Some(rules) = extra_human_rules.as_ref() {
+                        sys.content = std::sync::Arc::<str>::from(merge_vesprism_human_rules(
+                            sys.content.as_ref(),
+                            rules,
+                        ));
+                    }
+                    break;
+                }
+            }
+            self.chat_state_handle.replace_conversation(conversation);
+        } else if let Some(rules) = extra_human_rules.as_ref() {
+            // 模型未变、不重写整份系统提示时，仍把人设段落补进当前系统头。
+            let mut conversation = self.chat_state_handle.get_conversation().await;
+            for item in conversation.iter_mut() {
+                if let ConversationItem::System(sys) = item {
+                    sys.content = std::sync::Arc::<str>::from(merge_vesprism_human_rules(
+                        sys.content.as_ref(),
+                        rules,
+                    ));
                     break;
                 }
             }
@@ -408,5 +452,34 @@ impl SessionActor {
             self.compaction.prefire.finish();
         }
         self.compaction.prefire.clear();
+    }
+}
+
+#[cfg(test)]
+mod vesprism_human_rules_tests {
+    use super::merge_vesprism_human_rules;
+
+    #[test]
+    fn injects_dedicated_block() {
+        let out = merge_vesprism_human_rules("you are grok", "回复使用中文。");
+        assert!(out.contains("<human_rules source=\"vesprism-composition\">"));
+        assert!(out.contains("回复使用中文。"));
+        assert!(out.starts_with("you are grok"));
+    }
+
+    #[test]
+    fn replace_is_idempotent() {
+        let once = merge_vesprism_human_rules("base", "first");
+        let twice = merge_vesprism_human_rules(&once, "second");
+        assert_eq!(twice.matches("<human_rules source=\"vesprism-composition\">").count(), 1);
+        assert!(twice.contains("second"));
+        assert!(!twice.contains("first"));
+    }
+
+    #[test]
+    fn empty_rules_strips_block() {
+        let once = merge_vesprism_human_rules("base prompt", "keep me");
+        let stripped = merge_vesprism_human_rules(&once, "  ");
+        assert_eq!(stripped, "base prompt");
     }
 }

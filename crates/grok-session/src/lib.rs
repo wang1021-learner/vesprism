@@ -15,9 +15,12 @@ pub use display_messages::{
 mod prompt_attach;
 pub use prompt_attach::{PromptAttach, build_prompt_blocks};
 
+pub mod backend;
 pub mod composition;
 pub mod policy;
 mod terminal;
+
+pub use backend::{SessionBackend, SessionCaps, StartOpts};
 
 use agent_client_protocol::{
     Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ContentBlock,
@@ -1998,6 +2001,23 @@ fn unwrap_ext_json(value: serde_json::Value) -> serde_json::Value {
         .unwrap_or(value)
 }
 
+fn seed_model_lock(model_id: Option<&str>) -> std::sync::Arc<std::sync::RwLock<Option<String>>> {
+    std::sync::Arc::new(std::sync::RwLock::new(
+        model_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    ))
+}
+
+fn json_nonempty_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 fn git_change_status(change_type: &str) -> &'static str {
     match change_type.to_ascii_lowercase().as_str() {
         "untracked" | "create" => "untracked",
@@ -2389,6 +2409,8 @@ pub struct GrokSession {
     last_model_id: std::sync::Arc<std::sync::RwLock<Option<String>>>,
     /// 尚未返回的 `session/prompt` 数。排队的第二条也算，避免上一轮结束时误置 Idle。
     inflight_prompts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// 会话工作区，组装单技能/插件路径相对它解析。
+    cwd: String,
 }
 
 impl GrokSession {
@@ -2557,6 +2579,7 @@ impl GrokSession {
 
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
 
+        let cwd_owned = cwd.clone();
         let mut new_req = NewSessionRequest::new(cwd);
         if let Some(m) = spawn_session_meta(flows, model_id, reasoning_effort) {
             new_req = new_req.meta(Some(m));
@@ -2575,8 +2598,9 @@ impl GrokSession {
             status_tx,
             policy,
             tool_overrides: std::sync::Arc::new(std::sync::RwLock::new(None)),
-            last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
+            last_model_id: seed_model_lock(model_id),
             inflight_prompts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            cwd: cwd_owned,
         })
     }
 
@@ -2657,7 +2681,8 @@ impl GrokSession {
         connection.initialize(desktop_initialize_request()).await?;
         let (status_tx, _status_rx) = watch::channel(SessionStatus::Initializing);
         let load_session_id = session_id.clone();
-        let mut load_req = LoadSessionRequest::new(load_session_id, cwd.into());
+        let cwd_owned: String = cwd.into();
+        let mut load_req = LoadSessionRequest::new(load_session_id, cwd_owned.clone());
         let mut m = agent_client_protocol::Meta::new();
         let mut has_meta = false;
         if let Some(rc) = restore_code {
@@ -2690,6 +2715,7 @@ impl GrokSession {
             tool_overrides: std::sync::Arc::new(std::sync::RwLock::new(None)),
             last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
             inflight_prompts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            cwd: cwd_owned,
         })
     }
 
@@ -2740,6 +2766,120 @@ impl GrokSession {
             .await
             .map_err(|e| anyhow::anyhow!("取消排队失败: {e:?}"))?;
         Ok(())
+    }
+
+    /// 改一条尚未开跑的排队稿（官方 `x.ai/queue/edit`）。
+    pub async fn edit_queued_prompt(&self, id: &str, new_text: &str) -> anyhow::Result<()> {
+        let params = serde_json::json!({
+            "sessionId": self.session_id.to_string(),
+            "id": id,
+            "newText": new_text,
+        });
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化 queue/edit 失败: {e}"))?;
+        self.connection
+            .ext_notification(ExtNotification::new("x.ai/queue/edit", raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("改排队稿失败: {e:?}"))?;
+        Ok(())
+    }
+
+    /// 写回顾（官方 `x.ai/recap`）。桌面走具名命令，不要再喊方法名。
+    pub async fn recap(&self, auto: bool) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/recap", serde_json::json!({ "auto": auto }))
+            .await
+    }
+
+    /// 把本会话写入记忆（官方 `x.ai/memory/flush`）。
+    pub async fn memory_flush(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/memory/flush", serde_json::json!({}))
+            .await
+    }
+
+    /// 改写一条待记住的话（官方 `x.ai/memory/rewrite`）。
+    pub async fn memory_rewrite(
+        &self,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/memory/rewrite", params).await
+    }
+
+    /// hunk-tracker 动作。`action` 如 `get-files` / `hunk-action`，这里再拼官方方法名。
+    pub async fn hunk_call(
+        &self,
+        action: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let action = action.trim().trim_start_matches('/');
+        if action.is_empty()
+            || action.contains('/')
+            || !action
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            anyhow::bail!("非法 hunk 动作: {action:?}");
+        }
+        self.ext_json(&format!("x.ai/hunk-tracker/{action}"), params)
+            .await
+    }
+
+    pub async fn plugins_list(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/plugins/list", serde_json::json!({}))
+            .await
+    }
+
+    pub async fn plugins_action(
+        &self,
+        action: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/plugins/action", serde_json::json!({ "action": action }))
+            .await
+    }
+
+    pub async fn hooks_list(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/hooks/list", serde_json::json!({}))
+            .await
+    }
+
+    pub async fn hooks_action(
+        &self,
+        action: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/hooks/action", serde_json::json!({ "action": action }))
+            .await
+    }
+
+    pub async fn scheduler_delete(&self, task_id: &str) -> anyhow::Result<serde_json::Value> {
+        self.ext_json(
+            "x.ai/scheduler/delete",
+            serde_json::json!({ "taskId": task_id }),
+        )
+        .await
+    }
+
+    pub async fn session_info(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/session/info", serde_json::json!({}))
+            .await
+    }
+
+    pub async fn session_usage(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/session/usage", serde_json::json!({}))
+            .await
+    }
+
+    pub async fn compact_conversation(
+        &self,
+        user_context: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut params = serde_json::Map::new();
+        if let Some(ctx) = user_context.map(str::trim).filter(|s| !s.is_empty()) {
+            params.insert(
+                "userContext".into(),
+                serde_json::Value::String(ctx.to_string()),
+            );
+        }
+        self.ext_json("x.ai/compact_conversation", serde_json::Value::Object(params))
+            .await
     }
 
     /// 当前会话状态（最新值）。
@@ -2855,16 +2995,18 @@ impl GrokSession {
         model_id: impl Into<String>,
         reasoning_effort: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.set_model_with_label(model_id, reasoning_effort, None)
+        self.set_model_with_label(model_id, reasoning_effort, None, None)
             .await
     }
 
     /// 切模型，并可同时写入 `_meta.systemPromptLabel`（模型不变时也会重渲人设）。
+    /// `extra_human_rules` 为组装单 persona.sections 拼接稿。
     pub async fn set_model_with_label(
         &self,
         model_id: impl Into<String>,
         reasoning_effort: Option<&str>,
         system_prompt_label: Option<&str>,
+        extra_human_rules: Option<&str>,
     ) -> anyhow::Result<()> {
         let model_id = model_id.into();
         let mut req =
@@ -2882,6 +3024,19 @@ impl GrokSession {
                 serde_json::Value::String(label.to_string()),
             );
         }
+        if let Some(rules) = extra_human_rules.map(str::trim).filter(|s| !s.is_empty()) {
+            meta.insert(
+                "extraSystemSections".into(),
+                serde_json::Value::Array(
+                    rules
+                        .split("\n\n")
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| serde_json::Value::String(s.to_string()))
+                        .collect(),
+                ),
+            );
+        }
         if !meta.is_empty() {
             req = req.meta(meta);
         }
@@ -2891,6 +3046,31 @@ impl GrokSession {
             .write()
             .unwrap_or_else(|e| e.into_inner()) = Some(model_id);
         Ok(())
+    }
+
+    /// 组装单只改人设时复用当前模型。先看本会话缓存，没有再问 `session/info`。
+    async fn current_model_id(&self) -> anyhow::Result<String> {
+        {
+            let cached = self
+                .last_model_id
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(id) = cached
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                return Ok(id.to_string());
+            }
+        }
+        let info = self.session_info().await?;
+        let nested = info.get("data");
+        json_nonempty_str(&info, "model")
+            .or_else(|| json_nonempty_str(&info, "resolvedModelId"))
+            .or_else(|| json_nonempty_str(&info, "resolved_model_id"))
+            .or_else(|| nested.and_then(|d| json_nonempty_str(d, "model")))
+            .or_else(|| nested.and_then(|d| json_nonempty_str(d, "resolvedModelId")))
+            .ok_or_else(|| anyhow::anyhow!("人设段落需要当前会话的模型 id，但未能取得"))
     }
 
     /// 切换会话模式（官方 `session/set_mode`：`default` / `plan` / `ask`）。
@@ -2906,7 +3086,7 @@ impl GrokSession {
         Ok(())
     }
 
-    /// 应用已解析的组装单（已接线通道）。
+    /// 应用到当前会话：模型、人设段落、停用工具、权限、流程、MCP、技能、插件目录。
     pub async fn apply_composition(
         &self,
         composition: &crate::composition::Composition,
@@ -2940,27 +3120,185 @@ impl GrokSession {
             .await?;
 
         let label = composition.persona.label.as_deref();
-        if let Some(model) = composition.model.name.as_deref() {
-            self.set_model_with_label(model, composition.model.reasoning_effort.as_deref(), label)
-                .await?;
-        } else if label.is_some() {
-            let current = self
-                .last_model_id
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            if let Some(model) = current {
-                self.set_model_with_label(
-                    model,
-                    composition.model.reasoning_effort.as_deref(),
-                    label,
-                )
-                .await?;
+        let extra_rules = {
+            let joined = composition
+                .persona
+                .sections
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            if joined.is_empty() {
+                None
+            } else {
+                Some(joined)
             }
+        };
+        if let Some(model) = composition.model.name.as_deref() {
+            self.set_model_with_label(
+                model,
+                composition.model.reasoning_effort.as_deref(),
+                label,
+                extra_rules.as_deref(),
+            )
+            .await?;
+        } else if label.is_some() || extra_rules.is_some() {
+            let current = self.current_model_id().await?;
+            self.set_model_with_label(
+                current,
+                composition.model.reasoning_effort.as_deref(),
+                label,
+                extra_rules.as_deref(),
+            )
+            .await?;
         }
 
         self.update_flows(&composition.flows).await?;
+        self.apply_composition_mcp(composition).await?;
+        self.apply_composition_skills(composition).await?;
+        self.apply_composition_plugins(composition).await?;
 
+        Ok(())
+    }
+
+    async fn apply_composition_mcp(
+        &self,
+        composition: &crate::composition::Composition,
+    ) -> anyhow::Result<()> {
+        for server in &composition.mcp.servers {
+            let name = server.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let mut cfg = serde_json::Map::new();
+            if let Some(url) = server.url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                cfg.insert("url".into(), serde_json::Value::String(url.to_string()));
+            } else if let Some(cmd) = server
+                .command
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                let (bin, argv) =
+                    crate::composition::split_stdio_command(cmd, server.args.as_deref());
+                if bin.is_empty() {
+                    continue;
+                }
+                cfg.insert("command".into(), serde_json::Value::String(bin));
+                if !argv.is_empty() {
+                    cfg.insert(
+                        "args".into(),
+                        serde_json::Value::Array(argv.into_iter().map(serde_json::Value::String).collect()),
+                    );
+                }
+            } else {
+                continue;
+            }
+            if cfg.contains_key("command") {
+                if let Some(env) = &server.env {
+                    let mut obj = serde_json::Map::new();
+                    for (k, v) in env {
+                        obj.insert(k.clone(), serde_json::Value::String(v.clone()));
+                    }
+                    cfg.insert("env".into(), serde_json::Value::Object(obj));
+                }
+            }
+            cfg.insert("enabled".into(), serde_json::Value::Bool(true));
+            self.upsert_mcp_server(name, serde_json::Value::Object(cfg))
+                .await?;
+        }
+        for (server, tools) in &composition.mcp.disabled_tools {
+            for tool in tools {
+                let t = tool.trim();
+                if t.is_empty() {
+                    continue;
+                }
+                self.toggle_mcp_tool(server, t, false).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn apply_composition_skills(
+        &self,
+        composition: &crate::composition::Composition,
+    ) -> anyhow::Result<()> {
+        let scopes = &composition.skills.scopes;
+        let exclude = &composition.skills.exclude;
+        if scopes.is_empty() && exclude.is_empty() {
+            return Ok(());
+        }
+        let listed = self.list_skills(&self.cwd).await?;
+        let skills = listed
+            .get("skills")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for sk in skills {
+            let name = sk
+                .get("name")
+                .or_else(|| sk.get("skillName"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let scope = sk
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            let enabled = sk
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let in_scope = scopes.is_empty()
+                || scopes
+                    .iter()
+                    .any(|s| s.trim().eq_ignore_ascii_case(&scope));
+            let excluded = crate::composition::skill_name_excluded(&name, exclude);
+            let want = in_scope && !excluded;
+            if want != enabled {
+                self.toggle_skill(&name, want, &self.cwd).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn apply_composition_plugins(
+        &self,
+        composition: &crate::composition::Composition,
+    ) -> anyhow::Result<()> {
+        if composition.plugins.dirs.is_empty() {
+            return Ok(());
+        }
+        let cwd = std::path::Path::new(&self.cwd);
+        for dir in &composition.plugins.dirs {
+            let raw = dir.to_string_lossy();
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let path = {
+                let p = std::path::Path::new(trimmed);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    cwd.join(p)
+                }
+            };
+            self.plugins_action(serde_json::json!({
+                "type": "add",
+                "path": path.to_string_lossy(),
+            }))
+            .await?;
+        }
+        self.plugins_action(serde_json::json!({ "type": "reload" }))
+            .await?;
         Ok(())
     }
 
@@ -3610,6 +3948,86 @@ impl GrokSession {
     /// 非阻塞取一条事件（历史回放 drain 用）。
     pub fn try_next_event(&mut self) -> Option<SessionEvent> {
         self.event_rx.try_recv().ok()
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl SessionBackend for GrokSession {
+    fn caps(&self) -> SessionCaps {
+        SessionCaps::GROK
+    }
+    fn session_id(&self) -> String {
+        GrokSession::session_id(self)
+    }
+    fn subscribe_status(&self) -> watch::Receiver<SessionStatus> {
+        GrokSession::subscribe_status(self)
+    }
+    async fn send_prompt_with_attachments(
+        &self,
+        text: String,
+        attachments: Vec<PromptAttach>,
+        prompt_id: String,
+    ) -> anyhow::Result<()> {
+        GrokSession::send_prompt_with_attachments(self, text, attachments, prompt_id).await
+    }
+    async fn cancel(&self) -> anyhow::Result<()> {
+        GrokSession::cancel(self).await
+    }
+    async fn recap(&self, auto: bool) -> anyhow::Result<serde_json::Value> {
+        GrokSession::recap(self, auto).await
+    }
+    async fn memory_flush(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::memory_flush(self).await
+    }
+    async fn memory_rewrite(
+        &self,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        GrokSession::memory_rewrite(self, params).await
+    }
+    async fn hunk_call(
+        &self,
+        action: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        GrokSession::hunk_call(self, action, params).await
+    }
+    async fn edit_queued_prompt(&self, id: &str, new_text: &str) -> anyhow::Result<()> {
+        GrokSession::edit_queued_prompt(self, id, new_text).await
+    }
+    async fn plugins_list(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::plugins_list(self).await
+    }
+    async fn plugins_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        GrokSession::plugins_action(self, action).await
+    }
+    async fn hooks_list(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::hooks_list(self).await
+    }
+    async fn hooks_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        GrokSession::hooks_action(self, action).await
+    }
+    async fn scheduler_delete(&self, task_id: &str) -> anyhow::Result<serde_json::Value> {
+        GrokSession::scheduler_delete(self, task_id).await
+    }
+    async fn session_info(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::session_info(self).await
+    }
+    async fn session_usage(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::session_usage(self).await
+    }
+    async fn compact_conversation(
+        &self,
+        user_context: Option<&str>,
+    ) -> anyhow::Result<serde_json::Value> {
+        GrokSession::compact_conversation(self, user_context).await
+    }
+    async fn ext_json(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        GrokSession::ext_json(self, method, params).await
     }
 }
 

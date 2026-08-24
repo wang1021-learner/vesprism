@@ -658,6 +658,7 @@ pub(super) async fn run_session(
                             skip_prompt_rewrite,
                             auto_compact_threshold_percent,
                             system_prompt_label,
+                            extra_human_rules,
                             responds_to,
                         } => {
                             let updated_model_id = session
@@ -669,6 +670,7 @@ pub(super) async fn run_session(
                                     skip_prompt_rewrite,
                                     auto_compact_threshold_percent,
                                     system_prompt_label,
+                                    extra_human_rules,
                                 )
                                 .await;
                             let _ = responds_to.send(updated_model_id);
