@@ -154,9 +154,9 @@ export function WorkflowsPanel() {
           <div className="workflows-panel-titles">
             <h2 className="workflows-panel-title">自动化任务</h2>
             <p className="workflows-panel-desc">
-              Rhai 工作流（Workflow）：多阶段编排脚本。对话中输入{' '}
-              <code>/工作流名</code> 启动；也可点「使用」填入输入框。
-              脚本位于 <code>.grok/workflows/*.rhai</code> 或用户配置目录。
+              Rhai 工作流：多阶段编排脚本。对话里输入{' '}
+              <code>/工作流名</code> 启动，也可直接说流程名——模型看得到已发布列表。
+              点「使用」会填进输入框。脚本在 <code>.grok/workflows/*.rhai</code> 或用户配置目录。
             </p>
           </div>
           <div className="workflows-panel-actions">
@@ -181,6 +181,11 @@ export function WorkflowsPanel() {
                   <div>
                     {w.name || w.runId} · {w.status}
                     {w.currentPhase ? ` · ${w.currentPhase}` : ''}
+                    {w.agentBudget
+                      ? ` · ${w.agentsUsed}/${w.agentBudget} agent`
+                      : w.agentsUsed
+                        ? ` · ${w.agentsUsed} agent`
+                        : ''}
                   </div>
                   <div className="work-panel-actions" style={{ marginTop: 4 }}>
                     {w.status === 'paused' ? (

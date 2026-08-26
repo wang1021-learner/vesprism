@@ -28,6 +28,7 @@ import {
 import { ErrorBoundary } from '../../components/ErrorBoundary'
 import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
 import { sendPrompt } from '../../bridge'
+import { buildNamedWorkflowSlash } from '../flow/namedWorkflowSlash'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
 import { expectCanvasGraph, resetCanvasGraphWait } from '../generateWait'
 import { CanvasGraphApplier } from './CanvasGraphApplier'
@@ -881,8 +882,15 @@ function FlowCanvasInner() {
         ephemeral: Boolean(fromNodeId),
       })
       if (fromNodeId) ephemeralRunId.current = current.id
-      const arg = Object.keys(input as object).length ? ` ${JSON.stringify(input)}` : ''
-      await sendPrompt(tabId, `/${fromNodeId ? current.id : draft.id}${arg}`)
+      const effort = getTabState(tabId)?.reasoningEffort
+      await sendPrompt(
+        tabId,
+        buildNamedWorkflowSlash({
+          id: fromNodeId ? current.id : draft.id,
+          input,
+          effort,
+        }),
+      )
       submittedRunRef.current = {
         keys: new Set(Object.keys($workflows.get())),
         id: current.id,
