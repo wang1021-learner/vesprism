@@ -44,7 +44,14 @@ import {
   $appShell,
   $utilityKind,
   type ChatSummary,
+  type UtilityKind,
 } from '../store'
+import {
+  getProduct,
+  isProductSessionGroup,
+  navLabelForKind,
+  type ProductNavKind,
+} from '../products/catalog'
 import { clearSessionAllowed } from '../lib/permissionMemory'
 import { tabStates, pushToast } from '../store'
 import {
@@ -291,6 +298,22 @@ function PlusIcon() {
   )
 }
 
+function GenericNavIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+  )
+}
+
+function iconForNavKind(kind: ProductNavKind) {
+  if (kind === 'schedule') return ScheduleIcon
+  if (kind === 'workflows') return WorkflowIcon
+  if (kind === 'flow-canvas') return FlowCanvasIcon
+  if (kind === 'agents') return AgentsIcon
+  return GenericNavIcon
+}
+
 function ChatBubbleIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -336,8 +359,8 @@ function normalizeCwdKey(cwd: string | undefined): string {
   return normalizeWorkspacePath(cwd || '') || '(未知工作空间)'
 }
 
-/** 工作台分组（有产物绑定的画布/编制干活会话）专用 key，不参与 cwd 分组。 */
-const WORKBENCH_GROUP_KEY = '__workbench__'
+/** 工作台分组 key 来自产品表，不参与 cwd 分组。 */
+const WORKBENCH_GROUP_KEY = getProduct('workbench').sessionGroupKey ?? '__workbench__'
 /** 闲聊分组（scratch cwd，未绑定项目）专用 key。 */
 const CASUAL_GROUP_KEY = '__casual__'
 
@@ -376,6 +399,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
   const scratchCwd = useStore($scratchCwd)
   const appShell = useStore($appShell)
   const utilityKind = useStore($utilityKind)
+  const product = getProduct(appShell)
 
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Set<string>>(new Set())
   const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null)
@@ -1158,47 +1182,37 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     $settingsOpen.set(true)
   }
 
-  /** 侧栏「自动化任务 / 流程画布 / Agent 编制」：各开一个带标题的专用 Tab */
-  const onOpenUtilityTab = useCallback(
-    async (kind: 'workflows' | 'flow-canvas' | 'agents') => {
-      const title =
-        kind === 'flow-canvas'
-          ? '流程画布'
-          : kind === 'agents'
-            ? 'Agent 编制'
-            : '自动化任务'
-      setMenuOpenChatId(null)
-      await openChatTab({ title, utilityKind: kind })
+  /** 侧栏产品入口：开专用 Tab；schedule 只打开当前会话的定时面板。 */
+  const onOpenUtilityTab = useCallback(async (kind: UtilityKind) => {
+    setMenuOpenChatId(null)
+    await openChatTab({ title: navLabelForKind(kind), utilityKind: kind })
+  }, [])
+
+  const onProductNav = useCallback(
+    (kind: ProductNavKind) => {
+      if (kind === 'schedule') openSessionSchedule()
+      else void onOpenUtilityTab(kind)
     },
-    [],
+    [onOpenUtilityTab],
   )
 
-  const utilityEntries =
-    appShell === 'workbench'
-      ? [
-          { kind: 'workflows' as const, label: '自动化任务', Icon: WorkflowIcon },
-          { kind: 'flow-canvas' as const, label: '流程画布', Icon: FlowCanvasIcon },
-          { kind: 'agents' as const, label: 'Agent 编制', Icon: AgentsIcon },
-        ]
-      : [{ kind: 'schedule' as const, label: '定时任务', Icon: ScheduleIcon }]
-
   const renderUtilityGrid = () => (
-    <nav className="sidebar-compose-nav" aria-label={appShell === 'workbench' ? '工作台入口' : '能力入口'}>
-      {utilityEntries.map(({ kind, label, Icon }) => (
-        <button
-          key={kind}
-          type="button"
-          className={`sidebar-compose-link${utilityKind === kind ? ' is-active' : ''}`}
-          title={label}
-          onClick={() => {
-            if (kind === 'schedule') openSessionSchedule()
-            else void onOpenUtilityTab(kind)
-          }}
-        >
-          <Icon />
-          <span>{label}</span>
-        </button>
-      ))}
+    <nav className="sidebar-compose-nav" aria-label={product.sidebarNavLabel}>
+      {product.sidebarEntries.map(({ kind, label }) => {
+        const Icon = iconForNavKind(kind)
+        return (
+          <button
+            key={kind}
+            type="button"
+            className={`sidebar-compose-link${utilityKind === kind ? ' is-active' : ''}`}
+            title={label}
+            onClick={() => onProductNav(kind)}
+          >
+            <Icon />
+            <span>{label}</span>
+          </button>
+        )
+      })}
     </nav>
   )
 
@@ -1206,9 +1220,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     <div className="sidebar-recent-list" ref={listRef}>
       {workspaceGroups
         .filter((ws) =>
-          appShell === 'workbench'
-            ? ws.cwdKey === WORKBENCH_GROUP_KEY
-            : ws.cwdKey !== WORKBENCH_GROUP_KEY,
+          product.sessionList === 'product'
+            ? ws.cwdKey === (product.sessionGroupKey ?? '')
+            : !isProductSessionGroup(ws.cwdKey),
         )
         .map((ws) => {
         const folded = isWorkspaceCollapsed(ws)
@@ -1283,15 +1297,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         )
       })}
       {workspaceGroups.filter((ws) =>
-        appShell === 'workbench'
-          ? ws.cwdKey === WORKBENCH_GROUP_KEY
-          : ws.cwdKey !== WORKBENCH_GROUP_KEY,
+        product.sessionList === 'product'
+          ? ws.cwdKey === (product.sessionGroupKey ?? '')
+          : !isProductSessionGroup(ws.cwdKey),
       ).length === 0 && (
-        <p className="sidebar-empty-hint">
-          {appShell === 'workbench'
-            ? '还没有画布或编制会话。'
-            : '暂无历史会话。点上方 + 添加项目。'}
-        </p>
+        <p className="sidebar-empty-hint">{product.emptyHint}</p>
       )}
     </div>
   )
@@ -1321,7 +1331,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             </button>
           </div>
         </div>
-        {appShell === 'coding' && (
+        {product.showNewChat && (
           <button
             type="button"
             className="sidebar-compose-new"
@@ -1339,8 +1349,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       </div>
 
       <div className="sidebar-section-label">
-        <span>{appShell === 'workbench' ? '干活会话' : '会话'}</span>
-        {appShell === 'coding' && (
+        <span>{product.sidebarListLabel}</span>
+        {product.showAddProject && (
         <button
           type="button"
           className="sidebar-section-add"
@@ -1394,7 +1404,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             onMouseLeave={handlePeekZoneLeave}
           >
             <div className="sidebar-rail-divider" />
-            {appShell === 'coding' ? (
+            {product.showNewChat ? (
               <>
             <button
               type="button"
@@ -1416,43 +1426,22 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
               <SearchIcon />
             </button>
             <div className="sidebar-rail-divider" />
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="定时任务"
-              onClick={() => openSessionSchedule()}
-            >
-              <ScheduleIcon />
-            </button>
               </>
-            ) : (
-              <>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="自动化任务"
-              onClick={() => void onOpenUtilityTab('workflows')}
-            >
-              <WorkflowIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="流程画布"
-              onClick={() => void onOpenUtilityTab('flow-canvas')}
-            >
-              <FlowCanvasIcon />
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-btn"
-              title="Agent 编制"
-              onClick={() => void onOpenUtilityTab('agents')}
-            >
-              <AgentsIcon />
-            </button>
-              </>
-            )}
+            ) : null}
+            {product.sidebarEntries.map(({ kind, label }) => {
+              const Icon = iconForNavKind(kind)
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  className="sidebar-icon-btn"
+                  title={label}
+                  onClick={() => onProductNav(kind)}
+                >
+                  <Icon />
+                </button>
+              )
+            })}
             <div className="sidebar-spacer" />
             <button
               type="button"

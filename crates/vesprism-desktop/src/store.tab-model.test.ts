@@ -295,6 +295,14 @@ describe('Tab 活动灯', () => {
     expect($activeTabId.get()).toBe('tab-flow')
   })
 
+  it('未登记产品 id 回落到默认产品', () => {
+    createTab('tab-chat', { utilityKind: null, chatTitle: '对话' })
+    switchTab('tab-chat')
+    setAppShell('not-a-product')
+    expect($appShell.get()).toBe('coding')
+    expect($activeTabId.get()).toBe('tab-chat')
+  })
+
   it('isScratchCwd / workspaceLabel 识别闲聊目录', () => {
     $scratchCwd.set('C:\\Users\\me\\.vesprism\\scratch')
     expect(isScratchCwd('C:/Users/me/.vesprism/scratch')).toBe(true)

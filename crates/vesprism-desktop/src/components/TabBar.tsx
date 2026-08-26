@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useState } from 'react'
 import { IconAdjustmentsHorizontal } from '@tabler/icons-react'
+import { getProduct } from '../products/catalog'
 import {
   $activeTabId,
   $appShell,
@@ -32,7 +33,7 @@ export function TabBar() {
   const activeId = useStore($activeTabId)
   const compOpen = useStore($compositionOpen)
   const [busy, setBusy] = useState(false)
-  const workbench = shell === 'workbench'
+  const showTabPlus = getProduct(shell).showTabPlus
 
   const onNewTab = async () => {
     if (busy) return
@@ -134,7 +135,7 @@ export function TabBar() {
             </div>
           )
         })}
-        {!workbench && (
+        {showTabPlus && (
         <button type="button" className="tabbar-new" title="新建会话" disabled={busy} onClick={() => void onNewTab()}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 5v14M5 12h14" />

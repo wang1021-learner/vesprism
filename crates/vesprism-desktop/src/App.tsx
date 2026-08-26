@@ -43,7 +43,7 @@ import {
   $permission, $userQuestion, $mcpElicit, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
-  $appShell, isWorkbenchUtility,
+  $appShell,
   $preferredWorkspaceCwd, $scratchCwd, $securityPolicy, $sessionCaps,
   createTab, getTabState, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast,
@@ -52,7 +52,8 @@ import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
-import { WorkbenchHome } from './components/WorkbenchHome'
+import { ProductHome } from './products/ProductHome'
+import { getProduct, productOwnsUtility } from './products/catalog'
 
 const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
@@ -149,7 +150,7 @@ function DesktopApp() {
 
 function AppRightPanel() {
   const shell = useStore($appShell)
-  if (shell === 'workbench') return null
+  if (!getProduct(shell).showRightPanel) return null
   return <RightPanel />
 }
 
@@ -316,8 +317,9 @@ function AppError() {
 function AppMainBody() {
   const shell = useStore($appShell)
   const kind = useStore($utilityKind)
-  if (shell === 'workbench' && !isWorkbenchUtility(kind)) {
-    return <WorkbenchHome />
+  const product = getProduct(shell)
+  if (product.emptyView === 'home' && !productOwnsUtility(shell, kind)) {
+    return <ProductHome product={product} />
   }
   if (kind === 'mcp') {
     return <McpPanel />

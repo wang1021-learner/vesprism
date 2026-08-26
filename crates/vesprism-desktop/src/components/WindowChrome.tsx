@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react'
+import { getProduct } from '../products/catalog'
 import { $appShell } from '../store'
 import { RightPanelToggle, TabBar } from './TabBar'
 
@@ -9,7 +10,7 @@ export function WindowChrome() {
     <div className="window-chrome">
       <TabBar />
       <div className="window-chrome-spacer" />
-      {shell === 'coding' && (
+      {getProduct(shell).showRightPanel && (
         <div className="window-actions">
           <RightPanelToggle />
         </div>

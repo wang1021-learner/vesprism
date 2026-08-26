@@ -1,17 +1,13 @@
 import { useStore } from '@nanostores/react'
-import { $appShell, setAppShell, type AppShell } from '../store'
+import { listedProducts } from '../products/catalog'
+import { $appShell, setAppShell } from '../store'
 
-const SHELLS: { id: AppShell; label: string }[] = [
-  { id: 'coding', label: '编码' },
-  { id: 'workbench', label: '工作台' },
-]
-
-/** 编码 / 工作台。侧栏左上角，纯文字 + 底线。 */
+/** 产品切换。侧栏左上角，纯文字 + 底线。条目来自产品表。 */
 export function ShellSwitch() {
   const shell = useStore($appShell)
   return (
     <div className="shell-switch" role="tablist" aria-label="界面">
-      {SHELLS.map((s) => (
+      {listedProducts().map((s) => (
         <button
           key={s.id}
           type="button"

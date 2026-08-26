@@ -27,6 +27,13 @@ import { upsertSubagentMessage } from './lib/subagentMessage'
 import type { SecurityPolicy } from './lib/executionPolicy'
 import { DEFAULT_SECURITY_POLICY } from './lib/executionPolicy'
 import type { GoalInfoDto, WorkflowInfoDto } from './lib/composition'
+import {
+  DEFAULT_PRODUCT_ID,
+  getProduct,
+  isRegisteredProduct,
+  productIdForUtility,
+  type ProductId,
+} from './products/catalog'
 
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
@@ -363,17 +370,18 @@ export function resolveNewTabCwd(): string {
   return resolveWorkspaceCwd()
 }
 
-/** 编码对话 vs 工作台（画布 / 编制 / 试跑 / 自动化任务）。 */
-export type AppShell = 'coding' | 'workbench'
+/** 当前产品 id，取值来自 `products/catalog.ts`，不是联合类型。 */
+export type AppShell = ProductId
 
 const APP_SHELL_KEY = 'vesprism.appShell'
 
 function readStoredAppShell(): AppShell {
   try {
-    if (typeof localStorage === 'undefined') return 'coding'
-    return localStorage.getItem(APP_SHELL_KEY) === 'workbench' ? 'workbench' : 'coding'
+    if (typeof localStorage === 'undefined') return DEFAULT_PRODUCT_ID
+    const raw = localStorage.getItem(APP_SHELL_KEY)
+    return isRegisteredProduct(raw) ? raw : DEFAULT_PRODUCT_ID
   } catch {
-    return 'coding'
+    return DEFAULT_PRODUCT_ID
   }
 }
 
@@ -387,23 +395,15 @@ function persistAppShell(shell: AppShell): void {
 
 export const $appShell = atom<AppShell>(readStoredAppShell())
 
-const lastShellTab: Record<AppShell, string> = { coding: '', workbench: '' }
+const lastShellTab: Record<string, string> = {}
 
 export function shellForUtility(kind: UtilityKind | null | undefined): AppShell {
-  if (
-    kind === 'flow-canvas' ||
-    kind === 'agents' ||
-    kind === 'flow-run' ||
-    kind === 'workflows'
-  ) {
-    return 'workbench'
-  }
-  return 'coding'
+  return productIdForUtility(kind)
 }
 
-/** 画布 / 编制 / 试跑 / 自动化任务：设置里的 MCP 等不能绑它们。 */
+/** 非默认产品的专用面板：设置里的 MCP 等不能绑它们。 */
 export function isWorkbenchUtility(kind: UtilityKind | null | undefined): boolean {
-  return shellForUtility(kind) === 'workbench'
+  return !getProduct(productIdForUtility(kind)).isDefault
 }
 
 export function tabsForShell(shell: AppShell, tabs = $tabs.get()): TabInfo[] {
@@ -416,7 +416,12 @@ function rememberShellTab(id: string): void {
   lastShellTab[shellForUtility(st.utilityKind)] = id
 }
 
+function clearLastShellTabs(): void {
+  for (const key of Object.keys(lastShellTab)) delete lastShellTab[key]
+}
+
 export function setAppShell(next: AppShell): void {
+  if (!isRegisteredProduct(next)) next = DEFAULT_PRODUCT_ID
   const active = $activeTabId.get()
   if (active) rememberShellTab(active)
   if ($appShell.get() !== next) {
@@ -436,13 +441,15 @@ export function setAppShell(next: AppShell): void {
     switchTab(last)
     return
   }
-  if (next === 'coding') {
+  const product = getProduct(next)
+  if (product.isDefault) {
     const id = findNormalChatTab(false)
     if (id) switchTab(id)
     return
   }
-  for (const kind of ['flow-canvas', 'agents', 'workflows', 'flow-run'] as UtilityKind[]) {
-    const id = findTabByUtilityKind(kind)
+  for (const kind of product.utilityKinds) {
+    if (kind === 'schedule') continue
+    const id = findTabByUtilityKind(kind as UtilityKind)
     if (id) {
       switchTab(id)
       return
@@ -450,10 +457,10 @@ export function setAppShell(next: AppShell): void {
   }
 }
 
-/** 设置里技能/工具/MCP 用的编码会话 Tab：优先当前，否则任意已就绪的非工作台 Tab。 */
+/** 设置里技能/工具/MCP 用的编码会话 Tab：优先当前，否则任意已就绪的默认产品 Tab。 */
 export function findReadyCodingTabId(): string {
   const usable = (st: TabState) =>
-    !isWorkbenchUtility(st.utilityKind) &&
+    Boolean(getProduct(productIdForUtility(st.utilityKind)).isDefault) &&
     (st.phase === 'ready' || Boolean(st.sessionId))
   const active = $activeTabId.get()
   const ast = active ? tabStates.get(active) : undefined
@@ -541,9 +548,8 @@ export function resetTabsForTests(): void {
   $activeTabId.set('')
   $ptyAlive.set({})
   $ptyEpoch.set({})
-  $appShell.set('coding')
-  lastShellTab.coding = ''
-  lastShellTab.workbench = ''
+  $appShell.set(DEFAULT_PRODUCT_ID)
+  clearLastShellTabs()
   resetProjection()
 }
 
