@@ -10,6 +10,46 @@ mod workbench;
 use state::{AppState, spawn_supervisor};
 use tauri::Manager;
 
+fn is_app_navigation(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "ipc" | "asset" | "data" | "blob" | "about" => true,
+        "http" | "https" => matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1")),
+        _ => false,
+    }
+}
+
+fn open_in_system_browser(url: &str) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+}
+
+fn external_link_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("vesprism-nav")
+        .on_navigation(|_webview, url| {
+            if is_app_navigation(url) {
+                return true;
+            }
+            open_in_system_browser(url.as_str());
+            false
+        })
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 内置 MCP server 模式：exe --vesprism-mcp-server（stdio 传输，供官方引擎 .mcp.json 挂载）。
@@ -122,6 +162,7 @@ pub fn run() {
 
             Ok(())
         })
+        .plugin(external_link_plugin())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::open_tab,

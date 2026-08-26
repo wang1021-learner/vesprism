@@ -103,12 +103,39 @@ fn porcelain_paths(dest: &Path) -> Result<Vec<String>, String> {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     let mut paths = Vec::new();
-    for raw in out.stdout.split(|b| *b == 0) {
-        if raw.len() < 4 {
+    let bytes = out.stdout;
+    let mut i = 0;
+    while i < bytes.len() {
+        let end = bytes[i..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|p| i + p)
+            .unwrap_or(bytes.len());
+        let rec = &bytes[i..end];
+        i = end + 1;
+        if rec.len() < 3 {
             continue;
         }
-        // "XY path" ；rename 取新路径
-        let rel = String::from_utf8_lossy(&raw[3..]).replace('\\', "/");
+        let staged = rec[0] as char;
+        let unstaged = rec[1] as char;
+        let rel = if rec.len() >= 3 {
+            String::from_utf8_lossy(&rec[3..]).replace('\\', "/")
+        } else {
+            String::new()
+        };
+        let is_rename = staged == 'R' || staged == 'C' || unstaged == 'R' || unstaged == 'C';
+        let rel = if is_rename {
+            let end2 = bytes[i..]
+                .iter()
+                .position(|&b| b == 0)
+                .map(|p| i + p)
+                .unwrap_or(bytes.len());
+            let newp = String::from_utf8_lossy(&bytes[i..end2]).replace('\\', "/");
+            i = end2 + 1;
+            if newp.is_empty() { rel } else { newp }
+        } else {
+            rel
+        };
         let name = rel.rsplit('/').next().unwrap_or(&rel);
         if name == MARKER || rel.is_empty() {
             continue;

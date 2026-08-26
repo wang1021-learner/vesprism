@@ -39,6 +39,47 @@ pub fn knowledge_root() -> PathBuf {
     home().join(".vesprism").join("knowledge")
 }
 
+fn lexical_normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn path_within(root: &Path, child: &Path) -> anyhow::Result<PathBuf> {
+    let root_c = root.canonicalize().unwrap_or_else(|_| lexical_normalize(root));
+    let joined = if child.is_absolute() {
+        child.to_path_buf()
+    } else {
+        root.join(child)
+    };
+    let child_c = if joined.exists() {
+        joined.canonicalize().unwrap_or_else(|_| lexical_normalize(&joined))
+    } else {
+        lexical_normalize(&joined)
+    };
+    let norm = |p: &Path| {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    let root_s = norm(&root_c);
+    let child_s = norm(&child_c);
+    if child_s == root_s || child_s.starts_with(&(root_s.clone() + "\\")) {
+        return Ok(child_c);
+    }
+    Err(anyhow::anyhow!("路径超出知识库根目录"))
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 工具 schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,6 +238,8 @@ fn sql_leading_keyword(sql: &str) -> String {
     rest.split_whitespace().next().unwrap_or("").to_ascii_uppercase()
 }
 
+const MAX_QUERY_ROWS: usize = 200;
+
 fn query_rows(conn: &rusqlite::Connection, sql: &str) -> anyhow::Result<Json> {
     let mut stmt = conn.prepare(sql)?;
     let col_names: Vec<String> = stmt
@@ -204,24 +247,33 @@ fn query_rows(conn: &rusqlite::Connection, sql: &str) -> anyhow::Result<Json> {
         .iter()
         .map(|c| c.to_string())
         .collect();
-    let rows: Vec<Json> = stmt
-        .query_map([], |row| {
-            let mut map = serde_json::Map::new();
-            for (i, name) in col_names.iter().enumerate() {
-                let val = match row.get_ref(i) {
-                    Ok(rusqlite::types::ValueRef::Null) => Json::Null,
-                    Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
-                    Ok(rusqlite::types::ValueRef::Real(f)) => json!(f),
-                    Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
-                    Ok(rusqlite::types::ValueRef::Blob(b)) => json!(String::from_utf8_lossy(b)),
-                    Err(_) => Json::Null,
-                };
-                map.insert(name.clone(), val);
-            }
-            Ok(Json::Object(map))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(json!({ "rows": rows, "row_count": rows.len() }))
+    let mut rows: Vec<Json> = Vec::new();
+    let mut mapped = stmt.query_map([], |row| {
+        let mut map = serde_json::Map::new();
+        for (i, name) in col_names.iter().enumerate() {
+            let val = match row.get_ref(i) {
+                Ok(rusqlite::types::ValueRef::Null) => Json::Null,
+                Ok(rusqlite::types::ValueRef::Integer(n)) => json!(n),
+                Ok(rusqlite::types::ValueRef::Real(f)) => json!(f),
+                Ok(rusqlite::types::ValueRef::Text(t)) => json!(String::from_utf8_lossy(t)),
+                Ok(rusqlite::types::ValueRef::Blob(b)) => json!(String::from_utf8_lossy(b)),
+                Err(_) => Json::Null,
+            };
+            map.insert(name.clone(), val);
+        }
+        Ok(Json::Object(map))
+    })?;
+    while let Some(row) = mapped.next() {
+        rows.push(row?);
+        if rows.len() >= MAX_QUERY_ROWS {
+            break;
+        }
+    }
+    Ok(json!({
+        "rows": rows,
+        "row_count": rows.len(),
+        "truncated": rows.len() >= MAX_QUERY_ROWS,
+    }))
 }
 
 fn write_rows(conn: &rusqlite::Connection, sql: &str) -> anyhow::Result<Json> {
@@ -247,7 +299,7 @@ fn search_knowledge(
     }
     // 枚举知识库目录（指定或全部）
     let kbs: Vec<PathBuf> = if let Some(kb) = kb {
-        let p = root.join(kb);
+        let p = path_within(root, kb)?;
         if p.is_dir() {
             vec![p]
         } else {

@@ -11,10 +11,13 @@ import {
 
   $securityPolicy,
   $sessionPolicyOverride,
+  cwdAfterLoadSession,
   findTabBySessionId,
   getTabState,
   hasTab,
+  looksAbsolutePath,
   patchTab,
+  resolveHistoryLoadCwd,
   pushToast,
   trackSubagentRunning,
   untrackSubagentRunning,
@@ -34,7 +37,12 @@ import {
   setCurrentModel,
   startSession,
 } from '../bridge'
-import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './sessionOpen'
+import {
+  beginAttachRuntime,
+  finishAttachRuntime,
+  isAttachingRuntime,
+  pushTranscriptEvent,
+} from './sessionOpen'
 import { applyTranscriptEvent } from './sessionTranscript'
 import { refreshSubagentTabMessages } from './openSubagentTab'
 import { markToolSession } from '../workbench/bindings'
@@ -197,6 +205,8 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       break
     }
     case 'error': {
+      // load_session 失败由 invoke catch 负责；attach 期间这条会把重试成功盖掉
+      if (isAttachingRuntime(tabId) && !ev.prompt_id) break
       const st = getTabState(tabId)
       const queued = st?.queuedPrompts ?? []
       const lastUser = [...(st?.messages ?? [])].reverse().find((m) => m.role === 'user')
@@ -240,10 +250,10 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         }
         const sig = permissionSignature(req)
         const base = $securityPolicy.get()
-        const override = $sessionPolicyOverride.get()
+        const stNow = getTabState(tabId)
+        const override = stNow?.executionPolicyOverride ?? $sessionPolicyOverride.get()
         const policy = override ? { ...base, executionPolicy: override } : base
-        const cwd =
-          getTabState(tabId)?.cwd || $workspaceCwd.get() || policy.cwd
+        const cwd = stNow?.cwd || $workspaceCwd.get() || policy.cwd
         const decision = evaluatePermission(
           { command: req.command, kindLabel: req.kindLabel },
           { ...policy, cwd },
@@ -259,6 +269,10 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
             patchTab(tabId, { permission: null })
             break
           }
+          // 没有拒绝项：弹出审批，不要落到自动放行
+          pushToast(decision.reason, 'error')
+          patchTab(tabId, { permission: req })
+          break
         }
         if (decision.action === 'allow' || decision.action === 'sandbox') {
           const allow = pickAllowStrict(req.options)
@@ -628,8 +642,10 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       // 只更新引擎 sessionId；chatId 保留侧栏历史 id（空白新对话保持 chatId 为空，使 isBlankNewChat 持续成立）
       if (ev.session_id) {
         const prev = getTabState(tabId)
+        const nextCwd = (ev.cwd || '').trim()
         patchTab(tabId, {
           sessionId: ev.session_id,
+          ...(looksAbsolutePath(nextCwd) ? { cwd: nextCwd } : {}),
         })
         void sessionCaps(tabId)
           .then((caps) => patchTab(tabId, { sessionCaps: caps }))
@@ -779,12 +795,19 @@ async function replayTabAfterCrash(
     status: 'idle',
   })
   pushToast(waitText, 'info')
-  const cwd = st.cwd || $workspaceCwd.get()
+  const cwd = resolveHistoryLoadCwd(st.cwd || $workspaceCwd.get())
   try {
     if (st.sessionId) {
       beginAttachRuntime(tabId)
-      await loadSession(tabId, st.sessionId, cwd, undefined, st.reasoningEffort)
+      const used = await loadSession(
+        tabId,
+        st.sessionId,
+        cwd,
+        undefined,
+        st.reasoningEffort,
+      )
       finishAttachRuntime(tabId)
+      patchTab(tabId, { cwd: cwdAfterLoadSession(used, cwd) })
     } else {
       await startSession(tabId, cwd, {
         modelId: st.modelId,

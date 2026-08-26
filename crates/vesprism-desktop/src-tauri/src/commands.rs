@@ -1,5 +1,5 @@
 use crate::state::{ActorCommand, AppState, SupervisorCommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::State;
 use tokio::sync::oneshot;
 
@@ -212,8 +212,7 @@ fn save_persisted_workspace_cwd(cwd: &std::path::Path) -> Result<(), String> {
     );
     let serialized =
         toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
-    std::fs::write(&path, serialized.as_bytes())
-        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -238,8 +237,7 @@ fn clear_persisted_workspace_cwd() -> Result<(), String> {
     }
     let serialized =
         toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
-    std::fs::write(&path, serialized.as_bytes())
-        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -263,6 +261,19 @@ fn resolve_workspace_cwd(state: &AppState) -> PathBuf {
 
 /// 校验 `requested` 是否落在 `workspace_root` 范围内，返回规范化后的绝对路径。
 /// 供所有"按路径读工作区内文件"的 command 复用，避免校验逻辑散落多处。
+/// canonicalize 后去掉 Windows `\\?\`，再比前缀，避免符号链接逃逸或误拒。
+fn path_is_within(child: &Path, root: &Path) -> bool {
+    let c = display_path(child)
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    let r = display_path(root)
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    c == r || c.starts_with(&format!("{r}/"))
+}
+
 fn ensure_within_workspace(
     requested: &str,
     workspace_root: &std::path::Path,
@@ -276,7 +287,7 @@ fn ensure_within_workspace(
         .canonicalize()
         .map_err(|e| format!("文件不存在或无法访问: {e}"))?;
 
-    if !canonical_requested.starts_with(&canonical_root) {
+    if !path_is_within(&canonical_requested, &canonical_root) {
         return Err("拒绝访问：目标文件不在当前工作区范围内".to_string());
     }
 
@@ -1370,14 +1381,33 @@ pub(crate) fn load_config_root() -> Result<toml::Value, String> {
     toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))
 }
 
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("tmp"),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let _ = std::fs::remove_file(path);
+            let r = std::fs::rename(&tmp, path).or_else(|_| std::fs::copy(&tmp, path).map(|_| ()));
+            let _ = std::fs::remove_file(&tmp);
+            r.map_err(|e| format!("替换文件失败: {e}"))
+        }
+    }
+}
+
 pub(crate) fn write_config_root(root: &toml::Value) -> Result<(), String> {
     let path = desktop_config_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    }
     let serialized =
         toml::to_string_pretty(root).map_err(|e| format!("序列化 config.toml 失败: {e}"))?;
-    std::fs::write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))
+    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))
 }
 
 fn policy_table_str(tbl: &toml::map::Map<String, toml::Value>, key: &str, default: &str) -> String {
@@ -2244,8 +2274,7 @@ pub fn save_model_settings(default_id: String, models: Vec<ModelEntryDto>) -> Re
     let serialized =
         toml::to_string_pretty(&root).map_err(|e| format!("序列化 config.toml 失败: {e}"))?;
     // 显式 UTF-8 写入，避免 Windows 默认编码坑
-    std::fs::write(&path, serialized.as_bytes())
-        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -2511,8 +2540,8 @@ pub async fn load_session(
     restore_code: Option<bool>,
     reasoning_effort: Option<String>,
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    send_cmd(&state, &tab_id, |reply| ActorCommand::LoadSession {
+) -> Result<String, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::LoadSession {
         session_id,
         cwd,
         restore_code,
@@ -3208,6 +3237,37 @@ pub fn search_workspace_files(
 }
 
 const MAX_PASTE_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+const PASTE_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
+
+fn sweep_old_paste_images(dir: &Path) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SWEPT: AtomicBool = AtomicBool::new(false);
+    if SWEPT.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(PASTE_MAX_AGE_SECS));
+    let Some(cutoff) = cutoff else { return };
+    for ent in rd.flatten() {
+        let path = ent.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if !name.starts_with("paste-") {
+            continue;
+        }
+        let Ok(meta) = ent.metadata() else { continue };
+        let Ok(modified) = meta.modified() else { continue };
+        if modified < cutoff {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
 
 /// 把剪贴板/拖入的图片落到临时文件，供附件 kind=image 发送。
 #[tauri::command]
@@ -3236,17 +3296,21 @@ pub fn save_paste_image(base64: String, mime: String) -> Result<String, String> 
     };
     let dir = std::env::temp_dir().join("vesprism-paste");
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录: {e}"))?;
+    sweep_old_paste_images(&dir);
+    static PASTE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = PASTE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = format!(
-        "paste-{}-{}.{}",
+        "paste-{}-{}-{}.{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0),
         std::process::id(),
+        seq,
         ext
     );
     let path = dir.join(name);
-    std::fs::write(&path, bytes).map_err(|e| format!("写入图片失败: {e}"))?;
+    atomic_write(&path, &bytes).map_err(|e| format!("写入图片失败: {e}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -3280,7 +3344,7 @@ fn ensure_under_memory(path: &str) -> Result<PathBuf, String> {
         .canonicalize()
         .map_err(|e| format!("记忆文件不存在或无法访问: {e}"))?;
     let root = memory_root_canonical()?;
-    if !requested.starts_with(&root) {
+    if !path_is_within(&requested, &root) {
         return Err("拒绝访问：只能操作本机记忆目录下的文件".into());
     }
     Ok(requested)
@@ -3328,11 +3392,11 @@ pub fn delete_memory_path(path: String, source: String) -> Result<(), String> {
                     .map(|p| p.to_path_buf())
                     .ok_or_else(|| "无法解析仓库记忆目录".to_string())?
             };
-            if dir == root {
-                return Err("不能删除整个记忆根目录".into());
-            }
-            if !dir.starts_with(&root) {
+            if !path_is_within(&dir, &root) {
                 return Err("拒绝访问：目标不在记忆目录内".into());
+            }
+            if display_path(&dir).eq_ignore_ascii_case(&display_path(&root)) {
+                return Err("不能删除整个记忆根目录".into());
             }
             std::fs::remove_dir_all(&dir).map_err(|e| format!("删除仓库记忆失败: {e}"))
         }
@@ -3439,7 +3503,7 @@ fn collect_file_working_diff(
         } else {
             root.join(requested)
         };
-        if !candidate.starts_with(&root) {
+        if !path_is_within(&candidate, &root) {
             return Err("拒绝访问：目标文件不在当前工作区范围内".into());
         }
         candidate

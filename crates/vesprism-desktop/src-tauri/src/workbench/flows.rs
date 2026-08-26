@@ -1143,10 +1143,14 @@ fn read_zip_sidecar_pair(
 ) -> Result<(String, String), String> {
     let names: Vec<String> = (0..archive.len())
         .filter_map(|i| {
-            archive
-                .by_index(i)
-                .ok()
-                .map(|f| f.name().replace('\\', "/"))
+            archive.by_index(i).ok().and_then(|f| {
+                let n = f.name().replace('\\', "/");
+                if n.contains("..") || n.starts_with('/') || n.contains(':') {
+                    None
+                } else {
+                    Some(n)
+                }
+            })
         })
         .collect();
     if let Some(yaml_name) = names

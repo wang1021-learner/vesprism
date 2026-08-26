@@ -135,6 +135,11 @@ describe('选项识别', () => {
     expect(isAllowOption(denyOnly[0])).toBe(false)
     expect(pickAllowStrict(denyOnly)).toBeUndefined()
   })
+
+  it('pickDeny 找不到拒绝项时不回退到允许项', () => {
+    const allowOnly = [{ id: 'yes', name: '运行', kind: 'allow_once' }]
+    expect(pickDeny(allowOnly)).toBeUndefined()
+  })
 })
 
 describe('官方 ACP kind', () => {
@@ -155,10 +160,10 @@ describe('官方 ACP kind', () => {
 })
 
 describe('只读权限', () => {
-  it('读取/搜索/网络请求视为只读', () => {
+  it('读取/搜索视为只读；网络请求要审批', () => {
     expect(isReadOnlyPermission({ kindLabel: '读取文件' })).toBe(true)
     expect(isReadOnlyPermission({ kindLabel: '搜索' })).toBe(true)
-    expect(isReadOnlyPermission({ kindLabel: '网络请求' })).toBe(true)
+    expect(isReadOnlyPermission({ kindLabel: '网络请求' })).toBe(false)
     expect(isReadOnlyPermission({ kindLabel: '运行终端命令' })).toBe(false)
     expect(isReadOnlyPermission({ kindLabel: '编辑文件' })).toBe(false)
   })

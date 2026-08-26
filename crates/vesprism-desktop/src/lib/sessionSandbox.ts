@@ -4,9 +4,9 @@
 import {
   $activeTabId,
   $securityPolicy,
-  $sessionPolicyOverride,
   $workspaceCwd,
   getTabState,
+  patchTab,
   pushToast,
 } from '../store'
 import {
@@ -50,7 +50,8 @@ export async function applyComposerPolicy(next: ExecutionPolicy): Promise<void> 
   const tabId = $activeTabId.get()
   const cwd = $workspaceCwd.get()
   const cur = $securityPolicy.get()
-  $sessionPolicyOverride.set(next)
+  const prevOverride = tabId ? (getTabState(tabId)?.executionPolicyOverride ?? null) : null
+  if (tabId) patchTab(tabId, { executionPolicyOverride: next })
   try {
     if (next === 'proceed-in-sandbox') {
       if (tabId) await enableTabSandbox(tabId)
@@ -83,6 +84,7 @@ export async function applyComposerPolicy(next: ExecutionPolicy): Promise<void> 
       'info',
     )
   } catch (e) {
+    if (tabId) patchTab(tabId, { executionPolicyOverride: prevOverride })
     pushToast(`切换策略失败：${String(e)}`, 'error')
   }
 }

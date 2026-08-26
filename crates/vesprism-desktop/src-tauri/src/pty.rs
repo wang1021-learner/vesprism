@@ -203,24 +203,73 @@ impl PtyManager {
 
 fn read_loop(app: AppHandle, tab_id: String, mut reader: Box<dyn Read + Send>, slot: Arc<PtySlot>) {
     let mut buf = [0u8; 4096];
+    let mut leftover = Vec::new();
     loop {
         match reader.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                if !leftover.is_empty() && slot.attached.load(Ordering::SeqCst) {
+                    let data = String::from_utf8_lossy(&leftover).into_owned();
+                    let _ = app.emit(
+                        "pty-output",
+                        PtyOutputPayload {
+                            tab_id: tab_id.clone(),
+                            data,
+                        },
+                    );
+                }
+                break;
+            }
             Ok(n) => {
                 keep_tail(&slot.tail, &buf[..n]);
-                if !slot.attached.load(Ordering::SeqCst) {
-                    continue;
+                leftover.extend_from_slice(&buf[..n]);
+                if let Some(data) = take_utf8_chunk(&mut leftover) {
+                    if slot.attached.load(Ordering::SeqCst) {
+                        let _ = app.emit(
+                            "pty-output",
+                            PtyOutputPayload {
+                                tab_id: tab_id.clone(),
+                                data,
+                            },
+                        );
+                    }
                 }
-                let data = String::from_utf8_lossy(&buf[..n]).into_owned();
-                let _ = app.emit(
-                    "pty-output",
-                    PtyOutputPayload {
-                        tab_id: tab_id.clone(),
-                        data,
-                    },
-                );
             }
             Err(_) => break,
+        }
+    }
+}
+
+/// 读循环可能把多字节 UTF-8 拆在两次 read 中间；不完整后缀留到下次。
+fn take_utf8_chunk(buf: &mut Vec<u8>) -> Option<String> {
+    if buf.is_empty() {
+        return None;
+    }
+    match std::str::from_utf8(buf) {
+        Ok(s) => {
+            let out = s.to_string();
+            buf.clear();
+            Some(out)
+        }
+        Err(e) => {
+            let valid = e.valid_up_to();
+            if e.error_len().is_none() {
+                if valid == 0 {
+                    return None;
+                }
+                let out = String::from_utf8(buf.drain(..valid).collect()).unwrap_or_default();
+                Some(out)
+            } else {
+                let err_len = e.error_len().unwrap_or(1).min(buf.len().saturating_sub(valid));
+                let mut out = if valid > 0 {
+                    String::from_utf8(buf.drain(..valid).collect()).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                out.push('\u{FFFD}');
+                let skip = err_len.min(buf.len());
+                buf.drain(..skip);
+                Some(out)
+            }
         }
     }
 }

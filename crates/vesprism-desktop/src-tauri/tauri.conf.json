@@ -30,7 +30,39 @@
       }
     ],
     "security": {
-      "csp": null
+      "freezePrototype": true,
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost blob: data: https:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost",
+        "worker-src": "'self' blob:",
+        "child-src": "blob:",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'self' http://127.0.0.1:9527",
+        "script-src": "'self' 'unsafe-inline' http://127.0.0.1:9527",
+        "style-src": "'self' 'unsafe-inline' http://127.0.0.1:9527",
+        "img-src": "'self' asset: http://asset.localhost blob: data: https: http://127.0.0.1:9527",
+        "font-src": "'self' data: http://127.0.0.1:9527",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:9527 ws://127.0.0.1:9527",
+        "worker-src": "'self' blob:",
+        "child-src": "blob:",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$TEMP/vesprism-paste/**"]
+      }
     }
   },
   "bundle": {

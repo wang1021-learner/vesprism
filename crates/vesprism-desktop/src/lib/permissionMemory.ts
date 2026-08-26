@@ -71,7 +71,7 @@ export function pickAllow(options: PermissionOption[]): PermissionOption | undef
 /** 官方只读工具分类：读/搜/思考/拉取，无工作区副作用。 */
 export function isReadOnlyPermission(p: Pick<PermissionRequest, 'kindLabel'>): boolean {
   const k = (p.kindLabel || '').trim()
-  return k === '读取文件' || k === '搜索' || k === '网络请求'
+  return k === '读取文件' || k === '搜索'
 }
 
 /** 严格版：只认明确「允许」选项；找不到返回 undefined（UI 用宽松版兜底按钮） */
@@ -84,8 +84,7 @@ export function pickAllowStrict(
 export function pickDeny(options: PermissionOption[]): PermissionOption | undefined {
   return (
     pickRejectOnce(options) ||
-    options.find((o) => isDenyOption(o) && kindOf(o) !== 'reject_always') ||
-    options[options.length - 1]
+    options.find((o) => isDenyOption(o) && kindOf(o) !== 'reject_always')
   )
 }
 

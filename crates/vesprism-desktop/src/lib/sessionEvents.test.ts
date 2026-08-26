@@ -26,6 +26,7 @@ vi.mock('../bridge', () => ({
 }))
 
 import { handleSessionEvent } from './sessionEvents'
+import { beginAttachRuntime, finishAttachRuntime } from './sessionOpen'
 import { createTab, getTabState, patchTab, resetTabsForTests } from '../store'
 
 beforeEach(() => {
@@ -230,5 +231,28 @@ describe('崩溃恢复与错误提示', () => {
     })
     expect(getTabState('tab-1')?.phase).toBe('failed')
     expect(getTabState('tab-1')?.error).toContain('重试')
+  })
+
+  it('attach 期间无 prompt 的 error 不盖红条', () => {
+    patchTab('tab-1', { error: '', phase: 'ready' })
+    beginAttachRuntime('tab-1')
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'error',
+      message: '恢复会话失败: Path not found.',
+    })
+    expect(getTabState('tab-1')?.error).toBe('')
+    finishAttachRuntime('tab-1')
+  })
+
+  it('session_id_changed 带 cwd 时写入 Tab', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'session_id_changed',
+      session_id: 'sid-9',
+      cwd: 'D:\\proj',
+    })
+    expect(getTabState('tab-1')?.sessionId).toBe('sid-9')
+    expect(getTabState('tab-1')?.cwd).toBe('D:\\proj')
   })
 })

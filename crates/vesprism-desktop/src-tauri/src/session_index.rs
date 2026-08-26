@@ -462,6 +462,11 @@ pub fn delete_thread(session_id: &str) -> Result<(), String> {
             params![session_id],
         )
         .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM thread_compositions WHERE id = ?1",
+            params![session_id],
+        )
+        .map_err(|e| e.to_string())?;
         Ok(())
     })
 }

@@ -18,7 +18,7 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = { workspace = true }
 serde = { workspace = true }
 log = "0.4"
-tauri = { version = "2.11.3", features = [] }
+tauri = { version = "2.11.3", features = ["protocol-asset"] }
 tauri-plugin-log = "2"
 tokio = { workspace = true }
 anyhow = { workspace = true }

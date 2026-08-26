@@ -24,6 +24,8 @@ describe('名单匹配', () => {
   it('串联命令不能走白名单', () => {
     expect(matchesAllowlist('git status && rm -rf /')).toBe(false)
     expect(matchesAllowlist('git status; reboot')).toBe(false)
+    expect(matchesAllowlist('echo $(git push origin main)')).toBe(false)
+    expect(matchesAllowlist('ls `rm -rf /tmp`')).toBe(false)
   })
 
   it('黑名单拦截破坏性命令', () => {

@@ -79,7 +79,7 @@ const NET_PATTERNS: RegExp[] = [
   /\b(curl|wget|iwr|Invoke-WebRequest|Invoke-RestMethod|npm\s+publish|pip\s+install|cargo\s+publish)\b/i,
 ]
 
-const COMPOUND_RE = /[;\n]|\|\||&&|\|(?!\|)/
+const COMPOUND_RE = /[;\n]|\|\||&&|\|(?!\|)|\$\(|`/
 
 export function normalizeCommand(raw: string): string {
   return (raw || '').replace(/\s+/g, ' ').trim()

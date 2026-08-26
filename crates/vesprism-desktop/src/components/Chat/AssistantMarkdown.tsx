@@ -5,6 +5,7 @@ import {
   parseMarkdownIntoBlocks,
 } from '@assistant-ui/react-streamdown'
 import { createMathPlugin } from '@streamdown/math'
+import { safeMarkdownHref, safeMarkdownImgSrc } from '../../lib/safeMarkdownUrl'
 
 // ── 预处理 ──
 
@@ -160,11 +161,15 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: Props
 
     // ── 链接 ──
     a: ({ href, children, ...props }: ComponentProps<'a'>) => {
-      const isExternal = href && /^https?:\/\//i.test(href)
+      const safe = safeMarkdownHref(href)
+      if (!safe) {
+        return <span className="md-link">{children}</span>
+      }
+      const isExternal = /^https?:\/\//i.test(safe)
       return (
         <a
           className="md-link"
-          href={href}
+          href={safe}
           {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
           {...props}
         >
@@ -174,9 +179,11 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: Props
     },
 
     // ── 图片 ──
-    img: ({ alt, ...props }: ComponentProps<'img'>) => (
-      <img className="md-image" alt={alt || 'image'} loading="lazy" {...props} />
-    ),
+    img: ({ alt, src, ...props }: ComponentProps<'img'>) => {
+      const safe = safeMarkdownImgSrc(src)
+      if (!safe) return alt ? <span>{alt}</span> : null
+      return <img className="md-image" alt={alt || ''} src={safe} loading="lazy" {...props} />
+    },
 
     // ── 分隔线 ──
     hr: (_props: ComponentProps<'hr'>) => <hr className="md-hr" />,
