@@ -282,13 +282,16 @@ pub fn release_terminal(registry: &TerminalRegistry, terminal_id: &str) -> bool 
     registry.borrow_mut().remove(terminal_id).is_some()
 }
 
-/// 终端 id 中的简单命名：取命令首词（无随机库依赖，冲突靠 session+时间戳规避）。
+/// 终端 id 中的简单命名：命令首词 + 时间 + 序号（同毫秒并行也不撞）。
 fn uuid_simple(command: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let word = command
         .split_whitespace()
         .next()
@@ -297,7 +300,7 @@ fn uuid_simple(command: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .take(24)
         .collect::<String>();
-    format!("{word}-{millis}")
+    format!("{word}-{millis}-{seq}")
 }
 
 /// 供 `wait_for_terminal_exit` 使用的退出状态观察（轮询注册表）。

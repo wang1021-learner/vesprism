@@ -104,6 +104,31 @@ const OFFICIAL_TOOL_NAMES: &[&str] = &[
     "workflow",
 ];
 
+/// 组装 `toolOverrides` 下发体：`tools.disable` 写入 `disabled`，其余字段透传 `overrides`。
+pub fn tool_overrides_for_apply(tools: &ToolsConfig) -> Result<serde_json::Value> {
+    let disabled: Vec<String> = tools
+        .disable
+        .iter()
+        .map(|n| canonicalize_tool_name(n))
+        .collect::<Result<Vec<_>>>()?;
+    let mut map = match &tools.overrides {
+        None => serde_json::Map::new(),
+        Some(serde_json::Value::Object(m)) => m.clone(),
+        Some(other) => anyhow::bail!("tools.overrides 必须是 JSON 对象，得到 {other}"),
+    };
+    if disabled.is_empty() {
+        if tools.overrides.is_none() {
+            map.insert("disabled".into(), serde_json::Value::Null);
+        }
+    } else {
+        map.insert(
+            "disabled".into(),
+            serde_json::Value::Array(disabled.into_iter().map(serde_json::Value::String).collect()),
+        );
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
 /// 只认官方函数名。别名（bash/search/…）会让模型工具表对不上，直接拒。
 pub fn canonicalize_tool_name(raw: &str) -> Result<String> {
     let name = raw.trim();
@@ -526,6 +551,35 @@ flows:
         );
         assert_eq!(parsed.flows, vec!["demo-linear".to_string()]);
         parsed.validate().unwrap();
+    }
+
+    #[test]
+    fn tool_overrides_for_apply_merges_disable_into_overrides() {
+        let parsed = parse_composition(
+            r#"
+tools:
+  disable: [web_search]
+  overrides:
+    webSearch:
+      allowedDomains: ["docs.rs"]
+"#,
+            "test",
+        )
+        .unwrap();
+        let v = super::tool_overrides_for_apply(&parsed.tools).unwrap();
+        assert_eq!(
+            v.get("disabled").and_then(|x| x.as_array()).map(|a| a.len()),
+            Some(1)
+        );
+        assert_eq!(v["disabled"][0], "web_search");
+        assert!(v.get("webSearch").is_some());
+    }
+
+    #[test]
+    fn tool_overrides_for_apply_empty_disable_clears_sticky() {
+        let parsed = parse_composition("id: x\n", "test").unwrap();
+        let v = super::tool_overrides_for_apply(&parsed.tools).unwrap();
+        assert!(v.get("disabled").is_some_and(|x| x.is_null()));
     }
 
     #[test]

@@ -781,12 +781,21 @@ impl Client for GuiClient {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
 
-        // 锁定顺序：会话级 deny → per-agent deny → 子会话/只读自动放行 → 其余规则 → 审批条。
+        // 锁定顺序：会话级 deny → per-agent deny → 其余规则 → 子会话/只读自动放行 → 审批条。
+        // deny 找不到拒绝选项时 fail-closed，绝不继续走到放行。
         if let Some(engine) = session_policy.as_ref() {
             if engine.has_deny(&category, &detail) {
-                if let Some(opt) = pick_reject_once(&args.options) {
+                if let Some(opt) = pick_reject_option(&args.options) {
                     return Ok(auto_allow(opt));
                 }
+                let _ = self
+                    .event_tx
+                    .send(SessionEvent::Error {
+                        message: "策略拒绝该操作，但审批选项里没有拒绝项".to_string(),
+                        prompt_id: None,
+                    })
+                    .await;
+                return Err(agent_client_protocol::Error::invalid_params());
             }
         }
 
@@ -806,33 +815,35 @@ impl Client for GuiClient {
                     .get(&args.session_id.to_string())
                     .is_some_and(|engine| engine.has_deny(&category, &detail))
             };
-            if child_denied && let Some(opt) = pick_reject_once(&args.options) {
-                return Ok(auto_allow(opt));
-            }
-        }
-
-        // 子会话（workflow 子 agent）的工具权限：自动选 AllowOnce（运行一次），
-        // 不打扰父会话用户。官方 pager 对后台 turn 同样走 auto-approve。
-        if is_child {
-            if let Some(opt) = pick_allow_once(&args.options) {
-                return Ok(auto_allow(opt));
-            }
-        }
-
-        // 官方工具 taxonomy：Read/Search/Think/Fetch 默认只读，无工作区副作用。
-        // 对齐 pager 对只读工具的自动放行，避免 read_file / grep 每次打断。
-        if is_read_only_acp_kind(args.tool_call.fields.kind) {
-            if let Some(opt) = pick_allow_once(&args.options) {
-                return Ok(auto_allow(opt));
+            if child_denied {
+                if let Some(opt) = pick_reject_option(&args.options) {
+                    return Ok(auto_allow(opt));
+                }
+                let _ = self
+                    .event_tx
+                    .send(SessionEvent::Error {
+                        message: "Agent 规则拒绝该操作，但审批选项里没有拒绝项".to_string(),
+                        prompt_id: None,
+                    })
+                    .await;
+                return Err(agent_client_protocol::Error::invalid_params());
             }
         }
 
         if let Some(engine) = session_policy.as_ref() {
             match engine.evaluate_non_deny(&category, &detail) {
                 crate::policy::PolicyDecision::Respond(crate::policy::Policy::Deny) => {
-                    if let Some(opt) = pick_reject_once(&args.options) {
+                    if let Some(opt) = pick_reject_option(&args.options) {
                         return Ok(auto_allow(opt));
                     }
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::Error {
+                            message: "策略拒绝该操作，但审批选项里没有拒绝项".to_string(),
+                            prompt_id: None,
+                        })
+                        .await;
+                    return Err(agent_client_protocol::Error::invalid_params());
                 }
                 crate::policy::PolicyDecision::Respond(crate::policy::Policy::AllowOnce) => {
                     if let Some(opt) = pick_allow_once(&args.options) {
@@ -847,6 +858,21 @@ impl Client for GuiClient {
                 // 引擎不会产生 Ask 决策（Ask 映射为 ForwardToUi）；防御性兜底走审批条。
                 crate::policy::PolicyDecision::Respond(crate::policy::Policy::Ask) => {}
                 crate::policy::PolicyDecision::ForwardToUi => {}
+            }
+        }
+
+        // 子会话（workflow 子 agent）的工具权限：自动选 AllowOnce（运行一次）。
+        // 必须在 deny / 策略评估之后，避免绕过拒绝规则。
+        if is_child {
+            if let Some(opt) = pick_allow_once(&args.options) {
+                return Ok(auto_allow(opt));
+            }
+        }
+
+        // Read/Search/Think：无工作区副作用。Fetch 是网络请求，不自动放行。
+        if is_read_only_acp_kind(args.tool_call.fields.kind) {
+            if let Some(opt) = pick_allow_once(&args.options) {
+                return Ok(auto_allow(opt));
             }
         }
 
@@ -901,8 +927,19 @@ impl Client for GuiClient {
         let chosen_id = match respond_rx.await {
             Ok(id) => id,
             Err(_) => {
-                // 外部未作答（通道被 drop）：安全默认选第一项。
-                options[0].id.clone()
+                // 外部未作答（关窗 / 关 tab）：fail-closed，绝不自动放行。
+                if let Some(opt) = pick_reject_option(&args.options) {
+                    opt.option_id.to_string()
+                } else {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::Error {
+                            message: "权限请求已取消".to_string(),
+                            prompt_id: None,
+                        })
+                        .await;
+                    return Err(agent_client_protocol::Error::invalid_params());
+                }
             }
         };
 
@@ -1373,7 +1410,17 @@ impl Client for GuiClient {
                             .write()
                             .unwrap_or_else(|e| e.into_inner());
                         for a in &agents {
-                            if a.permission_rules.is_empty() {
+                            let terminal = matches!(
+                                a.state.to_ascii_lowercase().as_str(),
+                                "completed"
+                                    | "complete"
+                                    | "failed"
+                                    | "cancelled"
+                                    | "canceled"
+                                    | "error"
+                                    | "done"
+                            );
+                            if a.permission_rules.is_empty() || terminal {
                                 deny.remove(&a.agent_id);
                             } else {
                                 let rules: Vec<crate::policy::PermissionRule> = a
@@ -1943,7 +1990,16 @@ fn pick_allow_once(
     options
         .iter()
         .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::AllowOnce)
-        .or_else(|| options.first())
+}
+
+fn pick_reject_option(
+    options: &[agent_client_protocol::PermissionOption],
+) -> Option<&agent_client_protocol::PermissionOption> {
+    pick_reject_once(options).or_else(|| {
+        options
+            .iter()
+            .find(|o| o.kind == agent_client_protocol::PermissionOptionKind::RejectAlways)
+    })
 }
 
 fn pick_allow_always(
@@ -1989,7 +2045,7 @@ fn is_read_only_acp_kind(kind: Option<agent_client_protocol::ToolKind>) -> bool 
     use agent_client_protocol::ToolKind;
     matches!(
         kind,
-        Some(ToolKind::Read | ToolKind::Search | ToolKind::Think | ToolKind::Fetch)
+        Some(ToolKind::Read | ToolKind::Search | ToolKind::Think)
     )
 }
 
@@ -2419,6 +2475,11 @@ impl GrokSession {
         self.session_id.to_string()
     }
 
+    /// 本会话工作区（load/start 时写入；删空壳要用自己的 cwd 才能对上落盘桶）。
+    pub fn cwd(&self) -> &str {
+        &self.cwd
+    }
+
     /// 设置/清除本会话的权限策略（组装单 apply 时调用；热更新，无需重启会话）。
     pub fn set_policy(&self, engine: Option<crate::policy::PolicyEngine>) {
         let mut guard = self.policy.write().unwrap_or_else(|e| e.into_inner());
@@ -2435,6 +2496,20 @@ impl GrokSession {
             .write()
             .unwrap_or_else(|e| e.into_inner());
         *guard = value;
+    }
+
+    fn clone_policy(&self) -> Option<crate::policy::PolicyEngine> {
+        self.policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn clone_tool_overrides(&self) -> Option<serde_json::Value> {
+        self.tool_overrides
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// 按会话设置官方权限模式（`x.ai/yolo_mode_changed`）。
@@ -2972,6 +3047,8 @@ impl GrokSession {
                 }
             }
             if inflight.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                // TurnEnded 走事件通道、Idle 走 watch；先让出以便 UI 先处理定稿。
+                tokio::task::yield_now().await;
                 let _ = status_tx.send(SessionStatus::Idle);
             }
         });
@@ -3091,7 +3168,22 @@ impl GrokSession {
         &self,
         composition: &crate::composition::Composition,
     ) -> anyhow::Result<()> {
-        use crate::composition::canonicalize_tool_name;
+        let prev_policy = self.clone_policy();
+        let prev_overrides = self.clone_tool_overrides();
+        match self.apply_composition_inner(composition).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.set_policy(prev_policy);
+                self.set_tool_overrides(prev_overrides);
+                Err(e)
+            }
+        }
+    }
+
+    async fn apply_composition_inner(
+        &self,
+        composition: &crate::composition::Composition,
+    ) -> anyhow::Result<()> {
         use crate::policy::PolicyEngine;
 
         let engine = if composition.permissions.rules.is_empty() {
@@ -3103,18 +3195,9 @@ impl GrokSession {
             ))
         };
         self.set_policy(engine);
-
-        let disabled: Vec<String> = composition
-            .tools
-            .disable
-            .iter()
-            .map(|n| canonicalize_tool_name(n))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        if disabled.is_empty() {
-            self.set_tool_overrides(Some(serde_json::json!({ "disabled": null })));
-        } else {
-            self.set_tool_overrides(Some(serde_json::json!({ "disabled": disabled })));
-        }
+        self.set_tool_overrides(Some(crate::composition::tool_overrides_for_apply(
+            &composition.tools,
+        )?));
 
         self.set_permission_mode(composition.permissions.mode)
             .await?;
@@ -4045,13 +4128,34 @@ pub async fn list_all_sessions() -> anyhow::Result<Vec<Summary>> {
         .map_err(|e| anyhow::anyhow!("读取全部会话列表失败: {}", e))
 }
 
+/// `load_session` 用的 cwd：优先官方按 id 扫到的落盘目录（斜杠/尾斜杠不一致也能对上桶）。
+/// 磁盘上找不到该会话时，退回调用方给的路径。
+pub fn resolve_session_load_cwd(session_id: &str, fallback_cwd: &str) -> String {
+    let fallback = fallback_cwd.trim();
+    xai_grok_shell::session::resolve_local_session_any_cwd(session_id)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 /// 按 session id 查询单条最新摘要，供索引增量更新使用，避免为了刷新一条记录去拉全量列表。
 pub fn get_session_summary(session_id: &str) -> Option<Summary> {
     // 官方已将该查询函数收为 pub(crate)，这里改用公开的 find_session_dir_by_id
     // 自行读取 summary.json，语义与官方原实现一致（2026-08-10 合并 upstream 适配）。
+    // summary.json 可能正在被引擎写入：解析失败时短重试，避免撕开半截 JSON。
     let dir = xai_grok_shell::session::persistence::find_session_dir_by_id(session_id)?;
-    let bytes = std::fs::read(dir.join("summary.json")).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let path = dir.join("summary.json");
+    for attempt in 0..3 {
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(summary) = serde_json::from_slice(&bytes) {
+                return Some(summary);
+            }
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+    }
+    None
 }
 
 /// 删除指定 session_id 的本地持久化记录。
@@ -4062,11 +4166,14 @@ pub async fn delete_session(session_id: &str, cwd: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("创建 agent 配置失败: {}", e))?;
     let auth_manager = Arc::new(agent_config.create_auth_manager());
 
+    // 与 load_session 同一把钥匙：按 id 找到落盘桶，避免调用方 cwd 斜杠/大小写对不上。
+    let load_cwd = resolve_session_load_cwd(session_id, cwd);
+
     // 官方 1.0.4+：search_index 可选。桌面进程不常驻索引，删会话走 None；
     // delete 内部仍会 evict_session，与 `grok sessions delete` CLI 一致。
     xai_grok_shell::session::persistence::delete_session_history(
         session_id,
-        Some(cwd),
+        Some(&load_cwd),
         false,
         auth_manager,
         None,
