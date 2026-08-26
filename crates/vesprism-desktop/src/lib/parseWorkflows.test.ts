@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseWorkflowListings,
   parseWorkflowsFromCommands,
+  sourceBucket,
   sourceLabel,
   sourceRank,
 } from './parseWorkflows'
@@ -81,8 +82,16 @@ describe('source helpers', () => {
   })
 
   it('sourceLabel 中文', () => {
-    expect(sourceLabel('project')).toBe('项目')
-    expect(sourceLabel('user')).toBe('用户')
+    expect(sourceLabel('project')).toBe('本仓库')
+    expect(sourceLabel('local')).toBe('本仓库')
+    expect(sourceLabel('user')).toBe('本机')
     expect(sourceLabel('bundled')).toBe('内置')
+  })
+
+  it('project/local/repo 合成一个本仓库桶', () => {
+    expect(sourceBucket('project')).toBe('workspace')
+    expect(sourceBucket('local')).toBe('workspace')
+    expect(sourceBucket('repo')).toBe('workspace')
+    expect(sourceBucket('user')).toBe('machine')
   })
 })

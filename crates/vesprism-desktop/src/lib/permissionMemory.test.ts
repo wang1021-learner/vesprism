@@ -1,5 +1,5 @@
 /**
- * 权限记忆链路（本次会话允许 / 总是允许）共 10 例
+ * 权限记忆链路（仅这场对话允许 / 总是允许）共 10 例
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -91,8 +91,8 @@ describe('session 记忆（本次会话允许）', () => {
     expect(isSessionAllowed('tab-1', sig)).toBe(false)
   })
 
-  it('端到端：点「本次会话允许」→ 下次同命令自动命中', () => {
-    // 第一次请求：弹窗 → 用户点「本次会话允许」
+  it('端到端：点「仅这场对话允许」→ 下次同命令自动命中', () => {
+    // 第一次请求：弹窗 → 用户点「仅这场对话允许」
     const req1 = makeReq(DESC_TERMINAL)
     const sig = permissionSignature(req1)
     addSessionAllowed('tab-1', sig)

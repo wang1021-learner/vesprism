@@ -1,9 +1,9 @@
-/** 
+/**
  * 工具审批（内嵌位置 + choice 语义）：
  * - 主：内嵌在「发起审批的工具行」下方（positional：挂起时最后一个 in_progress 工具行）
  * - 兜底：输入框上方浮层，仅当内嵌条不可见时显示
- * - 主按钮：运行(once)；下拉：本次会话允许 / 总是允许 / 永不允许（官方 RejectAlways）/ 拒绝
- * - 键盘：Ctrl/⌘+Enter 运行 · Esc 拒绝
+ * - 主按钮：允许这次（once）；下拉：仅这场对话允许 / 总是允许 / 永不允许
+ * - 键盘：Ctrl/⌘+Enter 允许这次 · Esc 拒绝（确认框打开时 Esc 取消确认）
  * - 子 agent 的权限请求已在后端自动放行，不会到达这里
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -11,6 +11,8 @@ import { useStore } from '@nanostores/react'
 import type { PermissionRequest } from '../types'
 import { $activeTabId, $permissionInlineVisible, patchActiveTab, pushToast } from '../store'
 import { respondPermission } from '../bridge'
+import { formatEngineError } from '../lib/errorMessage'
+import { permissionDetailLabel, permissionLead } from '../lib/permissionCopy'
 import {
   addAlwaysAllowed,
   addSessionAllowed,
@@ -64,6 +66,7 @@ function LoaderIcon() {
     </svg>
   )
 }
+
 /** 安全预检发现 → 中文短文案（官方 ClassifierSecurityFinding token） */
 const SECURITY_FINDING_LABELS: Record<string, string> = {
   fail_closed_policy: '策略自动拒绝',
@@ -77,7 +80,58 @@ const SECURITY_FINDING_LABELS: Record<string, string> = {
   special_exec_surface: '特殊执行面',
 }
 
-/** 主审批条：组合按钮 + 拒绝 + 命令 + always 确认弹窗 */
+function ConfirmDialog({
+  title,
+  desc,
+  command,
+  confirmLabel,
+  danger,
+  onCancel,
+  onConfirm,
+}: {
+  title: string
+  desc: string
+  command?: string
+  confirmLabel: string
+  danger?: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="perm-dialog-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        className="perm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="perm-confirm-title"
+        aria-describedby="perm-confirm-desc"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="perm-dialog-title" id="perm-confirm-title">
+          {title}
+        </div>
+        <div className="perm-dialog-desc" id="perm-confirm-desc">
+          {desc}
+        </div>
+        {command ? <pre className="perm-command perm-dialog-cmd">{command}</pre> : null}
+        <div className="perm-dialog-actions">
+          <button type="button" className="btn-secondary" autoFocus onClick={onCancel}>
+            取消
+          </button>
+          <button
+            type="button"
+            className={danger ? 'perm-dialog-btn-danger' : 'btn-primary'}
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 主审批条：组合按钮 + 拒绝 + 详情 + always/never 确认弹窗 */
 function ApprovalBar({
   request,
   surface,
@@ -86,7 +140,7 @@ function ApprovalBar({
   surface: 'inline' | 'floating'
 }) {
   const [busy, setBusy] = useState<string | null>(null)
-  const [showCommand, setShowCommand] = useState(false)
+  const [showDetail, setShowDetail] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmAlways, setConfirmAlways] = useState(false)
   const [confirmNever, setConfirmNever] = useState(false)
@@ -94,6 +148,16 @@ function ApprovalBar({
   const menuRef = useRef<HTMLDivElement>(null)
   const mac = useMemo(() => isMacPlatform(), [])
   const sig = useMemo(() => permissionSignature(request), [request])
+  const lead = useMemo(() => permissionLead(request), [request])
+  const detailLabel = permissionDetailLabel(request.kindLabel)
+
+  useEffect(() => {
+    setShowDetail(true)
+    setMenuOpen(false)
+    setConfirmAlways(false)
+    setConfirmNever(false)
+    setBusy(null)
+  }, [request.id])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -127,19 +191,31 @@ function ApprovalBar({
       // 请求已失效（如 turn 已结束、tab 已重建）：收起弹窗而不是无声卡住
       setBusy(null)
       patchActiveTab({ permission: null })
-      pushToast(`审批未送达（请求可能已失效）：${String(e)}`, 'error')
+      pushToast(`审批没送出去：${formatEngineError(e)}`, 'error')
     }
   }
 
   useEffect(() => {
-    if (confirmAlways || confirmNever) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
+        if (confirmAlways) {
+          setConfirmAlways(false)
+          return
+        }
+        if (confirmNever) {
+          setConfirmNever(false)
+          return
+        }
+        if (menuOpen) {
+          setMenuOpen(false)
+          return
+        }
         if (deny && !busy) void respond(deny.id)
         return
       }
+      if (confirmAlways || confirmNever) return
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         e.stopPropagation()
@@ -150,7 +226,7 @@ function ApprovalBar({
     return () => window.removeEventListener('keydown', onKey, true)
     // respond 每次 render 重建，这里按选项 id 判断即可，无需整个函数入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request, allow?.id, deny?.id, busy, confirmAlways, confirmNever])
+  }, [request, allow?.id, deny?.id, busy, confirmAlways, confirmNever, menuOpen])
 
   useEffect(() => {
     if (surface === 'inline') runRef.current?.focus()
@@ -161,7 +237,6 @@ function ApprovalBar({
   const onSessionAllow = () => {
     setMenuOpen(false)
     if (!allow) return
-    console.log('[perm] 本次会话允许 ->', { tabId: $activeTabId.get(), sig })
     addSessionAllowed($activeTabId.get(), sig)
     runOnce(allow.id)
   }
@@ -175,7 +250,6 @@ function ApprovalBar({
     setConfirmAlways(false)
     const opt = allowAlways || allow
     if (!opt) return
-    console.log('[perm] 总是允许 ->', { sig, kind: opt.kind })
     addAlwaysAllowed(sig)
     runOnce(opt.id)
   }
@@ -188,44 +262,87 @@ function ApprovalBar({
   const confirmNeverAllow = () => {
     setConfirmNever(false)
     if (!neverAllow) return
-    console.log('[perm] 永不允许 ->', { sig, kind: neverAllow.kind })
     runOnce(neverAllow.id)
-  }
-
-  const onMenuDeny = () => {
-    setMenuOpen(false)
-    if (deny) runOnce(deny.id)
   }
 
   return (
     <>
       <div className={'perm-bar perm-bar-' + surface}>
+        {surface === 'inline' ? (
+          <div className="perm-bar-lead">
+            <span className="perm-bar-kind">{lead.title}</span>
+            {lead.note ? (
+              <span className="perm-bar-summary" title={command || lead.note}>
+                {lead.note}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="perm-bar-actions" ref={menuRef}>
           {allow ? (
-            <div className="perm-run-split">
-              <button
-                ref={runRef}
-                type="button"
-                className="perm-act perm-act-run"
-                disabled={busy != null}
-                onClick={() => runOnce(allow.id)}
-              >
-                {busy === allow.id ? <LoaderIcon /> : '运行'}
-                {busy !== allow.id && (
-                  <span className="perm-kbd">{mac ? '⌘⏎' : 'Ctrl⏎'}</span>
-                )}
-              </button>
-              <span className="perm-run-sep" aria-hidden />
-              <button
-                type="button"
-                className="perm-act perm-act-more"
-                aria-label="更多选项"
-                aria-expanded={menuOpen}
-                disabled={busy != null}
-                onClick={() => setMenuOpen((v) => !v)}
-              >
-                <ChevronIcon open={menuOpen} />
-              </button>
+            <div className="perm-run-wrap">
+              <div className="perm-run-split">
+                <button
+                  ref={runRef}
+                  type="button"
+                  className="perm-act perm-act-run"
+                  disabled={busy != null}
+                  onClick={() => runOnce(allow.id)}
+                >
+                  {busy === allow.id ? <LoaderIcon /> : '允许这次'}
+                  {busy !== allow.id && (
+                    <span className="perm-kbd">{mac ? '⌘⏎' : 'Ctrl⏎'}</span>
+                  )}
+                </button>
+                <span className="perm-run-sep" aria-hidden />
+                <button
+                  type="button"
+                  className="perm-act perm-act-more"
+                  aria-label="更多允许方式"
+                  aria-expanded={menuOpen}
+                  disabled={busy != null}
+                  onClick={() => setMenuOpen((v) => !v)}
+                >
+                  <ChevronIcon open={menuOpen} />
+                </button>
+              </div>
+              {menuOpen ? (
+                <div className="perm-menu" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="perm-menu-item"
+                    onClick={onSessionAllow}
+                  >
+                    <span className="perm-menu-label">仅这场对话允许</span>
+                    <span className="perm-menu-hint">同样的请求，这场对话不再问</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="perm-menu-item"
+                    onClick={onAlwaysAllow}
+                  >
+                    <span className="perm-menu-label">总是允许</span>
+                    <span className="perm-menu-hint">这台电脑记住，以后不再问</span>
+                  </button>
+                  {neverAllow && neverAllow.id !== deny?.id ? (
+                    <>
+                      <div className="perm-menu-sep" role="separator" />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="perm-menu-item perm-menu-item-danger"
+                        onClick={onNeverAllow}
+                      >
+                        <span className="perm-menu-label">永不允许</span>
+                        <span className="perm-menu-hint">以后同样的请求直接拒绝</span>
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -245,11 +362,11 @@ function ApprovalBar({
             <button
               type="button"
               className="perm-act perm-act-cmd"
-              aria-expanded={showCommand}
-              onClick={() => setShowCommand((v) => !v)}
+              aria-expanded={showDetail}
+              onClick={() => setShowDetail((v) => !v)}
             >
-              命令
-              <ChevronIcon open={showCommand} />
+              {detailLabel}
+              <ChevronIcon open={showDetail} />
             </button>
           ) : null}
         </div>
@@ -268,113 +385,32 @@ function ApprovalBar({
           </div>
         ) : null}
 
-        {menuOpen ? (
-          <div className="perm-menu" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              className="perm-menu-item"
-              onClick={onSessionAllow}
-            >
-              本次会话允许
-              <span className="perm-menu-hint">同命令不再询问</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="perm-menu-item"
-              onClick={onAlwaysAllow}
-            >
-              总是允许
-              <span className="perm-menu-hint">写入本地配置</span>
-            </button>
-            {neverAllow && neverAllow.id !== deny?.id ? (
-              <button
-                type="button"
-                role="menuitem"
-                className="perm-menu-item perm-menu-item-danger"
-                onClick={onNeverAllow}
-              >
-                永不允许
-                <span className="perm-menu-hint">写入项目，以后同类都拒绝</span>
-              </button>
-            ) : null}
-            {deny && deny.id !== allow?.id ? (
-              <button
-                type="button"
-                role="menuitem"
-                className="perm-menu-item perm-menu-item-danger"
-                onClick={onMenuDeny}
-              >
-                拒绝
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showCommand && hasCommand ? (
+        {showDetail && hasCommand ? (
           <pre className="perm-command">{command}</pre>
         ) : null}
       </div>
 
       {confirmAlways ? (
-        <div className="perm-dialog-backdrop" role="presentation">
-          <div className="perm-dialog" role="alertdialog" aria-label="总是允许">
-            <div className="perm-dialog-title">总是允许该命令？</div>
-            <div className="perm-dialog-desc">
-              {allowAlways
-                ? '之后同类命令将不再询问（写入项目权限）。'
-                : '之后同类命令将不再询问（写入本地配置）。'}
-            </div>
-            {hasCommand ? <pre className="perm-command perm-dialog-cmd">{command}</pre> : null}
-            <div className="perm-dialog-actions">
-              <button
-                type="button"
-                className="perm-act perm-act-deny"
-                onClick={() => setConfirmAlways(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="perm-act perm-act-run"
-                autoFocus
-                onClick={confirmAlwaysAllow}
-              >
-                总是允许
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="总是允许这项操作？"
+          desc="这台电脑会记住。之后遇到同样的请求，不再询问。"
+          command={hasCommand ? command : undefined}
+          confirmLabel="总是允许"
+          onCancel={() => setConfirmAlways(false)}
+          onConfirm={confirmAlwaysAllow}
+        />
       ) : null}
 
       {confirmNever ? (
-        <div className="perm-dialog-backdrop" role="presentation">
-          <div className="perm-dialog" role="alertdialog" aria-label="永不允许">
-            <div className="perm-dialog-title">永不允许该命令？</div>
-            <div className="perm-dialog-desc">
-              以后同类请求会直接拒绝（写入项目权限，官方 Never allow）。
-            </div>
-            {hasCommand ? <pre className="perm-command perm-dialog-cmd">{command}</pre> : null}
-            <div className="perm-dialog-actions">
-              <button
-                type="button"
-                className="perm-act perm-act-deny"
-                onClick={() => setConfirmNever(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="perm-act perm-act-deny"
-                autoFocus
-                onClick={confirmNeverAllow}
-              >
-                永不允许
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="永不允许这项操作？"
+          desc="这次会拒绝。以后遇到同样的请求，也会直接拒绝。"
+          command={hasCommand ? command : undefined}
+          confirmLabel="永不允许"
+          danger
+          onCancel={() => setConfirmNever(false)}
+          onConfirm={confirmNeverAllow}
+        />
       ) : null}
     </>
   )
@@ -419,24 +455,19 @@ export function PendingApprovalFallback({
   if (!permission) return null
   if (!force && inlineVisible) return null
 
-  const kindLabel =
-    permission.kindLabel && permission.kindLabel !== '需要审批'
-      ? permission.kindLabel
-      : ''
+  const lead = permissionLead(permission)
   const command = (permission.command || '').trim()
-  const summary = (permission.summary || '').trim()
-  const sideNote = [kindLabel, summary].filter(Boolean).join(' · ')
   return (
-    <div className="perm-dock" role="alertdialog" aria-label="需要审批">
+    <div className="perm-dock" role="alertdialog" aria-label={lead.title}>
       <div className="perm-card">
         <div className="perm-row-head">
           <span className="perm-ico" aria-hidden>
             <AlertIcon />
           </span>
-          <span className="perm-title">需要审批</span>
-          {sideNote ? (
-            <span className="perm-note" title={command || sideNote}>
-              {sideNote}
+          <span className="perm-title">{lead.title}</span>
+          {lead.note ? (
+            <span className="perm-note" title={command || lead.note}>
+              {lead.note}
             </span>
           ) : null}
         </div>

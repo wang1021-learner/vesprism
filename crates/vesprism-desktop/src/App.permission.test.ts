@@ -1,6 +1,6 @@
 /**
  * 权限审批事件链路（共 4 例）：
- * 未命中记忆 → 弹审批条；点「本次会话允许」→ 下次同命令自动放行（respondPermission + 不弹）
+ * 未命中记忆 → 弹审批条；点「仅这场对话允许」→ 下次同命令自动放行（respondPermission + 不弹）
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleSessionEvent } from './lib/sessionEvents'
@@ -48,7 +48,7 @@ describe('权限审批事件链路', () => {
   it('点「本次会话允许」后：同命令第二次请求自动放行，不弹窗', () => {
     // 第一次：弹窗
     handleSessionEvent(permEvent(1))
-    // 用户点「本次会话允许」（与 Permission.tsx onSessionAllow 相同的写入路径）
+    // 用户点「仅这场对话允许」（与 Permission.tsx onSessionAllow 相同的写入路径）
     const st = getTabState('tab-1')
     const sig = permissionSignature(st!.permission!)
     addSessionAllowed('tab-1', sig)

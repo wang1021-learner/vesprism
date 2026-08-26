@@ -1,31 +1,43 @@
 import { useStore } from '@nanostores/react'
-import { $activeTabId, $sessionAlert, patchTab } from '../store'
+import { $activeTabId, $sessionAlert, openSettings, patchTab } from '../store'
+import { Notice, type NoticeTone } from './Notice'
 
-const TITLE: Record<string, string> = {
-  overflow: '上下文超限',
-  rate: '请求过于频繁',
-  auth: '鉴权已过期',
+const META: Record<string, { title: string; tone: NoticeTone }> = {
+  overflow: { title: '上下文超限', tone: 'warning' },
+  rate: { title: '请求过于频繁', tone: 'warning' },
+  auth: { title: '鉴权已过期', tone: 'error' },
 }
 
 export function SessionAlertBanner() {
   const alert = useStore($sessionAlert)
   const tabId = useStore($activeTabId)
   if (!alert) return null
+  const meta = META[alert.kind] || { title: '会话提示', tone: 'info' as const }
+  const dismiss = () => {
+    if (tabId) patchTab(tabId, { sessionAlert: null })
+  }
   return (
-    <div className="plan-banner recap-banner" role="alert">
-      <div className="plan-banner-text">
-        <strong>{TITLE[alert.kind] || '会话提示'}</strong>
-        <span className="plan-banner-hint">{alert.message}</span>
-      </div>
-      <button
-        type="button"
-        className="plan-banner-btn"
-        onClick={() => {
-          if (tabId) patchTab(tabId, { sessionAlert: null })
-        }}
-      >
-        关掉
-      </button>
-    </div>
+    <Notice
+      tone={meta.tone}
+      title={meta.title}
+      className="notice-inline"
+      action={
+        alert.kind === 'auth' ? (
+          <button
+            type="button"
+            className="notice-action"
+            onClick={() => {
+              dismiss()
+              openSettings('models')
+            }}
+          >
+            去设置
+          </button>
+        ) : null
+      }
+      onDismiss={dismiss}
+    >
+      {alert.message}
+    </Notice>
   )
 }

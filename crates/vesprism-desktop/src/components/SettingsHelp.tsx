@@ -1,9 +1,15 @@
 import type { ReactNode } from 'react'
 
 /** 标签旁的「？」：悬停或键盘聚焦时显示说明。 */
-export function SettingsHelp({ text }: { text: string }) {
+export function SettingsHelp({
+  text,
+  className,
+}: {
+  text: string
+  className?: string
+}) {
   return (
-    <span className="settings-help">
+    <span className={`settings-help${className ? ` ${className}` : ''}`}>
       <button
         type="button"
         className="settings-help-mark"

@@ -4,6 +4,8 @@ import {
   parseOfficialSkills,
   parseSkillsFromCommands,
   skillPreviewBody,
+  skillScopeBucket,
+  skillScopeLabel,
 } from './skillRows'
 
 describe('parseOfficialSkills', () => {
@@ -30,7 +32,7 @@ describe('parseOfficialSkills', () => {
 })
 
 describe('parseSkillsFromCommands', () => {
-  it('只要 scope+path，跳过工作流', () => {
+  it('只要 scope+path，跳过工作流（含 snake_case）', () => {
     const rows = parseSkillsFromCommands([
       {
         name: '/ui-design',
@@ -41,6 +43,16 @@ describe('parseSkillsFromCommands', () => {
         name: '/ship',
         description: '工作流',
         meta: { workflowPath: 'a.rhai', workflowSource: 'user' },
+      },
+      {
+        name: '/other-wf',
+        description: 'snake',
+        meta: {
+          scope: 'user',
+          path: 'x',
+          workflow_path: 'b.rhai',
+          workflow_source: 'user',
+        },
       },
     ])
     expect(rows.map((r) => r.name)).toEqual(['ui-design'])
@@ -54,6 +66,18 @@ describe('isSkillAddPath', () => {
     expect(isSkillAddPath('D:/skills/foo')).toBe(true)
     expect(isSkillAddPath('readme.md')).toBe(false)
     expect(isSkillAddPath('')).toBe(false)
+  })
+})
+
+describe('skillScopeBucket', () => {
+  it('local 和 repo 都算本仓库，user 算本机', () => {
+    expect(skillScopeBucket('local')).toBe('workspace')
+    expect(skillScopeBucket('repo')).toBe('workspace')
+    expect(skillScopeBucket('user')).toBe('machine')
+    expect(skillScopeLabel('local')).toBe('本仓库')
+    expect(skillScopeLabel('user')).toBe('本机')
+    expect(skillScopeLabel('bundled')).toBe('内置')
+    expect(skillScopeLabel('plugin')).toBe('插件')
   })
 })
 

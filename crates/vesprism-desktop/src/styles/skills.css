@@ -112,10 +112,34 @@
   margin-bottom: 0.65rem;
 }
 
+.skills-banner,
+.skills-add-hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.skills-banner {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+}
+
+.skills-add-hint code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.7rem;
+  padding: 0.05em 0.28em;
+  border-radius: 3px;
+  background: var(--surface-muted);
+}
+
 .skills-add-row {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .skills-add-row .skills-search {
@@ -174,6 +198,11 @@
   color: var(--text-primary);
   border-color: color-mix(in srgb, var(--text-secondary) 35%, var(--border-solid));
   background: var(--surface-muted);
+}
+
+.skills-panel .notice {
+  margin: 0 0 0.85rem;
+  box-shadow: none;
 }
 
 .skills-empty,

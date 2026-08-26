@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 import { $toasts, dismissToast, type ToastItem } from '../store'
+import { Notice, type NoticeTone } from './Notice'
 
 /** 顶部浮层 toast，不进入对话历史 */
 export function ToastHost() {
@@ -17,21 +18,17 @@ export function ToastHost() {
 
 function ToastCard({ item }: { item: ToastItem }) {
   useEffect(() => {
-    const t = window.setTimeout(() => dismissToast(item.id), 2200)
+    const ms = item.tone === 'error' ? 5200 : item.tone === 'success' ? 2800 : 2200
+    const t = window.setTimeout(() => dismissToast(item.id), ms)
     return () => window.clearTimeout(t)
-  }, [item.id])
+  }, [item.id, item.tone])
 
   return (
-    <div className={`toast-card tone-${item.tone || 'info'}`} role="status">
-      <span className="toast-message">{item.message}</span>
-      <button
-        type="button"
-        className="toast-dismiss"
-        aria-label="关闭"
-        onClick={() => dismissToast(item.id)}
-      >
-        ×
-      </button>
-    </div>
+    <Notice
+      tone={(item.tone || 'info') as NoticeTone}
+      onDismiss={() => dismissToast(item.id)}
+    >
+      {item.message}
+    </Notice>
   )
 }

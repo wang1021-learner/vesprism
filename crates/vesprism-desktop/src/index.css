@@ -32,6 +32,7 @@
 @import './styles/composer-extras.css';
 @import './styles/settings-fields.css';
 @import './styles/buttons.css';
+@import './styles/notice.css';
 @import './styles/toast.css';
 @import './styles/error-boundary.css';
 @import './styles/right-panel.css';

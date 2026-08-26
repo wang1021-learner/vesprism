@@ -175,6 +175,22 @@
   background: var(--surface-muted);
 }
 
+.tools-banner {
+  margin: 0 0 0.75rem;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border-solid);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.tools-panel .notice {
+  margin: 0 0 0.85rem;
+  box-shadow: none;
+}
+
 .tools-empty,
 .tools-error {
   padding: 1.25rem 1rem;

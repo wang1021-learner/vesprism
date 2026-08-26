@@ -34,6 +34,7 @@ import {
   productIdForUtility,
   type ProductId,
 } from './products/catalog'
+import { spawnReasoningEffort } from './lib/reasoning'
 
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
@@ -537,7 +538,7 @@ export function resolveNewTabModel(inheritFromTabId?: string): {
   return {
     modelId,
     reasoningEffort:
-      entry?.reasoning_effort || $reasoningEffort.get() || 'medium',
+      spawnReasoningEffort(entry, $reasoningEffort.get()) || 'medium',
   }
 }
 

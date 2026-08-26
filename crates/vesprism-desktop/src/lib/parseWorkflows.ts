@@ -26,25 +26,47 @@ export function sourceRank(source: string): number {
   return i < 0 ? 99 : i
 }
 
-/** 来源中文标签 */
-export function sourceLabel(source: string): string {
-  switch (source.toLowerCase()) {
+/** 展示用分组：本仓库 / 本机 / 内置 / 插件 / 会话（与技能页同一套中文） */
+export function sourceBucket(source: string): string {
+  switch (source.trim().toLowerCase()) {
     case 'project':
     case 'local':
     case 'repo':
-      return '项目'
+      return 'workspace'
     case 'user':
     case 'global':
-      return '用户'
+      return 'machine'
     case 'bundled':
-      return '内置'
+      return 'bundled'
     case 'plugin':
-      return '插件'
+      return 'plugin'
     case 'session':
-      return '会话'
+      return 'session'
     default:
-      return source || '其他'
+      return source.trim().toLowerCase() || 'machine'
   }
+}
+
+export const SOURCE_BUCKET_LABEL: Record<string, string> = {
+  workspace: '本仓库',
+  machine: '本机',
+  bundled: '内置',
+  plugin: '插件',
+  session: '会话',
+}
+
+export const SOURCE_BUCKET_ORDER = [
+  'workspace',
+  'machine',
+  'bundled',
+  'plugin',
+  'session',
+] as const
+
+/** 来源中文标签（project/local/repo 都叫本仓库，跟技能页对齐） */
+export function sourceLabel(source: string): string {
+  const b = sourceBucket(source)
+  return SOURCE_BUCKET_LABEL[b] || source || '其他'
 }
 
 function str(v: unknown): string {

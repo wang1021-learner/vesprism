@@ -39,7 +39,7 @@
 }
 
 .settings-card {
-  max-width: 680px;
+  max-width: 52rem;
   width: 100%;
   padding: 18px 22px;
   border: 1px solid var(--border-solid, #e5e7eb);
@@ -129,18 +129,24 @@
   color: var(--text-tertiary);
 }
 
-/* API Key 已配置：不可再点、不可再改 */
+/* API Key 已配置：正文只读，「更新」可点 */
 .settings-key-set-banner {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: 6px;
   background: var(--surface-hover);
   border: 1px solid var(--border-solid);
-  cursor: default;
-  user-select: none;
-  pointer-events: none;
+}
+
+.settings-key-set-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
 .settings-key-set-text {
@@ -151,6 +157,11 @@
 
 .settings-key-set-banner .settings-hint {
   margin: 0;
+}
+
+.settings-key-set-banner .btn-inline {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .btn-danger-outline {
@@ -239,6 +250,13 @@
   opacity: 1;
   visibility: visible;
   transform: none;
+}
+
+/* 靠右的操作区：气泡往左展开，避免被设置页 overflow 裁掉 */
+.settings-help--end .settings-help-tip,
+.work-panel-actions .settings-help-tip {
+  left: auto;
+  right: 0;
 }
 
 .settings-row {

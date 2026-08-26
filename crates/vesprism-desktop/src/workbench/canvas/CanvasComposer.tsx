@@ -40,6 +40,7 @@ import {
   type PromptAttach,
 } from '../../bridge'
 import { cancelActiveTurn } from '../../lib/cancelActiveTurn'
+import { reasoningEffortLabel, spawnReasoningEffort } from '../../lib/reasoning'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
 import { generateId } from '../../lib/generateId'
 import { useActivePermission } from '../../lib/useActivePermission'
@@ -182,9 +183,7 @@ export const CanvasComposer = memo(function CanvasComposer({
   const onSwitchModel = useCallback((id: string) => {
     const tabId = $activeTabId.get()
     const entry = $models.get().find((m) => m.id === id)
-    const nextEffort = entry?.supports_reasoning_effort
-      ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
-      : $reasoningEffort.get() || 'medium'
+    const nextEffort = spawnReasoningEffort(entry, $reasoningEffort.get()) || 'medium'
     $defaultModelId.set(id)
     if (nextEffort) $reasoningEffort.set(nextEffort)
     if (tabId) patchTab(tabId, { modelId: id, reasoningEffort: nextEffort || 'medium' })
@@ -206,7 +205,9 @@ export const CanvasComposer = memo(function CanvasComposer({
     if (tabId) patchTab(tabId, { reasoningEffort: e, ...(id ? { modelId: id } : {}) })
     if (!id || !tabId) return
     void setCurrentModel(tabId, id, e)
-      .then(() => pushToast(`已切换思考强度 · ${e}`, 'success'))
+      .then(() =>
+        pushToast(`已切换思考强度 · ${reasoningEffortLabel(e)}`, 'success'),
+      )
       .catch((err) => {
         patchActiveTab({ error: String(err) })
         pushToast('切换思考强度失败', 'error')

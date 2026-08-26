@@ -11,7 +11,11 @@ import {
   type ReactNode,
 } from 'react'
 import type { ModelInfo, SessionPhase } from '../types'
-import { REASONING_LEVELS } from '../types'
+import {
+  defaultReasoningEffortFor,
+  looksLikeDeepSeek,
+  reasoningLevelsFor,
+} from '../lib/reasoning'
 import { generateId } from '../lib/generateId'
 import { useComposerAssist } from './ComposerAssist'
 import {
@@ -373,20 +377,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     [models, selectedModelId],
   )
 
-  // 官方 messages backend 主动过滤掉 none/minimal 两档
-  // （见 xai-grok-sampling-types 的 to_messages_api），选了也不会
-  // 真正发给模型；这里同步隐藏，避免用户选中一个静默失效的档位。
+  // 档位表与设置页 / 后端 commands.rs 对齐：DeepSeek 只有低/高/最高；
+  // messages 协议会静默丢掉 none/minimal，这里一并藏掉。
   const availableReasoningLevels = useMemo(() => {
-    if (selectedModel?.api_backend === 'messages') {
-      return REASONING_LEVELS.filter((lv) => lv.value !== 'none' && lv.value !== 'minimal')
-    }
-    return REASONING_LEVELS
+    if (!selectedModel) return []
+    return reasoningLevelsFor({
+      model: selectedModel.model,
+      baseUrl: selectedModel.base_url,
+      apiBackend: selectedModel.api_backend,
+    })
   }, [selectedModel])
 
   const effortIndex = useMemo(() => {
-    const i = availableReasoningLevels.findIndex((x) => x.value === (reasoningEffort || 'medium'))
-    return i >= 0 ? i : 3 // medium
-  }, [reasoningEffort, availableReasoningLevels])
+    const i = availableReasoningLevels.findIndex((x) => x.value === reasoningEffort)
+    if (i >= 0) return i
+    if (!selectedModel) return 0
+    const fb = defaultReasoningEffortFor(
+      selectedModel.model,
+      selectedModel.base_url,
+      '',
+    )
+    const j = availableReasoningLevels.findIndex((x) => x.value === fb)
+    return j >= 0 ? j : 0
+  }, [reasoningEffort, availableReasoningLevels, selectedModel])
 
   // textarea 自适应高度（空内容保持舒适行高）
   useEffect(() => {
@@ -400,7 +413,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // chat_completions backend（DeepSeek 等第三方）官方代码对这个参数
   // 不做任何过滤，是否真正生效取决于目标服务商是否支持，这里给用户
   // 一个提示而非保证。
-  const reasoningEffortUnverified = selectedModel?.api_backend === 'chat_completions'
+  const reasoningEffortUnverified =
+    selectedModel?.api_backend === 'chat_completions' &&
+    !looksLikeDeepSeek(selectedModel.model, selectedModel.base_url)
 
   const selectedModelLabel = useMemo(() => {
     return selectedModel?.model?.trim() || selectedModel?.id || '选择模型'
@@ -932,7 +947,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               {isGenerating
                 ? '生成中 · Enter 排队 · Ctrl+Enter 插话'
                 : sessionPhase === 'failed'
-                  ? '会话未就绪，可新建或重试'
+                  ? '会话已中断，点上方「重试」或新建对话'
                   : sessionPhase === 'loading' ||
                     sessionPhase === 'booting' ||
                     sessionPhase === 'restarting'
@@ -1073,7 +1088,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     {showReasoning && (
                       <div className="model-menu-reasoning-section">
                         <div className="model-menu-header">
-                          <span>推理挡位</span>
+                          <span>推理档位</span>
                           <span className="model-menu-reasoning-val-badge">
                             {availableReasoningLevels[effortIndex]?.label ||
                               `Tier ${effortIndex}`}

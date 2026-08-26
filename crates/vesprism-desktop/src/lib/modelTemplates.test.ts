@@ -28,15 +28,22 @@ describe('applyVendorTemplate', () => {
     expect(m.query_params['api-version']).toBeTruthy()
   })
 
-  it('拷贝当前只带 URL/协议', () => {
+  it('拷贝当前带上同一把密钥和请求头，模型名留空', () => {
     const cur = emptyModelEntry({
       id: 'old',
       base_url: 'https://api.example.com/v1',
       api_backend: 'responses',
+      env_key: 'OPENAI_API_KEY',
+      extra_headers: { 'X-Test': '1' },
+      supports_reasoning_effort: true,
+      reasoning_effort: 'high',
     })
     const m = applyVendorTemplate('m-5', 'copy', cur)
     expect(m.base_url).toBe('https://api.example.com/v1')
     expect(m.api_backend).toBe('responses')
+    expect(m.env_key).toBe('OPENAI_API_KEY')
+    expect(m.extra_headers['X-Test']).toBe('1')
+    expect(m.supports_reasoning_effort).toBe(true)
     expect(m.model).toBe('')
   })
 })
@@ -48,6 +55,15 @@ describe('prepareModelsForSave', () => {
     const saved = prepareModelsForSave([m])
     expect(saved[0].env_key).toBe('')
     expect(saved[0].query_params).toEqual({})
+  })
+
+  it('DeepSeek 推理档默认写成 high，不把 medium 写进配置', () => {
+    const m = applyVendorTemplate('ds', 'deepseek')
+    expect(m.reasoning_effort).toBe('high')
+    const saved = prepareModelsForSave([m])
+    expect(saved[0].reasoning_effort).toBe('high')
+    m.reasoning_effort = 'medium'
+    expect(prepareModelsForSave([m])[0].reasoning_effort).toBe('high')
   })
 })
 

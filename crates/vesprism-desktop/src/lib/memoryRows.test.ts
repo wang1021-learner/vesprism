@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { memoryDirSlug, memoryRowTitle, workspaceFolderName } from './memoryRows'
+import {
+  groupMemoryFiles,
+  memoryDirSlug,
+  memoryRowTitle,
+  workspaceFolderName,
+} from './memoryRows'
 
 describe('memoryDirSlug', () => {
   it('全局 MEMORY.md 没有 slug', () => {
@@ -42,5 +47,22 @@ describe('memoryRowTitle', () => {
 describe('workspaceFolderName', () => {
   it('取最后一段', () => {
     expect(workspaceFolderName('D:\\a\\grok-build')).toBe('grok-build')
+  })
+})
+
+describe('groupMemoryFiles', () => {
+  it('按全局 / 本仓库 / 其它 / 会话分组', () => {
+    const cwd = 'D:/proj/grok-build'
+    const groups = groupMemoryFiles(
+      [
+        { path: '/x/memory/other-bbbbbbbb/MEMORY.md', source: 'workspace' },
+        { path: '/x/memory/MEMORY.md', source: 'global' },
+        { path: '/x/memory/grok-build-aaaaaaaa/sessions/a.md', source: 'session' },
+        { path: '/x/memory/grok-build-aaaaaaaa/MEMORY.md', source: 'workspace' },
+      ],
+      cwd,
+    )
+    expect(groups.map((g) => g.id)).toEqual(['global', 'workspace', 'other', 'session'])
+    expect(groups[1].files[0].path).toContain('grok-build-aaaaaaaa/MEMORY.md')
   })
 })

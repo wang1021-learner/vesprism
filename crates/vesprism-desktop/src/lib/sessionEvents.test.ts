@@ -191,3 +191,44 @@ describe('turn_ended status', () => {
     })
   })
 })
+
+describe('崩溃恢复与错误提示', () => {
+  it('切工作区 restarting 时忽略 reconnecting，不当成恢复旧对话', async () => {
+    const { startSession } = await import('../bridge')
+    vi.mocked(startSession).mockClear()
+    patchTab('tab-1', { phase: 'restarting', sessionId: '', cwd: 'D:\\proj' })
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'session_reconnecting',
+      attempt: 1,
+    })
+    await Promise.resolve()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(getTabState('tab-1')?.phase).toBe('restarting')
+  })
+
+  it('tab_failed 写人话、标 failed、清挂起权限', () => {
+    handleSessionEvent({ tab_id: 'tab-1', type: 'tab_failed', attempts: 3 })
+    const st = getTabState('tab-1')
+    expect(st?.phase).toBe('failed')
+    expect(st?.error).toContain('连续崩溃')
+    expect(st?.permission).toBeNull()
+    expect(st?.status).toBe('idle')
+  })
+
+  it('error Unknown error 换成短句', () => {
+    handleSessionEvent({ tab_id: 'tab-1', type: 'error', message: 'Unknown error' })
+    expect(getTabState('tab-1')?.error).toBe('出了点问题，请重试')
+    expect(getTabState('tab-1')?.status).toBe('idle')
+  })
+
+  it('会话断开失败标 failed 以便点重试', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'error',
+      message: '会话已断开，自动恢复失败',
+    })
+    expect(getTabState('tab-1')?.phase).toBe('failed')
+    expect(getTabState('tab-1')?.error).toContain('重试')
+  })
+})

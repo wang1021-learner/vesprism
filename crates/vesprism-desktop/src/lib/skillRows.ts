@@ -22,11 +22,52 @@ export type SkillRow = {
   removable: boolean
 }
 
+/** 展示用分组：本仓库 / 本机 / 内置 / 插件（local+repo 都算本仓库） */
+export function skillScopeBucket(scope: string): string {
+  switch (scope.trim().toLowerCase()) {
+    case 'local':
+    case 'repo':
+      return 'workspace'
+    case 'user':
+      return 'machine'
+    case 'bundled':
+      return 'bundled'
+    case 'plugin':
+      return 'plugin'
+    case 'server':
+      return 'server'
+    default:
+      return scope.trim().toLowerCase() || 'machine'
+  }
+}
+
+export const SKILL_SCOPE_BUCKET_LABEL: Record<string, string> = {
+  workspace: '本仓库',
+  machine: '本机',
+  bundled: '内置',
+  plugin: '插件',
+  server: '远程',
+}
+
+export const SKILL_SCOPE_BUCKET_ORDER = [
+  'workspace',
+  'machine',
+  'bundled',
+  'plugin',
+  'server',
+] as const
+
+export function skillScopeLabel(scope: string): string {
+  const b = skillScopeBucket(scope)
+  return SKILL_SCOPE_BUCKET_LABEL[b] || scope
+}
+
+/** 官方 scope → 人话；local/repo 都显示「本仓库」 */
 export const SKILL_SCOPE_LABEL: Record<string, string> = {
-  local: '本地 (cwd)',
-  repo: '仓库',
-  user: '用户',
-  server: '服务器',
+  local: '本仓库',
+  repo: '本仓库',
+  user: '本机',
+  server: '远程',
   bundled: '内置',
   plugin: '插件',
 }
@@ -130,7 +171,14 @@ export function parseSkillsFromCommands(
     const path = str(meta.path)
     const scope = str(meta.scope).toLowerCase()
     if (!path || !scope) continue
-    if (meta.workflowPath || meta.workflowSource) continue
+    if (
+      meta.workflowPath ||
+      meta.workflowSource ||
+      meta.workflow_path ||
+      meta.workflow_source
+    ) {
+      continue
+    }
     const name = str(c.name).replace(/^\//, '')
     if (!name) continue
     const displayName = str(meta.displayName ?? meta.display_name) || name

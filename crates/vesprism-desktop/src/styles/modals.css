@@ -14,8 +14,12 @@
   padding: 16px;
 }
 
+/* 设置不是小对话框：铺满窗口，只留一圈边好点外面关掉。 */
 .modal-backdrop.settings-backdrop {
-  padding: 0;
+  padding: 10px;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
 }
 
 @keyframes modal-scale-in {

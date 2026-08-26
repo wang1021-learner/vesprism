@@ -1,0 +1,155 @@
+/* 错误 / 成功 / 提示：会话条、Toast、设置提示共用 */
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.notice-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+
+.notice-error {
+  border-color: var(--danger-border);
+}
+
+.notice-error .notice-icon {
+  color: var(--danger);
+}
+
+.notice-success {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border-solid));
+}
+
+.notice-success .notice-icon {
+  color: var(--success);
+}
+
+.notice-warning {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border-solid));
+}
+
+.notice-warning .notice-icon {
+  color: var(--warning-deep, var(--warning));
+}
+
+.notice-info .notice-icon {
+  color: var(--text-secondary);
+}
+
+.notice-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notice-title {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.notice-msg {
+  color: var(--text-secondary);
+  font-weight: 450;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.notice-plain .notice-msg {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.notice-action {
+  flex-shrink: 0;
+  height: 26px;
+  margin-top: 0;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid);
+  background: var(--surface-elevated, #fff);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notice-action:hover {
+  background: var(--surface-hover);
+}
+
+.notice-error .notice-action {
+  border-color: var(--danger-border);
+  color: var(--danger-deep, var(--danger));
+}
+
+.notice-dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -2px -4px -2px 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notice-dismiss:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* 浮在主界面 / 设置顶上，不要拉满整行 */
+.notice-float {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
+  width: min(36rem, calc(100% - 32px));
+  animation: notice-in 0.2s var(--ease-out-smooth, ease);
+  pointer-events: auto;
+}
+
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+
+.notice-inline {
+  margin: 8px 16px 0;
+  flex-shrink: 0;
+  box-shadow: none;
+}

@@ -80,6 +80,7 @@ import {
 } from '../lib/sessionOpen'
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
+import { spawnReasoningEffort } from '../lib/reasoning'
 import { openSessionSchedule } from '../lib/engineSlash'
 import { normalizeWorkspacePath, workspaceFolderName } from '../lib/workspacePath'
 import {
@@ -1005,9 +1006,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
       const modelId = $defaultModelId.get().trim()
       const entry = $models.get().find((m) => m.id === modelId)
-      const effort = entry?.supports_reasoning_effort
-        ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
-        : $reasoningEffort.get() || undefined
+      const effort = spawnReasoningEffort(entry, $reasoningEffort.get())
       const spawn = { modelId: modelId || undefined, reasoningEffort: effort }
       try {
         await restartSession(tabId, workCwd, spawn)

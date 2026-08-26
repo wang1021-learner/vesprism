@@ -16,17 +16,17 @@ export const API_BACKENDS: { value: ApiBackend; label: string; hint: string }[] 
   {
     value: 'chat_completions',
     label: 'Chat Completions',
-    hint: 'OpenAI 兼容 chat/completions（DeepSeek 官方不带 /v1；Ollama 等多数带 /v1）',
+    hint: '多数第三方（DeepSeek、Ollama、兼容网关）。选错会 404。',
   },
   {
     value: 'responses',
     label: 'Responses',
-    hint: 'OpenAI Responses /v1/responses',
+    hint: 'OpenAI 新接口 /v1/responses，普通兼容网关不要选。',
   },
   {
     value: 'messages',
     label: 'Messages',
-    hint: 'Anthropic Messages /v1/messages',
+    hint: 'Anthropic 官方。兼容网关几乎都不是这个。',
   },
 ]
 

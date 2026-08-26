@@ -13,6 +13,7 @@ import {
 } from '../../store'
 import { searchSessions } from '../../bridge'
 import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap } from '../../lib/engineSlash'
+import { openChatTab } from '../../lib/openChatTab'
 
 type SearchHit = ChatSummary & { snippet?: string }
 
@@ -204,7 +205,7 @@ export function CommandPalette() {
     {
       id: 'cmd-settings',
       title: '打开设置',
-      subtitle: '配置模型服务商与 API Key',
+      subtitle: '模型、技能、工具、MCP、记忆和插件',
       action: () => {
         openSettings()
       },
@@ -212,7 +213,7 @@ export function CommandPalette() {
     {
       id: 'cmd-skills',
       title: '技能',
-      subtitle: '在设置里浏览、启用技能',
+      subtitle: '提示包：浏览、启停（写入本机配置）',
       action: () => {
         openSettings('skills')
       },
@@ -220,7 +221,7 @@ export function CommandPalette() {
     {
       id: 'cmd-tools',
       title: '工具',
-      subtitle: '在设置里查看当前会话工具',
+      subtitle: '模型会调的能力；停用只作用于本工作区对话',
       action: () => {
         openSettings('tools')
       },
@@ -228,7 +229,7 @@ export function CommandPalette() {
     {
       id: 'cmd-mcp',
       title: 'MCP',
-      subtitle: '在设置里管理 MCP 服务器',
+      subtitle: '外接服务器连接；调用列表在工具页',
       action: () => {
         openSettings('mcp')
       },
@@ -244,7 +245,7 @@ export function CommandPalette() {
     {
       id: 'cmd-memory',
       title: '记忆',
-      subtitle: '浏览、写入、整理跨会话记忆',
+      subtitle: '全局 / 本仓库笔记，不是聊天记录',
       action: () => {
         openSettings('memory')
       },
@@ -252,9 +253,17 @@ export function CommandPalette() {
     {
       id: 'cmd-plugins',
       title: '插件',
-      subtitle: '安装、启停、更新插件',
+      subtitle: '一整箱技能和 MCP；启停写本机配置',
       action: () => {
         openSettings('plugins')
+      },
+    },
+    {
+      id: 'cmd-workflows',
+      title: '自动化任务',
+      subtitle: '浏览和运行工作流（/workflows）',
+      action: () => {
+        void openChatTab({ title: '自动化任务', utilityKind: 'workflows' })
       },
     },
     {

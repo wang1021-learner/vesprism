@@ -136,12 +136,10 @@ export function EngineSettings({
       </section>
 
       <section className="settings-card">
-        <h3 className="settings-card-title">记忆系统</h3>
+        <h3 className="settings-card-title">跨会话记忆</h3>
         <p className="settings-card-desc">
-          官方跨会话记忆（<code>[memory] enabled</code>）：新会话自动注入相关记忆，
-          会话结束时自动存摘要，agent 可用 memory_search / memory_get 主动检索。
-          存储位置 <code>~/.vesprism/memory/</code>；未配置 embedding 时官方自动退化为
-          FTS 关键词检索（无外部依赖）。
+          新对话会带上相关旧笔记，结束时自动存摘要。文件在{' '}
+          <code>~/.vesprism/memory/</code>。看内容和手写一条，到左侧「记忆」。
         </p>
         <label className="settings-check">
           <input
@@ -150,9 +148,11 @@ export function EngineSettings({
             onChange={(e) => setPrefs({ ...prefs, memory_enabled: e.target.checked })}
           />
           启用跨会话记忆（默认开）
-          <SettingsHelp text="新对话会带上相关旧记忆，结束时存摘要。关掉后已有记忆文件不会删。" />
+          <SettingsHelp text="这是总开关，保存后新会话才生效。当前这场对话要不要用，在「记忆」页再切。关掉不会删已有文件。" />
         </label>
-        <p className="settings-hint">保存后新会话生效；关掉后已存的记忆文件不会被删除。</p>
+        <p className="settings-hint">
+          保存后新开的对话才生效。已有文件不会被删除。
+        </p>
       </section>
 
       <section className="settings-card">

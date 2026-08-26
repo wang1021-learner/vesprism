@@ -40,9 +40,9 @@ export type McpRow = {
 export const MCP_GROUP_ORDER: McpGroupId[] = ['managed', 'plugin', 'local']
 
 export const MCP_GROUP_LABEL: Record<McpGroupId, string> = {
-  managed: '托管',
-  plugin: '插件',
-  local: '本地',
+  managed: '平台托管',
+  plugin: '插件带来的',
+  local: '本机添加',
 }
 
 function str(v: unknown): string {

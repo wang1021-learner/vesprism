@@ -12,14 +12,15 @@ export type PluginRow = {
 }
 
 const SCOPE: Record<string, string> = {
-  cli: '命令行',
-  project: '项目',
-  user: '用户',
-  config: '配置',
+  cli: '本机',
+  project: '本仓库',
+  user: '本机',
+  config: '本机配置',
 }
 
 export function scopeLabel(s: string): string {
-  return SCOPE[s] || s || '其他'
+  const k = (s || '').trim().toLowerCase()
+  return SCOPE[k] || s || '其他'
 }
 
 export function parsePluginList(raw: unknown): PluginRow[] {

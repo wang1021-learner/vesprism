@@ -10,6 +10,7 @@ import {
   $defaultModelId,
   $messages,
   $models,
+  $settingsDefaultModelId,
   $reasoningEffort,
   $settingsOpen,
   $settingsSection,
@@ -37,24 +38,36 @@ import {
 import { policyFromDto, type ExecutionPolicy, type FileAccess, type InternetAccess } from '../lib/executionPolicy'
 import {
   autoEnvKey,
+  CONTEXT_WINDOW_PRESETS,
+  formatContextTokens,
+  modelSetupWarnings,
   normalizeModelFromDisk,
+  parseContextWindowInput,
   parseHeadersText,
   prepareModelsForSave,
+  resolveDefaultModelId,
 } from '../lib/models'
 import {
   applyVendorTemplate,
   envKeyChoices,
   hostFromBaseUrl,
   MODEL_VENDOR_TEMPLATES,
+  suggestedEnvKey,
   type ModelVendorId,
 } from '../lib/modelTemplates'
+import {
+  clampReasoningEffort,
+  defaultReasoningEffortFor,
+  reasoningLevelsFor,
+  spawnReasoningEffort,
+} from '../lib/reasoning'
 import type { ModelInfo } from '../types'
 import { ModelSamplingFields } from './ModelSamplingFields'
 import { SettingsHelp, SettingsLabel } from './SettingsHelp'
+import { Notice } from './Notice'
 import {
   API_BACKENDS,
   headersToText,
-  textToHeaders,
   type SettingsTab,
 } from './settingsHelpers'
 import { EngineSettings } from './EngineSettings'
@@ -109,6 +122,8 @@ export function SettingsModal() {
   const [probeOk, setProbeOk] = useState<boolean | null>(null)
   /** 已配置密钥时，点「更新」才显示输入框 */
   const [forceKeyEdit, setForceKeyEdit] = useState(false)
+  const [customEnvKey, setCustomEnvKey] = useState(false)
+  const [contextDraft, setContextDraft] = useState<string | null>(null)
   const [execPolicy, setExecPolicy] = useState<ExecutionPolicy>('request-review')
   const [internetAccess, setInternetAccess] = useState<InternetAccess>('ask')
   const [fileAccess, setFileAccess] = useState<FileAccess>('workspace-only')
@@ -125,6 +140,14 @@ export function SettingsModal() {
 
   const selectedModel = models.find((m) => m.id === selectedModelId)
   const isDraft = selectedModelId ? draftModelIds.includes(selectedModelId) : false
+  const setupWarnings = selectedModel ? modelSetupWarnings(selectedModel) : []
+  const reasoningLevels = selectedModel
+    ? reasoningLevelsFor({
+        model: selectedModel.model,
+        baseUrl: selectedModel.base_url,
+        apiBackend: selectedModel.api_backend,
+      })
+    : []
 
   const headersText = useMemo(
     () => headersToText(selectedModel?.extra_headers),
@@ -170,6 +193,8 @@ export function SettingsModal() {
     setQueryDraft(null)
     setEnvHeaderDraft(null)
     setForceKeyEdit(false)
+    setCustomEnvKey(false)
+    setContextDraft(null)
     setProbeMsg('')
     setProbeOk(null)
     void (async () => {
@@ -230,6 +255,8 @@ export function SettingsModal() {
     setKeyInput('')
     setKeyVisible(false)
     setForceKeyEdit(false)
+    setCustomEnvKey(false)
+    setContextDraft(null)
     setProbeMsg('')
     setProbeOk(null)
     const entry = models.find((m) => m.id === id)
@@ -265,6 +292,8 @@ export function SettingsModal() {
     setQueryDraft(null)
     setEnvHeaderDraft(null)
     setShowAdvanced(false)
+    setCustomEnvKey(false)
+    setContextDraft(null)
     setProbeMsg('')
     setProbeOk(null)
     void refreshKeyStatus(draft.env_key)
@@ -330,11 +359,25 @@ export function SettingsModal() {
     setToast(null)
     try {
       if (!settingsCwd.trim()) throw new Error('请填写工作目录')
-      const trimmed = prepareModelsForSave(models)
-      // 选中即默认（与列表选择对齐）；若未选则用 defaultId
-      const def = (selectedModelId || defaultId).trim()
+      const modelsToSave =
+        contextDraft !== null && selectedModelId
+          ? models.map((m) =>
+              m.id === selectedModelId
+                ? {
+                    ...m,
+                    context_window: parseContextWindowInput(contextDraft),
+                  }
+                : m,
+            )
+          : models
+      const trimmed = prepareModelsForSave(modelsToSave)
+      const def = resolveDefaultModelId(
+        defaultId,
+        selectedModelId,
+        trimmed.map((m) => m.id),
+      )
       if (!def || !trimmed.some((m) => m.id === def)) {
-        throw new Error('请选择一个有效的默认模型')
+        throw new Error('请先点「设为默认」选一个默认模型')
       }
       const selectedEntry =
         trimmed.find((m) => m.id === selectedModelId) ??
@@ -353,22 +396,33 @@ export function SettingsModal() {
 
       $models.set(trimmed)
       $defaultModelId.set(def)
+      $settingsDefaultModelId.set(def)
       $preferredWorkspaceCwd.set(appliedCwd)
       patchActiveTab({ cwd: appliedCwd })
       setModels(trimmed)
       setDefaultId(def)
       setDraftModelIds([])
       setKeyInput('')
+      setForceKeyEdit(false)
+      setCustomEnvKey(false)
+      setContextDraft(null)
+      await refreshKeyStatus(selectedEntry?.env_key || '')
 
-      const ent = trimmed.find((m) => m.id === def)
-      const effort = ent?.supports_reasoning_effort
-        ? ent.reasoning_effort || 'medium'
-        : undefined
-      try {
-        await setCurrentModel($activeTabId.get(), def, effort)
-        if (effort) $reasoningEffort.set(effort)
-      } catch {
-        /* 会话未就绪 */
+      // 只刷新当前会话正在用的那条；不要把「正在编辑的条目」切到对话上。
+      const tabId = $activeTabId.get()
+      const tabModel = tabId ? getTabState(tabId)?.modelId : ''
+      const liveId =
+        tabModel && trimmed.some((m) => m.id === tabModel) ? tabModel : ''
+      if (tabId && liveId) {
+        const ent = trimmed.find((m) => m.id === liveId)
+        const keep = getTabState(tabId)?.reasoningEffort
+        const effort = spawnReasoningEffort(ent, keep)
+        try {
+          await setCurrentModel(tabId, liveId, effort)
+          if (effort) $reasoningEffort.set(effort)
+        } catch {
+          /* 会话未就绪 */
+        }
       }
 
       return { ok: true }
@@ -424,11 +478,21 @@ export function SettingsModal() {
     setToast(null)
     const res = await onSave()
     if (res.ok) {
-      setToast({ message: '配置模型成功', type: 'success' })
-      setTimeout(() => {
-        setToast(null)
-        $settingsOpen.set(false)
-      }, 600)
+      if (tab === 'models') {
+        setToast({
+          message: '模型已保存。密钥在 .env，其余在 config.toml。可再点「测连通」。',
+          type: 'success',
+        })
+        const ent = models.find((m) => m.id === selectedModelId)
+        void refreshKeyStatus(ent?.env_key || '')
+        setTimeout(() => setToast(null), 2200)
+      } else {
+        setToast({ message: '配置已保存', type: 'success' })
+        setTimeout(() => {
+          setToast(null)
+          $settingsOpen.set(false)
+        }, 600)
+      }
     } else if (res.error) {
       setToast({ message: res.error, type: 'error' })
     }
@@ -449,10 +513,9 @@ export function SettingsModal() {
         aria-labelledby="settings-title"
       >
         {toast && (
-          <div className={`settings-toast ${toast.type}`} role="alert">
-            <span className="toast-icon">{toast.type === 'success' ? '✓' : '✕'}</span>
-            <span className="toast-text">{toast.message}</span>
-          </div>
+          <Notice tone={toast.type} className="notice-float">
+            {toast.message}
+          </Notice>
         )}
         <div className="settings-shell-header">
           <div className="settings-shell-heading">
@@ -780,7 +843,7 @@ export function SettingsModal() {
 
                   {models.length === 0 ? (
                     <p className="settings-hint settings-models-empty">
-                      尚无模型，点击「新增」。
+                      尚无模型。用上方厂商模板新增，或「拷贝当前」。
                     </p>
                   ) : (
                     <ul className="settings-models-items">
@@ -840,6 +903,11 @@ export function SettingsModal() {
                           <h3 className="settings-panel-title">
                             {isDraft ? '新增模型' : '编辑模型'}
                           </h3>
+                          <p className="settings-hint">
+                            {defaultId === selectedModel.id
+                              ? '新对话默认用这条。编辑旁边条目再保存，不会改掉默认。'
+                              : '点「设为默认」后再保存，新对话才会用这条。'}
+                          </p>
                         </div>
                         <div className="settings-models-detail-actions">
                           <button
@@ -847,7 +915,7 @@ export function SettingsModal() {
                             className="btn-secondary"
                             disabled={savingSettings}
                             onClick={() => setDefaultId(selectedModel.id)}
-                            title="设为默认模型"
+                            title="新对话用这条。保存时以它为准，不会因为你在编辑旁边那条而改掉。"
                           >
                             {defaultId === selectedModel.id ? '已是默认' : '设为默认'}
                           </button>
@@ -887,9 +955,16 @@ export function SettingsModal() {
                       {/* —— 连接 —— */}
                       <section className="settings-field-section">
                         <h4 className="settings-field-section-title">连接</h4>
+                        {setupWarnings.length > 0 ? (
+                          <ul className="settings-callout-warn">
+                            {setupWarnings.map((msg) => (
+                              <li key={msg}>{msg}</li>
+                            ))}
+                          </ul>
+                        ) : null}
 
                         <div className="settings-field">
-                          <SettingsLabel help="发给对方接口的模型 id，不是本地昵称。例如 gpt-4o、claude-sonnet-4-6、llama3.1。">
+                          <SettingsLabel help="发给对方接口的模型 id，不是列表里的本地名字。例如 gpt-4o、deepseek-v4-flash、llama3.1:8b。">
                             模型名称
                           </SettingsLabel>
                           <input
@@ -904,9 +979,6 @@ export function SettingsModal() {
                               })
                             }
                           />
-                          <p className="settings-hint">
-                            发给对方的 model id，例如 gpt-4o、claude-sonnet-4-6、llama3.1。
-                          </p>
                         </div>
 
                         <div className="settings-field">
@@ -923,8 +995,7 @@ export function SettingsModal() {
                             }
                           />
                           <p className="settings-hint">
-                            OpenAI / Ollama / 多数网关以 <code>/v1</code> 结尾；DeepSeek
-                            官方是 https://api.deepseek.com（不要加 /v1）。
+                            多数网关以 <code>/v1</code> 结尾；DeepSeek 官方不要加 /v1。
                           </p>
                         </div>
 
@@ -960,43 +1031,62 @@ export function SettingsModal() {
 
                         <div className="settings-field-grid">
                           <div className="settings-field">
-                            <SettingsLabel htmlFor="settings-context-k" help="一次对话最多塞多少千 token。到顶会触发压缩。请按厂商文档填，DeepSeek V4 可用 1000（约 100 万）。">
-                              上下文窗口 (K)
+                            <SettingsLabel htmlFor="settings-context" help="一次对话最多塞多少 token。可填 128000、128K 或 1M。小于 10000 的纯数字按千 token 理解（128 = 128K），避免把文档里的 128000 再乘一千。">
+                              上下文窗口
                             </SettingsLabel>
                             <div className="settings-row">
                               <input
-                                id="settings-context-k"
-                                type="number"
-                                min={1}
-                                step={1}
+                                id="settings-context"
+                                type="text"
+                                inputMode="decimal"
                                 className="settings-input"
                                 value={
-                                  selectedModel.context_window > 0
-                                    ? Math.round(selectedModel.context_window / 1000)
-                                    : ''
+                                  contextDraft !== null
+                                    ? contextDraft
+                                    : selectedModel.context_window > 0
+                                      ? String(selectedModel.context_window)
+                                      : ''
                                 }
-                                placeholder="128"
-                                onChange={(e) => {
-                                  const raw = e.target.value.trim()
+                                placeholder="128000 或 128K"
+                                onChange={(e) => setContextDraft(e.target.value)}
+                                onBlur={() => {
+                                  const raw = (contextDraft ?? '').trim()
+                                  setContextDraft(null)
                                   if (raw === '') {
                                     updateSelectedModel({ context_window: 0 })
                                     return
                                   }
-                                  const k = Number(raw)
-                                  if (!Number.isFinite(k) || k <= 0) {
-                                    updateSelectedModel({ context_window: 0 })
-                                    return
-                                  }
                                   updateSelectedModel({
-                                    context_window: Math.round(k) * 1000,
+                                    context_window: parseContextWindowInput(raw),
                                   })
                                 }}
                               />
-                              <span className="settings-unit">K tokens</span>
+                              <span className="settings-unit">
+                                {contextDraft !== null
+                                  ? 'tokens'
+                                  : formatContextTokens(selectedModel.context_window) ||
+                                    'tokens'}
+                              </span>
                             </div>
-                            <p className="settings-hint">
-                              按厂商文档填。DeepSeek V4 可用 1000（1M tokens）。
-                            </p>
+                            <div className="settings-preset-row" aria-label="常用窗口">
+                              {CONTEXT_WINDOW_PRESETS.map((p) => (
+                                <button
+                                  key={p.label}
+                                  type="button"
+                                  className={`settings-vendor-chip${
+                                    selectedModel.context_window === p.tokens
+                                      ? ' is-active'
+                                      : ''
+                                  }`}
+                                  onClick={() => {
+                                    setContextDraft(null)
+                                    updateSelectedModel({ context_window: p.tokens })
+                                  }}
+                                >
+                                  {p.label}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                           <div className="settings-field">
                             <SettingsLabel help="只给你自己看的备注，不会发给模型。">
@@ -1026,68 +1116,136 @@ export function SettingsModal() {
                               const on = e.target.checked
                               updateSelectedModel({
                                 supports_reasoning_effort: on,
-                                reasoning_effort: on ? 'medium' : '',
+                                reasoning_effort: on
+                                  ? defaultReasoningEffortFor(
+                                      selectedModel.model,
+                                      selectedModel.base_url,
+                                      selectedModel.reasoning_effort,
+                                    )
+                                  : '',
                               })
                             }}
                           />
                           <span>
                             <strong>此模型支持推理 / 思考</strong>
-                            <SettingsHelp text="只声明「这个模型会思考」。具体强度在对话输入栏切换模型时选，不在这里改。" />
+                            <SettingsHelp text="勾上后，新对话会带默认档位；当前对话仍可在输入栏改。DeepSeek 官方只有 低 / 高 / 最高，默认高。" />
                             <span className="settings-hint settings-hint-inline">
-                              仅声明能力。强度在下方输入栏切换模型时选择。
+                              勾上表示对方会思考。默认档给新对话；当前对话在输入栏改。
                             </span>
                           </span>
                         </label>
+                        {selectedModel.supports_reasoning_effort ? (
+                          <div className="settings-field settings-reasoning-block">
+                            <SettingsLabel
+                              htmlFor="settings-reasoning-effort"
+                              help="写进配置，给之后新开的对话用。已经打开的对话不会被这条改掉。"
+                            >
+                              新对话默认档位
+                            </SettingsLabel>
+                            <select
+                              id="settings-reasoning-effort"
+                              className="settings-input settings-select"
+                              value={clampReasoningEffort(
+                                selectedModel.model,
+                                selectedModel.base_url,
+                                selectedModel.reasoning_effort,
+                              )}
+                              onChange={(e) =>
+                                updateSelectedModel({
+                                  reasoning_effort: e.target.value,
+                                })
+                              }
+                            >
+                              {reasoningLevels.map((lv) => (
+                                <option key={lv.value} value={lv.value}>
+                                  {lv.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : null}
                       </section>
 
                       {/* —— 密钥 —— */}
                       <section className="settings-field-section">
                         <h4 className="settings-field-section-title">密钥</h4>
                         <div className="settings-field">
-                          <SettingsLabel help="密钥存在桌面 .env 里的变量名。同一家网关（如 OpenAI）多条模型选同一个名字，Key 只贴一次。Ollama 等本地服务可选「无需密钥」。">
-                            共用哪把钥匙
+                          <SettingsLabel help="密钥存在桌面 .env 里，config.toml 只记变量名。同一家网关的多条模型选同一个名字，Key 只贴一次。本机 Ollama 选「无需密钥」。">
+                            密钥变量名
                           </SettingsLabel>
                           <select
                             className="settings-input settings-select"
                             value={
-                              selectedModel.env_key === ''
-                                ? ''
-                                : selectedModel.env_key || autoEnvKey(selectedModel.id)
+                              customEnvKey
+                                ? '__custom__'
+                                : selectedModel.env_key === ''
+                                  ? ''
+                                  : selectedModel.env_key ||
+                                    autoEnvKey(selectedModel.id)
                             }
                             onChange={(e) => {
                               const v = e.target.value
-                              const next =
-                                v === '__new__' ? autoEnvKey(selectedModel.id) : v
-                              updateSelectedModel({ env_key: next })
+                              if (v === '__custom__') {
+                                const next = suggestedEnvKey(selectedModel)
+                                setCustomEnvKey(true)
+                                updateSelectedModel({ env_key: next })
+                                setForceKeyEdit(false)
+                                setKeyInput('')
+                                void refreshKeyStatus(next)
+                                return
+                              }
+                              setCustomEnvKey(false)
+                              updateSelectedModel({ env_key: v })
                               setForceKeyEdit(false)
                               setKeyInput('')
-                              void refreshKeyStatus(next)
+                              void refreshKeyStatus(v)
                             }}
                           >
-                            <option value="">无需密钥（Ollama 等）</option>
-                            <option value="__new__">单独一把新钥匙</option>
+                            <option value="">无需密钥（本机 Ollama 等）</option>
                             {keyChoices.map((k) => (
                               <option key={k} value={k}>
                                 {k}
                               </option>
                             ))}
+                            <option value="__custom__">自定义变量名…</option>
                           </select>
                           <p className="settings-hint">
-                            同一家第三方（如 OpenAI）多条模型选同一个名字，只贴一次 Key。
+                            同一家网关多条模型选同一个名字，只贴一次 Key。
                           </p>
                         </div>
+                        {customEnvKey && selectedModel.env_key !== '' ? (
+                          <div className="settings-field">
+                            <SettingsLabel help="写入 .env 的那一行名字，例如 DEEPSEEK_API_KEY。不要把密钥本身填在这里。">
+                              自定义变量名
+                            </SettingsLabel>
+                            <input
+                              type="text"
+                              className="settings-input settings-mono"
+                              value={selectedModel.env_key}
+                              placeholder="MY_API_KEY"
+                              spellCheck={false}
+                              onChange={(e) => {
+                                const next = e.target.value.trim().toUpperCase()
+                                updateSelectedModel({ env_key: next })
+                                void refreshKeyStatus(next)
+                              }}
+                            />
+                          </div>
+                        ) : null}
                         {selectedModel.env_key ? (
                           <div className="settings-key-block">
                             {keyStatus?.is_set && !forceKeyEdit ? (
                               <div className="settings-key-set-banner">
-                                <span className="settings-key-set-text">已配置</span>
-                                <span className="settings-hint">
-                                  变量 {keyStatus.key_name} · 明文不在 config.toml
-                                </span>
+                                <div className="settings-key-set-copy">
+                                  <span className="settings-key-set-text">已配置</span>
+                                  <span className="settings-hint">
+                                    {keyStatus.key_name} · 明文只在{' '}
+                                    {envFilePath || '.env'}，不进 config.toml
+                                  </span>
+                                </div>
                                 <button
                                   type="button"
                                   className="btn-inline"
-                                  style={{ marginLeft: 'auto' }}
                                   onClick={() => setForceKeyEdit(true)}
                                 >
                                   更新
@@ -1100,7 +1258,7 @@ export function SettingsModal() {
                                     type={keyVisible ? 'text' : 'password'}
                                     value={keyInput}
                                     onChange={(e) => setKeyInput(e.target.value)}
-                                    placeholder="粘贴 API Key"
+                                    placeholder="粘贴 API Key（保存后写入 .env）"
                                     className="settings-input"
                                     autoComplete="off"
                                   />
@@ -1113,7 +1271,8 @@ export function SettingsModal() {
                                   </button>
                                 </div>
                                 <p className="settings-hint">
-                                  保存至 {envFilePath || '桌面 .env'}，不写入 config.toml。
+                                  保存到 {envFilePath || '桌面 .env'}，不会写进
+                                  config.toml。
                                 </p>
                               </>
                             )}
@@ -1352,14 +1511,11 @@ export function SettingsModal() {
                                 onChange={(e) => {
                                   setHeadersDraft(e.target.value)
                                   updateSelectedModel({
-                                    extra_headers: textToHeaders(e.target.value),
+                                    extra_headers: parseHeadersText(e.target.value),
                                   })
                                 }}
                                 onBlur={() => setHeadersDraft(null)}
                               />
-                              <p className="settings-hint">
-                                静态头，例如 anthropic-version: 2023-06-01。密钥不要写在这里。
-                              </p>
                             </div>
 
                             <div className="settings-field">
@@ -1379,9 +1535,6 @@ export function SettingsModal() {
                                 }}
                                 onBlur={() => setQueryDraft(null)}
                               />
-                              <p className="settings-hint">
-                                官方字段，附加到每次请求 URL。Azure 的 api-version 写这里。
-                              </p>
                             </div>
 
                             <div className="settings-field">
@@ -1401,10 +1554,6 @@ export function SettingsModal() {
                                 }}
                                 onBlur={() => setEnvHeaderDraft(null)}
                               />
-                              <p className="settings-hint">
-                                头的值从环境变量读，不写进 config.toml。Anthropic 模板会填
-                                x-api-key → ANTHROPIC_API_KEY。
-                              </p>
                             </div>
 
                             <h5 className="settings-field-subtitle">可见性 (visibility)</h5>

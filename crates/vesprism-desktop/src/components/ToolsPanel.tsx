@@ -1,17 +1,21 @@
 /**
- * 工具面板 — 当前会话可用工具（官方 x.ai/commands/list.tools）
- * 停用走组装单 tools.disable；斜杠命令可填入输入框。MCP 工具默认折叠。
+ * 工具面板 — 模型会调用的能力。停用写入本工作区已打开的对话，不是全局。
  */
 import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   $activeSessionId,
   $composerInput,
+  $settingsOpen,
+  $settingsSection,
   $tabs,
   $utilityKind,
   $workspaceCwd,
+  findNormalChatTab,
   patchActiveTab,
+  patchTab,
   pushToast,
+  switchTab,
 } from '../store'
 import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
 import { getComposition, listSessionCommands } from '../bridge'
@@ -23,7 +27,7 @@ import {
   type ToolCategory,
   type ToolMeta,
 } from '../lib/toolCatalog'
-import { zhCommandLabel, zhCommandPurpose, zhToolLabel } from '../lib/toolChinese'
+import { zhCommandLabel, zhToolLabel } from '../lib/toolChinese'
 import {
   canDisableTool,
   listChatSessionTargets,
@@ -31,12 +35,8 @@ import {
   setChatToolsDisabled,
 } from '../lib/toolDisable'
 import { parseOfficialCommands, type ComposerCommand } from '../lib/composerCommands'
-
-const KIND_LABEL: Record<string, string> = {
-  skill: '技能',
-  workflow: '工作流',
-  command: '命令',
-}
+import { formatEngineError } from '../lib/errorMessage'
+import { Notice } from './Notice'
 
 export function ToolsPanel() {
   const tabId = useCodingSessionTabId()
@@ -96,7 +96,7 @@ export function ToolsPanel() {
       setTools(listed.sort((a, b) => a.name.localeCompare(b.name)))
       setCommands(parseOfficialCommands(cmds))
     } catch (e) {
-      setError(String(e))
+      setError(formatEngineError(e))
       setTools(catalog)
       setCommands([])
     } finally {
@@ -136,15 +136,22 @@ export function ToolsPanel() {
       .map((c) => ({ category: c, items: map.get(c)! }))
   }, [filteredTools])
 
+  /** 技能 / 工作流有自己的页；这里只列内置斜杠命令，跟输入栏「命令」分组同一份 */
+  const builtinCmds = useMemo(
+    () => commands.filter((c) => (c.kind || 'command') === 'command'),
+    [commands],
+  )
+
   const filteredCmds = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return commands
-    return commands.filter(
+    if (!q) return builtinCmds
+    return builtinCmds.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
-        c.hint.toLowerCase().includes(q),
+        c.hint.toLowerCase().includes(q) ||
+        (zhCommandLabel(c.label.slice(1)) || '').toLowerCase().includes(q),
     )
-  }, [commands, query])
+  }, [builtinCmds, query])
 
   const mcpCount = useMemo(
     () => tools.filter((t) => t.category === 'mcp').length,
@@ -162,9 +169,16 @@ export function ToolsPanel() {
 
   const fillCommand = (cmd: ComposerCommand) => {
     $composerInput.set(cmd.insert)
-    patchActiveTab({ utilityKind: null, chatTitle: '' })
+    $settingsOpen.set(false)
     $utilityKind.set(null)
-    pushToast(`已填入 ${cmd.label}`, 'success')
+    const chat = findNormalChatTab(false)
+    if (chat) {
+      switchTab(chat)
+      patchTab(chat, { utilityKind: null })
+    } else {
+      patchActiveTab({ utilityKind: null, chatTitle: '' })
+    }
+    pushToast(`已填入 ${cmd.label}，可直接发送`, 'success')
   }
 
   const onToggleDisable = async (name: string) => {
@@ -180,13 +194,13 @@ export function ToolsPanel() {
       setDisabled(disable)
       pushToast(
         nextDisabled
-          ? `已在 ${count} 个对话停用 ${name}`
-          : `已在 ${count} 个对话启用 ${name}`,
+          ? `已在本工作区 ${count} 个已打开的对话里停用 ${name}`
+          : `已在本工作区 ${count} 个已打开的对话里启用 ${name}`,
         'success',
       )
       await load()
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(formatEngineError(e), 'error')
     } finally {
       setBusyTool('')
     }
@@ -208,8 +222,17 @@ export function ToolsPanel() {
           <div className="tools-panel-titles">
             <h2 className="tools-panel-title">工具</h2>
             <p className="tools-panel-desc">
-              模型按需调用，不必在此手动执行。停用写入同一工作区对话的组装单{' '}
-              <code>tools.disable</code>，不影响这个工具页自己。
+              {tab === 'commands' ? (
+                <>
+                  输入框打 <code>/</code> 时「命令」那一组。技能在「技能」页，工作流在自动化任务里。
+                </>
+              ) : (
+                <>
+                  模型会按需调用的能力，不是你在这里点着跑的。停用只作用于
+                  <strong>本工作区里已打开的对话</strong>
+                  ，不是全局，也不只关这一页。MCP 服务器的连接在「MCP」页管。
+                </>
+              )}
             </p>
           </div>
           <div className="tools-panel-actions">
@@ -217,12 +240,12 @@ export function ToolsPanel() {
               {tools.length} 工具
               {disabled.length > 0 ? ` · ${disabled.length} 已停用` : ''}
               {' · '}
-              {commands.length} 命令
+              {builtinCmds.length} 命令
             </span>
             <button
               type="button"
               className="tools-btn"
-              disabled={loading || !ready || !tabId}
+              disabled={loading}
               onClick={() => void load()}
             >
               {loading ? '刷新中…' : '刷新'}
@@ -248,7 +271,7 @@ export function ToolsPanel() {
               className={`tools-tab${tab === 'commands' ? ' is-active' : ''}`}
               onClick={() => setTab('commands')}
             >
-              斜杠命令 ({commands.length})
+              斜杠命令 ({builtinCmds.length})
             </button>
           </div>
           <input
@@ -289,26 +312,43 @@ export function ToolsPanel() {
                   else if (catFilter === 'mcp') setCatFilter('all')
                 }}
               >
-                MCP ({mcpCount})
+                MCP 调用 ({mcpCount})
               </button>
             ) : null}
+            <button
+              type="button"
+              className="tools-cat-chip"
+              onClick={() => $settingsSection.set('mcp')}
+              title="去 MCP 页管理服务器连接"
+            >
+              去 MCP 页
+            </button>
           </div>
         ) : null}
 
+        {chatCount === 0 ? (
+          <p className="tools-banner">
+            停用工具需要本工作区里先有一场编码对话。下面仍可浏览目录。
+          </p>
+        ) : null}
         {error ? (
-          <div className="tools-error" role="alert">
+          <Notice
+            tone="error"
+            action={
+              <button type="button" className="notice-action" onClick={() => void load()}>
+                重试
+              </button>
+            }
+          >
             {error}
-            <button type="button" className="tools-btn" onClick={() => void load()}>
-              重试
-            </button>
-          </div>
+          </Notice>
         ) : loading && tools.length === 0 && commands.length === 0 ? (
           <div className="tools-empty">加载中…</div>
         ) : tab === 'tools' ? (
           filteredTools.length === 0 ? (
             <div className="tools-empty">
               {tools.length === 0
-                ? '当前无可用工具。可点刷新重试，或先在普通对话里完成一次会话初始化。'
+                ? '还没有工具列表。先在编码里开一场对话再刷新。'
                 : '没有匹配的工具。'}
             </div>
           ) : (
@@ -358,10 +398,10 @@ export function ToolsPanel() {
                                 disabled={busyTool === t.name || !tabId || chatCount === 0}
                                 title={
                                   chatCount === 0
-                                    ? '请先打开一个对话再停用工具'
+                                    ? '先在编码里开一场对话，再停用工具'
                                     : off
-                                      ? '在同一工作区的对话里重新启用'
-                                      : '在同一工作区的对话里停用（组装单 tools.disable）'
+                                      ? '在本工作区已打开的对话里重新启用'
+                                      : '在本工作区已打开的对话里停用。不是全局，换仓库不受影响。'
                                 }
                                 onClick={() => void onToggleDisable(t.name)}
                               >
@@ -387,7 +427,9 @@ export function ToolsPanel() {
           )
         ) : filteredCmds.length === 0 ? (
           <div className="tools-empty">
-            {commands.length === 0 ? '暂无斜杠命令。' : '没有匹配的命令。'}
+            {builtinCmds.length === 0
+              ? '暂无内置斜杠命令。技能在「技能」页，工作流在自动化任务里。'
+              : '没有匹配的命令。'}
           </div>
         ) : (
           <ul className="tools-list">
@@ -396,16 +438,11 @@ export function ToolsPanel() {
                 <div className="tools-card-main">
                   <div className="tools-card-titles">
                     <code className="tools-card-name">{c.label}</code>
-                    <span className="tools-pill">{KIND_LABEL[c.kind || 'command']}</span>
                     {zhCommandLabel(c.label.slice(1)) ? (
                       <span className="zh-label">{zhCommandLabel(c.label.slice(1))}</span>
                     ) : null}
                   </div>
-                  {c.hint ? (
-                    <p className="tools-card-desc">
-                      {zhCommandPurpose(c.label.slice(1)) ?? c.hint}
-                    </p>
-                  ) : null}
+                  {c.hint ? <p className="tools-card-desc">{c.hint}</p> : null}
                 </div>
                 <div className="tools-card-ops">
                   <button
@@ -419,7 +456,7 @@ export function ToolsPanel() {
                     type="button"
                     className="tools-btn ghost"
                     onClick={() => fillCommand(c)}
-                    title="填入输入框并回到对话"
+                    title="填入输入框，关闭设置，回到对话"
                   >
                     使用
                   </button>

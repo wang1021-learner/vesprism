@@ -128,11 +128,16 @@ export function applyVendorTemplate(
       base_url: current?.base_url ?? '',
       api_backend: current?.api_backend || 'chat_completions',
       agent_type: current?.agent_type || 'grok-build',
+      env_key: current?.env_key ?? '',
       context_window: current?.context_window || 128_000,
-      extra_headers: {},
-      query_params: {},
-      env_http_headers: {},
-      supports_reasoning_effort: false,
+      extra_headers: { ...(current?.extra_headers ?? {}) },
+      query_params: { ...(current?.query_params ?? {}) },
+      env_http_headers: { ...(current?.env_http_headers ?? {}) },
+      api_base_url: current?.api_base_url ?? '',
+      supports_reasoning_effort: Boolean(current?.supports_reasoning_effort),
+      reasoning_effort: current?.supports_reasoning_effort
+        ? current.reasoning_effort || ''
+        : '',
     })
   }
   const tpl = MODEL_VENDOR_TEMPLATES.find((t) => t.id === vendor)
@@ -162,6 +167,18 @@ export function envKeyChoices(models: ModelInfo[]): string[] {
     out.push(k)
   }
   return out
+}
+
+/** 自定义密钥变量名时的建议，避免拷贝出 M_A8F3K2_API_KEY。 */
+export function suggestedEnvKey(model: Pick<ModelInfo, 'id' | 'base_url' | 'env_key'>): string {
+  const existing = (model.env_key || '').trim()
+  if (existing) return existing
+  const url = (model.base_url || '').toLowerCase()
+  if (url.includes('deepseek')) return 'DEEPSEEK_API_KEY'
+  if (url.includes('anthropic')) return 'ANTHROPIC_API_KEY'
+  if (url.includes('azure')) return 'AZURE_OPENAI_API_KEY'
+  if (url.includes('openai.com')) return 'OPENAI_API_KEY'
+  return autoEnvKey(model.id)
 }
 
 export function hostFromBaseUrl(url: string): string {

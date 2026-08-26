@@ -330,11 +330,11 @@ export type SessionPhase = 'idle' | 'booting' | 'ready' | 'restarting' | 'loadin
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const REASONING_LEVELS: { value: ReasoningEffort; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'minimal', label: 'Minimal' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'XHigh' },
-  { value: 'max', label: 'Max' },
+  { value: 'none', label: '关闭' },
+  { value: 'minimal', label: '最低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'xhigh', label: '很高' },
+  { value: 'max', label: '最高' },
 ]

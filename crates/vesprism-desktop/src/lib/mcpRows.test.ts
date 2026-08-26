@@ -22,7 +22,7 @@ describe('parseEnvBlock / formatEnvBlock', () => {
 })
 
 describe('mcpGroupOf', () => {
-  it('托管 / 插件 / 本地', () => {
+  it('托管 / 插件 / 本机', () => {
     expect(mcpGroupOf('managed', '', 'http')).toBe('managed')
     expect(mcpGroupOf('local', 'plugin: acme', 'stdio')).toBe('plugin')
     expect(mcpGroupOf('local', 'config.toml', 'stdio')).toBe('local')

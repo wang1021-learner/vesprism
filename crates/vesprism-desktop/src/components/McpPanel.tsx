@@ -18,6 +18,8 @@ import {
   type McpSetupFieldDto,
 } from '../bridge'
 import { zhServerLabel, zhToolLabel } from '../lib/toolChinese'
+import { formatEngineError } from '../lib/errorMessage'
+import { Notice } from './Notice'
 import {
   applyMcpStatusPush,
   applyMcpToolsPush,
@@ -66,6 +68,7 @@ export function McpPanel() {
   const [setupValues, setSetupValues] = useState<Record<string, string>>({})
   const [setupError, setSetupError] = useState('')
   const [setupSaving, setSetupSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState('')
   const reloadTimer = useRef<number>(0)
 
   const load = useCallback(
@@ -87,7 +90,7 @@ export function McpPanel() {
         }
         setRows([...byName.values()])
       } catch (e) {
-        setError(String(e))
+        setError(formatEngineError(e))
         setRows([])
       } finally {
         setLoading(false)
@@ -151,7 +154,7 @@ export function McpPanel() {
       pushToast(row.enabled ? `已停用 ${row.displayName}` : `已启用 ${row.displayName}`, 'success')
       await load(true)
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(formatEngineError(e), 'error')
     } finally {
       setBusyName(null)
     }
@@ -173,7 +176,7 @@ export function McpPanel() {
     try {
       await toggleMcpTool(tabId, row.name, toolName, enabled)
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(formatEngineError(e), 'error')
       await load(true)
     } finally {
       setBusyName(null)
@@ -182,14 +185,18 @@ export function McpPanel() {
 
   const onDelete = async (row: McpRow) => {
     if (!tabId || !row.canDelete || busyName) return
-    if (!window.confirm(`确定删除「${row.displayName}」？只删本地配置里的这一条。`)) return
+    if (confirmDelete !== row.name) {
+      setConfirmDelete(row.name)
+      return
+    }
+    setConfirmDelete('')
     setBusyName(row.name)
     try {
       await deleteMcpServer(tabId, row.name)
-      pushToast(`已删除 ${row.displayName}`, 'success')
+      pushToast(`已删除 ${row.displayName}（只去掉本机这条配置）`, 'success')
       await load(true)
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(formatEngineError(e), 'error')
     } finally {
       setBusyName(null)
     }
@@ -225,12 +232,12 @@ export function McpPanel() {
       }
       if (status === 'setup_required') {
         openSetup(row, resp?.setup)
-        if (resp?.error) setSetupError(String(resp.error))
+        if (resp?.error) setSetupError(formatEngineError(resp.error))
         return
       }
       pushToast(resp?.error || `登录未完成（${status || '未知'}）`, 'error')
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(formatEngineError(e), 'error')
     } finally {
       setBusyName(null)
     }
@@ -250,7 +257,7 @@ export function McpPanel() {
       setSetupName('')
       await load(true)
     } catch (e) {
-      setSetupError(String(e))
+      setSetupError(formatEngineError(e))
     } finally {
       setSetupSaving(false)
     }
@@ -306,7 +313,7 @@ export function McpPanel() {
       setForm(EMPTY_FORM)
       await load(true)
     } catch (e) {
-      setFormError(String(e))
+      setFormError(formatEngineError(e))
     } finally {
       setFormSaving(false)
     }
@@ -340,8 +347,8 @@ export function McpPanel() {
           <div className="mcp-panel-titles">
             <h2 className="mcp-panel-title">MCP 服务器</h2>
             <p className="mcp-panel-desc">
-              外接工具来源。模型会按需搜索并调用；需要对方网站授权的，点「登录」。
-              托管连接器在平台管理，这里只能开关。
+              外接能力的<strong>连接</strong>。这里管服务器开不开、登不登录；模型实际调到的名字在「工具」页的
+              MCP 调用列表里。托管连接只能开关，改不了地址。添加、登录需要编码对话。
             </p>
           </div>
           <div className="mcp-panel-actions">
@@ -367,6 +374,12 @@ export function McpPanel() {
             </button>
           </div>
         </header>
+
+        {!ready ? (
+          <p className="mcp-banner" role="status">
+            添加、登录、开关需要先在编码里开一场对话。下面仍可浏览已配置的服务器。
+          </p>
+        ) : null}
 
         <div className="mcp-toolbar">
           <input
@@ -465,9 +478,7 @@ export function McpPanel() {
               )}
             </div>
             {formError ? (
-              <div className="mcp-form-error" role="alert">
-                {formError}
-              </div>
+              <Notice tone="error">{formError}</Notice>
             ) : null}
             <div className="mcp-form-actions">
               <button
@@ -529,11 +540,7 @@ export function McpPanel() {
                 </label>
               ))}
             </div>
-            {setupError ? (
-              <div className="mcp-form-error" role="alert">
-                {setupError}
-              </div>
-            ) : null}
+            {setupError ? <Notice tone="error">{setupError}</Notice> : null}
             <div className="mcp-form-actions">
               <button type="button" className="mcp-btn" onClick={() => setSetupName('')}>
                 取消
@@ -551,19 +558,25 @@ export function McpPanel() {
         ) : null}
 
         {error ? (
-          <div className="mcp-panel-error" role="alert">
+          <Notice
+            tone="error"
+            action={
+              <button type="button" className="notice-action" onClick={() => void load(true)}>
+                重试
+              </button>
+            }
+          >
             {error}
-            <button type="button" className="mcp-btn" onClick={() => void load(true)}>
-              重试
-            </button>
-          </div>
+          </Notice>
         ) : loading && rows.length === 0 ? (
           <div className="mcp-panel-empty">加载中…</div>
         ) : rows.length === 0 ? (
           <div className="mcp-panel-empty">
             <p>还没有 MCP 服务器。</p>
-            <p className="mcp-panel-hint">点「添加」接本地进程或远程地址；也可写在 config 的 mcp_servers 里。</p>
-            <button type="button" className="mcp-btn primary" style={{ marginTop: '0.75rem' }} onClick={openAdd}>
+            <p className="mcp-panel-hint">
+              点「添加」：本地进程（npx / uvx）或远程 HTTP。插件带来的服务器会出现在「插件带来的」分组，不能在这里删。
+            </p>
+            <button type="button" className="mcp-btn primary" style={{ marginTop: '0.75rem' }} disabled={!ready} onClick={openAdd}>
               添加
             </button>
           </div>
@@ -684,7 +697,9 @@ export function McpPanel() {
                                 disabled={busyName === row.name || !ready}
                                 onClick={() => void onDelete(row)}
                               >
-                                删除
+                                {confirmDelete === row.name
+                                  ? '再点确认：删除本机这条'
+                                  : '删除'}
                               </button>
                             ) : null}
                           </div>

@@ -1,170 +1,209 @@
 /**
  * Composer / 与 @ 补全：
- * `/` 官方斜杠目录 + 本地 sandbox/rewind
+ * `/` 官方斜杠目录（命令 / 技能 / 工作流，分类和说明跟设置页对齐）+ 本地 sandbox/rewind
  * `@` 工作区文件搜索，选中变成附件芯片
  */
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
+import { useStore } from '@nanostores/react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   $activeTabId,
+  $sessionPhase,
   $tabs,
   openRewind,
   openSettings,
-  getTabState,
 } from '../store'
 import { listSessionCommands, searchWorkspaceFiles } from '../bridge'
 import {
+  COMPOSER_KIND_LABEL,
+  collapseSlashAliases,
   filterComposerCommands,
+  groupComposerCommands,
   mergeComposerCommands,
   parseOfficialCommands,
   type ComposerCommand,
 } from '../lib/composerCommands'
+import { zhCommandPurpose } from '../lib/toolChinese'
 import { attachKindFromPath, enableSessionSandbox } from '../lib/sessionSandbox'
 import { openPlanPreview, toggleAskMode } from '../lib/planMode'
 import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, sendEngineSlash } from '../lib/engineSlash'
+import { openChatTab } from '../lib/openChatTab'
 
 type Item = ComposerCommand
 
+function localCommand(
+  id: string,
+  rest: Pick<Item, 'insert' | 'run'>,
+): Item {
+  return {
+    id,
+    label: `/${id}`,
+    hint: zhCommandPurpose(id) || id,
+    kind: 'command',
+    insert: rest.insert,
+    run: rest.run,
+  }
+}
+
 const LOCAL_SLASH: Item[] = [
-  {
-    id: 'goal',
-    label: '/goal',
-    hint: '长程规划：先拆目标再执行',
-    insert: '/goal ',
-  },
-  {
-    id: 'sandbox',
-    label: '/sandbox',
-    hint: '本会话把文件改动写到 git 副本目录（不是进程沙箱）',
+  localCommand('goal', { insert: '/goal ' }),
+  localCommand('sandbox', {
     insert: '',
     run: () => {
       void enableSessionSandbox()
     },
-  },
-  {
-    id: 'rewind',
-    label: '/rewind',
-    hint: '回滚会话到某条提问之前',
+  }),
+  localCommand('rewind', {
     insert: '',
     run: () => {
       const tabId = $activeTabId.get()
       if (tabId) openRewind(tabId)
     },
-  },
-  {
-    id: 'plan',
-    label: '/plan',
-    hint: '只读规划，先出方案再改代码',
-    insert: '/plan ',
-  },
-  {
-    id: 'ask',
-    label: '/ask',
-    hint: '问答模式：只问不改文件',
+  }),
+  localCommand('plan', { insert: '/plan ' }),
+  localCommand('ask', {
     insert: '',
     run: () => {
       void toggleAskMode()
     },
-  },
-  {
-    id: 'view-plan',
-    label: '/view-plan',
-    hint: '打开最近一份计划稿',
-    insert: '',
-    run: () => openPlanPreview(),
-  },
-  {
-    id: 'show-plan',
-    label: '/show-plan',
-    hint: '打开最近一份计划稿',
-    insert: '',
-    run: () => openPlanPreview(),
-  },
-  {
-    id: 'plan-view',
-    label: '/plan-view',
-    hint: '打开最近一份计划稿',
-    insert: '',
-    run: () => openPlanPreview(),
-  },
-  {
-    id: 'compact',
-    label: '/compact',
-    hint: '压缩上下文，腾出空间',
-    insert: '',
-    run: () => openSessionInsight(),
-  },
-  {
-    id: 'context',
-    label: '/context',
-    hint: '查看上下文拆分',
-    insert: '',
-    run: () => openSessionInsight(),
-  },
-  {
-    id: 'usage',
-    label: '/usage',
-    hint: '查看本会话用量',
-    insert: '',
-    run: () => openSessionInsight(),
-  },
-  {
-    id: 'session-info',
-    label: '/session-info',
-    hint: '会话详情',
-    insert: '',
-    run: () => openSessionInsight(),
-  },
-  {
-    id: 'flush',
-    label: '/flush',
-    hint: '立刻把本会话写入记忆',
+  }),
+  localCommand('view-plan', { insert: '', run: () => openPlanPreview() }),
+  localCommand('show-plan', { insert: '', run: () => openPlanPreview() }),
+  localCommand('plan-view', { insert: '', run: () => openPlanPreview() }),
+  localCommand('compact', { insert: '', run: () => openSessionInsight() }),
+  localCommand('context', { insert: '', run: () => openSessionInsight() }),
+  localCommand('usage', { insert: '', run: () => openSessionInsight() }),
+  localCommand('session-info', { insert: '', run: () => openSessionInsight() }),
+  localCommand('flush', {
     insert: '',
     run: () => {
       void sendEngineSlash('/flush')
     },
-  },
-  {
-    id: 'dream',
-    label: '/dream',
-    hint: '整理记忆日志',
+  }),
+  localCommand('dream', {
     insert: '',
     run: () => {
       void sendEngineSlash('/dream')
     },
-  },
-  {
-    id: 'memory',
-    label: '/memory',
-    hint: '打开记忆（设置）',
+  }),
+  localCommand('memory', {
     insert: '',
     run: () => {
       openSettings('memory')
     },
-  },
-  {
-    id: 'loop',
-    label: '/loop',
-    hint: '按间隔反复执行同一条指令',
-    insert: '',
-    run: () => openSessionSchedule(),
-  },
-  {
-    id: 'recap',
-    label: '/recap',
-    hint: '回顾这场对话进行到哪',
+  }),
+  localCommand('loop', { insert: '', run: () => openSessionSchedule() }),
+  localCommand('recap', {
     insert: '',
     run: () => {
       void requestRecap()
     },
-  },
-  {
-    id: 'find',
-    label: '/find',
-    hint: '在对话里搜索',
+  }),
+  localCommand('find', { insert: '', run: () => openChatFind() }),
+  localCommand('skills', {
     insert: '',
-    run: () => openChatFind(),
-  },
+    run: () => {
+      openSettings('skills')
+    },
+  }),
+  localCommand('tools', {
+    insert: '',
+    run: () => {
+      openSettings('tools')
+    },
+  }),
+  localCommand('mcp', {
+    insert: '',
+    run: () => {
+      openSettings('mcp')
+    },
+  }),
+  localCommand('plugins', {
+    insert: '',
+    run: () => {
+      openSettings('plugins')
+    },
+  }),
+  localCommand('workflows', {
+    insert: '',
+    run: () => {
+      void openChatTab({ title: '自动化任务', utilityKind: 'workflows' })
+    },
+  }),
 ]
+
+function bindComposerCommand(c: ComposerCommand): ComposerCommand {
+  if (c.kind && c.kind !== 'command') return c
+  const name = c.label.slice(1).toLowerCase()
+  const open = (run: () => void): ComposerCommand => ({ ...c, insert: '', run })
+  if (name === 'view-plan' || name === 'show-plan' || name === 'plan-view') {
+    return open(() => openPlanPreview())
+  }
+  if (
+    name === 'compact' ||
+    name === 'context' ||
+    name === 'usage' ||
+    name === 'session-info' ||
+    name === 'status' ||
+    name === 'info' ||
+    name === 'compact-mode'
+  ) {
+    return open(() => openSessionInsight())
+  }
+  if (name === 'memory') {
+    return open(() => openSettings('memory'))
+  }
+  if (name === 'skills') {
+    return open(() => openSettings('skills'))
+  }
+  if (name === 'tools') {
+    return open(() => openSettings('tools'))
+  }
+  if (name === 'mcp') {
+    return open(() => openSettings('mcp'))
+  }
+  if (name === 'plugins' || name === 'marketplace') {
+    return open(() => openSettings('plugins'))
+  }
+  if (name === 'workflows') {
+    return open(() => {
+      void openChatTab({ title: '自动化任务', utilityKind: 'workflows' })
+    })
+  }
+  if (name === 'loop') {
+    return open(() => openSessionSchedule())
+  }
+  if (name === 'ask') {
+    return open(() => void toggleAskMode())
+  }
+  if (name === 'recap' || name === 'summarize') {
+    return open(() => void requestRecap())
+  }
+  if (name === 'find') {
+    return open(() => openChatFind())
+  }
+  if (name === 'sandbox') {
+    return open(() => {
+      void enableSessionSandbox()
+    })
+  }
+  if (name === 'rewind') {
+    return open(() => {
+      const id = $activeTabId.get()
+      if (id) openRewind(id)
+    })
+  }
+  if (name === 'flush') {
+    return open(() => {
+      void sendEngineSlash('/flush')
+    })
+  }
+  if (name === 'dream') {
+    return open(() => {
+      void sendEngineSlash('/dream')
+    })
+  }
+  return c
+}
 
 export function useComposerAssist(
   input: string,
@@ -176,11 +215,14 @@ export function useComposerAssist(
   },
 ) {
   const enableSlash = opts?.enableSlash !== false
+  const tabId = useStore($activeTabId)
+  const phase = useStore($sessionPhase)
   const [files, setFiles] = useState<
     Array<{ path: string; rel: string; is_dir: boolean }>
   >([])
   const [official, setOfficial] = useState<Item[]>([])
   const [active, setActive] = useState(0)
+  const activeRef = useRef<HTMLButtonElement>(null)
 
   const mode = useMemo(() => {
     if (enableSlash && /^\/[^\s]*$/.test(input)) return 'slash' as const
@@ -197,10 +239,9 @@ export function useComposerAssist(
 
   useEffect(() => {
     if (!enableSlash) return
-    const tabId = $activeTabId.get()
-    if (!tabId || getTabState(tabId)?.phase !== 'ready') return
+    if (!tabId || phase !== 'ready') return
     let alive = true
-    listSessionCommands(tabId)
+    listSessionCommands(tabId, cwd || undefined)
       .then((resp) => {
         if (!alive) return
         setOfficial(parseOfficialCommands(resp?.commands))
@@ -211,7 +252,7 @@ export function useComposerAssist(
     return () => {
       alive = false
     }
-  }, [enableSlash, cwd])
+  }, [enableSlash, cwd, tabId, phase])
 
   useEffect(() => {
     if (mode !== 'at' || !cwd) return
@@ -231,61 +272,17 @@ export function useComposerAssist(
     }
   }, [mode, cwd, query])
 
-  const items: Item[] = useMemo(() => {
+  const { items, groups } = useMemo(() => {
     if (mode === 'slash') {
-      return filterComposerCommands(
-        mergeComposerCommands(official, LOCAL_SLASH).map((c) => {
-          const name = c.label.slice(1).toLowerCase()
-          if (name === 'view-plan' || name === 'show-plan' || name === 'plan-view') {
-            return { ...c, insert: '', run: () => openPlanPreview() }
-          }
-          if (
-            name === 'compact' ||
-            name === 'context' ||
-            name === 'usage' ||
-            name === 'session-info' ||
-            name === 'status' ||
-            name === 'info'
-          ) {
-            return { ...c, insert: '', run: () => openSessionInsight() }
-          }
-          if (name === 'memory') {
-            return {
-              ...c,
-              insert: '',
-              run: () => {
-                openSettings('memory')
-              },
-            }
-          }
-          if (name === 'plugins' || name === 'marketplace') {
-            return {
-              ...c,
-              insert: '',
-              run: () => {
-                openSettings('plugins')
-              },
-            }
-          }
-          if (name === 'loop') {
-            return { ...c, insert: '', run: () => openSessionSchedule() }
-          }
-          if (name === 'ask') {
-            return { ...c, insert: '', run: () => void toggleAskMode() }
-          }
-          if (name === 'recap' || name === 'summarize') {
-            return { ...c, insert: '', run: () => void requestRecap() }
-          }
-          if (name === 'find') {
-            return { ...c, insert: '', run: () => openChatFind() }
-          }
-          if (name === 'compact-mode') {
-            return { ...c, insert: '', run: () => openSessionInsight() }
-          }
-          return c
-        }),
+      const filtered = collapseSlashAliases(
+        filterComposerCommands(
+          mergeComposerCommands(official, LOCAL_SLASH).map(bindComposerCommand),
+          query,
+        ),
         query,
       )
+      const nextGroups = groupComposerCommands(filtered)
+      return { items: nextGroups.flatMap((g) => g.items), groups: nextGroups }
     }
     if (mode === 'at') {
       const tabs = $tabs.get().map((t) => ({
@@ -303,16 +300,21 @@ export function useComposerAssist(
           opts?.onAttachPath?.(f.path, attachKindFromPath(f.path, f.is_dir))
         },
       }))
-      return [...fileItems, ...tabs].filter(
+      const atItems = [...fileItems, ...tabs].filter(
         (x) => !query || x.label.toLowerCase().includes(query),
       )
+      return { items: atItems, groups: [] }
     }
-    return []
+    return { items: [], groups: [] }
   }, [mode, query, files, official, opts?.onAttachPath])
 
   useEffect(() => {
     setActive(0)
   }, [mode, query])
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [active, items])
 
   const apply = (item: Item) => {
     if (item.run) {
@@ -361,30 +363,56 @@ export function useComposerAssist(
     return false
   }
 
+  const renderItem = (it: Item, i: number) => (
+    <button
+      key={it.id}
+      type="button"
+      ref={i === active ? activeRef : undefined}
+      className={`composer-assist-item${i === active ? ' is-active' : ''}`}
+      onMouseDown={(e) => {
+        e.preventDefault()
+        apply(it)
+      }}
+    >
+      <span className="composer-assist-main">
+        <span className="composer-assist-label">{it.label}</span>
+        {it.displayName ? (
+          <span className="composer-assist-aka">{it.displayName}</span>
+        ) : null}
+        {it.kind && it.kind !== 'command' ? (
+          <span className="composer-assist-kind">
+            {it.sourceLabel || COMPOSER_KIND_LABEL[it.kind]}
+          </span>
+        ) : null}
+      </span>
+      <span className="composer-assist-hint">{it.hint}</span>
+    </button>
+  )
+
   const menu =
-    mode && items.length > 0 ? (
+    mode === 'slash' ? (
       <div className="composer-assist" role="listbox">
-        {items.map((it, i) => (
-          <button
-            key={it.id}
-            type="button"
-            className={`composer-assist-item${i === active ? ' is-active' : ''}`}
-            onMouseDown={(e) => {
-              e.preventDefault()
-              apply(it)
-            }}
-          >
-            <span className="composer-assist-main">
-              <span className="composer-assist-label">{it.label}</span>
-              {it.kind && it.kind !== 'command' ? (
-                <span className="composer-assist-kind">
-                  {it.kind === 'skill' ? '技能' : '工作流'}
-                </span>
-              ) : null}
-            </span>
-            <span className="composer-assist-hint">{it.hint}</span>
-          </button>
-        ))}
+        {items.length === 0 ? (
+          <div className="composer-assist-empty">
+            {query ? `没有匹配「/${query}」` : '还没有可用命令'}
+          </div>
+        ) : (
+          groups.map((g) => {
+            const start = items.indexOf(g.items[0])
+            return (
+              <div key={g.kind} className="composer-assist-section">
+                <div className="composer-assist-group" role="presentation">
+                  {COMPOSER_KIND_LABEL[g.kind]}
+                </div>
+                {g.items.map((it, j) => renderItem(it, start + j))}
+              </div>
+            )
+          })
+        )}
+      </div>
+    ) : mode === 'at' && items.length > 0 ? (
+      <div className="composer-assist" role="listbox">
+        {items.map((it, i) => renderItem(it, i))}
       </div>
     ) : null
 

@@ -1,4 +1,5 @@
 import type { ModelInfo } from '../types'
+import { clampReasoningEffort } from './reasoning'
 
 /** 从模型 id 生成 .env 密钥名：m-abc → M_ABC_API_KEY */
 export function autoEnvKey(modelId: string): string {
@@ -118,7 +119,12 @@ export function prepareModelsForSave(models: ModelInfo[]): ModelInfo[] {
     if (!model) throw new Error(`模型「${id}」：API 模型名 (model) 不能为空`)
     if (!m.base_url.trim()) throw new Error(`模型「${model}」：base_url 不能为空`)
     if (!(m.context_window > 0)) {
-      throw new Error(`模型「${model}」：请填写上下文窗口（token 数），例如 128000`)
+      throw new Error(`模型「${model}」：请填写上下文窗口（token 数），例如 128000 或 128K`)
+    }
+    if (m.env_key.trim() && !isValidEnvKeyName(m.env_key)) {
+      throw new Error(
+        `模型「${model}」：密钥变量名只能用字母、数字和下划线，且须以字母或 _ 开头`,
+      )
     }
     const backend = (m.api_backend || 'chat_completions').trim() || 'chat_completions'
     if (!['chat_completions', 'responses', 'messages'].includes(backend)) {
@@ -176,7 +182,7 @@ export function prepareModelsForSave(models: ModelInfo[]): ModelInfo[] {
           : 0,
       supports_reasoning_effort: Boolean(m.supports_reasoning_effort),
       reasoning_effort: m.supports_reasoning_effort
-        ? (m.reasoning_effort || 'medium').trim() || 'medium'
+        ? clampReasoningEffort(model, m.base_url, m.reasoning_effort)
         : '',
       hidden: Boolean(m.hidden),
       supported_in_api: m.supported_in_api !== false,
@@ -190,4 +196,90 @@ export function prepareModelsForSave(models: ModelInfo[]): ModelInfo[] {
 
 export function modelDisplayName(m: Pick<ModelInfo, 'model' | 'name' | 'id'>): string {
   return (m.model || m.name || m.id).trim() || m.id
+}
+
+export function isValidEnvKeyName(name: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name.trim())
+}
+
+/** 保存时用「设为默认」的 id，不要把当前正在编辑的条目偷偷写成默认。 */
+export function resolveDefaultModelId(
+  defaultId: string,
+  selectedId: string,
+  ids: string[],
+): string {
+  const d = defaultId.trim()
+  if (d && ids.includes(d)) return d
+  const s = selectedId.trim()
+  if (s && ids.includes(s)) return s
+  return ids[0] ?? ''
+}
+
+export const CONTEXT_WINDOW_PRESETS: { label: string; tokens: number }[] = [
+  { label: '32K', tokens: 32_000 },
+  { label: '128K', tokens: 128_000 },
+  { label: '200K', tokens: 200_000 },
+  { label: '1M', tokens: 1_000_000 },
+]
+
+/**
+ * 上下文窗口输入：可填 128K / 1M / 128000。
+ * 纯数字小于 10000 按「千 token」（兼容旧的 K 栏）；≥10000 按 token 原文，
+ * 避免把文档里的 128000 再乘一千变成 1.28 亿。
+ */
+export function parseContextWindowInput(raw: string): number {
+  const t = raw.trim().toLowerCase().replace(/,/g, '').replace(/_/g, '').replace(/\s+/g, '')
+  if (!t) return 0
+  const million = t.match(/^(\d+(?:\.\d+)?)m(?:illion)?(?:tokens?)?$/)
+  if (million) return Math.round(Number(million[1]) * 1_000_000)
+  const kilo = t.match(/^(\d+(?:\.\d+)?)k(?:tokens?)?$/)
+  if (kilo) return Math.round(Number(kilo[1]) * 1000)
+  const n = Number(t.replace(/tokens?/g, ''))
+  if (!Number.isFinite(n) || n <= 0) return 0
+  if (n < 10_000) return Math.round(n) * 1000
+  return Math.round(n)
+}
+
+export function formatContextTokens(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return ''
+  if (tokens >= 1_000_000 && tokens % 1_000_000 === 0) {
+    return `${tokens / 1_000_000}M tokens`
+  }
+  if (tokens >= 1000 && tokens % 1000 === 0) {
+    return `${tokens / 1000}K tokens`
+  }
+  return `${tokens.toLocaleString()} tokens`
+}
+
+/** 配错时的即时提示；不替代保存校验。 */
+export function modelSetupWarnings(m: ModelInfo): string[] {
+  const w: string[] = []
+  const url = m.base_url.trim()
+  const urlLc = url.toLowerCase()
+  if (urlLc.includes('api.deepseek.com') && /\/v1\/?$/.test(urlLc)) {
+    w.push('DeepSeek 官方地址不要加 /v1，请用 https://api.deepseek.com')
+  }
+  if (
+    (urlLc.includes('api.openai.com') || urlLc.includes('localhost:11434')) &&
+    urlLc.length > 0 &&
+    !/\/v1\/?$/.test(urlLc.split('?')[0] || '')
+  ) {
+    w.push('OpenAI / Ollama 的 Base URL 通常以 /v1 结尾')
+  }
+  if (m.api_backend === 'messages' && urlLc && !urlLc.includes('anthropic')) {
+    w.push('Messages 协议主要用于 Anthropic 官方。多数网关应选 Chat Completions。')
+  }
+  if (m.api_backend === 'chat_completions' && urlLc.includes('api.anthropic.com')) {
+    w.push('Anthropic 官方应选 Messages，并在高级选项里保留 anthropic-version 请求头')
+  }
+  if (
+    urlLc.includes('openai.azure.com') &&
+    !Object.keys(m.query_params || {}).some((k) => k.toLowerCase() === 'api-version')
+  ) {
+    w.push('Azure 需要在高级选项的查询参数里写 api-version')
+  }
+  if (m.env_key.trim() && !isValidEnvKeyName(m.env_key)) {
+    w.push('密钥变量名只能用字母、数字和下划线，且须以字母或 _ 开头')
+  }
+  return w
 }

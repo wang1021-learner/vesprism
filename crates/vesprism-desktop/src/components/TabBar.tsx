@@ -10,12 +10,11 @@ import {
   $tabs,
   getTabState,
   isBlankNewChat,
-  patchActiveTab,
   switchTab,
   tabsForShell,
 } from '../store'
-import { restartTab } from '../bridge'
 import { closeChatTab } from '../lib/closeChatTab'
+import { retryTabSession } from '../lib/retryTab'
 import { openChatTab } from '../lib/openChatTab'
 
 function formatTabTitle(raw: string | undefined | null): string {
@@ -51,12 +50,7 @@ export function TabBar() {
   }
 
   const onRetry = async (id: string) => {
-    try {
-      await restartTab(id)
-      // 重建空壳后后端会发 tab_recovering，App.tsx 负责按 map 里的状态重放会话
-    } catch (e) {
-      patchActiveTab({ error: String(e) })
-    }
+    await retryTabSession(id)
   }
 
   return (

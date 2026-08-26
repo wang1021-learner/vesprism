@@ -23,7 +23,9 @@ import {
 import {
   parseWorkflowListings,
   parseWorkflowsFromCommands,
+  sourceBucket,
   sourceLabel,
+  SOURCE_BUCKET_ORDER,
   type WorkflowRow,
 } from '../lib/parseWorkflows'
 
@@ -99,14 +101,14 @@ export function WorkflowsPanel() {
   }, [tabId])
 
   const sourcesPresent = useMemo(() => {
-    const s = new Set(rows.map((r) => r.source))
-    return Array.from(s).sort()
+    const s = new Set(rows.map((r) => sourceBucket(r.source)))
+    return SOURCE_BUCKET_ORDER.filter((x) => s.has(x))
   }, [rows])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) => {
-      if (sourceFilter !== 'all' && r.source !== sourceFilter) return false
+      if (sourceFilter !== 'all' && sourceBucket(r.source) !== sourceFilter) return false
       if (!q) return true
       return (
         r.name.toLowerCase().includes(q) ||
@@ -120,13 +122,14 @@ export function WorkflowsPanel() {
   const grouped = useMemo(() => {
     const map = new Map<string, WorkflowRow[]>()
     for (const r of filtered) {
-      const list = map.get(r.source) || []
+      const bucket = sourceBucket(r.source)
+      const list = map.get(bucket) || []
       list.push(r)
-      map.set(r.source, list)
+      map.set(bucket, list)
     }
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([source, items]) => ({ source, items }))
+    return [...SOURCE_BUCKET_ORDER, ...map.keys()]
+      .filter((k, i, arr) => map.has(k) && arr.indexOf(k) === i)
+      .map((source) => ({ source, items: map.get(source)! }))
   }, [filtered])
 
   const copySlash = async (name: string) => {

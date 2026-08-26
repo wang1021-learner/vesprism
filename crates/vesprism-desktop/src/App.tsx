@@ -48,6 +48,9 @@ import {
   createTab, getTabState, patchActiveTab, patchTab, resolveNewTabModel,
   switchTab, pushToast,
 } from './store'
+import { formatEngineError, isSessionDeadError } from './lib/errorMessage'
+import { retryTabSession } from './lib/retryTab'
+import { Notice } from './components/Notice'
 import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
@@ -67,6 +70,7 @@ import {
   type PromptAttach,
 } from './bridge'
 import { sendSessionPrompt } from './lib/sendSessionPrompt'
+import { reasoningEffortLabel, spawnReasoningEffort } from './lib/reasoning'
 import { cancelActiveTurn } from './lib/cancelActiveTurn'
 import { handleSessionEvent } from './lib/sessionEvents'
 import { policyFromDto } from './lib/executionPolicy'
@@ -258,7 +262,7 @@ async function bootstrap() {
     await startSession(tabId, cwd, { modelId, reasoningEffort })
     patchActiveTab({ phase: 'ready', status: 'idle' })
   } catch (e) {
-    patchActiveTab({ error: String(e) })
+    patchActiveTab({ error: formatEngineError(e), phase: 'failed' })
   }
 }
 
@@ -280,36 +284,31 @@ function AppSidebar() {
 
 function AppError() {
   const err = useStore($error)
+  const phase = useStore($sessionPhase)
+  const tabId = useStore($activeTabId)
   if (!err) return null
+  const text = formatEngineError(err)
+  const canRetry =
+    Boolean(tabId) && (phase === 'failed' || isSessionDeadError(text))
   return (
-    <div className="app-error-bar" role="alert">
-      <svg
-        className="app-error-icon"
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-      >
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="8" x2="12" y2="12" />
-        <line x1="12" y1="16" x2="12.01" y2="16" />
-      </svg>
-      <span className="app-error-text">{err}</span>
-      <button
-        type="button"
-        className="app-error-dismiss"
-        title="关闭提示"
-        aria-label="关闭提示"
-        onClick={() => patchActiveTab({ error: '' })}
-      >
-        ✕
-      </button>
-    </div>
+    <Notice
+      tone="error"
+      className="notice-float"
+      action={
+        canRetry ? (
+          <button
+            type="button"
+            className="notice-action"
+            onClick={() => void retryTabSession(tabId)}
+          >
+            重试
+          </button>
+        ) : null
+      }
+      onDismiss={() => patchActiveTab({ error: '' })}
+    >
+      {text}
+    </Notice>
   )
 }
 
@@ -490,9 +489,7 @@ function AppComposer() {
   const onSwitchModel = useCallback((id: string) => {
     const tabId = $activeTabId.get()
     const entry = $models.get().find((m) => m.id === id)
-    const nextEffort = entry?.supports_reasoning_effort
-      ? entry.reasoning_effort || $reasoningEffort.get() || 'medium'
-      : $reasoningEffort.get() || 'medium'
+    const nextEffort = spawnReasoningEffort(entry, $reasoningEffort.get()) || 'medium'
     $defaultModelId.set(id)
     if (nextEffort) $reasoningEffort.set(nextEffort)
     // 每 Tab 独立记忆模型 / 推理档
@@ -520,7 +517,7 @@ function AppComposer() {
     if (!id || !tabId) return
     void setCurrentModel(tabId, id, e)
       .then(() => {
-        pushToast(`已切换思考强度 · ${e}`, 'success')
+        pushToast(`已切换思考强度 · ${reasoningEffortLabel(e)}`, 'success')
       })
       .catch((err) => {
         patchActiveTab({ error: String(err) })

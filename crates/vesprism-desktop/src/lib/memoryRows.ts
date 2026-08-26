@@ -52,3 +52,51 @@ export function memoryRowTitle(
     chip: '会话',
   }
 }
+
+export type MemoryGroupId = 'global' | 'workspace' | 'other' | 'session'
+
+export const MEMORY_GROUP_ORDER: readonly MemoryGroupId[] = [
+  'global',
+  'workspace',
+  'other',
+  'session',
+]
+
+export const MEMORY_GROUP_LABEL: Record<MemoryGroupId, string> = {
+  global: '所有项目共用',
+  workspace: '当前仓库',
+  other: '其它仓库',
+  session: '会话日志',
+}
+
+export function memoryGroupId(
+  path: string,
+  source: string,
+  cwd: string,
+): MemoryGroupId {
+  if (source === 'global') return 'global'
+  if (source === 'session') return 'session'
+  const meta = memoryRowTitle(path, source, cwd)
+  if (meta.chip === '本仓库') return 'workspace'
+  return 'other'
+}
+
+export function groupMemoryFiles<T extends { path: string; source: string }>(
+  files: T[],
+  cwd: string,
+): { id: MemoryGroupId; label: string; files: T[] }[] {
+  const buckets = new Map<MemoryGroupId, T[]>()
+  for (const f of files) {
+    const id = memoryGroupId(f.path, f.source, cwd)
+    const list = buckets.get(id)
+    if (list) list.push(f)
+    else buckets.set(id, [f])
+  }
+  return MEMORY_GROUP_ORDER.filter((id) => (buckets.get(id) || []).length > 0).map(
+    (id) => ({
+      id,
+      label: MEMORY_GROUP_LABEL[id],
+      files: buckets.get(id)!,
+    }),
+  )
+}

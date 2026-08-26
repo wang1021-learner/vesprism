@@ -38,6 +38,8 @@ import { beginAttachRuntime, finishAttachRuntime, pushTranscriptEvent } from './
 import { applyTranscriptEvent } from './sessionTranscript'
 import { refreshSubagentTabMessages } from './openSubagentTab'
 import { markToolSession } from '../workbench/bindings'
+import { spawnReasoningEffort } from './reasoning'
+import { formatEngineError, isSessionDeadError } from './errorMessage'
 import { parsePermissionDescription } from '../types'
 import type { SessionStatus } from '../types'
 import {
@@ -156,7 +158,6 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           message: ev.message || '上下文已满，请压缩会话或新开对话。',
         },
       })
-      pushToast('上下文超限', 'error')
       break
     }
     case 'rate_limit_exceeded': {
@@ -167,7 +168,6 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           message: ev.message || '请求过于频繁，请稍后再试。',
         },
       })
-      pushToast('请求过于频繁', 'error')
       break
     }
     case 'auth_expired': {
@@ -178,15 +178,22 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           message: ev.message || '鉴权已过期，请到设置里更新 API Key。',
         },
       })
-      pushToast('鉴权已过期', 'error')
       break
     }
     case 'session_reconnecting': {
-      pushToast(
-        `会话断开，正在恢复（第 ${ev.attempt ?? 1} 次）`,
-        'info',
-      )
-      void replayTabAfterCrash(tabId)
+      const cur = getTabState(tabId)
+      // 切工作区 / restart_session 会关掉旧管道，不是崩溃，不要当成恢复旧对话。
+      if (
+        cur?.phase === 'restarting' ||
+        cur?.phase === 'loading' ||
+        cur?.phase === 'booting'
+      ) {
+        break
+      }
+      void replayTabAfterCrash(tabId, {
+        attempt: ev.attempt ?? 1,
+        reason: 'disconnect',
+      })
       break
     }
     case 'error': {
@@ -199,13 +206,20 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         (Boolean(ev.prompt_id) &&
           Boolean(lastUser?.promptId) &&
           lastUser!.promptId !== ev.prompt_id)
+      const msg = formatEngineError(ev.message)
       if (otherStillGoing) {
         patchTab(tabId, {
           queuedPrompts: queued.filter((q) => q.id !== ev.prompt_id),
           status: 'generating',
         })
+        pushToast(`这一轮没跑成：${msg}`, 'error')
       } else {
-        patchTab(tabId, { error: ev.message || 'Unknown error', status: 'idle' })
+        const dead = isSessionDeadError(msg)
+        patchTab(tabId, {
+          error: msg,
+          status: 'idle',
+          ...(dead ? { phase: 'failed' as const } : {}),
+        })
       }
       break
     }
@@ -269,13 +283,12 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
             break
           }
         }
-        // 记忆命中（本次会话/总是允许）→ 自动放行，不弹审批条。
+        // 记忆命中（这场对话/总是允许）→ 自动放行，不弹审批条。
         const sessionHit = isSessionAllowed(tabId, sig)
         const alwaysHit = isAlwaysAllowed(sig)
         if (sessionHit || alwaysHit) {
           const allow = pickAllowStrict(req.options)
           if (allow) {
-            console.log('[perm] 记忆自动放行', { tabId, sig, sessionHit, alwaysHit })
             void (async () => {
               try {
                 await respondPermission(tabId, Number(ev.request_id), allow.id)
@@ -557,22 +570,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       if (title && sid) notifyChatsChanged()
       break
     }
-    // 终态错误（后端已映射事件，前端此前无 UI）：置 error banner + toast
-    case 'context_overflow':
-    case 'rate_limit_exceeded':
-    case 'auth_expired': {
-      const msg = ev.message || '会话失败'
-      patchTab(tabId, { error: msg, status: 'idle' })
-      pushToast(
-        ev.type === 'context_overflow'
-          ? '上下文超限，建议新建会话或压缩上下文'
-          : ev.type === 'rate_limit_exceeded'
-            ? '限流重试已耗尽，请稍后再试'
-            : '认证已失效，请到设置检查 API Key',
-        'error',
-      )
-      break
-    }
+    // 上面三个终态已在文件前部写了 sessionAlert，这里不要再配一份死代码。
     // 非终态：仅 toast 提示重试进度（不置 error banner，避免干扰流式输出）
     case 'retry_in_progress': {
       if (ev.attempt === 1) {
@@ -598,16 +596,25 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         })
       }
       break
-    // 后端 Phase 2：tab 崩溃自动重建 / 连续崩溃标记 Failed。
-    // 重建（含手动重试）→ 按 map 里该 tab 的状态重放会话身份 + 模型。
     case 'tab_recovering':
-      console.log(`[tab] ${ev.tab_id} 已重建为空壳（第 ${ev.attempt ?? '?'} 次），开始重放`)
-      if (ev.tab_id) void replayTabAfterCrash(ev.tab_id)
+      void replayTabAfterCrash(ev.tab_id || tabId, {
+        attempt: ev.attempt ?? 0,
+        reason: 'crash',
+      })
       break
-    case 'tab_failed':
-      console.warn(`[tab] ${ev.tab_id} 连续崩溃 ${ev.attempts ?? '?'} 次，标记 Failed，等待手动重启`)
-      patchTab(tabId, { phase: 'failed' })
+    case 'tab_failed': {
+      const n = ev.attempts ?? 3
+      const msg = `会话连续崩溃 ${n} 次，已停止自动恢复。请点「重试」或新建对话。`
+      patchTab(tabId, {
+        phase: 'failed',
+        error: msg,
+        status: 'idle',
+        permission: null,
+        userQuestion: null,
+        mcpElicit: null,
+      })
       break
+    }
     case 'sandbox_activated':
       patchTab(tabId, {
         sandboxCwd: ev.sandbox_cwd || '',
@@ -742,15 +749,39 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
   }
 }
 
-async function replayTabAfterCrash(tabId: string) {
+const replayingTabs = new Set<string>()
+
+async function replayTabAfterCrash(
+  tabId: string,
+  opts?: { attempt?: number; reason?: 'crash' | 'disconnect' },
+) {
+  if (!tabId || replayingTabs.has(tabId)) return
   const st = getTabState(tabId)
   if (!st) return
-  // 清挂起的 UI 状态（旧 actor 的权限 / 问卷 oneshot 已随 panic 失效）
-  patchTab(tabId, { permission: null, userQuestion: null, mcpElicit: null, error: '', subagents: [] })
+  replayingTabs.add(tabId)
+  const attempt = opts?.attempt ?? 0
+  const reason = opts?.reason ?? 'crash'
+  const waitText =
+    reason === 'disconnect'
+      ? `会话断开，正在恢复（第 ${Math.max(attempt, 1)} 次）`
+      : attempt > 0
+        ? `会话崩溃，正在自动恢复（第 ${attempt} 次）`
+        : '正在恢复会话'
+  // 旧 actor 的权限 / 问卷 oneshot 已随断开失效
+  patchTab(tabId, {
+    permission: null,
+    userQuestion: null,
+    mcpElicit: null,
+    error: '',
+    subagents: [],
+    sessionAlert: null,
+    phase: 'restarting',
+    status: 'idle',
+  })
+  pushToast(waitText, 'info')
   const cwd = st.cwd || $workspaceCwd.get()
   try {
     if (st.sessionId) {
-      // 走标准 attach 流程：历史回放期间吞 transcript 类事件
       beginAttachRuntime(tabId)
       await loadSession(tabId, st.sessionId, cwd, undefined, st.reasoningEffort)
       finishAttachRuntime(tabId)
@@ -761,22 +792,22 @@ async function replayTabAfterCrash(tabId: string) {
       })
       patchTab(tabId, { phase: 'ready', status: 'idle' })
     }
-    // 重放该 tab 自己记住的模型 / 推理档（不是全局默认）
     const modelId = st.modelId || $settingsDefaultModelId.get()
     if (modelId) {
       const entry = $models.get().find((m) => m.id === modelId)
-      const effort = entry?.supports_reasoning_effort
-        ? st.reasoningEffort || entry.reasoning_effort || 'medium'
-        : undefined
+      const effort = spawnReasoningEffort(entry, st.reasoningEffort)
       await setCurrentModel(tabId, modelId, effort)
       patchTab(tabId, {
         modelId,
         ...(effort ? { reasoningEffort: effort } : {}),
       })
     }
-    pushToast('会话已自动恢复', 'success')
+    patchTab(tabId, { error: '', phase: 'ready', status: 'idle' })
+    pushToast('会话已恢复', 'success')
   } catch (e) {
-    patchTab(tabId, { error: String(e) })
-    pushToast('会话恢复失败，可重试', 'error')
+    const msg = formatEngineError(e)
+    patchTab(tabId, { error: msg, phase: 'failed', status: 'idle' })
+  } finally {
+    replayingTabs.delete(tabId)
   }
 }

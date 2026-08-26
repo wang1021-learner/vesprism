@@ -170,6 +170,22 @@ describe('Tab 模型分片', () => {
     expect(r.reasoningEffort).toBe('high') // 来自 modelB.reasoning_effort
   })
 
+  it('resolveNewTabModel 对 DeepSeek 空档落到 high 而不是 medium', () => {
+    $models.set([
+      {
+        ...modelA,
+        id: 'ds',
+        model: 'deepseek-v4-flash',
+        base_url: 'https://api.deepseek.com',
+        supports_reasoning_effort: true,
+        reasoning_effort: '',
+      },
+    ])
+    $settingsDefaultModelId.set('ds')
+    const r = resolveNewTabModel()
+    expect(r.reasoningEffort).toBe('high')
+  })
+
   it('switchTab 点当前 tab 是空操作', () => {
     createTab('tab-1', { modelId: 'model-a', reasoningEffort: 'low' })
     switchTab('tab-1')
