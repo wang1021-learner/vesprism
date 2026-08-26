@@ -486,6 +486,38 @@
   font-family: inherit;
 }
 
+.bubble-attach-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.bubble-attach-img {
+  display: block;
+  max-width: min(280px, 72vw);
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--surface-hover);
+}
+
+.bubble-attach-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.bubble-attach-file {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
 .bubble-actions {
   display: flex;
   align-items: center;

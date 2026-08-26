@@ -45,10 +45,19 @@ export type ToolCallUpdateData = {
   todo?: TodoSnapshotData | null
 }
 
+export type MessageAttach = {
+  kind: 'file' | 'folder' | 'image'
+  path: string
+  /** 本次进程内预览（blob:）；历史重开会走路径 */
+  previewUrl?: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'thought' | 'tool'
   text: string
+  /** 用户气泡里的附件（图要画出来，不要只写文件名） */
+  attachments?: MessageAttach[]
   /** @deprecated 用 toolCall.title；兼容磁盘投影 */
   tool?: string
   toolCallId?: string

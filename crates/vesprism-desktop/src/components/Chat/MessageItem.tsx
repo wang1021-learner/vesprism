@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
-import type { ChatMessage, ToolCallData } from '../../types'
+import type { ChatMessage, MessageAttach, ToolCallData } from '../../types'
+import { localFileUrl } from '../../lib/localFileUrl'
 import {
   $activeTabId,
   $backgroundTasks,
@@ -322,6 +323,17 @@ function InlinePermissionBarWrap() {
   return <InlinePermissionBar permission={permission} />
 }
 
+function todoSnapshotEqual(
+  a: MessageItemProps['message']['toolCall'],
+  b: MessageItemProps['message']['toolCall'],
+): boolean {
+  const at = a?.todo?.todos
+  const bt = b?.todo?.todos
+  if (at === bt) return true
+  if (!at || !bt || at.length !== bt.length) return false
+  return at.every((t, i) => t.content === bt[i].content && t.status === bt[i].status)
+}
+
 function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boolean {
   if (prev.isPermissionOrigin !== next.isPermissionOrigin) return false
   if (prev.streaming !== next.streaming) return false
@@ -343,7 +355,8 @@ function messageItemEqual(prev: MessageItemProps, next: MessageItemProps): boole
         a.toolCall?.preview === b.toolCall?.preview &&
         a.toolCall?.detail === b.toolCall?.detail &&
         a.toolCall?.title === b.toolCall?.title &&
-        a.toolCall?.diffs === b.toolCall?.diffs))
+        a.toolCall?.diffs === b.toolCall?.diffs &&
+        todoSnapshotEqual(a.toolCall, b.toolCall)))
   )
 }
 
@@ -606,6 +619,7 @@ export const MessageItem = memo(function MessageItem({
           text={message.text}
           messageId={message.id}
           canRecall={canRecall && !sessionBusy}
+          attachments={message.attachments}
         />
       )
 
@@ -1283,23 +1297,37 @@ const AssistantActions = memo(function AssistantActions({
   )
 })
 
+function userVisibleText(text: string, attachments?: MessageAttach[]): string {
+  const hasImage = (attachments ?? []).some((a) => a.kind === 'image')
+  let t = (text || '').trim()
+  if (hasImage) {
+    t = t.replace(/(?:^|\n)\[附件\][^\n]*/g, '').trim()
+  }
+  return t
+}
+
 const UserBubble = memo(function UserBubble({
   text,
   messageId,
   canRecall,
+  attachments,
 }: {
   text: string
   messageId: string
   canRecall: boolean
+  attachments?: MessageAttach[]
 }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [recalling, setRecalling] = useState(false)
   const copyTimerRef = useRef<number | undefined>(undefined)
   const recallingRef = useRef(false)
-  const isLong = text.length > USER_BUBBLE_FOLD_THRESHOLD
+  const visible = userVisibleText(text, attachments)
+  const images = (attachments ?? []).filter((a) => a.kind === 'image' && a.path)
+  const files = (attachments ?? []).filter((a) => a.kind !== 'image' && a.path)
+  const isLong = visible.length > USER_BUBBLE_FOLD_THRESHOLD
   const displayText =
-    isLong && !expanded ? text.split('\n').slice(0, 3).join('\n') : text
+    isLong && !expanded ? visible.split('\n').slice(0, 3).join('\n') : visible
 
   useEffect(() => {
     return () => {
@@ -1308,16 +1336,16 @@ const UserBubble = memo(function UserBubble({
   }, [])
 
   const onCopy = useCallback(async () => {
-    if (!text) return
+    if (!visible) return
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(visible)
       setCopied(true)
       if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
       copyTimerRef.current = window.setTimeout(() => setCopied(false), 1200)
     } catch {
       pushToast('复制失败', 'error')
     }
-  }, [text])
+  }, [visible])
 
   const onRecall = useCallback(async () => {
     if (!canRecall || recallingRef.current) return
@@ -1335,7 +1363,28 @@ const UserBubble = memo(function UserBubble({
     <div className="message-row user-row">
       <div className="user-stack">
         <div className="bubble bubble-user">
-          <pre className="bubble-text">{displayText}</pre>
+          {images.length > 0 ? (
+            <div className="bubble-attach-images">
+              {images.map((a) => (
+                <img
+                  key={a.path}
+                  className="bubble-attach-img"
+                  src={a.previewUrl || localFileUrl(a.path)}
+                  alt=""
+                />
+              ))}
+            </div>
+          ) : null}
+          {displayText ? <pre className="bubble-text">{displayText}</pre> : null}
+          {files.length > 0 ? (
+            <div className="bubble-attach-files">
+              {files.map((a) => (
+                <span key={a.path} className="bubble-attach-file">
+                  {a.path.replace(/\\/g, '/').split('/').pop() || a.path}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {isLong ? (
             <button
               type="button"
@@ -1344,7 +1393,7 @@ const UserBubble = memo(function UserBubble({
             >
               {expanded
                 ? '收起'
-                : `展开全部（${text.length.toLocaleString()} 字符）`}
+                : `展开全部（${visible.length.toLocaleString()} 字符）`}
             </button>
           ) : null}
         </div>

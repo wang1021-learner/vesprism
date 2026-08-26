@@ -157,6 +157,35 @@
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
+.paste-block-card.paste-block-card--image {
+  position: relative;
+  min-width: 0;
+  width: fit-content;
+  max-width: none;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.paste-block-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  display: block;
+  background: var(--surface-hover);
+}
+
+.paste-block-card--image .paste-block-remove {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+  color: var(--text-primary);
+}
+
 .paste-block-card:hover {
   border-color: var(--border-strong-solid);
   box-shadow:

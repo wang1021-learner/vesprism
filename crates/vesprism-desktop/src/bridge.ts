@@ -38,6 +38,7 @@ export const scratchCwd = () => invoke<string>('scratch_cwd')
 export type PromptAttach = {
   kind: 'file' | 'folder' | 'image'
   path: string
+  previewUrl?: string
 }
 
 export type SecurityPolicyDto = {
@@ -268,6 +269,7 @@ export const getSessionMessages = (sessionId: string) =>
     }>
   >('get_session_messages', { sessionId })
 
+/** 挂上历史会话；返回实际用于 load 的 cwd（磁盘按 id 扫到的落盘目录）。 */
 export const loadSession = (
   tabId: string,
   sessionId: string,
@@ -275,7 +277,7 @@ export const loadSession = (
   restoreCode?: boolean,
   reasoningEffort?: string | null,
 ) =>
-  invoke('load_session', {
+  invoke<string>('load_session', {
     tabId,
     sessionId,
     cwd,
@@ -786,6 +788,7 @@ export interface SessionEventPayload {
   debug?: string
   origin_cwd?: string
   sandbox_cwd?: string
+  cwd?: string
   /** ToolCallInfo camelCase */
   tool?: {
     toolCallId?: string

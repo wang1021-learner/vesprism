@@ -37,7 +37,8 @@ import {
   attachKindFromPath,
   COMPOSER_POLICY_OPTIONS,
 } from '../lib/sessionSandbox'
-import { clipboardImageFiles, persistImageFile } from '../lib/pasteImage'
+import { clipboardImageFiles, persistImageFile, revokePreviewUrl } from '../lib/pasteImage'
+import { localFileUrl } from '../lib/localFileUrl'
 import { planChipLabel, toggleAskMode, togglePlanMode } from '../lib/planMode'
 import { openSessionInsight } from '../lib/engineSlash'
 import { useStore } from '@nanostores/react'
@@ -105,6 +106,7 @@ type AttachChip = {
   kind: 'file' | 'folder' | 'image'
   path: string
   name: string
+  previewUrl?: string
 }
 
 function formatTokenK(n: number): string {
@@ -320,6 +322,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const policyPickerRef = useRef<HTMLDivElement>(null)
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([])
   const [attachChips, setAttachChips] = useState<AttachChip[]>([])
+  const attachChipsRef = useRef<AttachChip[]>([])
+  attachChipsRef.current = attachChips
   const [dragging, setDragging] = useState(false)
   const [editQueuedId, setEditQueuedId] = useState<string | null>(null)
   const [editQueuedText, setEditQueuedText] = useState('')
@@ -424,23 +428,55 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const showReasoning =
     Boolean(selectedModel?.supports_reasoning_effort) && shellReady
 
-  const pushAttach = useCallback((kind: AttachChip['kind'], path: string) => {
-    const p = path.trim()
-    if (!p) return
-    const name = p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
-    setAttachChips((prev) =>
-      prev.some((a) => a.path === p)
-        ? prev
-        : [...prev, { id: generateId('att_'), kind, path: p, name }],
-    )
+  const pushAttach = useCallback(
+    (kind: AttachChip['kind'], path: string, previewUrl?: string) => {
+      const p = path.trim()
+      if (!p) return
+      const name = p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || p
+      setAttachChips((prev) => {
+        if (prev.some((a) => a.path === p)) {
+          revokePreviewUrl(previewUrl)
+          return prev
+        }
+        return [
+          ...prev,
+          {
+            id: generateId('att_'),
+            kind,
+            path: p,
+            name,
+            previewUrl,
+          },
+        ]
+      })
+    },
+    [],
+  )
+
+  const removeAttach = useCallback((id: string) => {
+    setAttachChips((prev) => {
+      const gone = prev.find((a) => a.id === id)
+      revokePreviewUrl(gone?.previewUrl)
+      return prev.filter((a) => a.id !== id)
+    })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      for (const a of attachChipsRef.current) revokePreviewUrl(a.previewUrl)
+    }
   }, [])
 
   const ingestImageFiles = useCallback(
     async (files: File[]) => {
+      const seen = new Set<string>()
       for (const f of files) {
+        const k = `${f.type}|${f.size}`
+        if (seen.has(k)) continue
+        seen.add(k)
         try {
-          const path = await persistImageFile(f)
-          pushAttach('image', path)
+          const { path, previewUrl } = await persistImageFile(f)
+          pushAttach('image', path, previewUrl)
         } catch (err) {
           pushToast(`图片失败：${String(err)}`, 'error')
         }
@@ -481,15 +517,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     e.preventDefault()
     setDragging(false)
     const images = clipboardImageFiles(e.dataTransfer)
-    const files = Array.from(e.dataTransfer.files)
     void ingestImageFiles(images)
-    for (const f of files) {
-      if (f.type.startsWith('image/') && images.includes(f)) continue
+    for (const f of Array.from(e.dataTransfer.files)) {
+      if (f.type.startsWith('image/')) continue
       const nativePath = (f as File & { path?: string }).path
       if (nativePath) {
         pushAttach(attachKindFromPath(nativePath), nativePath)
-      } else if (f.type.startsWith('image/')) {
-        void ingestImageFiles([f])
       }
     }
   }
@@ -535,6 +568,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const attachments: PromptAttach[] = attachChips.map((a) => ({
       kind: a.kind,
       path: a.path,
+      previewUrl: a.previewUrl,
     }))
     if (!finalText && attachments.length === 0) return
     onSend(finalText, attachments)
@@ -549,6 +583,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const attachments: PromptAttach[] = attachChips.map((a) => ({
       kind: a.kind,
       path: a.path,
+      previewUrl: a.previewUrl,
     }))
     if (!finalText && attachments.length === 0) return
     onSend(finalText, attachments, 'interject')
@@ -785,32 +820,49 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         {/* placeholder 固定；New chat 静默重建时不提示「创建中」 */}
         {(pasteBlocks.length > 0 || attachChips.length > 0) && (
           <div className="paste-blocks">
-            {attachChips.map((a) => (
-              <div key={a.id} className="paste-block-card">
-                <div className="paste-block-icon">
-                  {a.kind === 'folder' ? <FolderIcon /> : <FileTextIcon />}
+            {attachChips.map((a) =>
+              a.kind === 'image' ? (
+                <div key={a.id} className="paste-block-card paste-block-card--image">
+                  <img
+                    className="paste-block-thumb"
+                    src={a.previewUrl || localFileUrl(a.path)}
+                    alt=""
+                  />
+                  <button
+                    type="button"
+                    className="paste-block-remove"
+                    onClick={() => removeAttach(a.id)}
+                    aria-label="移除图片"
+                    title="移除图片"
+                  >
+                    ×
+                  </button>
                 </div>
-                <div className="paste-block-info">
-                  <div className="paste-block-title" title={a.path}>
-                    {a.name}
+              ) : (
+                <div key={a.id} className="paste-block-card">
+                  <div className="paste-block-icon">
+                    {a.kind === 'folder' ? <FolderIcon /> : <FileTextIcon />}
                   </div>
-                  <div className="paste-block-meta">
-                    {a.kind === 'folder' ? '文件夹' : a.kind === 'image' ? '图片' : '文件'}
+                  <div className="paste-block-info">
+                    <div className="paste-block-title" title={a.path}>
+                      {a.name}
+                    </div>
+                    <div className="paste-block-meta">
+                      {a.kind === 'folder' ? '文件夹' : '文件'}
+                    </div>
                   </div>
+                  <button
+                    type="button"
+                    className="paste-block-remove"
+                    onClick={() => removeAttach(a.id)}
+                    aria-label="移除附件"
+                    title="移除此附件"
+                  >
+                    ×
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="paste-block-remove"
-                  onClick={() =>
-                    setAttachChips((prev) => prev.filter((x) => x.id !== a.id))
-                  }
-                  aria-label="移除附件"
-                  title="移除此附件"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+              ),
+            )}
             {pasteBlocks.map((b) => {
               const rawFirstLine = b.text.trim().split('\n')[0]?.trim() || '剪贴板文本'
               const title = rawFirstLine.length > 24 ? `${rawFirstLine.slice(0, 24)}…` : rawFirstLine
