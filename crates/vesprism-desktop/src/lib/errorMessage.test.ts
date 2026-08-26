@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { formatEngineError, isSessionDeadError } from './errorMessage'
+import {
+  formatEngineError,
+  isMissingWorkspacePathError,
+  isSessionDeadError,
+} from './errorMessage'
 
 describe('formatEngineError', () => {
   it('空和 Unknown error 换成短句', () => {
@@ -21,10 +25,28 @@ describe('formatEngineError', () => {
     expect(formatEngineError('Supervisor 线程已退出')).toContain('重试')
     expect(formatEngineError('会话未启动')).toContain('就绪')
     expect(formatEngineError('会话已断开，自动恢复失败')).toContain('重试')
+    expect(formatEngineError('Cannot rewind to prompt #1 — current prompt index is 1')).toContain(
+      '没法重试',
+    )
   })
 
   it('已是中文的引擎句尽量保留', () => {
     expect(formatEngineError('拒绝访问：目标文件不在当前工作区范围内')).toContain('工作区')
+  })
+
+  it('历史会话没接上：记录还在，请重试', () => {
+    const raw =
+      '打开历史会话失败: Path not found.: { "code": "FS_NOT_FOUND", "detail": "系统找不到指定的路径。 (os error 3)" }'
+    expect(formatEngineError(raw)).toContain('聊天记录还在')
+    expect(formatEngineError(raw)).toContain('重试')
+    expect(formatEngineError(raw)).not.toContain('闲聊')
+    expect(isMissingWorkspacePathError(raw)).toBe(true)
+  })
+
+  it('恢复会话失败也收成同一句，不把英文原文拼上去', () => {
+    expect(formatEngineError('恢复会话失败: Path not found.')).toBe(
+      '没能接上这条对话。聊天记录还在，请点「重试」。',
+    )
   })
 })
 
@@ -33,6 +55,9 @@ describe('isSessionDeadError', () => {
     expect(isSessionDeadError('会话已断开，自动恢复失败。请点「重试」或新建对话')).toBe(
       true,
     )
+    expect(
+      isSessionDeadError('没能接上这条对话。聊天记录还在，请点「重试」。'),
+    ).toBe(true)
     expect(isSessionDeadError('鉴权失败，请到设置检查密钥')).toBe(false)
   })
 })

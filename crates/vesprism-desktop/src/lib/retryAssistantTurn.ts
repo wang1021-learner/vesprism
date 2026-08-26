@@ -1,14 +1,17 @@
 /**
  * 重试最新助手回复：conversation_only 回滚到该轮提问，再原话重发。
  * 不恢复文件快照，避免和「回滚」整包语义混用。
+ *
+ * 官方 rewind force=false 是预演（success 恒为 false），重试必须 force=true。
  */
-import { executeRewind, loadSession } from '../bridge'
+import { executeRewind, loadSession, type PromptAttach } from '../bridge'
 import {
   $activeTabId,
   getTabState,
   patchTab,
   pushToast,
 } from '../store'
+import { formatEngineError } from './errorMessage'
 import { beginAttachRuntime, finishAttachRuntime } from './sessionOpen'
 import { sendSessionPrompt } from './sendSessionPrompt'
 import { originUserMessage, promptIndexForUserId } from './userMessage'
@@ -27,7 +30,14 @@ export async function retryAssistantTurn(assistantId: string): Promise<void> {
   const origin = originUserMessage(st.messages, assistantId)
   const promptIndex = origin ? promptIndexForUserId(st.messages, origin.id) : null
   const text = (origin?.text || '').trim()
-  if (!origin || promptIndex == null || !text) {
+  const attachments: PromptAttach[] = (origin?.attachments ?? [])
+    .filter((a) => a.path.trim())
+    .map((a) => ({
+      kind: a.kind,
+      path: a.path,
+      previewUrl: a.previewUrl,
+    }))
+  if (!origin || promptIndex == null || (!text && attachments.length === 0)) {
     pushToast('找不到对应提问，无法重试', 'error')
     return
   }
@@ -37,12 +47,12 @@ export async function retryAssistantTurn(assistantId: string): Promise<void> {
   }
 
   try {
-    const resp = await executeRewind(tabId, promptIndex, 'conversation_only', false)
+    const resp = await executeRewind(tabId, promptIndex, 'conversation_only', true)
     if (!resp.success) {
       pushToast(
         resp.conflicts?.length
           ? '重试有文件冲突，请用回滚并勾选强制'
-          : resp.error || '重试失败',
+          : formatEngineError(resp.error || '重试失败'),
         'error',
       )
       return
@@ -54,12 +64,28 @@ export async function retryAssistantTurn(assistantId: string): Promise<void> {
     } finally {
       finishAttachRuntime(tabId)
     }
-    patchTab(tabId, { phase: 'ready', status: 'idle', error: '' })
-    const sent = await sendSessionPrompt({ text })
+
+    const originIdx = getTabState(tabId)?.messages.findIndex((m) => m.id === origin.id) ?? -1
+    if (originIdx >= 0) {
+      patchTab(tabId, {
+        messages: (getTabState(tabId)?.messages ?? []).slice(0, originIdx + 1),
+        phase: 'ready',
+        status: 'idle',
+        error: '',
+      })
+    } else {
+      patchTab(tabId, { phase: 'ready', status: 'idle', error: '' })
+    }
+
+    const sent = await sendSessionPrompt({
+      text,
+      attachments: attachments.length ? attachments : undefined,
+      hidden: true,
+    })
     if (!sent) {
-      pushToast('已回滚到该提问，但重新发送失败', 'error')
+      pushToast('已回到该提问，但重新发送失败', 'error')
     }
   } catch (e) {
-    pushToast(String(e), 'error')
+    pushToast(formatEngineError(e), 'error')
   }
 }

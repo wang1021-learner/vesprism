@@ -75,8 +75,6 @@ function flushPendingChunks(): void {
     }
     if (target) {
       patchTab(target, { messages: next })
-    } else {
-      $messages.set(next)
     }
   }
 }
@@ -204,8 +202,6 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
       const bgs = target ? new Set(Object.keys(getTabState(target)?.backgroundTasks || {})) : undefined
       if (target) {
         patchTab(target, { messages: applyTranscriptEvent(cur, ev, bgs) })
-      } else {
-        $messages.set(applyTranscriptEvent(cur, ev, bgs))
       }
       // 问卷 / 计划稿审批还需挂起面板，不吞掉
       if (ev.type === 'user_question_request' || ev.type === 'exit_plan_mode_request') {
@@ -227,8 +223,6 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
       const bgs = target ? new Set(Object.keys(getTabState(target)?.backgroundTasks || {})) : undefined
       if (target) {
         patchTab(target, { messages: sealStreamingMessages(cur, ev.prompt_id, bgs) })
-      } else {
-        $messages.set(sealStreamingMessages(cur, ev.prompt_id, bgs))
       }
       return false // 继续让 App 处理 idle 等
     }

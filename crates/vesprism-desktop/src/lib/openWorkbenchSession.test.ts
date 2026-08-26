@@ -81,6 +81,27 @@ describe('openWorkbenchHistory', () => {
     expect(st?.chatTitle).toBe('你根据他的agent配置一个agent')
   })
 
+  it('同一会话但没接上或还在报错时会重新 loadSession', async () => {
+    createTab('tab-flow', {
+      utilityKind: 'flow-canvas',
+      sessionId: '',
+      chatId: 'sess-1',
+      chatTitle: '流程画布',
+      cwd: 'C:\\\\scratch',
+      error: '没能接上这条对话。聊天记录还在，请点「重试」。',
+      phase: 'ready',
+    })
+    await openWorkbenchHistory({
+      sessionId: 'sess-1',
+      binding: flowBinding(),
+      title: '你根据他的agent配置一个agent',
+      cwd: 'C:\\\\scratch',
+    })
+    expect(loadSession).toHaveBeenCalledWith('tab-flow', 'sess-1', 'C:\\\\scratch')
+    expect(getTabState('tab-flow')?.sessionId).toBe('sess-1')
+    expect(getTabState('tab-flow')?.error).toBe('')
+  })
+
   it('已经挂着同一会话时只切 Tab，不再重载', async () => {
     createTab('tab-flow', {
       utilityKind: 'flow-canvas',

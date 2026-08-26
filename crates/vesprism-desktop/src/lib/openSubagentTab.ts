@@ -45,12 +45,23 @@ type DisplayMsg = {
   end_ms?: number | null
 }
 
+function displayMessageId(m: DisplayMsg): string {
+  const id = (m.id || '').trim()
+  if (id) return id
+  const tool = (m.tool_call_id || '').trim()
+  if (tool) return `msg_${tool}`
+  const raw = `${m.role || ''}\0${m.prompt_id || ''}\0${m.text || ''}`
+  let h = 5381
+  for (let i = 0; i < raw.length; i++) h = ((h << 5) + h) ^ raw.charCodeAt(i)
+  return `msg_${(h >>> 0).toString(36)}`
+}
+
 function hydrateDisplayMessage(m: DisplayMsg): ChatMessage {
   const role = (m.role || 'assistant') as ChatMessage['role']
   if (role === 'tool' || m.tool_call_id || m.kind) {
     const toolCallId = m.tool_call_id || m.id || generateId('tool_')
     return {
-      id: m.id || generateId('msg_'),
+      id: displayMessageId(m),
       role: 'tool',
       text: m.preview || m.detail || m.text || m.tool || '',
       tool: m.tool || m.kind || undefined,
@@ -70,7 +81,7 @@ function hydrateDisplayMessage(m: DisplayMsg): ChatMessage {
     }
   }
   return {
-    id: m.id || generateId('msg_'),
+    id: displayMessageId(m),
     role:
       role === 'user' ||
       role === 'assistant' ||

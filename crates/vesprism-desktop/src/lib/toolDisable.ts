@@ -129,9 +129,28 @@ export async function setChatToolsDisabled(
   if (targets.length === 0) {
     throw new Error('请先打开一个对话，再在这里停用工具')
   }
+  const undone: Array<{ tabId: string; sessionId: string; cwd: string; disable: string[] }> = []
   let disable: string[] = []
-  for (const t of targets) {
-    disable = await setSessionToolDisabled(t.tabId, t.sessionId, t.cwd, name, disabled)
+  try {
+    for (const t of targets) {
+      const merged = mergeComposition(await getComposition(t.sessionId, t.cwd || ''))
+      const prev = merged.tools.disable ?? []
+      disable = await setSessionToolDisabled(t.tabId, t.sessionId, t.cwd, name, disabled)
+      undone.push({ tabId: t.tabId, sessionId: t.sessionId, cwd: t.cwd, disable: prev })
+    }
+    return { disable, count: targets.length }
+  } catch (e) {
+    for (const u of undone.reverse()) {
+      try {
+        const merged = mergeComposition(await getComposition(u.sessionId, u.cwd || ''))
+        await applyComposition(u.tabId, u.sessionId, {
+          ...merged,
+          tools: { ...merged.tools, disable: u.disable },
+        })
+      } catch {
+        /* 尽力回滚已写入的会话 */
+      }
+    }
+    throw e
   }
-  return { disable, count: targets.length }
 }

@@ -58,7 +58,7 @@ describe('recallUserTurn', () => {
       'tab-1',
       1,
       'conversation_only',
-      false,
+      true,
     )
     expect(loadSession).toHaveBeenCalledWith('tab-1', 'sid', '/ws', false, 'medium')
     expect(getTabState('tab-1')?.composerInput).toBe('/memory')

@@ -7,6 +7,7 @@ export function formatEngineError(raw: unknown): string {
   let s = raw == null ? '' : String(raw)
   s = s.replace(/^Error:\s*/i, '').replace(/^error:\s*/i, '').trim()
   s = s.replace(/^Invoke error:\s*/i, '').trim()
+  s = s.replace(/^打开历史会话失败[:：]?\s*/i, '').trim()
   if (!s || /^unknown error$/i.test(s)) return '出了点问题，请重试'
 
   const lower = s.toLowerCase()
@@ -33,22 +34,29 @@ export function formatEngineError(raw: unknown): string {
   if (/会话未启动/.test(s)) {
     return '会话还没就绪，请稍等或点「重试」'
   }
+  if (/cannot rewind to prompt/i.test(s)) {
+    return '没法重试这一轮，请直接再发一条'
+  }
   if (/会话已断开/.test(s) || /自动恢复失败/.test(s)) {
     return '会话已断开，自动恢复失败。请点「重试」或新建对话'
   }
-  if (/恢复会话失败/.test(s)) {
-    return `没能接上上次的对话：${stripPrefix(s, '恢复会话失败')}`
+  if (
+    /恢复会话失败/.test(s) ||
+    /FS_NOT_FOUND|path not found|找不到指定的路径|os error 3/i.test(s)
+  ) {
+    return '没能接上这条对话。聊天记录还在，请点「重试」。'
   }
 
   return s
 }
 
-function stripPrefix(s: string, prefix: string): string {
-  const t = s.replace(new RegExp(`^${prefix}[:：]?\\s*`), '').trim()
-  return t || s
-}
-
 /** 需要「重试」而不是只关掉的会话级故障 */
 export function isSessionDeadError(msg: string): boolean {
-  return /崩溃|断开|恢复失败|通道已断开|还没就绪|点「重试」|空壳/.test(msg)
+  return /崩溃|断开|恢复失败|通道已断开|还没就绪|点「重试」|空壳|没能接上/.test(msg)
+}
+
+/** 工作区目录不存在（闲聊 scratch 被删、项目挪盘、副本 worktree 被清） */
+export function isMissingWorkspacePathError(raw: unknown): boolean {
+  const s = String(raw ?? '')
+  return /FS_NOT_FOUND|path not found|找不到指定的路径|os error 3|文件夹找不到/i.test(s)
 }

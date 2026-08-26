@@ -140,14 +140,14 @@ pub enum ActorCommand {
         reasoning_effort: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    /// 恢复一个已有历史会话。
+    /// 恢复一个已有历史会话。成功回执为实际用于 load 的 cwd。
     LoadSession {
         session_id: String,
         cwd: String,
         /// 官方 `--restore-code` 等价：resume 时是否恢复代码快照
         restore_code: Option<bool>,
         reasoning_effort: Option<String>,
-        reply: oneshot::Sender<Result<(), String>>,
+        reply: oneshot::Sender<Result<String, String>>,
     },
     /// 删除会话（若删的是当前会话，会先释放再开新会话）。
     DeleteSession {
@@ -562,6 +562,8 @@ pub enum FrontendEvent {
     /// 当前会话 ID 变化（新建/重启/恢复后广播）。
     SessionIdChanged {
         session_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     /// 历史回放事件已全部转发完毕（前端据此一次落盘 transcript）。
     ReplayComplete {
@@ -1583,11 +1585,15 @@ async fn handle_command(
             // 切到历史会话前：若当前是空会话则删掉，避免列表残留
             if let Some(old_session) = session.take() {
                 let old_id = old_session.session_id();
+                let old_cwd = old_session.cwd().to_string();
                 drop(old_session);
-                let _ = grok_session::delete_session_if_blank(&old_id, &cwd).await;
+                let _ = grok_session::delete_session_if_blank(&old_id, &old_cwd).await;
             }
             *status_rx = None;
             pending_permissions.clear();
+
+            // 按会话 id 扫落盘桶，cwd 字符串差斜杠也能找到；找不到再退回调用方路径。
+            let load_cwd = grok_session::resolve_session_load_cwd(&session_id, &cwd);
 
             emit(
                 app,
@@ -1598,7 +1604,7 @@ async fn handle_command(
             );
             match GrokSession::resume(
                 session_id,
-                cwd.clone(),
+                load_cwd.clone(),
                 restore_code,
                 reasoning_effort.as_deref(),
             )
@@ -1618,7 +1624,7 @@ async fn handle_command(
                         true, /* skip_transcript */
                     )
                     .await;
-                    replay_composition_on_session(&s, &sid, &cwd).await;
+                    replay_composition_on_session(&s, &sid, &load_cwd).await;
                     *session = Some(s);
                     emit(
                         app,
@@ -1632,6 +1638,7 @@ async fn handle_command(
                         tab_id,
                         FrontendEvent::SessionIdChanged {
                             session_id: sid.clone(),
+                            cwd: Some(load_cwd.clone()),
                         },
                     );
                     emit(
@@ -1639,24 +1646,11 @@ async fn handle_command(
                         tab_id,
                         FrontendEvent::ReplayComplete { session_id: sid },
                     );
-                    let _ = reply.send(Ok(()));
+                    let _ = reply.send(Ok(load_cwd));
                 }
                 Err(e) => {
-                    emit(
-                        app,
-                        tab_id,
-                        FrontendEvent::Error {
-                            message: format!("恢复会话失败: {e}"),
-                            prompt_id: None,
-                        },
-                    );
-                    emit(
-                        app,
-                        tab_id,
-                        FrontendEvent::StatusChanged {
-                            status: SessionStatus::Ended,
-                        },
-                    );
+                    // 失败只走 IPC 回执。再发 Error 事件会和点开/重试抢红条，
+                    // 甚至在已经接上之后把成功状态盖掉。
                     let _ = reply.send(Err(e.to_string()));
                 }
             }
@@ -1811,7 +1805,10 @@ async fn begin_fresh_session(
             emit(
                 app,
                 tab_id,
-                FrontendEvent::SessionIdChanged { session_id: sid },
+                FrontendEvent::SessionIdChanged {
+                    session_id: sid,
+                    cwd: Some(cwd.clone()),
+                },
             );
             if let Some(origin) = sandbox_origin.clone() {
                 emit(

@@ -26,6 +26,7 @@ import {
   $commandPaletteOpen,
   createTab,
   findNormalChatTab,
+  cwdAfterLoadSession,
   findTabBySessionId,
   getTabState,
   isBlankNewChat,
@@ -34,7 +35,9 @@ import {
   patchTab,
   removeTab,
   resolveNewTabModel,
+  resolveHistoryLoadCwd,
   resolveWorkspaceCwd,
+  sessionTabReadyToReuse,
   switchTab,
   $workspaceCwd,
   $preferredWorkspaceCwd,
@@ -53,6 +56,7 @@ import {
   type ProductNavKind,
 } from '../products/catalog'
 import { clearSessionAllowed } from '../lib/permissionMemory'
+import { formatEngineError } from '../lib/errorMessage'
 import { tabStates, pushToast } from '../store'
 import {
   closeTab,
@@ -797,16 +801,15 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       /* 索引不可用时按普通历史打开 */
     }
 
-    // 已打开：直接切换（phase 保持该 Tab 原状态，ready 则无绿闪）
     const existing = findTabBySessionId(id)
-    if (existing) {
+    if (existing && sessionTabReadyToReuse(getTabState(existing), id)) {
       switchTab(existing)
       return
     }
 
     const title =
       $chats.get().find((c) => c.id === id)?.title?.trim() || '历史会话'
-    const workCwd = (sessionCwd || resolveWorkspaceCwd() || cwd).trim()
+    const workCwd = resolveHistoryLoadCwd(sessionCwd || cwd)
     if (!workCwd || !looksAbsolutePath(workCwd)) {
       patchActiveTab({
         error: '工作区路径无效，无法打开历史会话。请在设置中选择绝对路径工作区。',
@@ -816,7 +819,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
     const activeId = $activeTabId.get()
     const active = activeId ? getTabState(activeId) : undefined
+    const reuseBroken = Boolean(existing)
     const reuseBlank =
+      !reuseBroken &&
       Boolean(activeId) &&
       Boolean(active) &&
       isBlankNewChat(active!) &&
@@ -826,8 +831,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
     let myTab = activeId
     let createdNew = false
-    // 新 Tab：先创建不切换，等有消息再 switch，用户可继续在当前 Tab 操作
-    if (!reuseBlank) {
+    if (existing) {
+      myTab = existing
+    } else if (!reuseBlank) {
+      // 新 Tab：先创建不切换，等有消息再 switch，用户可继续在当前 Tab 操作
       try {
         const prevId = activeId
         myTab = await openTab()
@@ -887,13 +894,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
       // 消息先写入；新 Tab 在此再切换，用户看到的是内容而不是空白 loading
       hydrateFromSnapshot(messages, myTab)
-      if (createdNew || reuseBlank) {
+      if (createdNew || reuseBlank || reuseBroken) {
         switchTab(myTab)
       }
 
       beginAttachRuntime(myTab)
       // 不传 tab 上的默认 effort，避免盖掉该历史会话自己记住的思考强度
-      await loadSession(myTab, id, workCwd)
+      const used = await loadSession(myTab, id, workCwd)
+      const attachedCwd = cwdAfterLoadSession(used, workCwd)
       // 启动对账：恢复该会话仍在运行的子 agent（重启/重连场景，官方 x.ai/subagent/list_running）
       void reconcileRunningSubagents(myTab)
       if (gen !== currentLoadGen(myTab)) return
@@ -902,6 +910,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       patchTab(myTab, {
         sessionId: id,
         chatId: id,
+        cwd: attachedCwd,
         phase: 'ready',
         status: 'idle',
         error: '',
@@ -910,22 +919,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     } catch (e) {
       if (gen !== currentLoadGen(myTab)) return
       abortOpenSession(myTab)
-      const err = String(e)
-      if (createdNew && myTab) {
-        try {
-          await closeTab(myTab)
-        } catch {
-          /* 后端可能未登记 */
-        }
-        removeTab(myTab)
-        const fallback = findNormalChatTab(false) || $activeTabId.get()
-        if (fallback && getTabState(fallback)) {
-          switchTab(fallback)
-          patchTab(fallback, { error: `打开历史会话失败: ${err}` })
-        }
-      } else {
-        patchTab(myTab, { phase: 'ready', status: 'idle', error: err })
-      }
+      const err = formatEngineError(e)
+      // 记录已经画出来了：别拆掉 Tab。没接上引擎不是「会话没启动」。
+      patchTab(myTab, { phase: 'ready', status: 'idle', error: err, cwd: workCwd })
+      if (createdNew || reuseBroken) switchTab(myTab)
     }
   }, [cwd, workbenchChats])
 

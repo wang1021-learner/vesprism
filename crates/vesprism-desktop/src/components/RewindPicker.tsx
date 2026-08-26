@@ -21,11 +21,12 @@ import {
   type RewindPointInfo,
 } from '../bridge'
 import { beginAttachRuntime, finishAttachRuntime } from '../lib/sessionOpen'
+import { formatEngineError } from '../lib/errorMessage'
 
 const MODE_OPTIONS: { value: RewindMode; label: string; hint: string }[] = [
-  { value: 'conversation_only', label: '仅对话', hint: '只回滚对话，工作区文件不动（官方默认）' },
-  { value: 'all', label: '全部回滚', hint: '对话与文件快照一起恢复' },
-  { value: 'files_only', label: '仅文件', hint: '只恢复文件，对话保留' },
+  { value: 'conversation_only', label: '仅对话', hint: '只改聊天记录，不改工作区文件' },
+  { value: 'all', label: '全部回滚', hint: '聊天和工作区文件一起恢复' },
+  { value: 'files_only', label: '仅文件', hint: '只恢复文件，聊天留下' },
 ]
 
 function formatTime(iso: string): string {
@@ -77,7 +78,7 @@ export function RewindPicker() {
         if (!cancelled) setPoints(Array.isArray(pts) ? pts : [])
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(String(e))
+        if (!cancelled) setError(formatEngineError(e))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -93,14 +94,26 @@ export function RewindPicker() {
     setRunning(true)
     setError('')
     try {
-      const resp = await executeRewind(tabId, pt.prompt_index, mode, force)
+      // force=false 只是预演，success 恒为 false。对话回滚直接执行；
+      // 改文件时若未勾强制，先预演看冲突，没有冲突再真正执行。
+      const commit = !touchesFiles || force
+      if (!commit) {
+        const preview = await executeRewind(tabId, pt.prompt_index, mode, false)
+        if (preview.conflicts?.length) {
+          setError(
+            `有 ${preview.conflicts.length} 处文件对不上，勾选「强制回滚」后再执行`,
+          )
+          return
+        }
+      }
+      const resp = await executeRewind(tabId, pt.prompt_index, mode, true)
       if (!resp.success) {
         if (resp.conflicts?.length) {
           setError(
-            `存在 ${resp.conflicts.length} 处文件冲突，可勾选「强制回滚」后重试`
+            `有 ${resp.conflicts.length} 处文件对不上，勾选「强制回滚」后再执行`,
           )
         } else {
-          setError(resp.error || '回滚失败')
+          setError(formatEngineError(resp.error || '回滚失败'))
         }
         return
       }
@@ -133,7 +146,7 @@ export function RewindPicker() {
         patchTab(tabId, { phase: 'ready', status: 'idle', error: '' })
       }
     } catch (e) {
-      setError(String(e))
+      setError(formatEngineError(e))
     } finally {
       setRunning(false)
     }
@@ -159,8 +172,7 @@ export function RewindPicker() {
           </button>
         </div>
         <p className="rewind-desc">
-          回滚到某条提问之前。默认只截断对话（官方 1.0.1 起），改工作区文件需另行确认。不是 git
-          revert。
+          回到某条提问之前。默认只改对话；要动文件需再确认一次。
         </p>
 
         {loading && <div className="rewind-loading">加载历史点...</div>}
@@ -219,23 +231,27 @@ export function RewindPicker() {
                   ))}
                 </div>
                 {touchesFiles ? (
-                  <label className="rewind-force">
-                    <input
-                      type="checkbox"
-                      checked={confirmFiles}
-                      onChange={(e) => setConfirmFiles(e.target.checked)}
-                    />
-                    确认会改工作区文件（与官方 /rewind 二次确认一致）
-                  </label>
-                ) : null}
-                <label className="rewind-force">
-                  <input
-                    type="checkbox"
-                    checked={force}
-                    onChange={(e) => setForce(e.target.checked)}
-                  />
-                  强制回滚（忽略冲突）
-                </label>
+                  <>
+                    <label className="rewind-force">
+                      <input
+                        type="checkbox"
+                        checked={confirmFiles}
+                        onChange={(e) => setConfirmFiles(e.target.checked)}
+                      />
+                      确认会改工作区文件
+                    </label>
+                    <label className="rewind-force">
+                      <input
+                        type="checkbox"
+                        checked={force}
+                        onChange={(e) => setForce(e.target.checked)}
+                      />
+                      强制回滚（文件对不上也改）
+                    </label>
+                  </>
+                ) : (
+                  <p className="rewind-desc">只改对话，不碰工作区文件。</p>
+                )}
                 <div className="rewind-confirm-row">
                   <button
                     type="button"

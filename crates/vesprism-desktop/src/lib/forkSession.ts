@@ -14,6 +14,7 @@ import {
 } from '../store'
 import { forkSession, getSessionMessages, loadSession, openTab } from '../bridge'
 import {
+  abortOpenSession,
   beginAttachRuntime,
   cacheSessionMessages,
   currentLoadGen,
@@ -32,10 +33,11 @@ export async function forkCurrentSession(): Promise<void> {
     return
   }
   const parentTitle = st.chatTitle?.trim() || '派生会话'
+  let newTabId = ''
   try {
     const newId = await forkSession(tabId, cwd)
     const model = resolveNewTabModel(tabId)
-    const newTabId = await openTab()
+    newTabId = await openTab()
     createTab(newTabId, {
       cwd,
       chatTitle: parentTitle,
@@ -63,7 +65,17 @@ export async function forkCurrentSession(): Promise<void> {
     }
 
     beginAttachRuntime(newTabId)
-    await loadSession(newTabId, newId, cwd)
+    try {
+      await loadSession(newTabId, newId, cwd)
+    } catch (e) {
+      abortOpenSession(newTabId)
+      patchTab(newTabId, {
+        phase: 'ready',
+        status: 'idle',
+        error: `派生失败：${String(e)}`,
+      })
+      throw e
+    }
     if (gen !== currentLoadGen(newTabId)) return
     finishAttachRuntime(newTabId)
     patchTab(newTabId, {
@@ -75,6 +87,7 @@ export async function forkCurrentSession(): Promise<void> {
     })
     pushToast('已派生新会话', 'success')
   } catch (e) {
+    if (newTabId) abortOpenSession(newTabId)
     pushToast(`派生失败：${String(e)}`, 'error')
   }
 }

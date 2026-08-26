@@ -40,7 +40,7 @@ export async function recallUserTurn(userId: string): Promise<void> {
   }
 
   try {
-    const resp = await executeRewind(tabId, promptIndex, 'conversation_only', false)
+    const resp = await executeRewind(tabId, promptIndex, 'conversation_only', true)
     if (!resp.success) {
       pushToast(
         resp.conflicts?.length

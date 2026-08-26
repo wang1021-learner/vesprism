@@ -74,20 +74,33 @@ export async function switchPreferredWorkspace(
     Boolean(tabId && st && st.status !== 'generating') &&
     (opts?.restartTab || isBlankNewChat(st!))
   if (restart && tabId && st) {
+    const prevSession = st.sessionId
+    const prevChat = st.chatId
+    const prevCwd = st.cwd
     patchTab(tabId, {
       cwd: applied,
       phase: 'restarting',
-      sessionId: '',
-      chatId: '',
       error: '',
     })
     const spawn = { modelId: st.modelId, reasoningEffort: st.reasoningEffort }
     try {
       await restartSession(tabId, applied, spawn)
+      patchTab(tabId, { phase: 'ready', status: 'idle', cwd: applied, error: '' })
     } catch {
-      await startSession(tabId, applied, spawn)
+      try {
+        await startSession(tabId, applied, spawn)
+        patchTab(tabId, { phase: 'ready', status: 'idle', cwd: applied, error: '' })
+      } catch (e) {
+        patchTab(tabId, {
+          phase: 'ready',
+          status: 'idle',
+          cwd: prevCwd,
+          sessionId: prevSession,
+          chatId: prevChat,
+          error: String(e),
+        })
+      }
     }
-    patchTab(tabId, { phase: 'ready', status: 'idle', cwd: applied, error: '' })
   }
   return applied
 }

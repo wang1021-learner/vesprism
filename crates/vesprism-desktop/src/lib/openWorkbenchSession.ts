@@ -5,17 +5,21 @@
 import {
   $scratchCwd,
   createTab,
+  cwdAfterLoadSession,
   findTabByUtilityKind,
   getTabState,
   hasTab,
   looksAbsolutePath,
   patchTab,
+  resolveHistoryLoadCwd,
   resolveNewTabCwd,
   resolveNewTabModel,
+  sessionTabReadyToReuse,
   switchTab,
   type UtilityKind,
 } from '../store'
 import { getSessionMessages, loadSession, openTab } from '../bridge'
+import { formatEngineError } from './errorMessage'
 import { mapDisplayMessages } from './openSubagentTab'
 import { clearSessionAllowed } from './permissionMemory'
 import { reconcileRunningSubagents } from './reconcileRunningSubagents'
@@ -68,17 +72,15 @@ export async function openWorkbenchHistory(
 
   const { kind, fallbackTitle } = pickUtility(opts.binding)
   const title = (opts.title || '').trim() || fallbackTitle
-  const cwd = (opts.cwd || resolveNewTabCwd() || $scratchCwd.get() || '').trim()
+  const cwd = resolveHistoryLoadCwd(
+    opts.cwd || resolveNewTabCwd() || $scratchCwd.get() || '',
+  )
   if (!cwd || !looksAbsolutePath(cwd)) return null
 
   let tabId = findTabByUtilityKind(kind)
   const existing = tabId ? getTabState(tabId) : undefined
-  if (
-    tabId &&
-    existing &&
-    (existing.sessionId === sessionId || existing.chatId === sessionId)
-  ) {
-    if (title && title !== fallbackTitle && existing.chatTitle !== title) {
+  if (tabId && sessionTabReadyToReuse(existing, sessionId)) {
+    if (title && title !== fallbackTitle && existing?.chatTitle !== title) {
       patchTab(tabId, { chatTitle: title })
     }
     switchTab(tabId)
@@ -138,7 +140,7 @@ export async function openWorkbenchHistory(
     switchTab(tabId)
 
     beginAttachRuntime(tabId)
-    await loadSession(tabId, sessionId, cwd)
+    const used = await loadSession(tabId, sessionId, cwd)
     void reconcileRunningSubagents(tabId)
     if (gen !== currentLoadGen(tabId)) return tabId
     finishAttachRuntime(tabId)
@@ -151,14 +153,14 @@ export async function openWorkbenchHistory(
       error: '',
       chatTitle: title,
       utilityKind: kind,
-      cwd,
+      cwd: cwdAfterLoadSession(used, cwd),
     })
     cacheSessionMessages(sessionId, getTabState(tabId)?.messages ?? messages)
     return tabId
   } catch (e) {
     if (gen !== currentLoadGen(tabId)) return tabId
     abortOpenSession(tabId)
-    patchTab(tabId, { phase: 'ready', status: 'idle', error: String(e) })
+    patchTab(tabId, { phase: 'ready', status: 'idle', error: formatEngineError(e) })
     return tabId
   }
 }
