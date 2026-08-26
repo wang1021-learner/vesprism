@@ -115,6 +115,10 @@ pub(super) fn bash_grant_segments(cmd: &str) -> Vec<String> {
 /// the injection floor via the raw key.
 pub(super) fn persist_bash_always_allow(state: &mut PermissionState, cmd: &str, prefix: &str) {
     let Some(h) = primary_command_from_script(cmd) else {
+        tracing::warn!(
+            %prefix,
+            "always-allow selected for a script with no primary command; no grant persisted"
+        );
         return;
     };
     let words = &h.highlighted_words;
@@ -131,10 +135,16 @@ pub(super) fn persist_bash_always_allow(state: &mut PermissionState, cmd: &str, 
                 .extend(extra_persist_keys_from_words(&words[..n]));
         }
     } else if h.prefix.is_empty() && h.suffix.is_empty() && words.join(" ") == prefix {
+        // jike: 禁止把 bash/sh 本身当 always-allow 前缀。
         if !is_banned_grant_key(cmd) {
             state.allowed_bash_commands.insert(cmd.to_owned());
         }
         state.allowed_bash_commands.extend(extra_persist_keys(cmd));
+    } else {
+        tracing::warn!(
+            %prefix,
+            "always-allow label did not verify against the primary command; no grant persisted"
+        );
     }
 }
 
@@ -429,6 +439,9 @@ mod tests {
         // though the WIDEST join is argv-ambiguous.
         assert!(always_allow_row_is_effective(
             r#"terraform plan -var "x=1 2" | head"#
+        ));
+        assert!(always_allow_row_is_effective(
+            "cargo test --lib && echo done"
         ));
     }
 

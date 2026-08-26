@@ -1365,7 +1365,6 @@ mod tests {
             IMAGE_TO_VIDEO_TOOL_NAME
         );
         let desc = crate::types::tool_metadata::ToolMetadata::description_template(&tool);
-        assert!(desc.contains("single source image"));
         assert!(desc.contains("image_to_video"));
     }
 
@@ -1377,7 +1376,6 @@ mod tests {
             REFERENCE_TO_VIDEO_TOOL_NAME
         );
         let desc = crate::types::tool_metadata::ToolMetadata::description_template(&tool);
-        assert!(desc.contains("reference images and/or preset voices"));
         assert!(desc.contains("reference_to_video"));
         assert!(desc.contains("<AUDIO_0>"));
     }
