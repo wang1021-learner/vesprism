@@ -1,140 +1,76 @@
 <div align="center">
 
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://media.x.ai/v1/website/spacexai-symbol-white-transparent-0c31957f.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png">
-    <img alt="SpaceXAI logo" src="https://media.x.ai/v1/website/spacexai-symbol-black-transparent-6435cf42.png" width="96">
-  </picture>
-  <br>
-  Grok Build (<code>grok</code>)
-</h1>
+<img src="crates/vesprism-desktop/public/vesprism-logo.png" alt="Vesprism" width="96">
 
-**Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
-full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — interactively,
-headlessly for scripting/CI, or embedded in editors via the Agent Client
-Protocol (ACP).
+# Vesprism
 
-[Installing the released binary](#installing-the-released-binary) ·
-[Building from source](#building-from-source) ·
-[Documentation](#documentation) ·
-[Repository layout](#repository-layout) ·
-[Development](#development) ·
-[Contributing](#contributing) ·
-[License](#license)
+**AI 原生桌面开发工作台。**  
+编码改仓库，工作台编排流程。引擎用 [Grok Build](https://github.com/xai-org/grok-build) 官方运行时，桌面是自研壳。
 
-![Grok Build TUI](https://media.x.ai/v1/website/universe-tui-screenshot-6f7a0837.png)
-
-**Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
-
-This repository contains the Rust source for the `grok` CLI/TUI and its agent
-runtime. It is synced periodically from the SpaceXAI monorepo.
-
-A small `SOURCE_REV` file at the root records the full monorepo commit SHA
-for the version of the code present in this tree.
+[启动桌面](#启动桌面) ·
+[两套界面](#两套界面) ·
+[和上游的关系](#和上游的关系) ·
+[文档](#文档) ·
+[许可证](#许可证)
 
 </div>
 
 ---
 
-## Installing the released binary
+## 启动桌面
 
-Prebuilt binaries are published for macOS, Linux, and Windows:
-
-```sh
-curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
-irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
-grok --version
-```
-
-See the [changelog](https://x.ai/build/changelog) for the latest fixes,
-features, and improvements in each release.
-
-## Building from source
-
-Requirements:
-
-- **Rust** — the toolchain is pinned by [`rust-toolchain.toml`](rust-toolchain.toml);
-  `rustup` installs it automatically on first build.
-- **[DotSlash](https://dotslash-cli.com)** — required so hermetic tools under
-  [`bin/`](bin/) (notably [`bin/protoc`](bin/protoc)) can download and run.
-  Install it and ensure `dotslash` is on your `PATH` **before** building:
-
-  ```sh
-  cargo install dotslash
-  # or: prebuilt packages — https://dotslash-cli.com/docs/installation/
-  /usr/bin/env dotslash --help   # sanity check
-  ```
-
-- **protoc** — proto codegen resolves [`bin/protoc`](bin/protoc) via DotSlash,
-  or falls back to a `protoc` on `PATH` / `$PROTOC`.
-- macOS and Linux are supported build hosts; Windows builds are best-effort
-  and not currently tested from this tree.
+需要 **Node 20.12+**（本包脚本会优先用本机 nvm 的 22，不改全局 Node 18）和仓库锁定的 **Rust** 工具链。
 
 ```sh
-cargo run -p xai-grok-pager-bin              # build + launch the TUI
-cargo build -p xai-grok-pager-bin --release  # release binary: target/release/xai-grok-pager
-cargo check -p xai-grok-pager-bin            # fast validation
+cd crates/vesprism-desktop
+npm install
+npm run desktop
 ```
 
-The binary artifact is named `xai-grok-pager`; official installs ship it as
-`grok`. On first launch it opens your browser to authenticate — see the
-[authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+用弹出的桌面窗口，不要拿浏览器打开 `127.0.0.1:9527`。  
+打包安装包：`npm run desktop:build`。  
+检查：`npm run typecheck` 与 `npm test`。
 
-## Documentation
+密钥和模型写在本机 `~/.vesprism/`（`config.toml` / `.env`），和命令行 `grok` 的 `~/.grok` 分开。不要把 API key 提交进仓库。
 
-Full online documentation is available at
-[docs.x.ai/build/overview](https://docs.x.ai/build/overview).
+## 两套界面
 
-The user guide ships with the pager crate:
-[`crates/codegen/xai-grok-pager/docs/user-guide/`](crates/codegen/xai-grok-pager/docs/user-guide/)
-— getting started, keyboard shortcuts, slash commands, configuration, theming,
-MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
+| 壳 | 做什么 |
+|----|--------|
+| **编码** | 对话写代码、权限审批、计划、记忆、MCP、技能 |
+| **工作台** | 流程画布、Agent 编制、已发布自动化任务 |
 
-## Repository layout
+侧栏左上角切换。会话、Tab 按壳分开。
 
-| Path | Contents |
-|------|----------|
-| `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
-| `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
-| `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
-| `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
-| `crates/codegen/xai-grok-workspace` | Host filesystem, VCS, execution, checkpoints |
-| `crates/codegen/...` | The rest of the CLI crate closure (config, MCP, markdown, sandbox, ...) |
-| `crates/common/`, `crates/build/`, `prod/mc/` | Small shared leaf crates pulled in by the closure |
-| `third_party/` | Vendored upstream source (Mermaid diagram stack) — see below |
+## 和上游的关系
 
-> [!IMPORTANT]
-> The root `Cargo.toml` (workspace members, dependency versions, lints,
-> profiles) is **generated** — treat it as read-only. Prefer editing per-crate
-> `Cargo.toml` files.
+本仓 fork 自 [`xai-org/grok-build`](https://github.com/xai-org/grok-build)，定期 `merge upstream/main`。
 
-## Development
+| 路径 | 归属 |
+|------|------|
+| `crates/codegen/xai-grok-*` | 官方引擎 |
+| `crates/grok-session` | 桌面胶水（进程内 ACP） |
+| `crates/vesprism-desktop` | 桌面 UI |
 
-```sh
-cargo check -p <crate>        # always target specific crates; full-workspace builds are slow
-cargo test -p xai-grok-config # per-crate tests
-cargo clippy -p <crate>       # lint config: clippy.toml at the repo root
-cargo fmt --all               # rustfmt.toml at the repo root
-```
+官方 CLI/TUI 的安装与说明以 [上游 README](https://github.com/xai-org/grok-build) 为准，不要用本页当 `grok` 安装文档。
 
-## Contributing
+日常推送：`origin` = `wang1021-learner/grokbuild`。  
+改官方 crate 的规则：[`docs/官方代码修改原则.md`](docs/官方代码修改原则.md)。
 
-> [!NOTE]
-> External contributions are not accepted. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+## 文档
 
-## License
+- [`docs/Vesprism-全功能与实现手册.md`](docs/Vesprism-全功能与实现手册.md) — 现码怎么接、改哪一层
+- [`docs/官方合并与二次开发工作流.md`](docs/官方合并与二次开发工作流.md) — 拉上游
+- [中文 README](README.zh.md)
 
-First-party code in this repository is licensed under the **Apache License,
-Version 2.0** — see [`LICENSE`](LICENSE).
+## 许可证
 
-Third-party and vendored code remains under its original licenses. See:
+上游与本仓二次开发均为 **Apache-2.0**。法律文本以英文 [`LICENSE`](LICENSE) 为准；中文参考 [`LICENSE.zh.md`](LICENSE.zh.md)。
 
-- [`THIRD-PARTY-NOTICES`](THIRD-PARTY-NOTICES) — crates.io / git dependencies,
-  bundled UI themes, and **in-tree source ports** (including openai/codex and
-  sst/opencode tool implementations)
-- [`crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md`](crates/codegen/xai-grok-tools/THIRD_PARTY_NOTICES.md)
-  — crate-local notice for the codex and opencode ports (license texts +
-  Apache §4(b) change notice)
-- [`third_party/NOTICE`](third_party/NOTICE) — vendored Mermaid-stack index
+---
+
+<div align="center">
+
+**Vesprism** is a desktop workbench around the Grok Build agent runtime: coding chat and a flow canvas. It is a fork of [`xai-org/grok-build`](https://github.com/xai-org/grok-build), not the official CLI. Run `cd crates/vesprism-desktop && npm run desktop`.
+
+</div>
