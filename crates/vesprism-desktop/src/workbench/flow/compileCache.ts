@@ -12,15 +12,34 @@ export type GraphSnap = {
   edges: FlowGraphEdge[]
 }
 
-/** 拓扑 + params（不含坐标）。发布/试跑编 Rhai 用。 */
-export function topologyHash(d: Pick<FlowDraft, 'id' | 'nodes' | 'edges' | 'input_schema' | 'output_schema'>): string {
+export type TopologyDraft = Pick<
+  FlowDraft,
+  'id' | 'name' | 'description' | 'version' | 'nodes' | 'edges' | 'input_schema' | 'output_schema'
+>
+
+/** 拓扑 + params + 元信息（不含坐标）。发布/试跑编 Rhai 用。 */
+export function topologyHash(d: TopologyDraft): string {
   return JSON.stringify({
     id: d.id,
+    name: d.name,
+    desc: d.description,
+    ver: d.version,
     in: d.input_schema,
     out: d.output_schema,
     nodes: d.nodes.map((n) => [n.id, n.type, n.params]),
     edges: d.edges.map((e) => [e.from, e.to, e.label ?? '', e.sourceHandle ?? '', e.targetHandle ?? '']),
   })
+}
+
+/** 编 Rhai 缓存键：拓扑/元信息 + Agent 编制 + 已内联子流程。 */
+export function compileCacheKey(
+  d: TopologyDraft,
+  extras: { presets: unknown; catalog?: unknown },
+): string {
+  return `${topologyHash(d)}\0${JSON.stringify({
+    presets: extras.presets,
+    catalog: extras.catalog ?? null,
+  })}`
 }
 
 /** 含坐标与标题，自动保存去重用。 */

@@ -7,15 +7,22 @@ export type GenerateWait = {
   started: boolean
 }
 
-/** 组件卸载后仍能收齐回复，避免切 tab 丢拓扑。 */
-let pendingWait: GenerateWait | null = null
+/** 组件卸载后仍能收齐回复，避免切 tab 丢拓扑。按 tab 分片，避免两个画布互相覆盖。 */
+const pendingWaits = new Map<string, GenerateWait>()
 
-export function setGenerateWait(wait: GenerateWait | null): void {
-  pendingWait = wait
+export function setGenerateWait(wait: GenerateWait | null, tabId?: string): void {
+  if (!wait) {
+    if (tabId) pendingWaits.delete(tabId)
+    else pendingWaits.clear()
+    return
+  }
+  pendingWaits.set(wait.tabId, wait)
 }
 
-export function getGenerateWait(): GenerateWait | null {
-  return pendingWait
+export function getGenerateWait(tabId?: string): GenerateWait | null {
+  if (tabId) return pendingWaits.get(tabId) ?? null
+  if (pendingWaits.size === 1) return pendingWaits.values().next().value ?? null
+  return null
 }
 
 export function noteGenerateProgress(

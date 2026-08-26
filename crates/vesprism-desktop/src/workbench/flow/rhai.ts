@@ -658,6 +658,51 @@ function emitNode(
   }
 }
 
+/** 沿一条支路走到汇合点：join、入度>1，或 end。嵌套多出边则取其共同汇合。 */
+function findArmJoin(
+  startId: string,
+  nodes: Map<string, FlowGraphNode>,
+  edges: FlowGraphEdge[],
+): string | undefined {
+  const seen = new Set<string>()
+  let cur: string | undefined = startId
+  while (cur && !seen.has(cur)) {
+    seen.add(cur)
+    const n = nodes.get(cur)
+    if (!n) return undefined
+    const ins = incoming(edges, cur)
+    if (n.type === 'join' || n.type === 'end' || ins.length > 1) return cur
+    const outs = outgoing(edges, cur)
+    if (outs.length === 0) return cur
+    if (outs.length > 1) {
+      return findSharedJoin(
+        outs.map((e) => e.to),
+        nodes,
+        edges,
+      )
+    }
+    cur = outs[0].to
+  }
+  return undefined
+}
+
+/** 各分支最终汇到的同一节点。没有共同汇合则 undefined。 */
+function findSharedJoin(
+  armStarts: string[],
+  nodes: Map<string, FlowGraphNode>,
+  edges: FlowGraphEdge[],
+): string | undefined {
+  if (!armStarts.length) return undefined
+  let shared: string | undefined
+  for (const start of armStarts) {
+    const join = findArmJoin(start, nodes, edges)
+    if (!join) return undefined
+    if (shared === undefined) shared = join
+    else if (shared !== join) return undefined
+  }
+  return shared
+}
+
 function walk(
   currentId: string,
   prevVar: string,
@@ -666,7 +711,11 @@ function walk(
   lines: string[],
   visiting: Set<string>,
   presets: Record<string, PresetResolve>,
+  stopAt?: string,
 ): string {
+  if (stopAt && currentId === stopAt) {
+    return prevVar
+  }
   if (visiting.has(currentId)) {
     lines.push(`log("skip cycle at ${esc(currentId)}");`)
     return prevVar
@@ -702,7 +751,8 @@ function walk(
     if (downstreamIds.length === 1) {
       const nextId = downstreamIds[0]
       visiting.delete(currentId)
-      return walk(nextId, pVar, nodes, edges, lines, visiting, presets)
+      if (stopAt && nextId === stopAt) return pVar
+      return walk(nextId, pVar, nodes, edges, lines, visiting, presets, stopAt)
     }
     if (downstreamIds.length > 1) {
       throw new Error(
@@ -737,7 +787,7 @@ function walk(
     if (endEdge && nodes.get(endEdge.to)?.type === 'loop_end') {
       visiting.add(endEdge.to)
       visiting.delete(currentId)
-      return walk(endEdge.to, resVar, nodes, edges, lines, visiting, presets)
+      return walk(endEdge.to, resVar, nodes, edges, lines, visiting, presets, stopAt)
     }
     visiting.delete(currentId)
     return resVar
@@ -750,6 +800,13 @@ function walk(
     lines.push(`phase("${esc(phaseTitle(node))}");`)
     lines.push(`log("node ${esc(node.id)} branch");`)
     lines.push(`let ${branchResVar} = ${prevVar};`)
+
+    const joinId = findSharedJoin(
+      outs.map((e) => e.to),
+      nodes,
+      edges,
+    )
+    const armStop = joinId ?? stopAt
 
     const isBinarySuccessFailure =
       outs.length === 2 &&
@@ -772,17 +829,15 @@ function walk(
       const no = outs.find((e) => e !== yes)
       lines.push(`if (${cond}) {`)
       if (yes) {
-        const yesVar = walk(yes.to, prevVar, nodes, edges, lines, visiting, presets)
+        const yesVar = walk(yes.to, prevVar, nodes, edges, lines, visiting, presets, armStop)
         lines.push(`    ${branchResVar} = ${yesVar};`)
       }
       if (no) {
         lines.push(`} else {`)
-        const noVar = walk(no.to, prevVar, nodes, edges, lines, visiting, presets)
+        const noVar = walk(no.to, prevVar, nodes, edges, lines, visiting, presets, armStop)
         lines.push(`    ${branchResVar} = ${noVar};`)
       }
       lines.push(`}`)
-      visiting.delete(currentId)
-      return branchResVar
     } else {
       for (let i = 0; i < outs.length; i++) {
         const edge = outs[i]
@@ -804,18 +859,23 @@ function walk(
         } else {
           lines.push(`} else if (${cond}) {`)
         }
-        const armVar = walk(edge.to, prevVar, nodes, edges, lines, visiting, presets)
+        const armVar = walk(edge.to, prevVar, nodes, edges, lines, visiting, presets, armStop)
         lines.push(`    ${branchResVar} = ${armVar};`)
       }
       lines.push(`}`)
-      visiting.delete(currentId)
-      return branchResVar
     }
+    visiting.delete(currentId)
+    if (joinId && joinId !== stopAt) {
+      return walk(joinId, branchResVar, nodes, edges, lines, visiting, presets, stopAt)
+    }
+    return branchResVar
   }
 
   const produced = emitNode(node, prevVar, lines, presets)
   const nextEdge = outs[0]
-  const last = nextEdge ? walk(nextEdge.to, produced, nodes, edges, lines, visiting, presets) : produced
+  const last = nextEdge
+    ? walk(nextEdge.to, produced, nodes, edges, lines, visiting, presets, stopAt)
+    : produced
   visiting.delete(currentId)
   return last
 }

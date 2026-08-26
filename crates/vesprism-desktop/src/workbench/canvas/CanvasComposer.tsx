@@ -182,6 +182,9 @@ export const CanvasComposer = memo(function CanvasComposer({
 
   const onSwitchModel = useCallback((id: string) => {
     const tabId = $activeTabId.get()
+    const prevModel = $defaultModelId.get()
+    const prevEffort = $reasoningEffort.get()
+    const prevTab = tabId ? getTabState(tabId) : null
     const entry = $models.get().find((m) => m.id === id)
     const nextEffort = spawnReasoningEffort(entry, $reasoningEffort.get()) || 'medium'
     $defaultModelId.set(id)
@@ -193,7 +196,17 @@ export const CanvasComposer = memo(function CanvasComposer({
         pushToast(`已切换模型 · ${label}`, 'success')
       })
       .catch((e) => {
-        patchActiveTab({ error: String(e) })
+        $defaultModelId.set(prevModel)
+        $reasoningEffort.set(prevEffort)
+        if (tabId) {
+          patchTab(tabId, {
+            modelId: prevTab?.modelId || prevModel,
+            reasoningEffort: prevTab?.reasoningEffort || prevEffort,
+            error: String(e),
+          })
+        } else {
+          patchActiveTab({ error: String(e) })
+        }
         pushToast(`切换模型失败 · ${String(e)}`, 'error')
       })
   }, [])
@@ -201,6 +214,8 @@ export const CanvasComposer = memo(function CanvasComposer({
   const onSwitchReasoningEffort = useCallback((e: string) => {
     const tabId = $activeTabId.get()
     const id = $defaultModelId.get()
+    const prevEffort = $reasoningEffort.get()
+    const prevTabEffort = tabId ? getTabState(tabId)?.reasoningEffort : prevEffort
     $reasoningEffort.set(e)
     if (tabId) patchTab(tabId, { reasoningEffort: e, ...(id ? { modelId: id } : {}) })
     if (!id || !tabId) return
@@ -209,7 +224,11 @@ export const CanvasComposer = memo(function CanvasComposer({
         pushToast(`已切换思考强度 · ${reasoningEffortLabel(e)}`, 'success'),
       )
       .catch((err) => {
-        patchActiveTab({ error: String(err) })
+        $reasoningEffort.set(prevEffort)
+        patchTab(tabId, {
+          reasoningEffort: prevTabEffort || prevEffort,
+          error: String(err),
+        })
         pushToast('切换思考强度失败', 'error')
       })
   }, [])

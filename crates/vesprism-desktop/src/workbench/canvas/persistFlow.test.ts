@@ -129,6 +129,40 @@ describe('compileDraftRhai', () => {
     expect(rhai.length).toBeGreaterThan(10)
   })
 
+  it('改说明或 Agent 编制会让缓存失效', async () => {
+    const d = createDemoDraft()
+    d.id = 'cache-root'
+    const cache: { current: { key: string; rhai: string } | null } = { current: null }
+    const getFlow = async () => {
+      throw new Error('nope')
+    }
+    await compileDraftRhai(d, getFlow, async () => [], cache)
+    const keyTopo = cache.current?.key
+    expect(keyTopo).toBeTruthy()
+    d.description = '改过的说明'
+    await compileDraftRhai(d, getFlow, async () => [], cache)
+    expect(cache.current?.key).not.toBe(keyTopo)
+    expect(cache.current?.rhai).toContain('改过的说明')
+    const keyDesc = cache.current?.key
+    ;(d.nodes[1].params as { presetId?: string }).presetId = 'pr-reviewer'
+    await compileDraftRhai(
+      d,
+      getFlow,
+      async () => [
+        {
+          id: 'pr-reviewer',
+          name: '审查员',
+          version: '1',
+          isolation: true,
+          systemPrompt: '只读审查',
+        },
+      ],
+      cache,
+    )
+    expect(cache.current?.key).not.toBe(keyDesc)
+    expect(cache.current?.rhai).toContain('只读审查')
+  })
+
   it('缺子流程直接报错', async () => {
     const d = createDemoDraft()
     d.nodes.push({

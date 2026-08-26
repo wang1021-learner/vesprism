@@ -3,11 +3,11 @@
  */
 import { AGENT_CAPABILITY_OFFICIAL, type AgentListItem } from '../types'
 import {
+  compileCacheKey,
   compileInlinedRhai,
   compileToRhai,
   loadReferencedCatalog,
   saveHash,
-  topologyHash,
   type FlowDraft,
   type FlowRecord,
   type PresetResolve,
@@ -86,8 +86,6 @@ export async function compileDraftRhai(
   listAgents: () => Promise<AgentListItem[]>,
   cache: { current: { key: string; rhai: string } | null },
 ): Promise<string> {
-  const topo = topologyHash(d)
-  if (cache.current?.key === topo) return cache.current.rhai
   const { catalog, missing } = await loadReferencedCatalog(d, getFlow)
   if (missing.length) {
     throw new Error(`缺少子流程：${missing.join('、')}`)
@@ -98,8 +96,10 @@ export async function compileDraftRhai(
   } catch {
     /* 编制列表失败时仍编图，节点人设走本地 params */
   }
+  const key = compileCacheKey(d, { presets, catalog })
+  if (cache.current?.key === key) return cache.current.rhai
   const compiled = compileInlinedRhai(d, catalog, (next) => compileToRhai(next, { presets }))
   if (!compiled.ok) throw new Error(compiled.error)
-  cache.current = { key: topo, rhai: compiled.rhai }
+  cache.current = { key, rhai: compiled.rhai }
   return compiled.rhai
 }

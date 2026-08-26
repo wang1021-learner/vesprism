@@ -299,6 +299,12 @@ export default function AgentsPanel() {
           edges: flow.edges,
         })
       }
+      const published = detailedFlows
+        .filter((f) => f.published)
+        .map((f) => ({ id: f.id, name: f.name }))
+      if (published.length > 0) {
+        markFlowsStale(agentId, published)
+      }
       pushToast(`已将 ${detailedFlows.length} 个流程中的节点解绑并降级为试岗`, 'info')
       await performDelete(agentId)
     } catch (e) {

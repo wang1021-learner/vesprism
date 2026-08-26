@@ -184,6 +184,41 @@ describe('compileToRhai', () => {
     expect(rhai).toContain('complete(')
   })
 
+  it('branch 两臂汇入同一 join 时只编译一次汇聚，不把 join 写进 if/else', () => {
+    const draft: FlowDraft = {
+      id: 'branch-join',
+      name: '分支汇聚',
+      description: '两臂汇合',
+      version: '1',
+      input_schema: { type: 'object' },
+      output_schema: { type: 'object' },
+      nodes: [
+        { id: 's', type: 'start', params: { label: '起点' } },
+        { id: 'b', type: 'branch', params: { condition: 'success' } },
+        { id: 'ok', type: 'agent', params: { label: '成功', prompt: '处理成功' } },
+        { id: 'ng', type: 'tool', params: { command: 'echo fail' } },
+        { id: 'j', type: 'join', params: { label: '聚合', mergeMode: 'merge_json' } },
+        { id: 'tail', type: 'agent', params: { label: '收尾', prompt: '汇总结果' } },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'b' },
+        { from: 'b', to: 'ok', label: 'success' },
+        { from: 'b', to: 'ng', label: 'failure' },
+        { from: 'ok', to: 'j' },
+        { from: 'ng', to: 'j' },
+        { from: 'j', to: 'tail' },
+        { from: 'tail', to: 'e' },
+      ],
+    }
+    const rhai = compileToRhai(draft)
+    expect((rhai.match(/join \(mode: merge_json\)/g) || []).length).toBe(1)
+    expect((rhai.match(/汇总结果/g) || []).length).toBe(1)
+    expect(rhai).toContain('处理成功')
+    expect(rhai).toContain('echo fail')
+    expect(rhai).toContain('complete(')
+  })
+
   it('HTTP 节点编译成带真实请求说明的 execute agent 调用（URL/方法/头/体全量入 prompt）', () => {
     const draft: FlowDraft = {
       id: 'http-flow',
