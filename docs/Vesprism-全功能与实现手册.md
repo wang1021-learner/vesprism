@@ -6,7 +6,7 @@
 > **产品名：** Vesprism（`package.json` `productName`、`tauri.conf.json` `identifier: com.vesprism.desktop`）  
 > **用户数据：** `~/.vesprism`（环境变量 `GROK_HOME`；与 CLI `grok` 的 `~/.grok` 隔离）
 
-旧文档 `docs/桌面端-现状架构与功能文档.md` 是按会话增量改的对照表，部分条目已过期（例如 Rewind、流程画布）。**以本文 + 源码为准。**
+**以本文 + 源码为准。**
 
 ---
 
