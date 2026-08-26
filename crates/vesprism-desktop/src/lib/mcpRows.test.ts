@@ -7,6 +7,7 @@ import {
   mcpGroupOf,
   normalizeMcpServer,
   parseEnvBlock,
+  joinArgs,
   splitArgs,
   validServerName,
 } from './mcpRows'
@@ -99,5 +100,8 @@ describe('validServerName / splitArgs', () => {
     expect(validServerName('filesystem')).toBe(true)
     expect(validServerName('1bad')).toBe(false)
     expect(splitArgs('-y "mcp server" .')).toEqual(['-y', 'mcp server', '.'])
+    expect(splitArgs(`-y 'mcp server' .`)).toEqual(['-y', 'mcp server', '.'])
+    expect(joinArgs(['-y', 'mcp server', '.'])).toBe(`-y 'mcp server' .`)
+    expect(splitArgs(joinArgs(['say "hi"', 'x']))).toEqual(['say "hi"', 'x'])
   })
 })

@@ -1,5 +1,6 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { formatEngineError } from '../../lib/errorMessage'
 import {
   $activeChatId,
   $chats,
@@ -93,8 +94,10 @@ export function CommandPalette() {
   const [loading, setLoading] = useState(false)
   const [bootstrapping, setBootstrapping] = useState(false)
   const [error, setError] = useState('')
+  const [active, setActive] = useState(0)
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const activeRef = useRef<HTMLButtonElement>(null)
   const searchGenRef = useRef(0)
 
   // 全局 ⌘K / Ctrl+K 监听
@@ -162,7 +165,7 @@ export function CommandPalette() {
         } catch (e) {
           if (gen !== searchGenRef.current) return
           setHits([])
-          setError(String(e))
+          setError(formatEngineError(e))
         } finally {
           if (gen === searchGenRef.current) setLoading(false)
         }
@@ -170,6 +173,15 @@ export function CommandPalette() {
     }, 250)
     return () => window.clearTimeout(t)
   }, [query, open])
+
+  useEffect(() => {
+    setActive(0)
+  }, [query, open])
+
+  useEffect(() => {
+    if (!open) return
+    activeRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [active, query, open])
 
   if (!open) return null
 
@@ -292,6 +304,11 @@ export function CommandPalette() {
     },
   ].filter((c) => !commandFilter || c.title.toLowerCase().includes(commandFilter) || c.subtitle.toLowerCase().includes(commandFilter))
 
+  const recentChats = chats.slice(0, 8)
+  const chatRows: SearchHit[] = query.trim() ? hits : recentChats
+  const rowCount = isCommandMode ? quickCommands.length : chatRows.length
+  const safeActive = rowCount === 0 ? 0 : Math.min(active, rowCount - 1)
+
   const handlePickChat = (chat: ChatSummary) => {
     $commandPaletteOpen.set(false)
     window.dispatchEvent(new CustomEvent('jike:open-chat', { detail: { id: chat.id, cwd: chat.cwd } }))
@@ -300,6 +317,36 @@ export function CommandPalette() {
   const handleRunCommand = (cmd: QuickCommand) => {
     $commandPaletteOpen.set(false)
     cmd.action()
+  }
+
+  const runActive = () => {
+    if (isCommandMode) {
+      const cmd = quickCommands[safeActive]
+      if (cmd) handleRunCommand(cmd)
+      return
+    }
+    const chat = chatRows[safeActive]
+    if (chat) handlePickChat(chat)
+  }
+
+  const onInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (rowCount === 0) return
+      setActive((i) => (i + 1) % rowCount)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (rowCount === 0) return
+      setActive((i) => (i - 1 + rowCount) % rowCount)
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      runActive()
+    }
   }
 
   return (
@@ -322,6 +369,8 @@ export function CommandPalette() {
             placeholder="搜索会话…（输入 > 运行指令）"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onInputKeyDown}
+            aria-activedescendant={rowCount ? `palette-row-${safeActive}` : undefined}
           />
           <span className="command-palette-badge">⌘K</span>
           <button
@@ -342,11 +391,13 @@ export function CommandPalette() {
                 <div className="search-empty">没有匹配的指令</div>
               ) : (
                 <ul className="search-result-list">
-                  {quickCommands.map((cmd) => (
+                  {quickCommands.map((cmd, i) => (
                     <li key={cmd.id}>
                       <button
+                        id={`palette-row-${i}`}
                         type="button"
-                        className="search-result-item"
+                        ref={i === safeActive ? activeRef : undefined}
+                        className={`search-result-item${i === safeActive ? ' is-kbd' : ''}`}
                         onClick={() => handleRunCommand(cmd)}
                       >
                         <span className="search-result-icon" aria-hidden>
@@ -379,11 +430,13 @@ export function CommandPalette() {
                 <div className="command-palette-section">
                   <div className="command-palette-section-title">最近会话</div>
                   <ul className="search-result-list">
-                    {chats.slice(0, 8).map((chat) => (
+                    {recentChats.map((chat, i) => (
                       <li key={chat.id}>
                         <button
+                          id={`palette-row-${i}`}
                           type="button"
-                          className={`search-result-item${chat.id === activeChatId ? ' active' : ''}`}
+                          ref={i === safeActive ? activeRef : undefined}
+                          className={`search-result-item${chat.id === activeChatId ? ' active' : ''}${i === safeActive ? ' is-kbd' : ''}`}
                           onClick={() => handlePickChat(chat)}
                           title={chat.title}
                         >
@@ -410,11 +463,13 @@ export function CommandPalette() {
             </div>
           ) : (
             <ul className="search-result-list">
-              {hits.map((chat) => (
+              {hits.map((chat, i) => (
                 <li key={chat.id}>
                   <button
+                    id={`palette-row-${i}`}
                     type="button"
-                    className={`search-result-item${chat.id === activeChatId ? ' active' : ''}`}
+                    ref={i === safeActive ? activeRef : undefined}
+                    className={`search-result-item${chat.id === activeChatId ? ' active' : ''}${i === safeActive ? ' is-kbd' : ''}`}
                     onClick={() => handlePickChat(chat)}
                     title={chat.title}
                   >

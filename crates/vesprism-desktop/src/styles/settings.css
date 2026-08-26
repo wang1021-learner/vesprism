@@ -196,8 +196,36 @@
 .settings-embed .skills-add-hint,
 .settings-embed .tools-banner,
 .settings-embed .mcp-banner,
-.settings-embed .memory-banner {
+.settings-embed .memory-banner,
+.settings-embed .tools-panel-head,
+.settings-embed .tools-toolbar,
+.settings-embed .tools-cat-row,
+.settings-embed .tools-panel .notice {
   flex-shrink: 0;
+}
+
+.settings-embed .tools-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 12px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.28) transparent;
+}
+
+.settings-embed .tools-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-embed .tools-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+}
+
+.settings-embed .tools-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .settings-embed .work-split {

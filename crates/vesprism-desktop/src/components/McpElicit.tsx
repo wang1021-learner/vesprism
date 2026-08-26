@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { McpElicitRequest } from '../types'
 import { $activeTabId, patchActiveTab, patchTab } from '../store'
 import { respondUserQuestion } from '../bridge'
+import { formatEngineError } from '../lib/errorMessage'
 import {
   checkElicitUrl,
   collectElicitContent,
@@ -45,7 +46,7 @@ export function McpElicitPanel({ request }: Props) {
       try {
         await respondUserQuestion(tabId, request.requestId, JSON.stringify(payload))
       } catch (e) {
-        patchActiveTab({ error: String(e) })
+        patchActiveTab({ error: formatEngineError(e) })
         setBusy(false)
         return
       }
@@ -104,7 +105,7 @@ export function McpElicitPanel({ request }: Props) {
     <div className="elicit-dock" role="dialog" aria-label="MCP 征求" aria-modal="false">
       <div className="elicit-card">
         <div className="elicit-head">
-          <span className="elicit-badge">MCP</span>
+          <span className="elicit-badge">征求</span>
           <span className="elicit-server" title={request.serverName}>
             {request.serverName || 'MCP 服务器'}
           </span>

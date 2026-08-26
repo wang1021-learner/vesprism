@@ -281,31 +281,43 @@ export function useComposerAssist(
         ),
         query,
       )
-      const nextGroups = groupComposerCommands(filtered)
+      const nextGroups = groupComposerCommands(filtered).map((g) => ({
+        key: g.kind,
+        label: COMPOSER_KIND_LABEL[g.kind],
+        items: g.items,
+      }))
       return { items: nextGroups.flatMap((g) => g.items), groups: nextGroups }
     }
     if (mode === 'at') {
-      const tabs = $tabs.get().map((t) => ({
-        id: `tab-${t.id}`,
-        label: `@${(t.title || '新对话').trim() || '新对话'}`,
-        hint: '其它会话',
-        insert: `@tab:${t.id} `,
-      }))
-      const fileItems = files.map((f) => ({
-        id: `f-${f.path}`,
-        label: `@${f.rel}`,
-        hint: f.is_dir ? '目录' : '文件',
-        insert: `@${f.rel} `,
-        run: () => {
-          opts?.onAttachPath?.(f.path, attachKindFromPath(f.path, f.is_dir))
-        },
-      }))
-      const atItems = [...fileItems, ...tabs].filter(
-        (x) => !query || x.label.toLowerCase().includes(query),
-      )
-      return { items: atItems, groups: [] }
+      const q = query.trim().toLowerCase()
+      const match = (label: string) => !q || label.toLowerCase().includes(q)
+      const fileItems: Item[] = files
+        .filter((f) => match(f.rel) || match(`@${f.rel}`))
+        .map((f) => ({
+          id: `f-${f.path}`,
+          label: `@${f.rel}`,
+          hint: f.is_dir ? '目录' : '文件',
+          insert: `@${f.rel} `,
+          run: () => {
+            opts?.onAttachPath?.(f.path, attachKindFromPath(f.path, f.is_dir))
+          },
+        }))
+      const tabItems: Item[] = $tabs
+        .get()
+        .filter((t) => match(t.title || '新对话') || match(t.id))
+        .map((t) => ({
+          id: `tab-${t.id}`,
+          label: `@${(t.title || '新对话').trim() || '新对话'}`,
+          hint: '其它会话',
+          insert: `@tab:${t.id} `,
+        }))
+      const nextGroups = [
+        { key: 'file', label: '文件', items: fileItems },
+        { key: 'session', label: '其它会话', items: tabItems },
+      ].filter((g) => g.items.length > 0)
+      return { items: nextGroups.flatMap((g) => g.items), groups: nextGroups }
     }
-    return { items: [], groups: [] }
+    return { items: [], groups: [] as { key: string; label: string; items: Item[] }[] }
   }, [mode, query, files, official, opts?.onAttachPath])
 
   useEffect(() => {
@@ -339,7 +351,15 @@ export function useComposerAssist(
     if (e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229) {
       return false
     }
-    if (!mode || items.length === 0) return false
+    if (!mode) return false
+    if (items.length === 0) {
+      if (e.key === 'Escape' && mode === 'slash') {
+        e.preventDefault()
+        setInput('')
+        return true
+      }
+      return false
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setActive((i) => (i + 1) % items.length)
@@ -390,29 +410,31 @@ export function useComposerAssist(
   )
 
   const menu =
-    mode === 'slash' ? (
+    mode === 'slash' || mode === 'at' ? (
       <div className="composer-assist" role="listbox">
         {items.length === 0 ? (
           <div className="composer-assist-empty">
-            {query ? `没有匹配「/${query}」` : '还没有可用命令'}
+            {mode === 'slash'
+              ? query
+                ? `没有匹配「/${query}」`
+                : '还没有可用命令'
+              : query
+                ? `没有匹配「@${query}」的文件或会话`
+                : '没有可引用的文件或会话'}
           </div>
         ) : (
           groups.map((g) => {
             const start = items.indexOf(g.items[0])
             return (
-              <div key={g.kind} className="composer-assist-section">
+              <div key={g.key} className="composer-assist-section">
                 <div className="composer-assist-group" role="presentation">
-                  {COMPOSER_KIND_LABEL[g.kind]}
+                  {g.label}
                 </div>
                 {g.items.map((it, j) => renderItem(it, start + j))}
               </div>
             )
           })
         )}
-      </div>
-    ) : mode === 'at' && items.length > 0 ? (
-      <div className="composer-assist" role="listbox">
-        {items.map((it, i) => renderItem(it, i))}
       </div>
     ) : null
 

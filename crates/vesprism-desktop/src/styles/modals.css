@@ -184,6 +184,10 @@
   gap: 10px;
 }
 
+.command-palette-body .search-result-item.is-kbd {
+  background: var(--surface-hover);
+}
+
 .command-palette-initial {
   display: flex;
   flex-direction: column;

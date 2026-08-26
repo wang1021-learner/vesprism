@@ -46,7 +46,10 @@ export function TerminalPane({ tabId, cwd }: { tabId: string; cwd: string }) {
     })
       .then((fn) => {
         unlisten = fn
-        if (!alive) return Promise.resolve()
+        if (!alive) {
+          fn()
+          return Promise.resolve()
+        }
         return startTabPty(tabId, cwd, cols, rows)
       })
       .then(() => {

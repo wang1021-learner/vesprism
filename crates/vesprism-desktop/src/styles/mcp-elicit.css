@@ -16,7 +16,10 @@
   border: 1px solid var(--border-solid);
   background: color-mix(in srgb, var(--surface-elevated) 92%, #9a9a9a 4%);
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   color: var(--text-primary);
+  animation: uq-card-slide-up 0.22s var(--ease-spring) forwards;
 }
 
 .elicit-head {
@@ -49,12 +52,21 @@
 }
 
 .elicit-close {
-  border: 0;
+  flex-shrink: 0;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: none;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  font-size: 1.1rem;
+  font-size: 0.75rem;
   line-height: 1;
+}
+
+.elicit-close:hover {
+  background: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
+  color: var(--text-primary);
 }
 
 .elicit-msg,
@@ -103,7 +115,7 @@
 .elicit-error {
   margin: 0;
   font-size: 0.75rem;
-  color: #b42318;
+  color: var(--danger, #b91c1c);
 }
 
 .elicit-url {
@@ -122,7 +134,7 @@
 }
 
 .elicit-warn {
-  color: #b42318;
+  color: var(--danger, #b91c1c);
   font-weight: 500;
 }
 
@@ -133,23 +145,34 @@
 }
 
 .elicit-act {
+  height: 1.5rem;
+  padding: 0 0.65rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border-solid);
+  background: transparent;
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.75rem;
-  padding: 0.28rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--border-solid);
-  background: var(--surface);
-  color: var(--text-primary);
   cursor: pointer;
 }
 
+.elicit-act:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-tertiary) 12%, transparent);
+  color: var(--text-primary);
+}
+
 .elicit-act:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .elicit-act-run {
-  background: var(--text-primary);
-  color: var(--surface-elevated);
-  border-color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  border-color: transparent;
+  color: var(--surface, #fff);
+  font-weight: 600;
+}
+
+.elicit-act-run:hover:not(:disabled) {
+  filter: brightness(1.05);
 }

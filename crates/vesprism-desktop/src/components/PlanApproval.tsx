@@ -69,8 +69,9 @@ export function PlanApprovalPanel() {
   const commentRef = useRef<HTMLTextAreaElement>(null)
   const mac = useMemo(() => isMacPlatform(), [])
 
-  const hasPlan = approval ? approval.hasPlan : lastHasBody
-  const source = approval ? approval.planContent : lastContent
+  const hasPlan = approval ? approval.hasPlan || lastHasBody : lastHasBody
+  // 预览用当前 tab 投影的最新稿；审批事件里的 planContent 可能是打开时的快照。
+  const source = (lastContent || '').trim() ? lastContent : (approval?.planContent || '')
   const body = planPreviewBody(source, hasPlan)
   const lines = useMemo(() => body.split('\n'), [body])
   const toolCallId = approval?.toolCallId || lastToolId

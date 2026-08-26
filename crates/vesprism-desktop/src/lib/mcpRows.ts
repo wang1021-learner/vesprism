@@ -130,17 +130,48 @@ export function validServerName(name: string): boolean {
 
 export function splitArgs(raw: string): string[] {
   const out: string[] = []
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(raw))) {
-    out.push(m[1] ?? m[2] ?? m[3] ?? '')
+  const s = raw ?? ''
+  let i = 0
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i])) i++
+    if (i >= s.length) break
+    const q = s[i]
+    if (q === '"' || q === "'") {
+      i++
+      let acc = ''
+      while (i < s.length) {
+        if (s[i] === '\\' && i + 1 < s.length) {
+          acc += s[i + 1]
+          i += 2
+          continue
+        }
+        if (s[i] === q) {
+          i++
+          break
+        }
+        acc += s[i]
+        i++
+      }
+      out.push(acc)
+      continue
+    }
+    let acc = ''
+    while (i < s.length && !/\s/.test(s[i])) {
+      acc += s[i]
+      i++
+    }
+    out.push(acc)
   }
-  return out.filter(Boolean)
+  return out
 }
 
 export function joinArgs(args: string[]): string {
   return args
-    .map((a) => (/\s/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
+    .map((a) => {
+      if (!/[\s"']/.test(a)) return a
+      if (!/'/.test(a)) return `'${a}'`
+      return `"${a.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+    })
     .join(' ')
 }
 

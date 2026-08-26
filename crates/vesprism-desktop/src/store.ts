@@ -24,7 +24,7 @@ import type {
 } from './types'
 import type { SessionModeId } from './lib/planMode'
 import { upsertSubagentMessage } from './lib/subagentMessage'
-import type { SecurityPolicy } from './lib/executionPolicy'
+import type { ExecutionPolicy, SecurityPolicy } from './lib/executionPolicy'
 import { DEFAULT_SECURITY_POLICY } from './lib/executionPolicy'
 import type { GoalInfoDto, WorkflowInfoDto } from './lib/composition'
 import {
@@ -107,6 +107,8 @@ export interface TabState {
   utilityKind: UtilityKind | null
   /** 画布当前编辑的流程 id（flow-canvas tab；组件卸载重挂载时据此恢复，避免回落 demo） */
   flowId?: string
+  /** 本 tab 临时覆盖执行策略（/sandbox）；空则用全局 $securityPolicy */
+  executionPolicyOverride: ExecutionPolicy | null
   /** 隔离 worktree 绝对路径；空=未沙箱 */
   sandboxCwd: string
   /** 沙箱对应的主工作区 */
@@ -229,6 +231,7 @@ export function emptyTabState(): TabState {
     reasoningEffort: 'medium',
     utilityKind: null,
     backgroundTasks: {},
+    executionPolicyOverride: null,
     sandboxCwd: '',
     sandboxOrigin: '',
     goal: null,
@@ -327,6 +330,19 @@ export function workspaceLabel(p: string): string {
   const key = p.trim().replace(/\\/g, '/').replace(/\/+$/, '')
   const parts = key.split('/').filter(Boolean)
   return parts[parts.length - 1] || key || '闲聊'
+}
+
+/**
+ * 打开历史会话的兜底 cwd：闲聊落到当前 scratch；项目路径原样用。
+ * 真正挂引擎时后端还会按会话 id 扫落盘目录，这里只给 Tab 一个能显示的绝对路径。
+ */
+export function resolveHistoryLoadCwd(sessionCwd?: string): string {
+  const recorded = (sessionCwd || '').trim()
+  const scratch = $scratchCwd.get().trim()
+  if (isScratchCwd(recorded) && looksAbsolutePath(scratch)) return scratch
+  if (looksAbsolutePath(recorded)) return recorded
+  if (looksAbsolutePath(scratch)) return scratch
+  return resolveWorkspaceCwd()
 }
 
 /**
@@ -489,6 +505,22 @@ export function findNormalChatTab(preferBlank = true): string | undefined {
   return undefined
 }
 
+/** 填入输入框并回到普通对话。必须写进目标 tab，不能先改全局 atom 再切 tab。 */
+export function fillComposerOnChatTab(text: string): void {
+  const chat = findNormalChatTab(false)
+  if (chat) {
+    switchTab(chat)
+    patchTab(chat, { utilityKind: null, composerInput: text })
+    return
+  }
+  const tab = $activeTabId.get()
+  if (tab) {
+    patchTab(tab, { utilityKind: null, composerInput: text })
+    return
+  }
+  $composerInput.set(text)
+}
+
 /** 查找已打开该历史会话的 Tab（sessionId 或 chatId 匹配） */
 export function findTabBySessionId(sessionId: string): string | undefined {
   const sid = sessionId.trim()
@@ -498,6 +530,36 @@ export function findTabBySessionId(sessionId: string): string | undefined {
     if (st.sessionId === sid || st.chatId === sid) return id
   }
   return undefined
+}
+
+/** load_session 回执若是绝对路径就用它，否则退回打开时的兜底 cwd。 */
+export function cwdAfterLoadSession(returned: unknown, fallback: string): string {
+  const s = typeof returned === 'string' ? returned.trim() : ''
+  return looksAbsolutePath(s) ? s : fallback
+}
+
+/**
+ * 这条历史已经接上引擎、可以只切 Tab。
+ * 有记录但没 sessionId、还在报错、正在 loading，都要重新 load。
+ */
+export function sessionTabReadyToReuse(
+  st: TabState | undefined,
+  sessionId: string,
+): boolean {
+  const sid = sessionId.trim()
+  if (!st || !sid) return false
+  if (st.sessionId !== sid && st.chatId !== sid) return false
+  if (!st.sessionId) return false
+  if ((st.error || '').trim()) return false
+  if (
+    st.phase === 'failed' ||
+    st.phase === 'loading' ||
+    st.phase === 'restarting' ||
+    st.phase === 'booting'
+  ) {
+    return false
+  }
+  return true
 }
 
 /** 注册一个新 tab（openTab 成功后调用） */
@@ -604,6 +666,9 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('scheduledTasks' in patch) $scheduledTasks.set(patch.scheduledTasks ?? [])
   if ('sessionAlert' in patch) $sessionAlert.set(patch.sessionAlert ?? null)
   if ('sessionCaps' in patch) $sessionCaps.set(patch.sessionCaps ?? GROK_SESSION_CAPS)
+  if ('executionPolicyOverride' in patch) {
+    $sessionPolicyOverride.set(patch.executionPolicyOverride ?? null)
+  }
 }
 
 /** 把 map[id] 全量投影到全局 atom（切换 tab 时用） */
@@ -648,6 +713,7 @@ function projectTab(id: string): void {
     scheduledTasks: s.scheduledTasks,
     sessionAlert: s.sessionAlert,
     sessionCaps: s.sessionCaps,
+    executionPolicyOverride: s.executionPolicyOverride,
   })
 }
 
@@ -690,6 +756,7 @@ function resetProjection(): void {
     scheduledTasks: [],
     sessionAlert: null,
     sessionCaps: GROK_SESSION_CAPS,
+    executionPolicyOverride: null,
   })
 }
 
@@ -895,8 +962,8 @@ export function upsertSubagent(
   // 上限 20 条：优先裁掉已结束的；全是运行中就裁最老的（按列表顺序）
   const MAX_SUBAGENTS = 20
   if (list.length > MAX_SUBAGENTS) {
-    const ended = list.filter((x) => x.status !== 'running')
     const overflow = list.length - MAX_SUBAGENTS
+    const ended = list.filter((x) => x.status !== 'running')
     if (ended.length >= overflow) {
       let removed = 0
       for (let i = 0; i < list.length && removed < overflow; i++) {
@@ -910,7 +977,8 @@ export function upsertSubagent(
       list.splice(0, overflow)
     }
   }
-  const entry = list[idx >= 0 ? idx : list.length - 1]
+  const entry = list.find((s) => s.subagentId === patch.subagentId)
+  if (!entry) return
   const messages = upsertSubagentMessage(st.messages, entry)
   patchTab(tabId, { subagents: list, messages })
 }

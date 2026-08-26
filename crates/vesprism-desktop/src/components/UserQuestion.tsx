@@ -17,6 +17,7 @@ import {
   patchTab,
 } from '../store'
 import { respondUserQuestion } from '../bridge'
+import { formatEngineError } from '../lib/errorMessage'
 import {
   applyTranscriptEvent,
   formatAskUserAnswerPreview,
@@ -99,7 +100,7 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
       try {
         await respondUserQuestion(tabId, request.requestId, json)
       } catch (e) {
-        patchActiveTab({ error: String(e) })
+        patchActiveTab({ error: formatEngineError(e) })
         setBusy(false)
         return
       }
@@ -193,7 +194,7 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
     >
       <div className="uq-card">
         <div className="uq-head">
-          <span className="uq-badge">Ask</span>
+          <span className="uq-badge">问卷</span>
           <span className="uq-step">
             {step + 1} / {total}
             {isMulti ? ' · 可多选' : ''}
@@ -244,7 +245,7 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
                     {i < 9 ? (
                       <kbd className="uq-option-key">{i + 1}</kbd>
                     ) : null}
-                    {opt.label}
+                    {/^other$/i.test(opt.label.trim()) ? '其他' : opt.label}
                   </span>
                   {opt.description ? (
                     <span className="uq-option-desc">{opt.description}</span>
@@ -267,7 +268,7 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
             onChange={(e) =>
               setOtherNotes((p) => ({ ...p, [step]: e.target.value }))
             }
-            placeholder="Other / 备注"
+            placeholder="没有合适选项时，可以写在这里"
             disabled={busy}
           />
         </label>

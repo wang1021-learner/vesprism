@@ -2,17 +2,13 @@
  * 技能面板 — 可复用提示包（SKILL.md）。启停写入本机配置，不是只关当前对话。
  */
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  $composerInput,
   $settingsOpen,
   $utilityKind,
   $workspaceCwd,
-  findNormalChatTab,
-  patchActiveTab,
-  patchTab,
+  fillComposerOnChatTab,
   pushToast,
-  switchTab,
 } from '../store'
 import { useCodingSessionTabId } from '../lib/codingSession'
 import { Notice } from './Notice'
@@ -55,6 +51,8 @@ export function SkillsPanel() {
   const [previewBody, setPreviewBody] = useState('')
   const [previewError, setPreviewError] = useState('')
   const [confirmBulkOff, setConfirmBulkOff] = useState(false)
+  const loadGen = useRef(0)
+  const previewGen = useRef(0)
 
   const applyOfficial = (raw: SkillInfoDto[] | undefined) => {
     if (!raw?.length) return false
@@ -63,15 +61,18 @@ export function SkillsPanel() {
   }
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current
     setLoading(true)
     setError('')
     try {
       if (tabId) {
         try {
           const official = await listSkills(tabId, cwd || '.')
+          if (gen !== loadGen.current) return
           const list = Array.isArray(official?.skills) ? official.skills : []
           if (applyOfficial(list)) return
           const resp = await listSessionCommands(tabId, cwd || undefined)
+          if (gen !== loadGen.current) return
           const cmds = Array.isArray(resp?.commands) ? resp.commands : []
           if (cmds.length) {
             setSkills(parseSkillsFromCommands(cmds))
@@ -81,14 +82,17 @@ export function SkillsPanel() {
           /* 无会话时扫磁盘 */
         }
       }
+      if (gen !== loadGen.current) return
       const cat = await listCatalogSkills(cwd || null)
+      if (gen !== loadGen.current) return
       const list = Array.isArray(cat?.skills) ? cat.skills : []
       if (!applyOfficial(list)) setSkills([])
     } catch (e) {
+      if (gen !== loadGen.current) return
       setError(String(e))
       setSkills([])
     } finally {
-      setLoading(false)
+      if (gen === loadGen.current) setLoading(false)
     }
   }, [tabId, cwd])
 
@@ -147,16 +151,9 @@ export function SkillsPanel() {
 
   /** 填入输入框、关掉设置、回到对话（勿命名 use*） */
   const fillInChat = (sk: SkillRow) => {
-    $composerInput.set(`/${sk.name} `)
     $settingsOpen.set(false)
     $utilityKind.set(null)
-    const chat = findNormalChatTab(false)
-    if (chat) {
-      switchTab(chat)
-      patchTab(chat, { utilityKind: null })
-    } else {
-      patchActiveTab({ utilityKind: null, chatTitle: '' })
-    }
+    fillComposerOnChatTab(`/${sk.name} `)
     const hint = sk.argumentHint ? `，参数：${sk.argumentHint}` : ''
     pushToast(`已填入 /${sk.name}${hint}，可直接发送`, 'success')
   }
@@ -274,11 +271,13 @@ export function SkillsPanel() {
 
   const togglePreview = async (sk: SkillRow) => {
     if (previewName === sk.name) {
+      previewGen.current++
       setPreviewName('')
       setPreviewBody('')
       setPreviewError('')
       return
     }
+    const gen = ++previewGen.current
     setPreviewName(sk.name)
     setPreviewBody('')
     setPreviewError('')
@@ -288,8 +287,10 @@ export function SkillsPanel() {
     }
     try {
       const text = await readFileText(sk.path)
+      if (gen !== previewGen.current) return
       setPreviewBody(skillPreviewBody(String(text || '')))
     } catch (e) {
+      if (gen !== previewGen.current) return
       setPreviewError(String(e))
     }
   }

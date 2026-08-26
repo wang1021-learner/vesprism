@@ -12,11 +12,13 @@ import {
   createTab,
   deriveTabActivity,
   emptyTabState,
+  $composerInput,
   $workspaceCwd,
   $workspaceOptions,
   $scratchCwd,
   isScratchCwd,
   workspaceLabel,
+  fillComposerOnChatTab,
   findNormalChatTab,
   findReadyCodingTabId,
   findTabByUtilityKind,
@@ -34,7 +36,10 @@ import {
   resetTabsForTests,
   resolveNewTabModel,
   resolveNewTabCwd,
+  resolveHistoryLoadCwd,
   resolveWorkspaceCwd,
+  cwdAfterLoadSession,
+  sessionTabReadyToReuse,
   switchTab,
   tabWorkspaceCwd,
   $preferredWorkspaceCwd,
@@ -333,6 +338,47 @@ describe('Tab 活动灯', () => {
     $scratchCwd.set('')
   })
 
+  it('resolveHistoryLoadCwd：闲聊落到当前 scratch', () => {
+    $scratchCwd.set('C:\\Users\\me\\.vesprism\\scratch')
+    expect(resolveHistoryLoadCwd('C:/Users/me/.vesprism/scratch')).toBe(
+      'C:\\Users\\me\\.vesprism\\scratch',
+    )
+    expect(resolveHistoryLoadCwd('D:\\repo')).toBe('D:\\repo')
+    $scratchCwd.set('')
+  })
+
+  it('cwdAfterLoadSession：回执是绝对路径才用', () => {
+    expect(cwdAfterLoadSession('D:\\real', 'C:\\fallback')).toBe('D:\\real')
+    expect(cwdAfterLoadSession(undefined, 'C:\\fallback')).toBe('C:\\fallback')
+    expect(cwdAfterLoadSession('', 'C:\\fallback')).toBe('C:\\fallback')
+  })
+
+  it('sessionTabReadyToReuse：没接上或还在报错要重载', () => {
+    createTab('tab-ok', {
+      sessionId: 's1',
+      chatId: 's1',
+      phase: 'ready',
+      error: '',
+    })
+    expect(sessionTabReadyToReuse(getTabState('tab-ok'), 's1')).toBe(true)
+
+    createTab('tab-err', {
+      sessionId: '',
+      chatId: 's1',
+      phase: 'ready',
+      error: '没能接上这条对话。聊天记录还在，请点「重试」。',
+      messages: [{ id: 'm1', role: 'user', text: 'hi' } as never],
+    })
+    expect(sessionTabReadyToReuse(getTabState('tab-err'), 's1')).toBe(false)
+
+    createTab('tab-loading', {
+      sessionId: 's1',
+      chatId: 's1',
+      phase: 'loading',
+    })
+    expect(sessionTabReadyToReuse(getTabState('tab-loading'), 's1')).toBe(false)
+  })
+
   it('looksAbsolutePath / resolveWorkspaceCwd 兜底空投影', () => {
     expect(looksAbsolutePath('')).toBe(false)
     expect(looksAbsolutePath('relative')).toBe(false)
@@ -378,6 +424,17 @@ describe('Tab 活动灯', () => {
     createTab('tab-blank', { utilityKind: null, chatId: '', messages: [] })
     expect(findNormalChatTab(true)).toBe('tab-blank')
     expect(findNormalChatTab(false)).toBe('tab-old')
+  })
+
+  it('fillComposerOnChatTab 写进对话 tab，不被切 tab 投影盖掉', () => {
+    createTab('tab-tools', { utilityKind: 'tools', composerInput: '旧工具' })
+    createTab('tab-chat', { utilityKind: null, composerInput: '旧对话' })
+    switchTab('tab-tools')
+    $composerInput.set('不该留下')
+    fillComposerOnChatTab('/review ')
+    expect($activeTabId.get()).toBe('tab-chat')
+    expect(getTabState('tab-chat')?.composerInput).toBe('/review ')
+    expect($composerInput.get()).toBe('/review ')
   })
 
   it('deriveTabActivity 优先级：error > permission > working > idle', () => {

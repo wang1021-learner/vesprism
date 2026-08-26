@@ -112,9 +112,9 @@ export const ChatTimeline = memo(function ChatTimeline({
   const tickRefs = useRef<(HTMLSpanElement | null)[]>([])
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  if (open && !everOpened) {
-    setEverOpened(true)
-  }
+  useEffect(() => {
+    if (open && !everOpened) setEverOpened(true)
+  }, [open, everOpened])
 
   // 滚动时更新当前高亮刻度（不画滑块）
   useEffect(() => {

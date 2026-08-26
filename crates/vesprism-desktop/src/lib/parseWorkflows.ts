@@ -80,18 +80,16 @@ export function parseWorkflowListings(
   items: Array<Record<string, unknown> | null | undefined> | null | undefined,
 ): WorkflowRow[] {
   if (!Array.isArray(items)) return []
-  const out: WorkflowRow[] = []
-  const seen = new Set<string>()
+  const parsed: WorkflowRow[] = []
   for (const raw of items) {
     if (!raw || typeof raw !== 'object') continue
     const name = str(raw.name).replace(/^\//, '')
-    if (!name || seen.has(name)) continue
-    seen.add(name)
+    if (!name) continue
     const description = str(raw.description).replace(/^Workflow:\s*/i, '')
     const whenToUse = str(raw.when_to_use ?? raw.whenToUse)
     const source = str(raw.source).toLowerCase() || 'unknown'
     const path = str(raw.path)
-    out.push({
+    parsed.push({
       name,
       description: description || `工作流「${name}」`,
       whenToUse,
@@ -99,11 +97,18 @@ export function parseWorkflowListings(
       path,
     })
   }
-  out.sort((a, b) => {
+  parsed.sort((a, b) => {
     const d = sourceRank(a.source) - sourceRank(b.source)
     if (d !== 0) return d
     return a.name.localeCompare(b.name)
   })
+  const out: WorkflowRow[] = []
+  const seen = new Set<string>()
+  for (const row of parsed) {
+    if (seen.has(row.name)) continue
+    seen.add(row.name)
+    out.push(row)
+  }
   return out
 }
 

@@ -20,6 +20,7 @@ import {
   $sessionPolicyOverride,
   getTabState,
   patchActiveTab,
+  patchTab,
 } from '../store'
 import {
   envFileLocation,
@@ -395,7 +396,6 @@ export function SettingsModal() {
       }
 
       $models.set(trimmed)
-      $defaultModelId.set(def)
       $settingsDefaultModelId.set(def)
       $preferredWorkspaceCwd.set(appliedCwd)
       patchActiveTab({ cwd: appliedCwd })
@@ -408,7 +408,7 @@ export function SettingsModal() {
       setContextDraft(null)
       await refreshKeyStatus(selectedEntry?.env_key || '')
 
-      // 只刷新当前会话正在用的那条；不要把「正在编辑的条目」切到对话上。
+      // 只刷新当前会话正在用的那条；不要把「设置里的默认」投影成当前 tab 模型。
       const tabId = $activeTabId.get()
       const tabModel = tabId ? getTabState(tabId)?.modelId : ''
       const liveId =
@@ -419,10 +419,18 @@ export function SettingsModal() {
         const effort = spawnReasoningEffort(ent, keep)
         try {
           await setCurrentModel(tabId, liveId, effort)
-          if (effort) $reasoningEffort.set(effort)
+          patchTab(tabId, {
+            modelId: liveId,
+            ...(effort ? { reasoningEffort: effort } : {}),
+          })
         } catch {
-          /* 会话未就绪 */
+          /* 会话未就绪：投影保持 tab 原模型 */
+          patchTab(tabId, { modelId: liveId })
         }
+      } else if (tabId) {
+        patchTab(tabId, { modelId: def })
+      } else {
+        $defaultModelId.set(def)
       }
 
       return { ok: true }
@@ -448,7 +456,9 @@ export function SettingsModal() {
         }),
       )
       $securityPolicy.set(saved)
-      $sessionPolicyOverride.set(null)
+      const tab = $activeTabId.get()
+      if (tab) patchTab(tab, { executionPolicyOverride: null })
+      else $sessionPolicyOverride.set(null)
       setPolicyScope(saved.scope)
       if (saved.executionPolicy === 'proceed-in-sandbox') {
         const tab = $activeTabId.get()

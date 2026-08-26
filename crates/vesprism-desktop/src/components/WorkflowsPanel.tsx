@@ -6,11 +6,10 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   $activeTabId,
-  $composerInput,
   $sessionPhase,
   $utilityKind,
   $workflows,
-  patchActiveTab,
+  fillComposerOnChatTab,
   pushToast,
 } from '../store'
 import { sendEngineSlash, openSessionSchedule } from '../lib/engineSlash'
@@ -144,9 +143,8 @@ export function WorkflowsPanel() {
 
   /** 填入输入框并退出专用面板 */
   const fillInChat = (name: string) => {
-    $composerInput.set(`/${name} `)
-    patchActiveTab({ utilityKind: null, chatTitle: '' })
     $utilityKind.set(null)
+    fillComposerOnChatTab(`/${name} `)
     pushToast(`已填入 /${name}，可补充参数后发送`, 'success')
   }
 

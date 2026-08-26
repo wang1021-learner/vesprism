@@ -43,6 +43,16 @@ describe('parseWorkflowListings', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].description).toBe('first')
   })
+
+  it('同名时保留来源更优先的（项目盖过内置）', () => {
+    const rows = parseWorkflowListings([
+      { name: 'deploy', description: 'bundled', source: 'bundled' },
+      { name: 'deploy', description: 'project copy', source: 'project' },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].source).toBe('project')
+    expect(rows[0].description).toBe('project copy')
+  })
 })
 
 describe('parseWorkflowsFromCommands', () => {

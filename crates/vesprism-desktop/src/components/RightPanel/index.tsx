@@ -114,12 +114,22 @@ function FileTree() {
 
   useEffect(() => {
     if (!path) return
+    let cancelled = false
     setLoading(true)
     setError('')
     listDir(path)
-      .then(setEntries)
-      .catch((e: unknown) => setError(String(e)))
-      .finally(() => setLoading(false))
+      .then((rows) => {
+        if (!cancelled) setEntries(rows)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [path])
 
   const enterDir = (name: string) => {

@@ -118,7 +118,9 @@ function estimateMessageHeight(msg: ChatMessage | undefined): number {
     }
     case 'user': {
       const lines = Math.min(12, Math.ceil(len / EST_CHARS_PER_LINE) || 1)
-      return Math.min(280, 48 + lines * 20) + ROW_GAP
+      const imgs = msg.attachments?.filter((a) => a.kind === 'image').length ?? 0
+      const imgH = imgs > 0 ? Math.min(240, 8 + imgs * 168) : 0
+      return Math.min(420, 48 + lines * 20 + imgH) + ROW_GAP
     }
     case 'assistant': {
       // 流式长文：放宽估高上限，跟滚才跟得上；流式用偏保守行高（代码块实测常 >18px）

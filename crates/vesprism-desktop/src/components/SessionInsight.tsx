@@ -1,7 +1,7 @@
 /**
  * 上下文 / 用量 / 会话 三页卡。点输入栏百分比或 /context /usage 打开。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import {
   $activeTabId,
@@ -48,9 +48,11 @@ export function SessionInsight() {
   const [busy, setBusy] = useState('')
   const models = useStore($models)
   const modelId = useStore($defaultModelId)
+  const loadGen = useRef(0)
 
   const load = useCallback(async () => {
     if (!tabId || !ready) return
+    const gen = ++loadGen.current
     setLoading(true)
     setError('')
     try {
@@ -58,12 +60,14 @@ export function SessionInsight() {
         sessionInfo(tabId),
         sessionUsage(tabId),
       ])
+      if (gen !== loadGen.current) return
       setInfo(parseSessionInfo(infoRaw))
       setUsage(parseSessionUsage(usageRaw))
     } catch (e) {
+      if (gen !== loadGen.current) return
       setError(String(e))
     } finally {
-      setLoading(false)
+      if (gen === loadGen.current) setLoading(false)
     }
   }, [tabId, ready])
 

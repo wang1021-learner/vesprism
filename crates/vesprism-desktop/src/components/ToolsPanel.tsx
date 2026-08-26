@@ -5,17 +5,13 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   $activeSessionId,
-  $composerInput,
   $settingsOpen,
   $settingsSection,
   $tabs,
   $utilityKind,
   $workspaceCwd,
-  findNormalChatTab,
-  patchActiveTab,
-  patchTab,
+  fillComposerOnChatTab,
   pushToast,
-  switchTab,
 } from '../store'
 import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
 import { getComposition, listSessionCommands } from '../bridge'
@@ -168,16 +164,9 @@ export function ToolsPanel() {
   }
 
   const fillCommand = (cmd: ComposerCommand) => {
-    $composerInput.set(cmd.insert)
     $settingsOpen.set(false)
     $utilityKind.set(null)
-    const chat = findNormalChatTab(false)
-    if (chat) {
-      switchTab(chat)
-      patchTab(chat, { utilityKind: null })
-    } else {
-      patchActiveTab({ utilityKind: null, chatTitle: '' })
-    }
+    fillComposerOnChatTab(cmd.insert)
     pushToast(`已填入 ${cmd.label}，可直接发送`, 'success')
   }
 
@@ -342,7 +331,9 @@ export function ToolsPanel() {
           >
             {error}
           </Notice>
-        ) : loading && tools.length === 0 && commands.length === 0 ? (
+        ) : null}
+        <div className="tools-scroll">
+        {loading && tools.length === 0 && commands.length === 0 ? (
           <div className="tools-empty">加载中…</div>
         ) : tab === 'tools' ? (
           filteredTools.length === 0 ? (
@@ -465,6 +456,7 @@ export function ToolsPanel() {
             ))}
           </ul>
         )}
+        </div>
       </div>
     </div>
   )
