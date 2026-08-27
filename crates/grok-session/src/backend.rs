@@ -86,6 +86,11 @@ pub trait SessionBackend {
 
     async fn plugins_list(&self) -> anyhow::Result<serde_json::Value>;
     async fn plugins_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value>;
+    async fn marketplace_list(&self) -> anyhow::Result<serde_json::Value>;
+    async fn marketplace_action(
+        &self,
+        action: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value>;
     async fn hooks_list(&self) -> anyhow::Result<serde_json::Value>;
     async fn hooks_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value>;
     async fn scheduler_delete(&self, task_id: &str) -> anyhow::Result<serde_json::Value>;
@@ -95,6 +100,8 @@ pub trait SessionBackend {
         &self,
         user_context: Option<&str>,
     ) -> anyhow::Result<serde_json::Value>;
+    async fn submit_feedback(&self, text: &str) -> anyhow::Result<serde_json::Value>;
+    async fn share_session(&self) -> anyhow::Result<serde_json::Value>;
 
     /// 未收编的官方扩展逃生口。桌面新功能不要再走这条。
     async fn ext_json(
@@ -169,6 +176,15 @@ mod tests {
         ) -> anyhow::Result<serde_json::Value> {
             Ok(serde_json::json!({ "ok": true }))
         }
+        async fn marketplace_list(&self) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "sources": [] }))
+        }
+        async fn marketplace_action(
+            &self,
+            _action: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "ok": true }))
+        }
         async fn hooks_list(&self) -> anyhow::Result<serde_json::Value> {
             Ok(serde_json::json!({ "hooks": [] }))
         }
@@ -192,6 +208,12 @@ mod tests {
             _user_context: Option<&str>,
         ) -> anyhow::Result<serde_json::Value> {
             Ok(serde_json::json!({ "ok": true }))
+        }
+        async fn submit_feedback(&self, text: &str) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "success": true, "text": text }))
+        }
+        async fn share_session(&self) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::json!({ "share_url": "https://example.invalid/s" }))
         }
         async fn ext_json(
             &self,

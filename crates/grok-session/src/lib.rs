@@ -2911,6 +2911,51 @@ impl GrokSession {
             .await
     }
 
+    /// 官方商店目录（`x.ai/marketplace/list`）。扫描可能较慢。
+    pub async fn marketplace_list(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json("x.ai/marketplace/list", serde_json::json!({}))
+            .await
+    }
+
+    /// 官方商店动作：安装 / 更新 / 卸载 / 刷新源。
+    pub async fn marketplace_action(
+        &self,
+        action: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.ext_json(
+            "x.ai/marketplace/action",
+            serde_json::json!({ "action": action }),
+        )
+        .await
+    }
+
+    /// 把对本会话的意见发给官方反馈通道（`x.ai/feedback`）。
+    pub async fn submit_feedback(&self, text: &str) -> anyhow::Result<serde_json::Value> {
+        let text = text.trim();
+        if text.is_empty() {
+            anyhow::bail!("反馈内容不能为空");
+        }
+        self.ext_json(
+            "x.ai/feedback",
+            serde_json::json!({
+                "session_id": self.session_id.to_string(),
+                "feedback_text": text,
+            }),
+        )
+        .await
+    }
+
+    /// 生成可分享链接（`x.ai/share_session`）。账号未开通时引擎会拒绝。
+    pub async fn share_session(&self) -> anyhow::Result<serde_json::Value> {
+        self.ext_json(
+            "x.ai/share_session",
+            serde_json::json!({
+                "session_id": self.session_id.to_string(),
+            }),
+        )
+        .await
+    }
+
     pub async fn hooks_list(&self) -> anyhow::Result<serde_json::Value> {
         self.ext_json("x.ai/hooks/list", serde_json::json!({}))
             .await
@@ -4084,6 +4129,12 @@ impl SessionBackend for GrokSession {
     async fn plugins_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         GrokSession::plugins_action(self, action).await
     }
+    async fn marketplace_list(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::marketplace_list(self).await
+    }
+    async fn marketplace_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        GrokSession::marketplace_action(self, action).await
+    }
     async fn hooks_list(&self) -> anyhow::Result<serde_json::Value> {
         GrokSession::hooks_list(self).await
     }
@@ -4104,6 +4155,12 @@ impl SessionBackend for GrokSession {
         user_context: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
         GrokSession::compact_conversation(self, user_context).await
+    }
+    async fn submit_feedback(&self, text: &str) -> anyhow::Result<serde_json::Value> {
+        GrokSession::submit_feedback(self, text).await
+    }
+    async fn share_session(&self) -> anyhow::Result<serde_json::Value> {
+        GrokSession::share_session(self).await
     }
     async fn ext_json(
         &self,
