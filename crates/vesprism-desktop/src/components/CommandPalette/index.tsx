@@ -8,12 +8,14 @@ import {
   $rightPanelOpen,
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
+  openFeedback,
+  openSessionIntent,
   openSettings,
   isScratchCwd,
   type ChatSummary,
 } from '../../store'
 import { searchSessions } from '../../bridge'
-import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap } from '../../lib/engineSlash'
+import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, shareCurrentSession } from '../../lib/engineSlash'
 import { openChatTab } from '../../lib/openChatTab'
 
 type SearchHit = ChatSummary & { snippet?: string }
@@ -284,6 +286,46 @@ export function CommandPalette() {
       subtitle: '按间隔反复执行同一条指令（/loop）',
       action: () => {
         openSessionSchedule()
+      },
+    },
+    {
+      id: 'cmd-goal',
+      title: '设目标',
+      subtitle: '长程规划并执行，直到完成或你停掉',
+      action: () => {
+        openSessionIntent('goal')
+      },
+    },
+    {
+      id: 'cmd-deep-research',
+      title: '深度研究',
+      subtitle: '多路检索并交叉核对，写出带引用的报告',
+      action: () => {
+        openSessionIntent('research')
+      },
+    },
+    {
+      id: 'cmd-feedback',
+      title: '发送反馈',
+      subtitle: '对本会话的意见发给官方反馈通道',
+      action: () => {
+        openFeedback()
+      },
+    },
+    {
+      id: 'cmd-share',
+      title: '分享本会话',
+      subtitle: '生成链接并复制；账号未开通时引擎会拒绝',
+      action: () => {
+        void shareCurrentSession()
+      },
+    },
+    {
+      id: 'cmd-computer',
+      title: '电脑操作',
+      subtitle: '截屏、点击、打字。默认关，到设置里授权',
+      action: () => {
+        openSettings('security')
       },
     },
     {

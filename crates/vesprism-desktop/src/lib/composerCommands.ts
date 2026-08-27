@@ -116,13 +116,14 @@ export function parseOfficialCommands(
   return out
 }
 
+/** 官方 `commands/list` 为唯一源；extras 只补桌面独有且官方没有的。 */
 export function mergeComposerCommands(
   official: ComposerCommand[],
   extras: ComposerCommand[],
 ): ComposerCommand[] {
   const seen = new Set(official.map((c) => c.label.toLowerCase()))
   const extra = extras.filter((c) => !seen.has(c.label.toLowerCase()))
-  return [...extra, ...official]
+  return [...official, ...extra]
 }
 
 export function filterComposerCommands(
@@ -169,8 +170,10 @@ function sortGroup(kind: ComposerCommandKind, items: ComposerCommand[]): Compose
  */
 const SLASH_ALIAS_GROUPS: string[][] = [
   ['view-plan', 'show-plan', 'plan-view'],
-  ['compact', 'context', 'usage', 'session-info', 'status', 'info', 'compact-mode'],
+  ['context', 'usage', 'session-info', 'status', 'info', 'compact-mode'],
+  ['always-approve', 'yolo'],
   ['recap', 'summarize'],
+  ['plugins', 'marketplace', 'reload-plugins'],
 ]
 
 export function collapseSlashAliases(

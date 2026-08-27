@@ -1,4 +1,13 @@
 /** 与桌面 session_index 同一把钥匙：斜杠、长路径、尾斜杠、大小写。 */
+/** 路径是否落在工作区根下（含根自身）。空根不过滤。不解析盘上的 symlink，只挡 `..` 段。 */
+export function pathUnderWorkspace(path: string, root: string): boolean {
+  const p = normalizeWorkspacePath(path)
+  const r = normalizeWorkspacePath(root)
+  if (!r) return true
+  if (p.split('/').includes('..')) return false
+  return p === r || p.startsWith(`${r}/`)
+}
+
 export function normalizeWorkspacePath(path: string): string {
   let s = path.trim().replace(/\\/g, '/')
   const lower = s.toLowerCase()

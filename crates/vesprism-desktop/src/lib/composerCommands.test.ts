@@ -101,7 +101,7 @@ describe('mergeComposerCommands', () => {
       { id: 'goal', label: '/goal', hint: '本地', insert: '/goal ' },
     ]
     const merged = mergeComposerCommands(official, extras)
-    expect(merged.map((c) => c.label)).toEqual(['/sandbox', '/goal'])
+    expect(merged.map((c) => c.label)).toEqual(['/goal', '/sandbox'])
   })
 })
 
@@ -141,6 +141,7 @@ describe('collapseSlashAliases', () => {
     expect(collapseSlashAliases(items, '').map((c) => c.label)).toEqual([
       '/view-plan',
       '/compact',
+      '/usage',
       '/help',
     ])
   })
@@ -149,10 +150,12 @@ describe('collapseSlashAliases', () => {
     expect(collapseSlashAliases(items, 'show').map((c) => c.label)).toEqual([
       '/show-plan',
       '/compact',
+      '/usage',
       '/help',
     ])
     expect(collapseSlashAliases(items, 'usage').map((c) => c.label)).toEqual([
       '/view-plan',
+      '/compact',
       '/usage',
       '/help',
     ])

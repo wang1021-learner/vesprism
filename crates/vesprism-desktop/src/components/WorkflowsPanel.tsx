@@ -12,7 +12,7 @@ import {
   fillComposerOnChatTab,
   pushToast,
 } from '../store'
-import { sendEngineSlash, openSessionSchedule } from '../lib/engineSlash'
+import { sendEngineSlashToast, openSessionSchedule } from '../lib/engineSlash'
 import {
   listRunningSubagents,
   listSessionCommands,
@@ -195,9 +195,7 @@ export function WorkflowsPanel() {
                         className="workflows-btn"
                         disabled={!ready}
                         onClick={() =>
-                          void sendEngineSlash(`/workflow resume ${w.name}`).then(() =>
-                            pushToast('已继续工作流', 'success'),
-                          )
+                          void sendEngineSlashToast(`/workflow resume ${w.name}`, '已继续工作流')
                         }
                       >
                         继续
@@ -208,9 +206,7 @@ export function WorkflowsPanel() {
                         className="workflows-btn"
                         disabled={!ready}
                         onClick={() =>
-                          void sendEngineSlash(`/workflow pause ${w.name}`).then(() =>
-                            pushToast('已暂停工作流', 'success'),
-                          )
+                          void sendEngineSlashToast(`/workflow pause ${w.name}`, '已暂停工作流')
                         }
                       >
                         暂停
@@ -221,9 +217,7 @@ export function WorkflowsPanel() {
                       className="workflows-btn"
                       disabled={!ready}
                       onClick={() =>
-                        void sendEngineSlash(`/workflow stop ${w.name}`).then(() =>
-                          pushToast('已停止工作流', 'success'),
-                        )
+                        void sendEngineSlashToast(`/workflow stop ${w.name}`, '已停止工作流')
                       }
                     >
                       停止

@@ -6,8 +6,9 @@ import { $workspaceCwd, pushToast } from '../store'
 import { useStore } from '@nanostores/react'
 import { codingSessionReady, useCodingSessionTabId } from '../lib/codingSession'
 import { listCatalogPlugins, pluginsAction, pluginsList } from '../bridge'
-import { parsePluginList, scopeLabel, type PluginRow } from '../lib/pluginRows'
+import { parsePluginList, pluginStatusLabel, scopeLabel, type PluginRow } from '../lib/pluginRows'
 import { formatEngineError } from '../lib/errorMessage'
+import { MarketplaceStore } from './MarketplaceStore'
 import { Notice } from './Notice'
 
 export function PluginsPanel() {
@@ -21,6 +22,8 @@ export function PluginsPanel() {
   const [error, setError] = useState('')
   const [sel, setSel] = useState('')
   const [confirmUninstall, setConfirmUninstall] = useState('')
+  const [confirmInstall, setConfirmInstall] = useState(false)
+  const [pane, setPane] = useState<'installed' | 'store'>('installed')
 
   const load = useCallback(async () => {
     setError('')
@@ -86,10 +89,24 @@ export function PluginsPanel() {
             <p className="work-panel-desc">
               一整箱扩展，里面可以带技能、MCP 和 Hooks。启停写入本机配置，之后
               <strong>所有对话</strong>
-              都不再加载它。装、卸需要先有一场编码对话。
+              都不再加载它。商店安装会写到本机目录，要确认来源路径；默认不自动启用。
             </p>
           </div>
           <div className="work-panel-actions">
+            <button
+              type="button"
+              className={`skills-btn${pane === 'installed' ? ' is-on' : ''}`}
+              onClick={() => setPane('installed')}
+            >
+              已装
+            </button>
+            <button
+              type="button"
+              className={`skills-btn${pane === 'store' ? ' is-on' : ''}`}
+              onClick={() => setPane('store')}
+            >
+              商店
+            </button>
             <button
               type="button"
               className="skills-btn"
@@ -110,6 +127,16 @@ export function PluginsPanel() {
           </div>
         </header>
 
+        {pane === 'store' ? (
+          <MarketplaceStore
+            tabId={tabId}
+            ready={ready}
+            busy={busy}
+            setBusy={setBusy}
+            onInstalled={() => void load()}
+          />
+        ) : (
+          <>
         {!ready ? (
           <p className="memory-banner" role="status">
             安装、启停、卸载需要先在编码里开一场对话。下面仍可浏览已装列表。
@@ -124,7 +151,10 @@ export function PluginsPanel() {
           <span>安装来源</span>
           <input
             value={source}
-            onChange={(e) => setSource(e.target.value)}
+            onChange={(e) => {
+              setSource(e.target.value)
+              setConfirmInstall(false)
+            }}
             placeholder="owner/repo 或 git 地址或本地文件夹"
             disabled={!ready}
           />
@@ -134,9 +164,16 @@ export function PluginsPanel() {
             type="button"
             className="insight-btn is-primary"
             disabled={!ready || !source.trim() || Boolean(busy)}
-            onClick={() => void act({ type: 'install', source: source.trim() }, '已开始安装')}
+            onClick={() => {
+              if (!confirmInstall) {
+                setConfirmInstall(true)
+                return
+              }
+              setConfirmInstall(false)
+              void act({ type: 'install', source: source.trim() }, '已开始安装')
+            }}
           >
-            安装
+            {confirmInstall ? `再点确认：安装 ${source.trim()}` : '安装'}
           </button>
         </div>
 
@@ -204,6 +241,17 @@ export function PluginsPanel() {
                   {selected.description || selected.id}
                   {selected.version ? ` · v${selected.version}` : ''}
                 </p>
+                {selected.root ? (
+                  <p className="work-row-sub" style={{ margin: '0 0 12px' }}>
+                    路径：{selected.root}
+                    {selected.hookCount
+                      ? ` · Hooks ${pluginStatusLabel(selected.hookStatus)}`
+                      : ''}
+                    {selected.mcpCount
+                      ? ` · MCP ${pluginStatusLabel(selected.mcpStatus)}`
+                      : ''}
+                  </p>
+                ) : null}
                 <div className="work-panel-actions">
                   <button
                     type="button"
@@ -271,6 +319,8 @@ export function PluginsPanel() {
             )}
           </div>
         </div>
+          </>
+        )}
       </div>
     </div>
   )

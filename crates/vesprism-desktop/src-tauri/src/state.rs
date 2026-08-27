@@ -101,6 +101,13 @@ pub enum ActorCommand {
         action: serde_json::Value,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
+    MarketplaceList {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    MarketplaceAction {
+        action: serde_json::Value,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
     HooksList {
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
@@ -120,6 +127,13 @@ pub enum ActorCommand {
     },
     CompactConversation {
         user_context: Option<String>,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    SubmitFeedback {
+        text: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    ShareSession {
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
     /// 取消当前生成。
@@ -973,6 +987,34 @@ async fn handle_command(
                 }
             }
         }
+        ActorCommand::MarketplaceList { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.marketplace_list().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::MarketplaceAction { action, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.marketplace_action(action).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
         ActorCommand::HooksList { reply } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
@@ -1052,6 +1094,34 @@ async fn handle_command(
                 return;
             };
             match s.compact_conversation(user_context.as_deref()).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::SubmitFeedback { text, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.submit_feedback(&text).await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::ShareSession { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.share_session().await {
                 Ok(v) => {
                     let _ = reply.send(Ok(v));
                 }

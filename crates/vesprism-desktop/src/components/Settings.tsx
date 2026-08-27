@@ -33,6 +33,8 @@ import {
   setCurrentModel,
   setWorkspaceCwd,
   getSecurityPolicy,
+  getComputerUse,
+  setComputerUse,
   setSecurityPolicy,
   restartSession,
 } from '../bridge'
@@ -129,6 +131,9 @@ export function SettingsModal() {
   const [internetAccess, setInternetAccess] = useState<InternetAccess>('ask')
   const [fileAccess, setFileAccess] = useState<FileAccess>('workspace-only')
   const [policyScope, setPolicyScope] = useState<'global' | 'workspace'>('global')
+  const [computerUse, setComputerUseOn] = useState(false)
+  const [computerUseAck, setComputerUseAck] = useState(false)
+  const [computerBusy, setComputerBusy] = useState(false)
 
   const engineSaveRef = useRef<(() => Promise<void>) | null>(null)
   const hooksSaveRef = useRef<(() => Promise<void>) | null>(null)
@@ -218,6 +223,11 @@ export function SettingsModal() {
           setPolicyScope(pol.scope)
         } catch {
           /* 默认审批模式 */
+        }
+        try {
+          setComputerUseOn(await getComputerUse())
+        } catch {
+          setComputerUseOn(false)
         }
         setSettingsCwd($workspaceCwd.get())
         const entry = normalized.find((m) => m.id === pick)
@@ -753,8 +763,9 @@ export function SettingsModal() {
                     降低审批疲劳：白名单（git status、cargo check、lint 等）自动放行；
                     黑名单（rm -rf、format、管道下载执行等）自动拒绝。
                     「仅工作区」会拦截指向仓库外的读/写路径。其余按下方强度处理。
+                    信任模式与斜杠 /always-approve（yolo）相同：本会话不再弹出工具审批。
                   </p>
-                  <SettingsLabel htmlFor="settings-exec-policy" help="模型要跑命令或改文件时，要不要先问你。审批=弹出确认；信任=除黑名单外直接跑；副本=改动写到 git 工作副本，不是系统沙箱。">
+                  <SettingsLabel htmlFor="settings-exec-policy" help="模型要跑命令或改文件时，要不要先问你。审批=弹出确认；信任=本会话不再弹审批（除黑名单）；副本=改动写到 git 工作副本，不是系统沙箱。">
                     授权强度
                   </SettingsLabel>
                   <select
@@ -764,7 +775,7 @@ export function SettingsModal() {
                     onChange={(e) => setExecPolicy(e.target.value as ExecutionPolicy)}
                   >
                     <option value="request-review">审批模式（默认）— 未知命令弹出确认</option>
-                    <option value="always-proceed">信任模式 — 除黑名单外全部自动放行</option>
+                    <option value="always-proceed">信任模式 — 本会话不再弹出工具审批（除黑名单）</option>
                     <option value="proceed-in-sandbox">副本模式 — 文件写入 git worktree 副本（不是进程沙箱）</option>
                   </select>
                   <SettingsLabel htmlFor="settings-net" help="模型能不能访问互联网（搜索、下载、curl 等）。禁止时会拦截常见联网命令。">
@@ -815,6 +826,53 @@ export function SettingsModal() {
                   >
                     保存安全策略
                   </button>
+                </section>
+                <section className="settings-card">
+                  <h3 className="settings-card-title">电脑操作</h3>
+                  <p className="settings-card-desc">
+                    默认关闭。打开后，模型可以通过内置 MCP 截取你的屏幕、移动鼠标、点击和打字。
+                    这不是官方引擎自带的通道，是 Vesprism 在本机接的。每次调用仍会走工具审批（除非你开了信任模式）。
+                    Windows 可用。会写入当前工作区的 <code>.mcp.json</code>。
+                  </p>
+                  <label className="settings-hint" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <input
+                      type="checkbox"
+                      checked={computerUseAck}
+                      onChange={(e) => setComputerUseAck(e.target.checked)}
+                      disabled={computerUse}
+                    />
+                    <span>我明白：开启后模型能看到屏幕内容，并能模拟键鼠操作本机。</span>
+                  </label>
+                  <div className="work-panel-actions" style={{ marginTop: 12 }}>
+                    <button
+                      type="button"
+                      className="skills-btn"
+                      disabled={computerBusy || (!computerUse && !computerUseAck)}
+                      onClick={() => {
+                        void (async () => {
+                          setComputerBusy(true)
+                          try {
+                            const next = !computerUse
+                            await setComputerUse(next, $workspaceCwd.get() || settingsCwd || null)
+                            setComputerUseOn(next)
+                            if (!next) setComputerUseAck(false)
+                            setToast({
+                              message: next
+                                ? '已开启电脑操作。新开或重载对话后模型才能看到这些工具。'
+                                : '已关闭电脑操作，并卸下本工作区的电脑 MCP。',
+                              type: 'success',
+                            })
+                          } catch (e) {
+                            setToast({ message: String(e), type: 'error' })
+                          } finally {
+                            setComputerBusy(false)
+                          }
+                        })()
+                      }}
+                    >
+                      {computerUse ? '关闭电脑操作' : '开启电脑操作'}
+                    </button>
+                  </div>
                 </section>
               </div>
             )}

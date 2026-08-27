@@ -25,6 +25,7 @@ import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
 import { ToastHost } from './components/Toast'
 import { RewindPicker } from './components/RewindPicker'
+import { FeedbackDialog } from './components/FeedbackDialog'
 import { CompositionPanel } from './components/CompositionPanel'
 import { GoalStrip } from './components/GoalStrip'
 import { TodoStrip } from './components/TodoStrip'
@@ -126,6 +127,7 @@ function DesktopApp() {
       <ToastHost />
       <CommandPalette />
       <RewindPicker />
+      <FeedbackDialog />
       <div className="app-body">
         <ErrorBoundary name="侧栏">
           <AppSidebar />

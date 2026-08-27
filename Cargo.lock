@@ -13456,6 +13456,7 @@ dependencies = [
  "dotenvy",
  "grok-session",
  "log",
+ "png 0.17.16",
  "portable-pty",
  "reqwest 0.12.24",
  "rusqlite",

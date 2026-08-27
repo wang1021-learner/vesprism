@@ -309,7 +309,7 @@ function SectionBody({
       return (
         <>
           <label className="comp-field">
-            <span className="comp-label">权限模式（官方 yolo/auto，会话级）</span>
+            <span className="comp-label">权限模式（会话级；yolo 与信任模式相同，不再弹审批）</span>
             <select
               className="comp-input"
               value={draft.permissions.mode}
@@ -317,9 +317,9 @@ function SectionBody({
                 patch({ permissions: { ...draft.permissions, mode: e.target.value as PermissionMode } })
               }
             >
-              <option value="ask">ask（默认审批流）</option>
-              <option value="yolo">yolo（自动放行）</option>
-              <option value="auto">auto（LLM 分类器）</option>
+              <option value="ask">ask（默认弹出审批）</option>
+              <option value="yolo">yolo（本会话不再弹出工具审批）</option>
+              <option value="auto">auto（由分类器决定是否询问）</option>
             </select>
           </label>
           <div className="comp-label">规则（deny 优先于只读自动放行；如 edit:**/.env → deny）</div>

@@ -1,6 +1,6 @@
 /**
  * Composer / 与 @ 补全：
- * `/` 官方斜杠目录（命令 / 技能 / 工作流，分类和说明跟设置页对齐）+ 本地 sandbox/rewind
+ * `/` 以官方 commands/list 为唯一源；仅补桌面独有入口（sandbox/rewind/find 等）
  * `@` 工作区文件搜索，选中变成附件芯片
  */
 import { useStore } from '@nanostores/react'
@@ -9,7 +9,9 @@ import {
   $activeTabId,
   $sessionPhase,
   $tabs,
+  openFeedback,
   openRewind,
+  openSessionIntent,
   openSettings,
 } from '../store'
 import { listSessionCommands, searchWorkspaceFiles } from '../bridge'
@@ -25,7 +27,7 @@ import {
 import { zhCommandPurpose } from '../lib/toolChinese'
 import { attachKindFromPath, enableSessionSandbox } from '../lib/sessionSandbox'
 import { openPlanPreview, toggleAskMode } from '../lib/planMode'
-import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, sendEngineSlash } from '../lib/engineSlash'
+import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, sendEngineSlashToast } from '../lib/engineSlash'
 import { openChatTab } from '../lib/openChatTab'
 
 type Item = ComposerCommand
@@ -44,8 +46,8 @@ function localCommand(
   }
 }
 
+/** 仅桌面壳有的入口。官方已有的同名斜杠以 list_session_commands 为准，这里补不上。 */
 const LOCAL_SLASH: Item[] = [
-  localCommand('goal', { insert: '/goal ' }),
   localCommand('sandbox', {
     insert: '',
     run: () => {
@@ -59,7 +61,6 @@ const LOCAL_SLASH: Item[] = [
       if (tabId) openRewind(tabId)
     },
   }),
-  localCommand('plan', { insert: '/plan ' }),
   localCommand('ask', {
     insert: '',
     run: () => {
@@ -69,29 +70,7 @@ const LOCAL_SLASH: Item[] = [
   localCommand('view-plan', { insert: '', run: () => openPlanPreview() }),
   localCommand('show-plan', { insert: '', run: () => openPlanPreview() }),
   localCommand('plan-view', { insert: '', run: () => openPlanPreview() }),
-  localCommand('compact', { insert: '', run: () => openSessionInsight() }),
-  localCommand('context', { insert: '', run: () => openSessionInsight() }),
   localCommand('usage', { insert: '', run: () => openSessionInsight() }),
-  localCommand('session-info', { insert: '', run: () => openSessionInsight() }),
-  localCommand('flush', {
-    insert: '',
-    run: () => {
-      void sendEngineSlash('/flush')
-    },
-  }),
-  localCommand('dream', {
-    insert: '',
-    run: () => {
-      void sendEngineSlash('/dream')
-    },
-  }),
-  localCommand('memory', {
-    insert: '',
-    run: () => {
-      openSettings('memory')
-    },
-  }),
-  localCommand('loop', { insert: '', run: () => openSessionSchedule() }),
   localCommand('recap', {
     insert: '',
     run: () => {
@@ -117,12 +96,6 @@ const LOCAL_SLASH: Item[] = [
       openSettings('mcp')
     },
   }),
-  localCommand('plugins', {
-    insert: '',
-    run: () => {
-      openSettings('plugins')
-    },
-  }),
   localCommand('workflows', {
     insert: '',
     run: () => {
@@ -139,7 +112,6 @@ function bindComposerCommand(c: ComposerCommand): ComposerCommand {
     return open(() => openPlanPreview())
   }
   if (
-    name === 'compact' ||
     name === 'context' ||
     name === 'usage' ||
     name === 'session-info' ||
@@ -148,6 +120,29 @@ function bindComposerCommand(c: ComposerCommand): ComposerCommand {
     name === 'compact-mode'
   ) {
     return open(() => openSessionInsight())
+  }
+  if (name === 'always-approve' || name === 'yolo') {
+    return open(() => {
+      void sendEngineSlashToast('/always-approve', '本会话不再弹出工具审批')
+    })
+  }
+  if (
+    name === 'hooks-list' ||
+    name === 'hooks-trust' ||
+    name === 'hooks-untrust' ||
+    name === 'reload-plugins'
+  ) {
+    return open(() => {
+      const ok =
+        name === 'hooks-list'
+          ? '正在列出 Hooks'
+          : name === 'hooks-trust'
+            ? '已请求信任本仓库 Hooks'
+            : name === 'hooks-untrust'
+              ? '已请求取消 Hooks 信任'
+              : '已请求重载插件'
+      void sendEngineSlashToast(`/${name}`, ok)
+    })
   }
   if (name === 'memory') {
     return open(() => openSettings('memory'))
@@ -163,6 +158,15 @@ function bindComposerCommand(c: ComposerCommand): ComposerCommand {
   }
   if (name === 'plugins' || name === 'marketplace') {
     return open(() => openSettings('plugins'))
+  }
+  if (name === 'feedback') {
+    return open(() => openFeedback())
+  }
+  if (name === 'goal') {
+    return open(() => openSessionIntent('goal'))
+  }
+  if (name === 'deep-research') {
+    return open(() => openSessionIntent('research'))
   }
   if (name === 'workflows') {
     return open(() => {
@@ -194,12 +198,12 @@ function bindComposerCommand(c: ComposerCommand): ComposerCommand {
   }
   if (name === 'flush') {
     return open(() => {
-      void sendEngineSlash('/flush')
+      void sendEngineSlashToast('/flush', '正在把对话记忆写入磁盘')
     })
   }
   if (name === 'dream') {
     return open(() => {
-      void sendEngineSlash('/dream')
+      void sendEngineSlashToast('/dream', '正在整理记忆')
     })
   }
   return c

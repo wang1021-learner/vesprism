@@ -323,8 +323,13 @@
   transition: background 0.12s ease;
 }
 
-.composer-menu-item:hover {
+.composer-menu-item:hover:not(:disabled) {
   background: var(--surface-hover);
+}
+
+.composer-menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .composer-menu-item.active {

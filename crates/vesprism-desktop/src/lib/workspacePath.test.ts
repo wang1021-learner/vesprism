@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   dedupeWorkspacePaths,
   normalizeWorkspacePath,
+  pathUnderWorkspace,
   workspaceFolderName,
 } from './workspacePath'
 
@@ -15,6 +16,19 @@ describe('normalizeWorkspacePath', () => {
     )
     expect(normalizeWorkspacePath('D:\\foo\\bar\\')).toBe('d:/foo/bar')
     expect(normalizeWorkspacePath('D:/')).toBe('d:/')
+  })
+})
+
+describe('pathUnderWorkspace', () => {
+  it('根自身和子路径允许，出仓库拒绝', () => {
+    expect(pathUnderWorkspace('D:\\proj', 'D:\\proj')).toBe(true)
+    expect(pathUnderWorkspace('D:\\proj\\src', 'D:\\proj')).toBe(true)
+    expect(pathUnderWorkspace('D:\\proj\\..\\other', 'D:\\proj')).toBe(false)
+    expect(pathUnderWorkspace('C:\\Windows', 'D:\\proj')).toBe(false)
+  })
+
+  it('空工作区不过滤', () => {
+    expect(pathUnderWorkspace('/etc', '')).toBe(true)
   })
 })
 

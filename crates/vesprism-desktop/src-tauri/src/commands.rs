@@ -630,6 +630,23 @@ pub async fn plugins_action(
 }
 
 #[tauri::command]
+pub async fn marketplace_list(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::MarketplaceList { reply }).await
+}
+
+#[tauri::command]
+pub async fn marketplace_action(
+    tab_id: String,
+    action: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::MarketplaceAction { action, reply }).await
+}
+
+#[tauri::command]
 pub async fn hooks_list(
     tab_id: String,
     state: State<'_, AppState>,
@@ -644,6 +661,23 @@ pub async fn hooks_action(
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     send_value(&state, &tab_id, |reply| ActorCommand::HooksAction { action, reply }).await
+}
+
+#[tauri::command]
+pub async fn submit_feedback(
+    tab_id: String,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::SubmitFeedback { text, reply }).await
+}
+
+#[tauri::command]
+pub async fn share_session(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    send_value(&state, &tab_id, |reply| ActorCommand::ShareSession { reply }).await
 }
 
 #[tauri::command]
@@ -1381,6 +1415,42 @@ pub(crate) fn load_config_root() -> Result<toml::Value, String> {
     toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))
 }
 
+pub(crate) fn write_config_root(root: &toml::Value) -> Result<(), String> {
+    let path = desktop_config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let serialized =
+        toml::to_string_pretty(root).map_err(|e| format!("序列化 config 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))
+}
+
+#[tauri::command]
+pub fn get_computer_use() -> bool {
+    crate::computer::is_enabled()
+}
+
+#[tauri::command]
+pub fn set_computer_use(enabled: bool, cwd: Option<String>) -> Result<bool, String> {
+    crate::computer::set_enabled(enabled)?;
+    let path = cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_dir());
+    if let Some(dir) = path {
+        if enabled {
+            crate::computer_mcp::ensure_mount(&dir)
+                .map_err(|e| format!("挂载电脑操作 MCP 失败: {e}"))?;
+        } else {
+            crate::computer_mcp::unmount(&dir)
+                .map_err(|e| format!("卸下电脑操作 MCP 失败: {e}"))?;
+        }
+    }
+    Ok(enabled)
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
@@ -1401,13 +1471,6 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
             r.map_err(|e| format!("替换文件失败: {e}"))
         }
     }
-}
-
-pub(crate) fn write_config_root(root: &toml::Value) -> Result<(), String> {
-    let path = desktop_config_path();
-    let serialized =
-        toml::to_string_pretty(root).map_err(|e| format!("序列化 config.toml 失败: {e}"))?;
-    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))
 }
 
 fn policy_table_str(tbl: &toml::map::Map<String, toml::Value>, key: &str, default: &str) -> String {
@@ -3115,8 +3178,10 @@ pub struct DirEntry {
 }
 
 #[tauri::command]
-pub fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
-    let dir = std::path::Path::new(&path);
+pub fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<DirEntry>, String> {
+    let workspace_root = resolve_workspace_cwd(&state);
+    let canonical = ensure_within_workspace(&path, &workspace_root)?;
+    let dir = canonical.as_path();
     if !dir.is_dir() {
         return Err(format!("不是目录: {}", dir.display()));
     }
@@ -3223,8 +3288,10 @@ pub fn search_workspace_files(
     root: String,
     query: String,
     limit: Option<u32>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<WorkspaceFileHit>, String> {
-    let dir = std::path::Path::new(&root);
+    let workspace_root = resolve_workspace_cwd(&state);
+    let dir = ensure_within_workspace(&root, &workspace_root)?;
     if !dir.is_dir() {
         return Err(format!("不是目录: {}", dir.display()));
     }
@@ -3232,7 +3299,7 @@ pub fn search_workspace_files(
     let cap = limit.unwrap_or(24).clamp(1, 40) as usize;
     let mut out = Vec::new();
     let mut visits = 0u32;
-    walk_workspace_files(dir, dir, &q, 0, cap, &mut visits, &mut out);
+    walk_workspace_files(&dir, &dir, &q, 0, cap, &mut visits, &mut out);
     Ok(out)
 }
 

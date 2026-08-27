@@ -48,6 +48,15 @@ describe('formatEngineError', () => {
       '没能接上这条对话。聊天记录还在，请点「重试」。',
     )
   })
+
+  it('分享和反馈的账号限制换成中文', () => {
+    expect(formatEngineError('Session sharing is not available for your account.')).toBe(
+      '当前账号不能分享会话',
+    )
+    expect(formatEngineError('Feedback is disabled. To enable, set GROK_FEEDBACK_ENABLED=true')).toContain(
+      '反馈未开启',
+    )
+  })
 })
 
 describe('isSessionDeadError', () => {

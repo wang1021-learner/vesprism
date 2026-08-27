@@ -764,7 +764,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
    * 1. 已在某 Tab 打开 → 立刻切换（不重载、不闪 loading）
    * 2. 否则后台新开/复用空白 Tab 加载；消息秒开后再切过去，避免输入框长时间「正在加载会话」
    */
-  const onSelectChat = useCallback(async (id: string, sessionCwd?: string) => {
+  const onSelectChat = useCallback(async (
+    id: string,
+    sessionCwd?: string,
+    restoreCode = false,
+  ) => {
     setMenuOpenChatId(null)
 
     // 有产物绑定的干活会话：直接跳工作台面板（画布/编制）并定位，
@@ -802,7 +806,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     }
 
     const existing = findTabBySessionId(id)
-    if (existing && sessionTabReadyToReuse(getTabState(existing), id)) {
+    if (existing && sessionTabReadyToReuse(getTabState(existing), id) && !restoreCode) {
       switchTab(existing)
       return
     }
@@ -900,7 +904,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
 
       beginAttachRuntime(myTab)
       // 不传 tab 上的默认 effort，避免盖掉该历史会话自己记住的思考强度
-      const used = await loadSession(myTab, id, workCwd)
+      const used = await loadSession(myTab, id, workCwd, restoreCode || undefined)
       const attachedCwd = cwdAfterLoadSession(used, workCwd)
       // 启动对账：恢复该会话仍在运行的子 agent（重启/重连场景，官方 x.ai/subagent/list_running）
       void reconcileRunningSubagents(myTab)
@@ -916,6 +920,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         error: '',
       })
       cacheSessionMessages(id, getTabState(myTab)?.messages ?? [])
+      if (restoreCode) pushToast('已按这场对话的代码快照恢复工作区', 'info')
     } catch (e) {
       if (gen !== currentLoadGen(myTab)) return
       abortOpenSession(myTab)
@@ -1280,6 +1285,10 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                       setRenameChat(chat)
                       setRenameInput(chat.title)
                       setRenameError(null)
+                    }}
+                    onRestoreCode={() => {
+                      setMenuOpenChatId(null)
+                      void onSelectChat(chat.id, chat.cwd, true)
                     }}
                     onDelete={() => {
                       setMenuOpenChatId(null)
@@ -1666,6 +1675,7 @@ function ChatRow({
   onSelect,
   onOpenMenu,
   onRename,
+  onRestoreCode,
   onDelete,
 }: {
   chat: ChatSummary
@@ -1675,6 +1685,7 @@ function ChatRow({
   onSelect: () => void
   onOpenMenu: () => void
   onRename: () => void
+  onRestoreCode: () => void
   onDelete: () => void
 }) {
   const runningByParent = useStore($runningByParent)
@@ -1683,6 +1694,10 @@ function ChatRow({
   const flowCount = artifacts.filter((item) => item.kind === 'flow').length
   const agentCount = artifacts.filter((item) => item.kind === 'agent').length
   const hasWorkbenchArtifacts = flowCount > 0 || agentCount > 0
+  const [confirmRestore, setConfirmRestore] = useState(false)
+  useEffect(() => {
+    if (!menuOpen) setConfirmRestore(false)
+  }, [menuOpen])
   return (
     <div className={`recent-item-container${isActive ? ' active' : ''}`}>
       <button type="button" className="recent-item" onClick={onSelect}>
@@ -1716,6 +1731,21 @@ function ChatRow({
         <div className="recent-menu place-bottom" onClick={(e) => e.stopPropagation()}>
           <button type="button" className="recent-menu-item" onClick={onRename}>
             ✎ 重命名
+          </button>
+          <button
+            type="button"
+            className="recent-menu-item"
+            title="打开这场对话，并把工作区文件恢复成当时的快照。未提交改动可能被盖掉。"
+            onClick={() => {
+              if (!confirmRestore) {
+                setConfirmRestore(true)
+                return
+              }
+              setConfirmRestore(false)
+              onRestoreCode()
+            }}
+          >
+            {confirmRestore ? '再点确认：会改工作区文件' : '还原代码快照'}
           </button>
           <button type="button" className="recent-menu-item danger" onClick={onDelete}>
             🗑 删除对话

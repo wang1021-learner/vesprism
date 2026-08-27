@@ -7,13 +7,42 @@ import { SettingsLabel } from './SettingsHelp'
 const HOOK_EVENTS = [
   'PreToolUse',
   'PostToolUse',
+  'PostToolUseFailure',
   'UserPromptSubmit',
   'Stop',
   'StopCancelled',
+  'StopFailure',
+  'SubagentStart',
   'SubagentStop',
   'SessionStart',
   'SessionEnd',
-]
+  'PermissionDenied',
+  'Notification',
+  'PreCompact',
+  'PostCompact',
+] as const
+
+const HOOK_EVENT_LABEL: Record<string, string> = {
+  PreToolUse: '工具调用前',
+  PostToolUse: '工具调用后',
+  PostToolUseFailure: '工具失败后',
+  UserPromptSubmit: '提交用户消息时',
+  Stop: '停止时',
+  StopCancelled: '取消停止时',
+  StopFailure: '停止失败时',
+  SubagentStart: '子任务开始',
+  SubagentStop: '子任务结束',
+  SessionStart: '会话开始',
+  SessionEnd: '会话结束',
+  PermissionDenied: '权限被拒',
+  Notification: '通知',
+  PreCompact: '压缩前',
+  PostCompact: '压缩后',
+}
+
+function hookEventLabel(event: string): string {
+  return HOOK_EVENT_LABEL[event] || event
+}
 
 function emptyHandler(): HookHandler {
   return { handler_type: 'command', command: '', url: '', timeout: null }
@@ -106,7 +135,7 @@ export function HooksSettings({
               >
                 {HOOK_EVENTS.map((ev) => (
                   <option key={ev} value={ev}>
-                    {ev}
+                    {hookEventLabel(ev)}
                   </option>
                 ))}
               </select>
@@ -264,7 +293,7 @@ function LiveHooksCard() {
     <section className="settings-card">
       <h3 className="settings-card-title">本会话已加载</h3>
       <p className="settings-card-desc">
-        项目 Hooks {trusted ? '已信任' : '未信任'}。下面按条开关，不改配置文件。
+        项目 Hooks {trusted ? '已信任' : '未信任'}。未信任时工具前 hook 不会跑。看见列表不等于已经安全——拦不住已经执行过的副作用。
       </p>
       <div className="work-panel-actions" style={{ marginBottom: 8 }}>
         <button
@@ -291,7 +320,7 @@ function LiveHooksCard() {
           <div key={h.name} className="settings-row" style={{ marginBottom: 6 }}>
             <span style={{ flex: 1, fontSize: 13 }}>
               {h.name}
-              <span className="settings-hint"> · {h.event}</span>
+              <span className="settings-hint"> · {hookEventLabel(h.event)}</span>
             </span>
             <button
               type="button"

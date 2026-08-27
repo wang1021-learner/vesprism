@@ -28,6 +28,9 @@ import {
   $sessionPolicyOverride,
   $totalTokens,
   isScratchCwd,
+  openFeedback,
+  openSessionIntent,
+  openSettings,
   pushToast,
   workspaceLabel,
 } from '../store'
@@ -40,7 +43,7 @@ import {
 import { clipboardImageFiles, persistImageFile, revokePreviewUrl } from '../lib/pasteImage'
 import { localFileUrl } from '../lib/localFileUrl'
 import { planChipLabel, toggleAskMode, togglePlanMode } from '../lib/planMode'
-import { openSessionInsight } from '../lib/engineSlash'
+import { openSessionInsight, shareCurrentSession } from '../lib/engineSlash'
 import { useStore } from '@nanostores/react'
 import type { PromptAttach } from '../bridge'
 import type { QueuedPrompt } from '../store'
@@ -948,6 +951,77 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     <span className="menu-item-body">
                       <span className="menu-item-title">插入命令…</span>
                       <span className="menu-item-sub">输入 / 打开斜杠目录</span>
+                    </span>
+                  </button>
+                  <div className="composer-menu-divider" />
+                  <div className="composer-menu-label">本会话</div>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    disabled={!shellReady}
+                    onClick={() => {
+                      setAttachOpen(false)
+                      openSessionIntent('goal')
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">设目标</span>
+                      <span className="menu-item-sub">长程规划并执行，直到完成或你停掉</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    disabled={!shellReady}
+                    onClick={() => {
+                      setAttachOpen(false)
+                      openSessionIntent('research')
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">深度研究</span>
+                      <span className="menu-item-sub">多路检索并交叉核对，写出带引用的报告</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    disabled={!shellReady}
+                    onClick={() => {
+                      setAttachOpen(false)
+                      openFeedback()
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">发送反馈</span>
+                      <span className="menu-item-sub">对本会话的意见发给官方反馈通道</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    disabled={!shellReady}
+                    onClick={() => {
+                      setAttachOpen(false)
+                      void shareCurrentSession()
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">分享本会话</span>
+                      <span className="menu-item-sub">生成链接并复制；账号未开通时会拒绝</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    onClick={() => {
+                      setAttachOpen(false)
+                      openSettings('security')
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">电脑操作</span>
+                      <span className="menu-item-sub">截屏、点击、打字。默认关，在设置里授权</span>
                     </span>
                   </button>
                     </>

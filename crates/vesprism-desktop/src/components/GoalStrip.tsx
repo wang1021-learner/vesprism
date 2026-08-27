@@ -1,7 +1,16 @@
+import { useEffect, useState, type FormEvent } from 'react'
 import { useStore } from '@nanostores/react'
-import { $goalInfo, $sessionPhase, pushToast } from '../store'
+import {
+  $goalInfo,
+  $sessionIntent,
+  $sessionPhase,
+  closeSessionIntent,
+  openSessionIntent,
+  pushToast,
+} from '../store'
 import type { GoalInfoDto } from '../lib/composition'
 import { sendEngineSlash } from '../lib/engineSlash'
+import { formatEngineError } from '../lib/errorMessage'
 
 const STATUS_LABEL: Record<string, string> = {
   active: '进行中',
@@ -39,11 +48,101 @@ function badgeClass(status: string): string {
   return 'goal-badge-active'
 }
 
-/** 会话区顶部 Goal 条（官方 GoalUpdated 投影）。 */
+/** 会话区顶部 Goal 条。进行中显示进度；设目标 / 深度研究从输入栏「+」打开。 */
 export function GoalStrip() {
   const goal = useStore($goalInfo)
-  if (!goal) return null
-  return <GoalStripInner goal={goal} />
+  const intent = useStore($sessionIntent)
+  const ready = useStore($sessionPhase) === 'ready'
+  if (goal && goal.status !== 'cleared') return <GoalStripInner goal={goal} />
+  if (!ready || !intent) return null
+  return <GoalCreateStrip />
+}
+
+function GoalCreateStrip() {
+  const intent = useStore($sessionIntent)
+  const [mode, setMode] = useState<'goal' | 'research'>(intent || 'goal')
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (intent) setMode(intent)
+  }, [intent])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) closeSessionIntent()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy])
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    const q = text.trim()
+    if (!q || busy) return
+    setBusy(true)
+    try {
+      const cmd = mode === 'goal' ? `/goal ${q}` : `/deep-research ${q}`
+      await sendEngineSlash(cmd)
+      pushToast(mode === 'goal' ? '已设定目标' : '已开始深度研究', 'success')
+      setText('')
+      closeSessionIntent()
+    } catch (err) {
+      pushToast(formatEngineError(err), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <form className="goal-strip" onSubmit={(e) => void submit(e)}>
+      <div className="goal-create-head">
+        <strong>{mode === 'goal' ? '设一个目标' : '深度研究'}</strong>
+        <span className="goal-create-hint">
+          {mode === 'goal'
+            ? '模型会规划并执行，直到完成或你停掉'
+            : '多路检索并交叉核对，写出带引用的报告'}
+        </span>
+        <button
+          type="button"
+          className="rewind-close"
+          aria-label="关闭"
+          onClick={() => closeSessionIntent()}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="goal-create-row">
+        <div className="goal-create-modes" role="tablist" aria-label="入口">
+          <button
+            type="button"
+            className={`skills-btn${mode === 'goal' ? ' is-on' : ''}`}
+            onClick={() => setMode('goal')}
+          >
+            设目标
+          </button>
+          <button
+            type="button"
+            className={`skills-btn${mode === 'research' ? ' is-on' : ''}`}
+            onClick={() => setMode('research')}
+          >
+            深度研究
+          </button>
+        </div>
+        <input
+          className="goal-create-input"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={mode === 'goal' ? '要持续推进的目标…' : '要调研的问题…'}
+          disabled={busy}
+          autoFocus
+          aria-label={mode === 'goal' ? '目标' : '研究问题'}
+        />
+        <button type="submit" className="skills-btn primary" disabled={busy || !text.trim()}>
+          开始
+        </button>
+      </div>
+    </form>
+  )
 }
 
 function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
@@ -53,7 +152,7 @@ function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
       await sendEngineSlash(cmd)
       pushToast(ok, 'success')
     } catch (e) {
-      pushToast(String(e), 'error')
+      pushToast(formatEngineError(e), 'error')
     }
   }
   const pct =
@@ -96,7 +195,21 @@ function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
           {goal.pauseMessage && <span className="goal-pause">{goal.pauseMessage}</span>}
         </div>
       )}
-      {goal.status !== 'cleared' && goal.status !== 'complete' ? (
+      {goal.status === 'complete' ? (
+        <div className="work-panel-actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="skills-btn"
+            disabled={!ready}
+            onClick={() => {
+              void act('/goal clear', '已清除目标')
+              openSessionIntent('goal')
+            }}
+          >
+            新目标
+          </button>
+        </div>
+      ) : goal.status !== 'cleared' ? (
         <div className="work-panel-actions" style={{ marginTop: 8 }}>
           {goal.status === 'user_paused' || goal.status.endsWith('_paused') ? (
             <button

@@ -7,6 +7,9 @@ export type PluginRow = {
   scope: string
   skillCount: number
   mcpCount: number
+  hookCount: number
+  hookStatus: string
+  mcpStatus: string
   marketplace?: string
   root: string
 }
@@ -21,6 +24,18 @@ const SCOPE: Record<string, string> = {
 export function scopeLabel(s: string): string {
   const k = (s || '').trim().toLowerCase()
   return SCOPE[k] || s || '其他'
+}
+
+const STATUS: Record<string, string> = {
+  none: '无',
+  active: '已加载',
+  active_inline: '已加载（内联）',
+  blocked: '已拦截',
+}
+
+export function pluginStatusLabel(s: string): string {
+  const k = (s || '').trim().toLowerCase()
+  return STATUS[k] || s
 }
 
 export function parsePluginList(raw: unknown): PluginRow[] {
@@ -40,6 +55,9 @@ export function parsePluginList(raw: unknown): PluginRow[] {
       scope: String(p.scope || ''),
       skillCount: Number(p.skillCount ?? p.skill_count ?? 0),
       mcpCount: Number(p.mcpServerCount ?? p.mcp_server_count ?? 0),
+      hookCount: Number(p.hookCount ?? p.hook_count ?? 0),
+      hookStatus: String(p.hookStatus || p.hook_status || ''),
+      mcpStatus: String(p.mcpStatus || p.mcp_status || ''),
       marketplace: String(p.marketplaceSource || p.marketplace_source || '') || undefined,
       root: String(p.root || ''),
     })

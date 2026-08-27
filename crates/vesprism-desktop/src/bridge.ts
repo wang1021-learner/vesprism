@@ -55,6 +55,10 @@ export const getSecurityPolicy = (cwd?: string) =>
 export const setSecurityPolicy = (policy: SecurityPolicyDto) =>
   invoke<SecurityPolicyDto>('set_security_policy', { policy })
 
+export const getComputerUse = () => invoke<boolean>('get_computer_use')
+export const setComputerUse = (enabled: boolean, cwd?: string | null) =>
+  invoke<boolean>('set_computer_use', { enabled, cwd: cwd ?? null })
+
 export const enableTabSandbox = (tabId: string) =>
   invoke('enable_tab_sandbox', { tabId })
 
@@ -157,10 +161,18 @@ export const pluginsList = (tabId: string) =>
   invoke<Record<string, unknown>>('plugins_list', { tabId })
 export const pluginsAction = (tabId: string, action: Record<string, unknown>) =>
   invoke<Record<string, unknown>>('plugins_action', { tabId, action })
+export const marketplaceList = (tabId: string) =>
+  invoke<Record<string, unknown>>('marketplace_list', { tabId })
+export const marketplaceAction = (tabId: string, action: Record<string, unknown>) =>
+  invoke<Record<string, unknown>>('marketplace_action', { tabId, action })
 export const hooksList = (tabId: string) =>
   invoke<Record<string, unknown>>('hooks_list', { tabId })
 export const hooksAction = (tabId: string, action: Record<string, unknown>) =>
   invoke<Record<string, unknown>>('hooks_action', { tabId, action })
+export const submitFeedback = (tabId: string, text: string) =>
+  invoke<Record<string, unknown>>('submit_feedback', { tabId, text })
+export const shareSession = (tabId: string) =>
+  invoke<Record<string, unknown>>('share_session', { tabId })
 export const schedulerDelete = (tabId: string, taskId: string) =>
   invoke<Record<string, unknown>>('scheduler_delete', { tabId, taskId })
 export const sessionInfo = (tabId: string) =>

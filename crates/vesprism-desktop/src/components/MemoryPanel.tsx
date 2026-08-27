@@ -78,7 +78,7 @@ export function MemoryPanel() {
         )
       })
       .catch(() => setDiskFiles([]))
-    if (ready && tabId) void sendEngineSlash('/memory', tabId)
+    if (ready && tabId) void sendEngineSlash('/memory', tabId).catch(() => {})
   }, [ready, tabId])
 
   useEffect(() => {

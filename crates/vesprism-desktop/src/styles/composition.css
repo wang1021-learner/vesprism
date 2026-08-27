@@ -75,6 +75,45 @@
 .goal-pause {
   color: #9a6a00;
 }
+.goal-create-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.goal-create-head strong {
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.goal-create-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+}
+.goal-create-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.goal-create-modes {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.goal-create-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 6px;
+  background: var(--bg-canvas, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
 
 /* ── 子代理三层树 ── */
 .st-list {

@@ -1,6 +1,7 @@
 import { sendSessionPrompt } from './sendSessionPrompt'
 import { openChatTab } from './openChatTab'
-import { sessionRecap } from '../bridge'
+import { sessionRecap, shareSession } from '../bridge'
+import { formatEngineError } from './errorMessage'
 import {
   $activeTabId,
   $chatFindIndex,
@@ -96,9 +97,54 @@ export function dismissRecap(tabId?: string): void {
   if (id) patchTab(id, { lastRecap: null })
 }
 
-/** 发官方斜杠但不进用户气泡（Goal / 工作流按钮、/memory 拉列表）。 */
-export function sendEngineSlash(text: string, tabId?: string): Promise<string | null> {
+/** 发官方斜杠但不进用户气泡（Goal / 工作流按钮、/memory 拉列表）。失败抛错，不吞。 */
+export async function sendEngineSlash(text: string, tabId?: string): Promise<string> {
   const cmd = text.trim()
-  if (!cmd) return Promise.resolve(null)
-  return sendSessionPrompt({ text: cmd, hidden: true, tabId })
+  if (!cmd) throw new Error('命令为空')
+  const id = await sendSessionPrompt({ text: cmd, hidden: true, tabId })
+  if (!id) throw new Error('命令没发出去')
+  return id
+}
+
+/** 斜杠发出去后给一句回执；引擎原文失败走 Toast。 */
+export async function sendEngineSlashToast(cmd: string, ok: string, tabId?: string): Promise<void> {
+  try {
+    await sendEngineSlash(cmd, tabId)
+    pushToast(ok, 'success')
+  } catch (e) {
+    pushToast(formatEngineError(e), 'error')
+  }
+}
+
+/** 官方分享：把链接复制到剪贴板。账号未开通时引擎会拒绝。 */
+export async function shareCurrentSession(): Promise<void> {
+  const tabId = $activeTabId.get()
+  const st = tabId ? getTabState(tabId) : null
+  if (st?.utilityKind) {
+    const chat = findNormalChatTab(false)
+    if (chat) {
+      switchTab(chat)
+    } else {
+      pushToast('先打开一场对话再分享', 'info')
+      return
+    }
+  }
+  const id = $activeTabId.get()
+  if (!id) {
+    pushToast('先打开一场对话再分享', 'info')
+    return
+  }
+  try {
+    const r = await shareSession(id)
+    const url = String(r.shareUrl ?? r.share_url ?? '').trim()
+    if (!url) throw new Error('没有返回分享链接')
+    try {
+      await navigator.clipboard.writeText(url)
+      pushToast('分享链接已复制', 'success')
+    } catch {
+      pushToast(`分享链接：${url}`, 'success')
+    }
+  } catch (e) {
+    pushToast(formatEngineError(e), 'error')
+  }
 }

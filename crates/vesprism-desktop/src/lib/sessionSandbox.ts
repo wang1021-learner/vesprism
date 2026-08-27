@@ -33,7 +33,7 @@ export const COMPOSER_POLICY_OPTIONS: {
   {
     value: 'always-proceed',
     label: '放行',
-    hint: '信任模式：命令自动执行',
+    hint: '信任模式：本会话不再弹出工具审批',
   },
   {
     value: 'proceed-in-sandbox',

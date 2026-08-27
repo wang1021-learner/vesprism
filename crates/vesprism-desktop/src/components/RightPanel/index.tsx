@@ -14,6 +14,7 @@ import {
   type RightPanelTab,
 } from '../../store'
 import { fileWorkingDiff, listDir, readFileText, workspaceChanges, type WorkspaceChange } from '../../bridge'
+import { pathUnderWorkspace } from '../../lib/workspacePath'
 import { DiffLines } from '../Chat/DiffLines'
 import { HunkReview } from '../HunkReview'
 
@@ -113,6 +114,11 @@ function FileTree() {
   }, [cwd])
 
   useEffect(() => {
+    if (!cwd || !path) return
+    if (!pathUnderWorkspace(path, cwd)) setPath(cwd)
+  }, [cwd, path])
+
+  useEffect(() => {
     if (!path) return
     let cancelled = false
     setLoading(true)
@@ -138,6 +144,7 @@ function FileTree() {
   const goUp = () => {
     const p = path.replace(/[/\\]$/, '')
     const parent = p.split(/[/\\]/).slice(0, -1).join('/') || '/'
+    if (!cwd || !pathUnderWorkspace(parent, cwd)) return
     setPath(parent)
   }
   const openFile = async (name: string) => {

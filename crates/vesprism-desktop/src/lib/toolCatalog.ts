@@ -215,6 +215,37 @@ const META: ToolMeta[] = [
     description: '按参考图 / 音色生成视频',
   },
   {
+    name: 'computer_screenshot',
+    label: '屏幕截图',
+    category: 'other',
+    description: '截取本机屏幕（电脑操作开启后才有）',
+  },
+  {
+    name: 'computer_click',
+    label: '鼠标点击',
+    category: 'other',
+    description: '按截图坐标点击（电脑操作开启后才有）',
+  },
+  {
+    name: 'computer_type',
+    label: '键盘输入',
+    category: 'other',
+    description: '向焦点窗口打字（电脑操作开启后才有）',
+  },
+  {
+    name: 'computer_key',
+    label: '发送按键',
+    category: 'other',
+    description: '发送快捷键（电脑操作开启后才有）',
+  },
+  {
+    name: 'computer_screen_size',
+    label: '屏幕尺寸',
+    category: 'other',
+    description: '读取屏幕宽高（电脑操作开启后才有）',
+    readOnly: true,
+  },
+  {
     name: 'kill_task',
     label: '终止任务',
     category: 'shell',

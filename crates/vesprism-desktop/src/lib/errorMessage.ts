@@ -46,6 +46,15 @@ export function formatEngineError(raw: unknown): string {
   ) {
     return '没能接上这条对话。聊天记录还在，请点「重试」。'
   }
+  if (/sharing is not available/i.test(s) || /sharing is disabled/i.test(s)) {
+    return '当前账号不能分享会话'
+  }
+  if (/data retention policy/i.test(s)) {
+    return '团队数据保留策略禁止分享会话'
+  }
+  if (/feedback is disabled/i.test(s)) {
+    return '反馈未开启。可在配置里打开 [features] feedback'
+  }
 
   return s
 }

@@ -165,3 +165,25 @@
   opacity: 0.6;
   cursor: default;
 }
+
+.feedback-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-solid);
+  border-radius: 8px;
+  background: var(--bg-canvas, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 6.5rem;
+}
+.rewind-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -1,5 +1,7 @@
 mod catalog;
 mod commands;
+mod computer;
+mod computer_mcp;
 mod engine_prefs;
 mod pty;
 mod sandbox;
@@ -56,6 +58,9 @@ pub fn run() {
     // 必须在 GUI 初始化之前分支，避免拉起整个 Tauri 应用。
     if std::env::args().any(|a| a == workbench::mcp_server::MCP_SERVER_FLAG) {
         std::process::exit(workbench::mcp_server::run_mcp_server_stdio());
+    }
+    if std::env::args().any(|a| a == computer_mcp::MCP_FLAG) {
+        std::process::exit(computer_mcp::run_stdio());
     }
 
     // 桌面 app 使用独立的 GROK_HOME，与命令行 grok 及 grok-gui-poc 完全隔离。
@@ -182,6 +187,8 @@ pub fn run() {
             commands::enable_tab_sandbox,
             commands::disable_tab_sandbox,
             commands::get_sandbox_status,
+            commands::get_computer_use,
+            commands::set_computer_use,
             commands::sync_sandbox_to_origin,
             commands::start_session,
             commands::send_prompt,
@@ -196,8 +203,12 @@ pub fn run() {
             commands::hunk_call,
             commands::plugins_list,
             commands::plugins_action,
+            commands::marketplace_list,
+            commands::marketplace_action,
             commands::hooks_list,
             commands::hooks_action,
+            commands::submit_feedback,
+            commands::share_session,
             commands::scheduler_delete,
             commands::session_info,
             commands::session_usage,

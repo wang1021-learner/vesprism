@@ -37,7 +37,12 @@ base64 = { workspace = true }
 portable-pty = { workspace = true }
 xai-grok-mcp = { workspace = true }
 reqwest = { workspace = true }
+png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true }
+windows = { workspace = true, features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
 

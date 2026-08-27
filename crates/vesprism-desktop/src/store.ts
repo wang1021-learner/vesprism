@@ -1220,6 +1220,24 @@ export function closeRewind() {
   $rewindOpen.set(false)
 }
 
+export const $feedbackOpen = atom(false)
+export function openFeedback() {
+  $feedbackOpen.set(true)
+}
+export function closeFeedback() {
+  $feedbackOpen.set(false)
+}
+
+/** 聊天顶栏的设目标 / 深度研究表单。有进行中的 Goal 时不用它。 */
+export type SessionIntentKind = 'goal' | 'research'
+export const $sessionIntent = atom<SessionIntentKind | null>(null)
+export function openSessionIntent(kind: SessionIntentKind) {
+  $sessionIntent.set(kind)
+}
+export function closeSessionIntent() {
+  $sessionIntent.set(null)
+}
+
 // ── bash 后台任务（task_backgrounded）──
 export const $backgroundTasks = atom<Record<string, BackgroundTaskInfo>>({})
 /** 登记后台任务（事件到达时） */

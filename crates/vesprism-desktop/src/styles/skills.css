@@ -83,6 +83,12 @@
   cursor: not-allowed;
 }
 
+.skills-btn.is-on {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+
 .skills-btn.primary {
   background: var(--text-primary, #1c1c1c);
   border-color: var(--text-primary, #1c1c1c);
