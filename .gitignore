@@ -14,3 +14,6 @@ crates/grok-gui-poc/test-grok-home/agent_id
 *.tsbuildinfo
 crates/jike-grok-desktop/src/index.css.bak
 
+# 依赖目录永不提交（含仓库根误装的一份）
+node_modules/
+
