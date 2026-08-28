@@ -216,7 +216,8 @@ Markdown：`AssistantMarkdown.tsx` 增量解析；工具卡里的 diff 不在会
 
 引擎 spawn 子会话。父会话消息流里有 scaffold 行；点开 `openSubagentTab.ts` attach 子 Tab。  
 `session_notification` 按 `session_id` 过滤，子内容不混进父气泡。  
-启动对账：`list_running_subagents`（`x.ai/subagent/list_running`）。
+启动对账：`list_running_subagents`（`x.ai/subagent/list_running`）。  
+官方已有工具 `send_subagent_message`（父会话给仍在跑的子 agent 发跟进）。模型可直接调；桌面不必再写一条 IPC。
 
 ### 5.6 Goal / Workflow 进度 / 沙箱条
 
