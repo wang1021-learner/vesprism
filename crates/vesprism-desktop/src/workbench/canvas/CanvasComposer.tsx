@@ -1,6 +1,7 @@
 /**
- * 画布底部输入：与编码同一套 Composer（附件 / @ / 斜杠 / 模型 / 发送）。
- * 不展示工作区芯片——这里编的是流程，不是切仓库；@ 仍用当前会话目录。
+ * 画布底部输入：与编码同一套 Composer（附件 / @ / 模型 / 发送）。
+ * 关掉斜杠、工作区芯片、审批/计划/问答/用量：这里编的是流程，不是编码壳。
+ * @ 仍用当前会话目录。
  * 发给引擎时仍包编排说明书。
  */
 import { memo, useCallback, useEffect, useState, type PointerEvent, type WheelEvent } from 'react'
@@ -245,6 +246,8 @@ export const CanvasComposer = memo(function CanvasComposer({
       <Composer
         variant="dock"
         showWorkspace={false}
+        enableSlash={false}
+        showShellChips={false}
         placeholder="描述流程，或说要改哪一步…"
         canSend={ready}
         engineGenerating={generating}

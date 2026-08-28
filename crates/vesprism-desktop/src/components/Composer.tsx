@@ -101,6 +101,8 @@ interface ComposerProps {
   variant?: 'default' | 'dock'
   /** 是否展示工作区芯片 */
   showWorkspace?: boolean
+  /** 审批 / 计划 / 问答 / 用量。画布关掉，避免编码壳动作露进流程对话 */
+  showShellChips?: boolean
   /** 精简工具条：只留附件 / @ / 发送 */
   compactActions?: boolean
   extraActions?: ReactNode
@@ -272,6 +274,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     placeholder,
     variant = 'default',
     showWorkspace = true,
+    showShellChips = true,
     compactActions = false,
     extraActions,
   }: ComposerProps,
@@ -1124,7 +1127,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </span>
           </div>
           <div className="toolbar-right">
-            {!compactActions ? (
+            {!compactActions && showShellChips ? (
             <>
             <div className="model-picker" ref={policyPickerRef}>
               <button
@@ -1230,7 +1233,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 用量
               </button>
             )}
-            {models.length > 0 && (
+            </>
+            ) : null}
+            {!compactActions && models.length > 0 ? (
               <div className="model-picker" ref={modelPickerRef}>
                 <button
                   type="button"
@@ -1335,8 +1340,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   </div>
                 )}
               </div>
-            )}
-            </>
             ) : null}
 
             {extraActions}

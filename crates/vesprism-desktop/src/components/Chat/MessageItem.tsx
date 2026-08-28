@@ -314,6 +314,8 @@ interface MessageItemProps {
   canRetry?: boolean
   /** 最新用户条：撤回才可点，按钮始终占位避免高度跳 */
   canRecall?: boolean
+  /** 画布对话关掉派生 / 回滚，那些是编码壳的会话操作 */
+  showSessionActions?: boolean
 }
 
 /** 内嵌审批条包装：读当前 tab 投影，有审批才渲染 */
@@ -601,6 +603,7 @@ export const MessageItem = memo(function MessageItem({
   isPermissionOrigin = false,
   canRetry = false,
   canRecall = false,
+  showSessionActions = true,
 }: MessageItemProps) {
   switch (message.role) {
     case 'system':
@@ -619,6 +622,7 @@ export const MessageItem = memo(function MessageItem({
           messageId={message.id}
           canRecall={canRecall && !sessionBusy}
           attachments={message.attachments}
+          showSessionActions={showSessionActions}
         />
       )
 
@@ -1312,11 +1316,13 @@ const UserBubble = memo(function UserBubble({
   messageId,
   canRecall,
   attachments,
+  showSessionActions = true,
 }: {
   text: string
   messageId: string
   canRecall: boolean
   attachments?: MessageAttach[]
+  showSessionActions?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1422,24 +1428,28 @@ const UserBubble = memo(function UserBubble({
           >
             {recalling ? '撤回中' : '撤回'}
           </button>
-          <button
-            type="button"
-            className="bubble-fork-btn"
-            title="派生新会话（复制当前会话到新标签继续）"
-            aria-label="派生新会话"
-            onClick={() => void forkCurrentSession()}
-          >
-            派生
-          </button>
-          <button
-            type="button"
-            className="bubble-rewind-btn"
-            title="回滚会话（撤销到此提问之前，可恢复文件快照）"
-            aria-label="回滚会话"
-            onClick={() => openRewind($activeTabId.get())}
-          >
-            回滚
-          </button>
+          {showSessionActions ? (
+            <>
+              <button
+                type="button"
+                className="bubble-fork-btn"
+                title="派生新会话（复制当前会话到新标签继续）"
+                aria-label="派生新会话"
+                onClick={() => void forkCurrentSession()}
+              >
+                派生
+              </button>
+              <button
+                type="button"
+                className="bubble-rewind-btn"
+                title="回滚会话（撤销到此提问之前，可恢复文件快照）"
+                aria-label="回滚会话"
+                onClick={() => openRewind($activeTabId.get())}
+              >
+                回滚
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
     </div>

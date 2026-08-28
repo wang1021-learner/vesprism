@@ -94,6 +94,7 @@ export function CanvasTalkLog({
               message={message}
               streaming={isLive}
               sessionBusy={generating}
+              showSessionActions={false}
               canRetry={
                 message.role === 'assistant' &&
                 canRetryAssistant(resolvedMessages, message.id, generating)
