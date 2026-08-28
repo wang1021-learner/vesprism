@@ -123,7 +123,12 @@ pub fn tool_overrides_for_apply(tools: &ToolsConfig) -> Result<serde_json::Value
     } else {
         map.insert(
             "disabled".into(),
-            serde_json::Value::Array(disabled.into_iter().map(serde_json::Value::String).collect()),
+            serde_json::Value::Array(
+                disabled
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
         );
     }
     Ok(serde_json::Value::Object(map))
@@ -568,7 +573,9 @@ tools:
         .unwrap();
         let v = super::tool_overrides_for_apply(&parsed.tools).unwrap();
         assert_eq!(
-            v.get("disabled").and_then(|x| x.as_array()).map(|a| a.len()),
+            v.get("disabled")
+                .and_then(|x| x.as_array())
+                .map(|a| a.len()),
             Some(1)
         );
         assert_eq!(v["disabled"][0], "web_search");

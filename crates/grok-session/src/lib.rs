@@ -661,9 +661,7 @@ impl std::fmt::Debug for SessionEvent {
                 "McpElicitRequest {{ tool_call_id: {:?}, server: {:?}, mode: {:?} }}",
                 tool_call_id, server_name, mode
             ),
-            Self::McpElicitComplete {
-                elicitation_id, ..
-            } => write!(
+            Self::McpElicitComplete { elicitation_id, .. } => write!(
                 f,
                 "McpElicitComplete {{ elicitation_id: {:?} }}",
                 elicitation_id
@@ -679,9 +677,7 @@ impl std::fmt::Debug for SessionEvent {
                 f,
                 "ExitPlanModeRequest {{ tool_call_id: {:?}, has_plan: {} }}",
                 tool_call_id,
-                plan_content
-                    .as_ref()
-                    .is_some_and(|s| !s.trim().is_empty())
+                plan_content.as_ref().is_some_and(|s| !s.trim().is_empty())
             ),
             Self::MemoryFiles { files } => {
                 write!(f, "MemoryFiles {{ n: {} }}", files.len())
@@ -781,7 +777,7 @@ impl Client for GuiClient {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
 
-        // 锁定顺序：会话级 deny → per-agent deny → 其余规则 → 子会话/只读自动放行 → 审批条。
+        // 锁定顺序：会话级 deny → per-agent deny → 其余规则 → 只读自动放行 → 审批条。
         // deny 找不到拒绝选项时 fail-closed，绝不继续走到放行。
         if let Some(engine) = session_policy.as_ref() {
             if engine.has_deny(&category, &detail) {
@@ -861,13 +857,7 @@ impl Client for GuiClient {
             }
         }
 
-        // 子会话（workflow 子 agent）的工具权限：自动选 AllowOnce（运行一次）。
-        // 必须在 deny / 策略评估之后，避免绕过拒绝规则。
-        if is_child {
-            if let Some(opt) = pick_allow_once(&args.options) {
-                return Ok(auto_allow(opt));
-            }
-        }
+        // 子会话写操作不再自动 AllowOnce：跟主会话一样走审批条（只读工具仍在下面放行）。
 
         // Read/Search/Think：无工作区副作用。Fetch 是网络请求，不自动放行。
         if is_read_only_acp_kind(args.tool_call.fields.kind) {
@@ -1723,9 +1713,7 @@ impl GuiClient {
             }
         };
 
-        let plan_content = params
-            .plan_content
-            .filter(|s| !s.trim().is_empty());
+        let plan_content = params.plan_content.filter(|s| !s.trim().is_empty());
         let (respond_tx, respond_rx) = oneshot::channel();
         let _ = self
             .event_tx
@@ -2448,11 +2436,15 @@ fn spawn_session_meta(
 }
 
 /// 会话句柄：GUI / REPL 只需要与此类型交互。
+///
+/// `event_rx` 包一层 Mutex，让句柄可 Clone：Actor 长 RPC 可以丢到 `spawn_local`，
+/// 主循环继续 `next_event`，审批才不会堵在 recap/rewind 上。
+#[derive(Clone)]
 pub struct GrokSession {
     connection: Arc<ClientSideConnection>,
     session_id: SessionId,
-    /// 流式事件接收端（有界缓冲 256，提供背压）。
-    event_rx: mpsc::Receiver<SessionEvent>,
+    /// 流式事件接收端（有界缓冲 4096，提供背压）。
+    event_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<SessionEvent>>>,
     event_tx: mpsc::Sender<SessionEvent>,
     /// 状态广播：只关心最新值，支持多路订阅。
     status_tx: watch::Sender<SessionStatus>,
@@ -2668,7 +2660,7 @@ impl GrokSession {
         Ok(Self {
             connection: Arc::new(connection),
             session_id: session_response.session_id,
-            event_rx,
+            event_rx: Arc::new(tokio::sync::Mutex::new(event_rx)),
             event_tx,
             status_tx,
             policy,
@@ -2783,7 +2775,7 @@ impl GrokSession {
         Ok(Self {
             connection: Arc::new(connection),
             session_id,
-            event_rx,
+            event_rx: Arc::new(tokio::sync::Mutex::new(event_rx)),
             event_tx,
             status_tx,
             policy,
@@ -2812,7 +2804,8 @@ impl GrokSession {
         attachments: Vec<PromptAttach>,
         prompt_id: String,
     ) -> anyhow::Result<()> {
-        let blocks = build_prompt_blocks(&text.into(), &attachments)?;
+        let blocks =
+            build_prompt_blocks(&text.into(), &attachments, std::path::Path::new(&self.cwd))?;
         self.send_prompt_blocks(blocks, prompt_id).await
     }
 
@@ -2823,12 +2816,17 @@ impl GrokSession {
         attachments: Vec<PromptAttach>,
         prompt_id: String,
     ) -> anyhow::Result<()> {
-        let blocks = build_prompt_blocks(&text.into(), &attachments)?;
+        let blocks =
+            build_prompt_blocks(&text.into(), &attachments, std::path::Path::new(&self.cwd))?;
         self.interject_blocks(blocks, prompt_id).await
     }
 
     /// 从官方队列去掉一条（`x.ai/queue/remove` 通知）。
-    pub async fn remove_queued_prompt(&self, id: &str, expected_version: u64) -> anyhow::Result<()> {
+    pub async fn remove_queued_prompt(
+        &self,
+        id: &str,
+        expected_version: u64,
+    ) -> anyhow::Result<()> {
         let params = serde_json::json!({
             "sessionId": self.session_id.to_string(),
             "id": id,
@@ -2907,8 +2905,11 @@ impl GrokSession {
         &self,
         action: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        self.ext_json("x.ai/plugins/action", serde_json::json!({ "action": action }))
-            .await
+        self.ext_json(
+            "x.ai/plugins/action",
+            serde_json::json!({ "action": action }),
+        )
+        .await
     }
 
     /// 官方商店目录（`x.ai/marketplace/list`）。扫描可能较慢。
@@ -2998,8 +2999,11 @@ impl GrokSession {
                 serde_json::Value::String(ctx.to_string()),
             );
         }
-        self.ext_json("x.ai/compact_conversation", serde_json::Value::Object(params))
-            .await
+        self.ext_json(
+            "x.ai/compact_conversation",
+            serde_json::Value::Object(params),
+        )
+        .await
     }
 
     /// 当前会话状态（最新值）。
@@ -3173,15 +3177,8 @@ impl GrokSession {
     /// 组装单只改人设时复用当前模型。先看本会话缓存，没有再问 `session/info`。
     async fn current_model_id(&self) -> anyhow::Result<String> {
         {
-            let cached = self
-                .last_model_id
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
-            if let Some(id) = cached
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
+            let cached = self.last_model_id.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(id) = cached.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 return Ok(id.to_string());
             }
         }
@@ -3199,8 +3196,7 @@ impl GrokSession {
     /// 点「计划」芯片走这条，不要另发一套协议。
     pub async fn set_session_mode(&self, mode_id: impl Into<String>) -> anyhow::Result<()> {
         let mode_id = mode_id.into();
-        let req =
-            SetSessionModeRequest::new(self.session_id.clone(), SessionModeId::new(mode_id));
+        let req = SetSessionModeRequest::new(self.session_id.clone(), SessionModeId::new(mode_id));
         self.connection
             .set_session_mode(req)
             .await
@@ -3300,7 +3296,12 @@ impl GrokSession {
                 continue;
             }
             let mut cfg = serde_json::Map::new();
-            if let Some(url) = server.url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(url) = server
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 cfg.insert("url".into(), serde_json::Value::String(url.to_string()));
             } else if let Some(cmd) = server
                 .command
@@ -3317,7 +3318,9 @@ impl GrokSession {
                 if !argv.is_empty() {
                     cfg.insert(
                         "args".into(),
-                        serde_json::Value::Array(argv.into_iter().map(serde_json::Value::String).collect()),
+                        serde_json::Value::Array(
+                            argv.into_iter().map(serde_json::Value::String).collect(),
+                        ),
                     );
                 }
             } else {
@@ -3380,14 +3383,9 @@ impl GrokSession {
                 .unwrap_or("")
                 .trim()
                 .to_ascii_lowercase();
-            let enabled = sk
-                .get("enabled")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-            let in_scope = scopes.is_empty()
-                || scopes
-                    .iter()
-                    .any(|s| s.trim().eq_ignore_ascii_case(&scope));
+            let enabled = sk.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let in_scope =
+                scopes.is_empty() || scopes.iter().any(|s| s.trim().eq_ignore_ascii_case(&scope));
             let excluded = crate::composition::skill_name_excluded(&name, exclude);
             let want = in_scope && !excluded;
             if want != enabled {
@@ -4069,13 +4067,15 @@ impl GrokSession {
     }
 
     /// 获取下一个会话事件（阻塞直到有事件或通道关闭）。
-    pub async fn next_event(&mut self) -> Option<SessionEvent> {
-        self.event_rx.recv().await
+    pub async fn next_event(&self) -> Option<SessionEvent> {
+        let mut rx = self.event_rx.lock().await;
+        rx.recv().await
     }
 
     /// 非阻塞取一条事件（历史回放 drain 用）。
-    pub fn try_next_event(&mut self) -> Option<SessionEvent> {
-        self.event_rx.try_recv().ok()
+    pub fn try_next_event(&self) -> Option<SessionEvent> {
+        let mut rx = self.event_rx.try_lock().ok()?;
+        rx.try_recv().ok()
     }
 }
 
@@ -4107,10 +4107,7 @@ impl SessionBackend for GrokSession {
     async fn memory_flush(&self) -> anyhow::Result<serde_json::Value> {
         GrokSession::memory_flush(self).await
     }
-    async fn memory_rewrite(
-        &self,
-        params: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    async fn memory_rewrite(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         GrokSession::memory_rewrite(self, params).await
     }
     async fn hunk_call(
@@ -4132,7 +4129,10 @@ impl SessionBackend for GrokSession {
     async fn marketplace_list(&self) -> anyhow::Result<serde_json::Value> {
         GrokSession::marketplace_list(self).await
     }
-    async fn marketplace_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+    async fn marketplace_action(
+        &self,
+        action: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
         GrokSession::marketplace_action(self, action).await
     }
     async fn hooks_list(&self) -> anyhow::Result<serde_json::Value> {

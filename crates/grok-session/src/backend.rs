@@ -70,10 +70,7 @@ pub trait SessionBackend {
 
     async fn memory_flush(&self) -> anyhow::Result<serde_json::Value>;
 
-    async fn memory_rewrite(
-        &self,
-        params: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value>;
+    async fn memory_rewrite(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value>;
 
     /// `action` 为 hunk-tracker 动作名（如 `get-files`），实现里再拼官方方法名。
     async fn hunk_call(
