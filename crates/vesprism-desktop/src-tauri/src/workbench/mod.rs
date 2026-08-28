@@ -7,3 +7,4 @@ pub mod agents;
 pub mod bindings;
 pub mod flows;
 pub mod mcp_server;
+pub mod role_agents;

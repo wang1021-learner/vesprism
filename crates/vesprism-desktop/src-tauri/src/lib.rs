@@ -126,6 +126,10 @@ pub fn run() {
         std::env::set_var("GROK_HOME", &desktop_grok_home);
     }
 
+    if let Err(e) = workbench::role_agents::seed_role_subagents(&desktop_grok_home) {
+        eprintln!("[vesprism] 写入岗位子代理失败: {e}");
+    }
+
     // 一次性迁移：若用户目录尚无 .env，而旧版曾把密钥写在仓库包目录，则复制过来。
     // 之后只读 $GROK_HOME/.env；仓库内 .env 不再参与加载。
     let secrets_env = desktop_grok_home.join(".env");
