@@ -30,7 +30,7 @@
       }
     ],
     "security": {
-      "freezePrototype": true,
+      "freezePrototype": false,
       "csp": {
         "default-src": "'self'",
         "script-src": "'self'",

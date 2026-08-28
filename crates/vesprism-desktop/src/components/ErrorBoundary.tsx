@@ -79,7 +79,7 @@ function ErrorFallback({
         </div>
         <h2 className="error-boundary-title">{title}</h2>
         <p className="error-boundary-desc">
-          界面渲染时发生错误。可尝试重试；若反复出现，请新建对话或重启应用。
+          界面渲染时发生错误。可先点重试；若反复出现，请新建对话或重启应用。
         </p>
         {detail && (
           <pre className="error-boundary-detail" title={detail}>
@@ -112,7 +112,7 @@ export function MainViewportErrorFallback({
   onReset: () => void
 }) {
   return (
-    <ErrorFallback title="主界面出错了" error={error} onReset={onReset} compact />
+    <ErrorFallback title="主界面出错了" error={error} onReset={onReset} />
   )
 }
 

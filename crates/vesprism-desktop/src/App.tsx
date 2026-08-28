@@ -343,9 +343,16 @@ function AppMainBody() {
   }
   if (kind === 'flow-canvas') {
     return (
-      <Suspense fallback={<div className="flow-canvas-loading">加载流程画布…</div>}>
-        <FlowCanvas />
-      </Suspense>
+      <ErrorBoundary
+        name="流程画布"
+        fallback={(error, reset) => (
+          <MainViewportErrorFallback error={error} onReset={reset} />
+        )}
+      >
+        <Suspense fallback={<div className="flow-canvas-loading">加载流程画布…</div>}>
+          <FlowCanvas />
+        </Suspense>
+      </ErrorBoundary>
     )
   }
   if (kind === 'flow-run') {
