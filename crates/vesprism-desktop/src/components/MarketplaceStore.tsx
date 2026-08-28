@@ -104,7 +104,7 @@ export function MarketplaceStore({
   }
 
   return (
-    <div>
+    <div className="work-store">
       <p className="skills-add-hint">
         安装会把技能、MCP、Hooks 写到本机目录，下次会话自动加载。默认不信任、不自动启用；装完请到左侧已装列表按需启用。来源和相对路径会在确认时展示。
       </p>

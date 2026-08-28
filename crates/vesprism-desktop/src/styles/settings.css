@@ -228,6 +228,19 @@
   background: transparent;
 }
 
+.settings-embed .work-store {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-embed .work-store > .skills-add-hint,
+.settings-embed .work-store > .work-panel-actions,
+.settings-embed .work-store > .notice,
+.settings-embed .work-store > .memory-banner {
+  flex-shrink: 0;
+}
+
 .settings-embed .work-split {
   flex: 1 1 auto;
   min-height: 0;
@@ -246,9 +259,17 @@
   overflow: hidden;
 }
 
+.settings-embed .work-search {
+  flex-shrink: 0;
+}
+
 .settings-embed .work-rows,
 .settings-embed .work-preview {
   overflow: auto;
+  min-height: 0;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.28) transparent;
 }
 
 .settings-embed .work-preview {
