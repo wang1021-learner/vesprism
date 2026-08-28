@@ -19,6 +19,8 @@ import {
 import { generateId } from '../lib/generateId'
 import { useComposerAssist } from './ComposerAssist'
 import {
+  $activeTabId,
+  $composerInput,
   $planApproval,
   $planPhase,
   $sessionMode,
@@ -31,6 +33,7 @@ import {
   openFeedback,
   openSessionIntent,
   openSettings,
+  patchActiveTab,
   pushToast,
   workspaceLabel,
 } from '../store'
@@ -43,6 +46,7 @@ import {
 import { clipboardImageFiles, persistImageFile, revokePreviewUrl } from '../lib/pasteImage'
 import { localFileUrl } from '../lib/localFileUrl'
 import { planChipLabel, toggleAskMode, togglePlanMode } from '../lib/planMode'
+import { startAccountLogin } from '../lib/accountAuth'
 import { openSessionInsight, shareCurrentSession } from '../lib/engineSlash'
 import { useStore } from '@nanostores/react'
 import type { PromptAttach } from '../bridge'
@@ -62,8 +66,6 @@ interface PasteBlock {
 }
 
 interface ComposerProps {
-  input: string
-  setInput: (v: string) => void
   canSend: boolean
   /** 引擎正在生成（engineStatus === generating） */
   engineGenerating: boolean
@@ -246,8 +248,6 @@ function FileTextIcon() {
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   {
-    input,
-    setInput,
     canSend,
     engineGenerating,
     shellReady,
@@ -282,12 +282,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wsPickerRef = useRef<HTMLDivElement>(null)
   const modelPickerRef = useRef<HTMLDivElement>(null)
+  const [draft, setDraft] = useState(() => $composerInput.get())
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+
+  const commitDraft = useCallback((v: string) => {
+    draftRef.current = v
+    setDraft(v)
+    patchActiveTab({ composerInput: v })
+  }, [])
 
   useImperativeHandle(ref, () => ({
     focus: () => {
       textareaRef.current?.focus()
     },
   }))
+
+  // 切 Tab / 发送清空 / 撤回回填：atom 变了才跟，自己打字不靠这条（避免和 setState 抢）
+  useEffect(() => {
+    return $composerInput.listen((v) => {
+      if (v !== draftRef.current) setDraft(v)
+    })
+  }, [])
 
   useEffect(() => {
     const onFocus = () => {
@@ -297,7 +313,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const onSetInput = (e: Event) => {
       const text = (e as CustomEvent<{ text?: string }>).detail?.text
       if (typeof text === 'string' && text.length > 0) {
-        setInput(text)
+        commitDraft(text)
       }
       // 等 state 提交后再聚焦，避免与受控输入抢焦点
       requestAnimationFrame(() => {
@@ -315,7 +331,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       window.removeEventListener('jike:focus-composer', onFocus)
       window.removeEventListener('jike:set-composer-input', onSetInput)
     }
-  }, [setInput])
+  }, [commitDraft])
 
   const scratch = useStore($scratchCwd)
   const [wsOpen, setWsOpen] = useState(false)
@@ -330,6 +346,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [dragging, setDragging] = useState(false)
   const [editQueuedId, setEditQueuedId] = useState<string | null>(null)
   const [editQueuedText, setEditQueuedText] = useState('')
+  const tabId = useStore($activeTabId)
+  const prevTabRef = useRef(tabId)
+  useEffect(() => {
+    if (prevTabRef.current === tabId) return
+    prevTabRef.current = tabId
+    setPasteBlocks([])
+    setAttachChips((prev) => {
+      for (const a of prev) revokePreviewUrl(a.previewUrl)
+      return []
+    })
+    setEditQueuedId(null)
+  }, [tabId])
   const attachMenuRef = useRef<HTMLDivElement>(null)
   const securityPolicy = useStore($securityPolicy)
   const policyOverride = useStore($sessionPolicyOverride)
@@ -415,7 +443,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     el.style.height = '0px'
     const next = Math.min(Math.max(el.scrollHeight, 36), 160)
     el.style.height = `${next}px`
-  }, [input])
+  }, [draft])
 
   // chat_completions backend（DeepSeek 等第三方）官方代码对这个参数
   // 不做任何过滤，是否真正生效取决于目标服务商是否支持，这里给用户
@@ -536,7 +564,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const buildFinalText = () => {
     const pasted = pasteBlocks.map((b) => b.text).join('\n\n')
-    const typed = input.trim()
+    const typed = draft.trim()
     if (pasted && typed) return `${pasted}\n\n${typed}`
     return pasted || typed
   }
@@ -582,7 +610,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const handleInterject = () => {
     if (!canSend) return
     const extra = pasteBlocks.map((b) => b.text).join('\n\n')
-    const finalText = [input.trim(), extra].filter(Boolean).join('\n\n')
+    const finalText = [draft.trim(), extra].filter(Boolean).join('\n\n')
     const attachments: PromptAttach[] = attachChips.map((a) => ({
       kind: a.kind,
       path: a.path,
@@ -594,7 +622,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     setAttachChips([])
   }
 
-  const assist = useComposerAssist(input, setInput, workspaceCwd, {
+  const assist = useComposerAssist(draft, commitDraft, workspaceCwd, {
     enableSlash,
     onAttachPath: (path, kind) => pushAttach(kind, path),
   })
@@ -606,14 +634,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (assist.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (!canSend || !(input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)) return
+      if (!canSend || !(draft.trim() || pasteBlocks.length > 0 || attachChips.length > 0)) return
       if (isGenerating && (e.ctrlKey || e.metaKey)) handleInterject()
       else handleSend()
     }
   }
 
   const canSubmit =
-    canSend && (!!input.trim() || pasteBlocks.length > 0 || attachChips.length > 0)
+    canSend && (!!draft.trim() || pasteBlocks.length > 0 || attachChips.length > 0)
   const execPolicy = policyOverride || securityPolicy.executionPolicy
   const policyChip =
     sandboxCwd || execPolicy === 'proceed-in-sandbox'
@@ -898,7 +926,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         )}
         <textarea
           ref={textareaRef}
-          value={input}
+          value={draft}
           rows={1}
           placeholder={
             placeholder
@@ -911,7 +939,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   ? '随便问问…'
                   : '输入消息…'
           }
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(e) => commitDraft(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
         />
@@ -955,6 +983,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   </button>
                   <div className="composer-menu-divider" />
                   <div className="composer-menu-label">本会话</div>
+                  <button
+                    type="button"
+                    className="composer-menu-item"
+                    onClick={() => {
+                      setAttachOpen(false)
+                      openSettings('general')
+                      void startAccountLogin()
+                    }}
+                  >
+                    <span className="menu-item-body">
+                      <span className="menu-item-title">登录账号</span>
+                      <span className="menu-item-sub">打开浏览器完成官方授权</span>
+                    </span>
+                  </button>
                   <button
                     type="button"
                     className="composer-menu-item"

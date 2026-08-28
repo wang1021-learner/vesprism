@@ -39,7 +39,7 @@ import { SessionTermDock } from './components/SessionTermDock'
 import { syncWindowTitle, titleForWindow } from './lib/windowTitle'
 import {
   $activeTabId, $tabs,
-  $activeChatId, $chats, $composerInput,
+  $activeChatId, $chats,
   $defaultModelId, $error, $generating, $messages, $models, $queuedPrompts,
   $permission, $userQuestion, $mcpElicit, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
@@ -421,7 +421,6 @@ function AppMessages() {
 }
 
 function AppComposer() {
-  const input = useStore($composerInput)
   const generating = useStore($generating)
   const ready = useStore($shellReady)
   const phase = useStore($sessionPhase)
@@ -555,14 +554,8 @@ function AppComposer() {
     }
   }, [cwd])
 
-  const setComposerInput = useCallback((v: string) => {
-    patchActiveTab({ composerInput: v })
-  }, [])
-
   return (
     <Composer
-      input={input}
-      setInput={setComposerInput}
       canSend={canSend}
       engineGenerating={generating}
       shellReady={ready}

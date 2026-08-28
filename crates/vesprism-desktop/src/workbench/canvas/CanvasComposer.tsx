@@ -73,7 +73,6 @@ export const CanvasComposer = memo(function CanvasComposer({
   error?: string
   onRetryStrict?: () => void
 }) {
-  const input = useStore($composerInput)
   const generating = useStore($generating)
   const ready = useStore($shellReady)
   const phase = useStore($sessionPhase)
@@ -247,8 +246,6 @@ export const CanvasComposer = memo(function CanvasComposer({
         variant="dock"
         showWorkspace={false}
         placeholder="描述流程，或说要改哪一步…"
-        input={input}
-        setInput={(v) => patchActiveTab({ composerInput: v })}
         canSend={ready}
         engineGenerating={generating}
         shellReady={ready}

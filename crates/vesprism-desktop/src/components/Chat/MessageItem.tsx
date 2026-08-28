@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useStore } from '@nanostores/react'
 import type { ChatMessage, MessageAttach, ToolCallData } from '../../types'
 import { localFileUrl } from '../../lib/localFileUrl'
 import {
@@ -10,6 +9,7 @@ import {
   pushToast,
   removeBackgroundTask,
 } from '../../store'
+import { useStoreSelect } from '../../lib/useStoreSelect'
 import { useActivePermission } from '../../lib/useActivePermission'
 import { InlinePermissionBar } from '../Permission'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -394,7 +394,7 @@ function useTickingMs(start: number | undefined, live: boolean): number | undefi
 }
 
 /** 子任务行：对话内 scaffold（须在 MessageItem 前声明） */
-function SubagentToolLine({
+const SubagentToolLine = memo(function SubagentToolLine({
   tool,
   streaming,
 }: {
@@ -406,11 +406,10 @@ function SubagentToolLine({
   const [cancelling, setCancelling] = useState(false)
   const [copied, setCopied] = useState(false)
   const copyTimerRef = useRef<number | undefined>(undefined)
-  const subagents = useStore($subagents)
   const subId = parseSubagentIdFromToolCallId(tool.toolCallId)
-  const runtime = subId
-    ? subagents.find((s) => s.subagentId === subId)
-    : undefined
+  const runtime = useStoreSelect($subagents, (list) =>
+    subId ? list.find((s) => s.subagentId === subId) : undefined,
+  )
 
   useEffect(() => {
     return () => {
@@ -591,7 +590,7 @@ function SubagentToolLine({
       </div>
     </div>
   )
-}
+})
 
 export const MessageItem = memo(function MessageItem({
   message,
@@ -1051,8 +1050,10 @@ const ToolLine = memo(function ToolLine({
   }, [diffs, formattedPreview, tool.detail, tool.title])
 
   // bash 后台任务（x.ai/task_backgrounded）：工具行显示徽标 + 终止入口
-  const bgTasks = useStore($backgroundTasks)
-  const bgTask = bgTasks[tool.toolCallId]
+  const bgTask = useStoreSelect(
+    $backgroundTasks,
+    (tasks) => tasks[tool.toolCallId],
+  )
   const [killing, setKilling] = useState(false)
   const onKillBg = useCallback(async () => {
     if (!bgTask || killing) return

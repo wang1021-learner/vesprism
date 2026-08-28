@@ -4,8 +4,8 @@ import {
   tailBoundedRemend,
   parseMarkdownIntoBlocks,
 } from '@assistant-ui/react-streamdown'
-import { createMathPlugin } from '@streamdown/math'
 import { safeMarkdownHref, safeMarkdownImgSrc } from '../../lib/safeMarkdownUrl'
+import { looksLikeMath } from '../../lib/looksLikeMath'
 
 // ── 预处理 ──
 
@@ -24,6 +24,9 @@ function preprocessWithTailRepair(text: string): string {
 
 let codePluginCache: import('@streamdown/code').CodeHighlighterPlugin | null = null
 let mermaidPluginCache: import('@streamdown/mermaid').DiagramPlugin | null = null
+let mathPluginCache: ReturnType<
+  (typeof import('@streamdown/math'))['createMathPlugin']
+> | null = null
 
 function useCodePlugin() {
   const [plugin, setPlugin] = useState(codePluginCache)
@@ -50,6 +53,20 @@ function useMermaidPlugin() {
     })
     return () => { cancelled = true }
   }, [plugin])
+  return plugin
+}
+
+function useMathPlugin(needed: boolean) {
+  const [plugin, setPlugin] = useState(mathPluginCache)
+  useEffect(() => {
+    if (!needed || plugin) return
+    let cancelled = false
+    void import('@streamdown/math').then(({ createMathPlugin }) => {
+      mathPluginCache = createMathPlugin({ singleDollarTextMath: true })
+      if (!cancelled) setPlugin(mathPluginCache)
+    })
+    return () => { cancelled = true }
+  }, [needed, plugin])
   return plugin
 }
 
@@ -105,15 +122,15 @@ interface Props {
 export const AssistantMarkdown = memo(function AssistantMarkdown({ text }: Props) {
   const code = useCodePlugin()
   const mermaid = useMermaidPlugin()
+  const math = useMathPlugin(looksLikeMath(text))
 
   const plugins = useMemo(() => {
-    const p: Record<string, unknown> = {
-      math: createMathPlugin({ singleDollarTextMath: true }),
-    }
+    const p: Record<string, unknown> = {}
+    if (math) p.math = math
     if (code) p.code = code
     if (mermaid) p.mermaid = mermaid
     return p
-  }, [code, mermaid])
+  }, [code, mermaid, math])
 
   const components = useMemo(() => ({
     // ── 标题层级 ──
