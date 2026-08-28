@@ -681,17 +681,39 @@ pub async fn run_tab_actor(
                 let Some(cmd) = cmd else {
                     break; // 所有 sender 已释放（CloseTab 已从共享表移除）→ 优雅退出
                 };
-                handle_command(
-                    cmd, &app, &tab_id, &mut session, &mut status_rx,
-                    &mut pending_permissions, &mut next_perm_id,
-                ).await;
+                if command_holds_actor(&cmd) {
+                    handle_command(
+                        cmd, &app, &tab_id, &mut session, &mut status_rx,
+                        &mut pending_permissions, &mut next_perm_id,
+                    ).await;
+                } else {
+                    // 长 RPC 丢到 LocalSet，主循环继续泵事件/审批。
+                    let mut session_clone = session.clone();
+                    let app2 = app.clone();
+                    let tab_id2 = tab_id.clone();
+                    tokio::task::spawn_local(async move {
+                        let mut status_rx = None;
+                        let mut pending_permissions = HashMap::new();
+                        let mut next_perm_id = 0u64;
+                        handle_command(
+                            cmd,
+                            &app2,
+                            &tab_id2,
+                            &mut session_clone,
+                            &mut status_rx,
+                            &mut pending_permissions,
+                            &mut next_perm_id,
+                        )
+                        .await;
+                    });
+                }
                 if session.is_some() {
                     disconnect_tries = 0;
                 }
             }
             // 消费会话流式事件并转发给前端（透传；合并由官方 ReplayBuffer 负责）。
             event = async {
-                match session.as_mut() {
+                match session.as_ref() {
                     Some(s) => s.next_event().await,
                     None => std::future::pending::<Option<SessionEvent>>().await,
                 }
@@ -741,6 +763,19 @@ pub async fn run_tab_actor(
             }
         }
     }
+}
+
+/// 会改 Actor 持有的 session / 审批表，必须在主循环里跑，不能 spawn。
+fn command_holds_actor(cmd: &ActorCommand) -> bool {
+    matches!(
+        cmd,
+        ActorCommand::Start { .. }
+            | ActorCommand::Restart { .. }
+            | ActorCommand::LoadSession { .. }
+            | ActorCommand::DeleteSession { .. }
+            | ActorCommand::RespondPermission { .. }
+            | ActorCommand::RespondUserQuestion { .. }
+    )
 }
 
 /// 处理单条 Actor 命令。
@@ -1393,10 +1428,7 @@ async fn handle_command(
                 }
             }
         }
-        ActorCommand::McpAuthTrigger {
-            server_name,
-            reply,
-        } => {
+        ActorCommand::McpAuthTrigger { server_name, reply } => {
             let Some(s) = session.as_ref() else {
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
@@ -1622,7 +1654,7 @@ async fn handle_command(
                     let _ = reply.send(Err(e.to_string()));
                 }
             }
-        },
+        }
         ActorCommand::Restart {
             cwd,
             sandbox_origin,
@@ -1678,15 +1710,16 @@ async fn handle_command(
                 restore_code,
                 reasoning_effort.as_deref(),
             )
-            .await {
-                Ok(mut s) => {
+            .await
+            {
+                Ok(s) => {
                     *status_rx = Some(s.subscribe_status());
                     let sid = s.session_id();
                     // 前端已用 get_session_messages 磁盘投影秒开 UI；回放 chunk 在 attaching
                     // 阶段会被丢弃。此处仍 drain channel（避免污染后续实时事件），但跳过
                     // 与投影重复的 transcript 类 forward，省 IPC/序列化/前端无效处理。
                     drain_session_events_until_quiet(
-                        &mut s,
+                        &s,
                         app,
                         tab_id,
                         pending_permissions,
@@ -1859,7 +1892,8 @@ async fn begin_fresh_session(
         model_id.as_deref(),
         reasoning_effort.as_deref(),
     )
-    .await {
+    .await
+    {
         Ok(s) => {
             *status_rx = Some(s.subscribe_status());
             let sid = s.session_id();
@@ -1942,7 +1976,7 @@ async fn replay_composition_on_session(s: &GrokSession, session_id: &str, cwd: &
 ///
 /// `skip_transcript`：前端已用磁盘投影展示历史时为 true，只透传权限/错误等关键事件。
 async fn drain_session_events_until_quiet(
-    session: &mut GrokSession,
+    session: &GrokSession,
     app: &AppHandle,
     tab_id: &TabId,
     pending: &mut HashMap<u64, oneshot::Sender<String>>,

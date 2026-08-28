@@ -11,7 +11,6 @@ import {
   $messages,
   $models,
   $settingsDefaultModelId,
-  $reasoningEffort,
   $settingsOpen,
   $settingsSection,
   $workspaceCwd,
@@ -64,6 +63,7 @@ import {
   reasoningLevelsFor,
   spawnReasoningEffort,
 } from '../lib/reasoning'
+import { useStoreSelect } from '../lib/useStoreSelect'
 import type { ModelInfo } from '../types'
 import { ModelSamplingFields } from './ModelSamplingFields'
 import { SettingsHelp, SettingsLabel } from './SettingsHelp'
@@ -93,8 +93,8 @@ function SettingsSessionGate({ children }: { children: ReactNode }) {
 
 export function SettingsModal() {
   const open = useStore($settingsOpen)
-  const messages = useStore($messages)
-  const canSwitchWorkspace = !messages.some((m) => m.role === 'user')
+  const hasUserMessage = useStoreSelect($messages, (m) => m.some((msg) => msg.role === 'user'))
+  const canSwitchWorkspace = !hasUserMessage
 
   const tab = useStore($settingsSection) as SettingsTab
   const setTab = (next: SettingsTab) => $settingsSection.set(next as SettingsSection)
@@ -190,7 +190,6 @@ export function SettingsModal() {
 
   useEffect(() => {
     if (!open) return
-    setTab('models')
     setShowAdvanced(false)
     setToast(null)
     setKeyInput('')

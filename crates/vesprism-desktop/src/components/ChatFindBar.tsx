@@ -9,12 +9,18 @@ import {
 } from '../store'
 import { closeChatFind, openChatFind } from '../lib/engineSlash'
 import { findMessageHits, nextHit } from '../lib/chatFind'
+import { useStoreSelect } from '../lib/useStoreSelect'
 
 export function ChatFindBar() {
   const open = useStore($chatFindOpen)
   const query = useStore($chatFindQuery)
   const index = useStore($chatFindIndex)
-  const messages = useStore($messages)
+  // 搜索条关掉时忽略流式消息更新，避免每个 token 都重渲染。
+  const messages = useStoreSelect(
+    $messages,
+    (m) => m,
+    (a, b) => ($chatFindOpen.get() ? Object.is(a, b) : true),
+  )
   const tabId = useStore($activeTabId)
   const inputRef = useRef<HTMLInputElement>(null)
   const hits = useMemo(() => findMessageHits(messages, query), [messages, query])

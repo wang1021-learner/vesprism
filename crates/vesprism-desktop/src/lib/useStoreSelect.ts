@@ -1,6 +1,15 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react'
 import type { ReadableAtom } from 'nanostores'
 
+/** 选中值没变就交回旧引用，避免无关更新触发重渲染。 */
+export function pickIfUnchanged<S>(
+  prev: S,
+  next: S,
+  isEqual: (a: S, b: S) => boolean = Object.is,
+): S {
+  return isEqual(prev, next) ? prev : next
+}
+
 /**
  * 订 atom，但只在选中值按 isEqual 变化时重渲染。
  * 工具行用它订「这一条」后台任务 / 子任务，避免整表一变所有行都刷。
@@ -23,9 +32,9 @@ export function useStoreSelect<T, S>(
 
   const getSnapshot = useCallback(() => {
     const next = selectRef.current(store.get())
-    if (eqRef.current(cache.current, next)) return cache.current
-    cache.current = next
-    return next
+    const kept = pickIfUnchanged(cache.current, next, eqRef.current)
+    cache.current = kept
+    return kept
   }, [store])
 
   return useSyncExternalStore(subscribe, getSnapshot)

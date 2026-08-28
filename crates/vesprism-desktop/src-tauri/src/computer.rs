@@ -111,12 +111,7 @@ pub fn encode_png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, St
     Ok(out)
 }
 
-pub fn downscale_rgb(
-    width: u32,
-    height: u32,
-    rgb: &[u8],
-    max_width: u32,
-) -> (u32, u32, Vec<u8>) {
+pub fn downscale_rgb(width: u32, height: u32, rgb: &[u8], max_width: u32) -> (u32, u32, Vec<u8>) {
     if width <= max_width || width == 0 {
         return (width, height, rgb.to_vec());
     }
@@ -204,9 +199,9 @@ fn windows_screen_size() -> Result<(u32, u32), String> {
 fn windows_screenshot() -> Result<Shot, String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HGDIOBJ,
-        SRCCOPY,
+        BITMAPINFO, BITMAPINFOHEADER, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC,
+        DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ, ReleaseDC, SRCCOPY,
+        SelectObject,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
@@ -274,7 +269,8 @@ fn windows_screenshot() -> Result<Shot, String> {
         }
         let screen_width = vw as u32;
         let screen_height = vh as u32;
-        let (width, height, scaled) = downscale_rgb(screen_width, screen_height, &rgb, MAX_SHOT_WIDTH);
+        let (width, height, scaled) =
+            downscale_rgb(screen_width, screen_height, &rgb, MAX_SHOT_WIDTH);
         let png = encode_png_rgb(width, height, &scaled)?;
         Ok(Shot {
             width,
@@ -290,12 +286,12 @@ fn windows_screenshot() -> Result<Shot, String> {
 
 #[cfg(windows)]
 fn windows_click(x: i32, y: i32, button: &str) -> Result<String, String> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SetCursorPos, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
-        MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, mouse_event,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SetCursorPos,
     };
     let (sw, sh) = windows_screen_size()?;
     let (vx, vy) = unsafe {
@@ -324,7 +320,7 @@ fn windows_click(x: i32, y: i32, button: &str) -> Result<String, String> {
 #[cfg(windows)]
 fn windows_type(text: &str) -> Result<String, String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput,
         VIRTUAL_KEY,
     };
     if text.is_empty() {
@@ -371,7 +367,7 @@ fn windows_type(text: &str) -> Result<String, String> {
 #[cfg(windows)]
 fn windows_key(key: &str) -> Result<String, String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY,
         VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU,
         VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
     };
@@ -426,7 +422,11 @@ fn windows_key(key: &str) -> Result<String, String> {
                 ki: KEYBDINPUT {
                     wVk: k,
                     wScan: 0,
-                    dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                    dwFlags: if up {
+                        KEYEVENTF_KEYUP
+                    } else {
+                        Default::default()
+                    },
                     time: 0,
                     dwExtraInfo: 0,
                 },

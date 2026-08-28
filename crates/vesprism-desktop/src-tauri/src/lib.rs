@@ -13,23 +13,50 @@ mod workbench;
 use state::{AppState, spawn_supervisor};
 use tauri::Manager;
 
+/// 与 `tauri.conf.json` `build.devUrl` 一致：只有这一份 Vite 源算应用内导航。
+const DEV_VITE_PORT: u16 = 9527;
+
 fn is_app_navigation(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" | "ipc" | "asset" | "data" | "blob" | "about" => true,
-        "http" | "https" => matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1")),
+        "http" | "https" => match url.host_str() {
+            Some("asset.localhost" | "ipc.localhost" | "tauri.localhost") => true,
+            Some("127.0.0.1") if url.scheme() == "http" && url.port() == Some(DEV_VITE_PORT) => {
+                true
+            }
+            _ => false,
+        },
         _ => false,
     }
 }
 
-fn open_in_system_browser(url: &str) {
+fn open_in_system_browser(url: &tauri::Url) {
+    if !matches!(url.scheme(), "http" | "https") {
+        return;
+    }
+    let url = url.as_str();
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::core::PCWSTR;
+
+        let file: Vec<u16> = std::ffi::OsStr::new(url)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        // 交给默认浏览器，避免 `cmd /C start` 把 URL 查询串里的 `&` 当成命令分隔符。
+        let _ = unsafe {
+            ShellExecuteW(
+                None,
+                windows::core::w!("open"),
+                PCWSTR(file.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
     }
     #[cfg(target_os = "macos")]
     {
@@ -47,7 +74,7 @@ fn external_link_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             if is_app_navigation(url) {
                 return true;
             }
-            open_in_system_browser(url.as_str());
+            open_in_system_browser(url);
             false
         })
         .build()
@@ -281,7 +308,6 @@ pub fn run() {
             workbench::bindings::list_workbench_sessions,
             workbench::bindings::bind_workbench_artifact,
             workbench::bindings::touch_workbench_session,
-            commands::save_artifact_file,
             commands::list_dir,
             commands::search_workspace_files,
             commands::save_paste_image,
@@ -308,4 +334,38 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::{DEV_VITE_PORT, is_app_navigation};
+
+    fn u(s: &str) -> tauri::Url {
+        tauri::Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn vite_dev_origin_is_in_app() {
+        assert!(is_app_navigation(&u("http://127.0.0.1:9527/")));
+        assert!(is_app_navigation(&u("http://127.0.0.1:9527/index.html")));
+        assert_eq!(DEV_VITE_PORT, 9527);
+    }
+
+    #[test]
+    fn other_loopback_is_external() {
+        assert!(!is_app_navigation(&u("http://127.0.0.1:8080/")));
+        assert!(!is_app_navigation(&u("http://localhost/")));
+        assert!(!is_app_navigation(&u("http://localhost:9527/")));
+        assert!(!is_app_navigation(&u("http://[::1]:9527/")));
+        assert!(!is_app_navigation(&u("https://127.0.0.1:9527/")));
+    }
+
+    #[test]
+    fn tauri_schemes_and_hosts_are_in_app() {
+        assert!(is_app_navigation(&u("tauri://localhost/")));
+        assert!(is_app_navigation(&u("http://asset.localhost/foo")));
+        assert!(is_app_navigation(&u("http://ipc.localhost/")));
+        assert!(is_app_navigation(&u("https://tauri.localhost/")));
+        assert!(!is_app_navigation(&u("https://example.com/")));
+    }
 }

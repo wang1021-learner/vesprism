@@ -2,7 +2,7 @@
 
 use crate::commands::desktop_home_dir;
 use crate::commands::load_config_root;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -64,10 +64,7 @@ pub fn list_catalog_mcp() -> Result<Value, String> {
         let Some(t) = spec.as_table() else { continue };
         let command = toml_str(t, "command");
         let url = toml_str(t, "url");
-        let args = t
-            .get("args")
-            .map(toml_string_array)
-            .unwrap_or_default();
+        let args = t.get("args").map(toml_string_array).unwrap_or_default();
         let enabled = !toml_bool(t, "disabled", false) && toml_bool(t, "enabled", true);
         let transport = if !url.is_empty() { "http" } else { "stdio" };
         servers.push(json!({
@@ -116,7 +113,9 @@ fn read_frontmatter(md: &str) -> (String, String) {
 }
 
 fn collect_skills_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -170,7 +169,9 @@ fn walk_memory(dir: &Path, source: &str, out: &mut Vec<Value>, depth: u8) {
     if depth > 4 {
         return;
     }
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -218,13 +219,21 @@ pub fn list_catalog_memory() -> Result<Value, String> {
 }
 
 fn read_plugin_json(dir: &Path) -> Option<(String, String, String)> {
-    for rel in ["plugin.json", ".grok-plugin/plugin.json", ".claude-plugin/plugin.json"] {
+    for rel in [
+        "plugin.json",
+        ".grok-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
+    ] {
         let p = dir.join(rel);
         if !p.is_file() {
             continue;
         }
-        let Ok(raw) = fs::read_to_string(&p) else { continue };
-        let Ok(v) = serde_json::from_str::<Value>(&raw) else { continue };
+        let Ok(raw) = fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
         let name = v
             .get("name")
             .and_then(|x| x.as_str())
@@ -249,7 +258,9 @@ fn read_plugin_json(dir: &Path) -> Option<(String, String, String)> {
 }
 
 fn collect_plugins_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -265,7 +276,11 @@ fn collect_plugins_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
         }
         let (name, description, version) = read_plugin_json(&path)
             .unwrap_or_else(|| (folder.clone(), String::new(), String::new()));
-        let id = if name.is_empty() { folder } else { name.clone() };
+        let id = if name.is_empty() {
+            folder
+        } else {
+            name.clone()
+        };
         out.push(json!({
             "id": id,
             "name": if name.is_empty() { id.clone() } else { name },

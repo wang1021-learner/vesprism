@@ -201,7 +201,7 @@ const COMMAND_PURPOSES: Record<string, string> = {
   tools: '打开工具页，查看模型会调用的能力',
   mcp: '打开 MCP 页，管理外接服务器',
   rewind: '将会话回滚到某个历史节点',
-  login: '打开浏览器登录官方账号，凭证与命令行同一份',
+  login: '打开浏览器登录官方账号（凭证保存在本机 Vesprism 目录）',
   logout: '退出本机官方账号；环境变量密钥仍会保留',
   'always-approve': 'on=本会话工具不再弹出审批，off=恢复询问',
   yolo: 'on=本会话工具不再弹出审批，off=恢复询问',

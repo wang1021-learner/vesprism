@@ -4,7 +4,7 @@
  * - 兜底：输入框上方浮层，仅当内嵌条不可见时显示
  * - 主按钮：允许这次（once）；下拉：仅这场对话允许 / 总是允许 / 永不允许
  * - 键盘：Ctrl/⌘+Enter 允许这次 · Esc 拒绝（确认框打开时 Esc 取消确认）
- * - 子 agent 的权限请求已在后端自动放行，不会到达这里
+ * - 子 agent 写操作也会到达这里（只读工具仍由后端自动放行）
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'

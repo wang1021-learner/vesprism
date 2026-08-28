@@ -6,13 +6,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{json, Value as Json};
-use xai_grok_mcp::rmcp;
+use rmcp::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ErrorData as McpError, JsonObject,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
-use rmcp::ServerHandler;
+use serde_json::{Value as Json, json};
+use xai_grok_mcp::rmcp;
 
 use crate::computer;
 
@@ -28,7 +28,9 @@ fn tool_shot() -> Tool {
     .expect("schema");
     Tool::new(
         Cow::Borrowed("computer_screenshot"),
-        Cow::Borrowed("截取当前整屏（含多显示器虚拟屏），返回缩小后的 PNG 与宽高。点击请用本图坐标。电脑操作关闭时会失败。"),
+        Cow::Borrowed(
+            "截取当前整屏（含多显示器虚拟屏），返回缩小后的 PNG 与宽高。点击请用本图坐标。电脑操作关闭时会失败。",
+        ),
         Arc::new(schema),
     )
 }
@@ -116,7 +118,13 @@ impl ServerHandler for ComputerMcp {
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         async move {
             Ok(ListToolsResult {
-                tools: vec![tool_shot(), tool_click(), tool_type(), tool_key(), tool_size()],
+                tools: vec![
+                    tool_shot(),
+                    tool_click(),
+                    tool_type(),
+                    tool_key(),
+                    tool_size(),
+                ],
                 next_cursor: None,
                 meta: None,
             })
@@ -128,24 +136,27 @@ impl ServerHandler for ComputerMcp {
         request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let args: HashMap<String, Json> = request
-            .arguments
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let args: HashMap<String, Json> =
+            request.arguments.unwrap_or_default().into_iter().collect();
         let text = match request.name.as_ref() {
             "computer_screenshot" => {
                 let shot = computer::screenshot().map_err(|e| McpError::internal_error(e, None))?;
-                serde_json::to_string(&computer::shot_to_json(&shot)).unwrap_or_else(|_| "{}".into())
+                serde_json::to_string(&computer::shot_to_json(&shot))
+                    .unwrap_or_else(|_| "{}".into())
             }
             "computer_click" => {
-                let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| {
-                    McpError::invalid_params("'x' is required", None)
-                })?;
-                let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| {
-                    McpError::invalid_params("'y' is required", None)
-                })?;
-                let button = args.get("button").and_then(|v| v.as_str()).unwrap_or("left");
+                let x = args
+                    .get("x")
+                    .and_then(|v| v.as_i64())
+                    .ok_or_else(|| McpError::invalid_params("'x' is required", None))?;
+                let y = args
+                    .get("y")
+                    .and_then(|v| v.as_i64())
+                    .ok_or_else(|| McpError::invalid_params("'y' is required", None))?;
+                let button = args
+                    .get("button")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("left");
                 computer::click(x as i32, y as i32, button)
                     .map_err(|e| McpError::internal_error(e, None))?
             }
@@ -164,8 +175,10 @@ impl ServerHandler for ComputerMcp {
                 computer::press_key(key).map_err(|e| McpError::internal_error(e, None))?
             }
             "computer_screen_size" => {
-                let (w, h) = computer::screen_size().map_err(|e| McpError::internal_error(e, None))?;
-                serde_json::to_string(&json!({ "width": w, "height": h })).unwrap_or_else(|_| "{}".into())
+                let (w, h) =
+                    computer::screen_size().map_err(|e| McpError::internal_error(e, None))?;
+                serde_json::to_string(&json!({ "width": w, "height": h }))
+                    .unwrap_or_else(|_| "{}".into())
             }
             other => {
                 return Err(McpError::invalid_params(
@@ -225,9 +238,7 @@ fn mutate_mcp_json(cwd: &Path, write: bool) -> anyhow::Result<PathBuf> {
             );
         }
     }
-    let servers = config
-        .get_mut("mcpServers")
-        .and_then(|v| v.as_object_mut());
+    let servers = config.get_mut("mcpServers").and_then(|v| v.as_object_mut());
     let servers_obj = match servers {
         Some(s) => s,
         None => {
@@ -265,10 +276,8 @@ mod tests {
 
     #[test]
     fn mount_and_unmount_merge() {
-        let dir = std::env::temp_dir().join(format!(
-            "vesprism-computer-mcp-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vesprism-computer-mcp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(

@@ -33,7 +33,6 @@ import {
   looksAbsolutePath,
   patchActiveTab,
   patchTab,
-  removeTab,
   resolveNewTabModel,
   resolveHistoryLoadCwd,
   resolveWorkspaceCwd,
@@ -59,7 +58,6 @@ import { clearSessionAllowed } from '../lib/permissionMemory'
 import { formatEngineError } from '../lib/errorMessage'
 import { tabStates, pushToast } from '../store'
 import {
-  closeTab,
   deleteSession,
   getSessionMessages,
   listSessions,

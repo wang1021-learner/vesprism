@@ -13,13 +13,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{json, Value as Json};
-use xai_grok_mcp::rmcp;
+use rmcp::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ErrorData as McpError, JsonObject,
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
-use rmcp::ServerHandler;
+use serde_json::{Value as Json, json};
+use xai_grok_mcp::rmcp;
 
 pub const MCP_SERVER_FLAG: &str = "--vesprism-mcp-server";
 /// `.mcp.json` 里注册的 server 名。
@@ -55,14 +55,18 @@ fn lexical_normalize(p: &Path) -> PathBuf {
 }
 
 fn path_within(root: &Path, child: &Path) -> anyhow::Result<PathBuf> {
-    let root_c = root.canonicalize().unwrap_or_else(|_| lexical_normalize(root));
+    let root_c = root
+        .canonicalize()
+        .unwrap_or_else(|_| lexical_normalize(root));
     let joined = if child.is_absolute() {
         child.to_path_buf()
     } else {
         root.join(child)
     };
     let child_c = if joined.exists() {
-        joined.canonicalize().unwrap_or_else(|_| lexical_normalize(&joined))
+        joined
+            .canonicalize()
+            .unwrap_or_else(|_| lexical_normalize(&joined))
     } else {
         lexical_normalize(&joined)
     };
@@ -97,7 +101,9 @@ fn tool_database_query() -> Tool {
     .expect("database_query schema");
     Tool::new(
         Cow::Borrowed("database_query"),
-        Cow::Borrowed("对本地 SQLite 数据库执行 SQL 并返回结果。支持 SELECT / INSERT / UPDATE / DELETE / CREATE 等。注意：一次调用只执行一条语句（分号分隔的多语句不支持）；SQL 里的字符串请用单引号包裹。"),
+        Cow::Borrowed(
+            "对本地 SQLite 数据库执行 SQL 并返回结果。支持 SELECT / INSERT / UPDATE / DELETE / CREATE 等。注意：一次调用只执行一条语句（分号分隔的多语句不支持）；SQL 里的字符串请用单引号包裹。",
+        ),
         Arc::new(schema),
     )
 }
@@ -117,7 +123,9 @@ fn tool_knowledge_search() -> Tool {
     .expect("knowledge_search schema");
     Tool::new(
         Cow::Borrowed("knowledge_search"),
-        Cow::Borrowed("在本地知识库做全文检索（FTS5），返回命中片段与来源文件。知识库 = ~/.vesprism/knowledge/<名>/ 目录下的 .md/.txt 文档。"),
+        Cow::Borrowed(
+            "在本地知识库做全文检索（FTS5），返回命中片段与来源文件。知识库 = ~/.vesprism/knowledge/<名>/ 目录下的 .md/.txt 文档。",
+        ),
         Arc::new(schema),
     )
 }
@@ -151,7 +159,10 @@ impl VesprismMcpServer {
         }
     }
 
-    fn handle_database_query(&self, args: &HashMap<String, Json>) -> Result<CallToolResult, McpError> {
+    fn handle_database_query(
+        &self,
+        args: &HashMap<String, Json>,
+    ) -> Result<CallToolResult, McpError> {
         let sql = args
             .get("sql")
             .and_then(|v| v.as_str())
@@ -165,9 +176,8 @@ impl VesprismMcpServer {
             .map(PathBuf::from)
             .unwrap_or_else(default_db_path);
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                McpError::invalid_params(format!("无法创建数据库目录: {e}"), None)
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| McpError::invalid_params(format!("无法创建数据库目录: {e}"), None))?;
         }
         let conn = rusqlite::Connection::open(&db_path)
             .map_err(|e| McpError::internal_error(format!("打开数据库失败: {e}"), None))?;
@@ -177,21 +187,32 @@ impl VesprismMcpServer {
         } else {
             write_rows(&conn, sql)
         };
-        let payload = result.map_err(|e| McpError::internal_error(format!("SQL 执行失败: {e}"), None))?;
+        let payload =
+            result.map_err(|e| McpError::internal_error(format!("SQL 执行失败: {e}"), None))?;
         Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into()),
         )]))
     }
 
-    fn handle_knowledge_search(&self, args: &HashMap<String, Json>) -> Result<CallToolResult, McpError> {
+    fn handle_knowledge_search(
+        &self,
+        args: &HashMap<String, Json>,
+    ) -> Result<CallToolResult, McpError> {
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .ok_or_else(|| McpError::invalid_params("'query' is a required property", None))?;
-        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5).clamp(1, 50) as usize;
-        let rebuild = args.get("rebuild").and_then(|v| v.as_bool()).unwrap_or(false);
+        let limit = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5)
+            .clamp(1, 50) as usize;
+        let rebuild = args
+            .get("rebuild")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let kb = args
             .get("knowledge_base")
             .and_then(|v| v.as_str())
@@ -235,18 +256,17 @@ fn sql_leading_keyword(sql: &str) -> String {
             break;
         }
     }
-    rest.split_whitespace().next().unwrap_or("").to_ascii_uppercase()
+    rest.split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase()
 }
 
 const MAX_QUERY_ROWS: usize = 200;
 
 fn query_rows(conn: &rusqlite::Connection, sql: &str) -> anyhow::Result<Json> {
     let mut stmt = conn.prepare(sql)?;
-    let col_names: Vec<String> = stmt
-        .column_names()
-        .iter()
-        .map(|c| c.to_string())
-        .collect();
+    let col_names: Vec<String> = stmt.column_names().iter().map(|c| c.to_string()).collect();
     let mut rows: Vec<Json> = Vec::new();
     let mut mapped = stmt.query_map([], |row| {
         let mut map = serde_json::Map::new();
@@ -324,12 +344,16 @@ fn search_knowledge(
             "CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(title, content, source, tokenize = 'trigram');",
         )?;
         let count: i64 = conn.query_row("SELECT count(*) FROM docs", [], |r| r.get(0))?;
-        log::info!("[vesprism-mcp] kb={} count={count} rebuild={rebuild}", kb_dir.display());
+        log::info!(
+            "[vesprism-mcp] kb={} count={count} rebuild={rebuild}",
+            kb_dir.display()
+        );
         if rebuild || count == 0 {
             let tx = conn.transaction()?;
             tx.execute_batch("DELETE FROM docs;")?;
             {
-                let mut stmt = tx.prepare("INSERT INTO docs(title, content, source) VALUES (?1, ?2, ?3)")?;
+                let mut stmt =
+                    tx.prepare("INSERT INTO docs(title, content, source) VALUES (?1, ?2, ?3)")?;
                 for entry in std::fs::read_dir(&kb_dir)? {
                     let entry = entry?;
                     let path = entry.path();
@@ -350,7 +374,11 @@ fn search_knowledge(
                         .and_then(|f| f.to_str())
                         .unwrap_or("")
                         .to_string();
-                    stmt.execute(rusqlite::params![title, content, path.display().to_string()])?;
+                    stmt.execute(rusqlite::params![
+                        title,
+                        content,
+                        path.display().to_string()
+                    ])?;
                 }
             }
             tx.commit()?;
@@ -425,11 +453,8 @@ impl ServerHandler for VesprismMcpServer {
         request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let args: HashMap<String, Json> = request
-            .arguments
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let args: HashMap<String, Json> =
+            request.arguments.unwrap_or_default().into_iter().collect();
         match request.name.as_ref() {
             "database_query" => self.handle_database_query(&args),
             "knowledge_search" => self.handle_knowledge_search(&args),
@@ -478,10 +503,7 @@ pub fn run_mcp_server_stdio() -> i32 {
             Err(e) => {
                 eprintln!("[vesprism-mcp] server 初始化失败: {e}");
                 // 客户端正常断开（如会话关闭）不算错误
-                if matches!(
-                    e,
-                    rmcp::service::ServerInitializeError::ConnectionClosed(_)
-                ) {
+                if matches!(e, rmcp::service::ServerInitializeError::ConnectionClosed(_)) {
                     0
                 } else {
                     1
@@ -519,9 +541,7 @@ pub fn ensure_mcp_mount(cwd: &Path) -> anyhow::Result<PathBuf> {
             ));
         }
     }
-    let servers = config
-        .get_mut("mcpServers")
-        .and_then(|v| v.as_object_mut());
+    let servers = config.get_mut("mcpServers").and_then(|v| v.as_object_mut());
     let servers_obj = match servers {
         Some(s) => s,
         None => {
@@ -549,10 +569,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "vesprism-mcp-test-{}-{stamp}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vesprism-mcp-test-{}-{stamp}", std::process::id()));
         let kb = dir.join(name);
         std::fs::create_dir_all(&kb).unwrap();
         kb
@@ -560,8 +578,8 @@ mod tests {
 
     #[test]
     fn database_query_select_and_write() {
-        let db_path = std::env::temp_dir()
-            .join(format!("vesprism-mcp-test-{}.sqlite", std::process::id()));
+        let db_path =
+            std::env::temp_dir().join(format!("vesprism-mcp-test-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&db_path);
         {
             let conn = rusqlite::Connection::open(&db_path).unwrap();
@@ -571,7 +589,10 @@ mod tests {
         let server = VesprismMcpServer::new();
         // 写
         let mut args = HashMap::new();
-        args.insert("sql".into(), json!("INSERT INTO t (name) VALUES ('vesprism'), ('flow')"));
+        args.insert(
+            "sql".into(),
+            json!("INSERT INTO t (name) VALUES ('vesprism'), ('flow')"),
+        );
         args.insert("db_path".into(), json!(db_path.display().to_string()));
         let res = server.handle_database_query(&args).unwrap();
         let text = extract_text(&res);
@@ -580,7 +601,10 @@ mod tests {
         args.insert("sql".into(), json!("SELECT id, name FROM t ORDER BY id"));
         let res = server.handle_database_query(&args).unwrap();
         let text = extract_text(&res);
-        assert!(text.contains("vesprism") && text.contains("flow"), "got {text}");
+        assert!(
+            text.contains("vesprism") && text.contains("flow"),
+            "got {text}"
+        );
         assert!(text.contains("\"row_count\": 2"), "got {text}");
         let _ = std::fs::remove_file(&db_path);
     }
@@ -588,7 +612,11 @@ mod tests {
     #[test]
     fn knowledge_search_builds_index_and_finds() {
         let kb = tmp_kb("docs");
-        std::fs::write(kb.join("intro.md"), "vesprism 是一个本地优先的 AI 工作台，支持数据库节点与知识库检索。").unwrap();
+        std::fs::write(
+            kb.join("intro.md"),
+            "vesprism 是一个本地优先的 AI 工作台，支持数据库节点与知识库检索。",
+        )
+        .unwrap();
         std::fs::write(kb.join("notes.txt"), "重试与超时：失败后自动重试三次。").unwrap();
         let root = kb.parent().unwrap().to_path_buf();
         let mut args = HashMap::new();

@@ -265,6 +265,10 @@
   align-items: center;
 }
 
+.settings-row-follow {
+  margin-top: 8px;
+}
+
 .settings-unit {
   flex-shrink: 0;
   font-size: 13px;

@@ -245,7 +245,15 @@ pub fn strip_positions(nodes: &Value) -> Value {
 pub fn text_has_absolute_path(text: &str) -> bool {
     for token in text.split_whitespace() {
         let clean = token.trim_matches(|c: char| {
-            c == '"' || c == '\'' || c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}'
+            c == '"'
+                || c == '\''
+                || c == '`'
+                || c == '('
+                || c == ')'
+                || c == '['
+                || c == ']'
+                || c == '{'
+                || c == '}'
         });
         if clean.contains("://") {
             continue;
@@ -262,7 +270,9 @@ pub fn text_has_absolute_path(text: &str) -> bool {
         if clean.starts_with("\\\\") || clean.starts_with("~/") {
             return true;
         }
-        for prefix in ["/home/", "/Users/", "/usr/", "/var/", "/opt/", "/tmp/", "/etc/"] {
+        for prefix in [
+            "/home/", "/Users/", "/usr/", "/var/", "/opt/", "/tmp/", "/etc/",
+        ] {
             if clean.starts_with(prefix) || clean.contains(prefix) {
                 return true;
             }

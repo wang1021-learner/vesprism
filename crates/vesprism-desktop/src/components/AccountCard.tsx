@@ -7,7 +7,7 @@ import {
 } from '../lib/accountAuth'
 import { SettingsLabel } from './SettingsHelp'
 
-/** 设置 · 通用：官方账号登录（浏览器回环，凭证与命令行同一份）。 */
+/** 设置 · 通用：官方账号登录（浏览器回环，凭证在 ~/.vesprism）。 */
 export function AccountCard() {
   const [status, setStatus] = useState<AccountStatus | null>(null)
   const [busy, setBusy] = useState(false)
@@ -29,8 +29,9 @@ export function AccountCard() {
       <h3 className="settings-card-title">账号</h3>
       <p className="settings-card-desc">
         用官方账号登录后，模型和会话走你的订阅。也可以只在「模型」页填 API 密钥。
+        凭证在本机 Vesprism 目录，不会沿用命令行已经登录的账号。
       </p>
-      <SettingsLabel help="会打开系统浏览器完成官方授权。凭证写在本机，和命令行登录是同一份。">
+      <SettingsLabel help="会打开系统浏览器完成官方授权。要在桌面再登一次，和命令行不是同一份 auth.json。">
         {loggedIn ? '当前账号' : '未登录'}
       </SettingsLabel>
       <p className="settings-hint">
@@ -40,10 +41,10 @@ export function AccountCard() {
             ? '未登录账号。环境变量里的密钥仍可发请求。'
             : '登录后才能用官方模型和会话搜索等账号能力。'}
       </p>
-      <div className="settings-row" style={{ marginTop: 8, gap: 8 }}>
+      <div className="settings-row settings-row-follow">
         <button
           type="button"
-          className="skills-btn primary"
+          className="btn-primary"
           disabled={busy}
           onClick={() => {
             setBusy(true)

@@ -259,7 +259,10 @@ fn take_utf8_chunk(buf: &mut Vec<u8>) -> Option<String> {
                 let out = String::from_utf8(buf.drain(..valid).collect()).unwrap_or_default();
                 Some(out)
             } else {
-                let err_len = e.error_len().unwrap_or(1).min(buf.len().saturating_sub(valid));
+                let err_len = e
+                    .error_len()
+                    .unwrap_or(1)
+                    .min(buf.len().saturating_sub(valid));
                 let mut out = if valid > 0 {
                     String::from_utf8(buf.drain(..valid).collect()).unwrap_or_default()
                 } else {

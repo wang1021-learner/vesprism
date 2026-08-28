@@ -135,8 +135,14 @@ fn display_path(path: &std::path::Path) -> String {
 }
 
 fn paths_eq(a: &std::path::Path, b: &std::path::Path) -> bool {
-    let na = display_path(a).replace('\\', "/").trim_end_matches('/').to_ascii_lowercase();
-    let nb = display_path(b).replace('\\', "/").trim_end_matches('/').to_ascii_lowercase();
+    let na = display_path(a)
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    let nb = display_path(b)
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
     if na == nb {
         return true;
     }
@@ -212,7 +218,8 @@ fn save_persisted_workspace_cwd(cwd: &std::path::Path) -> Result<(), String> {
     );
     let serialized =
         toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
-    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -237,7 +244,8 @@ fn clear_persisted_workspace_cwd() -> Result<(), String> {
     }
     let serialized =
         toml::to_string_pretty(&root).map_err(|e| format!("序列化 config 失败: {e}"))?;
-    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -585,7 +593,11 @@ pub async fn session_memory_rewrite(
     params: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::MemoryRewrite { params, reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::MemoryRewrite {
+        params,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -594,7 +606,11 @@ pub async fn session_set_memory(
     enabled: bool,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    send_cmd(&state, &tab_id, |reply| ActorCommand::SetMemoryEnabled { enabled, reply }).await
+    send_cmd(&state, &tab_id, |reply| ActorCommand::SetMemoryEnabled {
+        enabled,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -626,7 +642,11 @@ pub async fn plugins_action(
     action: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::PluginsAction { action, reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::PluginsAction {
+        action,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -634,7 +654,10 @@ pub async fn marketplace_list(
     tab_id: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::MarketplaceList { reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::MarketplaceList {
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -643,7 +666,11 @@ pub async fn marketplace_action(
     action: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::MarketplaceAction { action, reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::MarketplaceAction {
+        action,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -660,7 +687,11 @@ pub async fn hooks_action(
     action: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::HooksAction { action, reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::HooksAction {
+        action,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -669,7 +700,11 @@ pub async fn submit_feedback(
     text: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::SubmitFeedback { text, reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::SubmitFeedback {
+        text,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -677,7 +712,10 @@ pub async fn share_session(
     tab_id: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::ShareSession { reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::ShareSession {
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -686,7 +724,11 @@ pub async fn scheduler_delete(
     task_id: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::SchedulerDelete { task_id, reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::SchedulerDelete {
+        task_id,
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -702,7 +744,10 @@ pub async fn session_usage(
     tab_id: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    send_value(&state, &tab_id, |reply| ActorCommand::SessionUsage { reply }).await
+    send_value(&state, &tab_id, |reply| ActorCommand::SessionUsage {
+        reply,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1164,7 +1209,10 @@ pub async fn update_session_flows(
     };
     let (reply_tx, reply_rx) = oneshot::channel();
     cmd_tx
-        .send(ActorCommand::UpdateFlows { flows, reply: reply_tx })
+        .send(ActorCommand::UpdateFlows {
+            flows,
+            reply: reply_tx,
+        })
         .map_err(|_| "会话线程已退出".to_string())?;
     reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
@@ -1304,52 +1352,6 @@ pub(crate) fn harden_env_file_permissions(path: &std::path::Path) {
 #[tauri::command]
 pub fn env_file_location() -> String {
     env_file_path().display().to_string()
-}
-
-/// 另存为默认文件名：只要叶子名，挡住 `../` 和盘符。
-fn safe_export_name(raw: Option<&str>) -> String {
-    let base = raw
-        .unwrap_or("")
-        .trim()
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("")
-        .trim();
-    if base.is_empty() || base == "." || base == ".." {
-        return "artifact.txt".into();
-    }
-    if base.contains(':') {
-        return "artifact.txt".into();
-    }
-    base.to_string()
-}
-
-/// 另存 Artifact：路径只来自系统「另存为」对话框，前端传不了任意路径。
-#[tauri::command]
-pub async fn save_artifact_file(
-    app: tauri::AppHandle,
-    content: String,
-    default_name: Option<String>,
-) -> Result<String, String> {
-    const MAX: usize = 10 * 1024 * 1024;
-    if content.len() > MAX {
-        return Err("内容过大，上限 10MB".into());
-    }
-    let name = safe_export_name(default_name.as_deref());
-    let picked = tokio::task::spawn_blocking(move || {
-        use tauri_plugin_dialog::DialogExt;
-        app.dialog().file().set_file_name(&name).blocking_save_file()
-    })
-    .await
-    .map_err(|e| format!("打开另存为失败: {e}"))?;
-    let Some(file) = picked else {
-        return Ok(String::new());
-    };
-    let path = file
-        .into_path()
-        .map_err(|e| format!("路径无效: {e}"))?;
-    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("保存文件失败: {e}"))?;
-    Ok(path.display().to_string())
 }
 
 /// API Key 设置状态（不含明文值）。
@@ -1495,9 +1497,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
     let tmp = parent.join(format!(
         ".{}.tmp-{}",
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("tmp"),
+        path.file_name().and_then(|s| s.to_str()).unwrap_or("tmp"),
         std::process::id()
     ));
     std::fs::write(&tmp, bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
@@ -2376,7 +2376,8 @@ pub fn save_model_settings(default_id: String, models: Vec<ModelEntryDto>) -> Re
     let serialized =
         toml::to_string_pretty(&root).map_err(|e| format!("序列化 config.toml 失败: {e}"))?;
     // 显式 UTF-8 写入，避免 Windows 默认编码坑
-    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))?;
+    atomic_write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 config.toml 失败: {e}"))?;
     Ok(())
 }
 
@@ -2420,7 +2421,9 @@ fn probe_models_url(base: &str) -> Result<reqwest::Url, String> {
 }
 
 fn header_has(headers: &reqwest::header::HeaderMap, name: &str) -> bool {
-    headers.keys().any(|k| k.as_str().eq_ignore_ascii_case(name))
+    headers
+        .keys()
+        .any(|k| k.as_str().eq_ignore_ascii_case(name))
 }
 
 /// GET `{base}/models`：用来确认第三方 URL / 协议 / 密钥能否连上。
@@ -2526,7 +2529,12 @@ pub async fn probe_model_endpoint(args: ProbeModelArgs) -> Result<ProbeModelResu
         let message = if models.is_empty() {
             "通了。对方没有返回模型列表，但 HTTP 正常。".to_string()
         } else {
-            let preview = models.iter().take(8).cloned().collect::<Vec<_>>().join("、");
+            let preview = models
+                .iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、");
             let more = if models.len() > 8 {
                 format!(" 等 {} 个", models.len())
             } else {
@@ -2693,10 +2701,7 @@ pub async fn search_sessions(
     };
     // 官方 1.0.4+：execute_search 需要 IndexDecision；与 `grok sessions search` 一样
     // 在本命令里 start_if_enabled（受 GROK_SESSION_SEARCH / [features] session_search 门控）。
-    let raw_config = xai_grok_shell::config::load_effective_config()
-        .map_err(|e| format!("加载配置失败: {e}"))?;
-    let agent_config = xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw_config)
-        .map_err(|e| format!("创建 agent 配置失败: {e}"))?;
+    let agent_config = crate::account::load_agent_config()?;
     let search = xai_grok_shell::session::storage::search::start_if_enabled(&agent_config);
     let resp = xai_grok_shell::session::storage::search::execute_search(
         xai_grok_shell::session::storage::search::IndexDecision::settled(&search),
@@ -2837,15 +2842,12 @@ fn clean_session_title(raw: &str) -> String {
     if let Some(rest) = t.strip_prefix("生成流程图：") {
         let rest = rest.trim();
         if !rest.is_empty() {
-            t = rest
-                .lines()
-                .next()
-                .unwrap_or(rest)
-                .trim()
-                .to_string();
+            t = rest.lines().next().unwrap_or(rest).trim().to_string();
         }
     }
-    if t.contains("流程画布") || t.contains("flow-canvas orchestrator") || t.contains("Vesprism 流程")
+    if t.contains("流程画布")
+        || t.contains("flow-canvas orchestrator")
+        || t.contains("Vesprism 流程")
     {
         if let Some(idx) = t.find("用户：").or_else(|| t.find("User:")) {
             let mark = if t[idx..].starts_with("用户：") {
@@ -3351,7 +3353,9 @@ fn sweep_old_paste_images(dir: &Path) {
     if SWEPT.swap(true, Ordering::Relaxed) {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let cutoff = std::time::SystemTime::now()
         .checked_sub(std::time::Duration::from_secs(PASTE_MAX_AGE_SECS));
     let Some(cutoff) = cutoff else { return };
@@ -3360,15 +3364,14 @@ fn sweep_old_paste_images(dir: &Path) {
         if !path.is_file() {
             continue;
         }
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if !name.starts_with("paste-") {
             continue;
         }
         let Ok(meta) = ent.metadata() else { continue };
-        let Ok(modified) = meta.modified() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
         if modified < cutoff {
             let _ = std::fs::remove_file(&path);
         }
@@ -3898,9 +3901,7 @@ pub fn mount_mcp(cwd: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod deepseek_preset_tests {
-    use super::{
-        default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for, safe_export_name,
-    };
+    use super::{default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for};
 
     #[test]
     fn detects_official_host_and_model_prefix() {
@@ -3949,15 +3950,5 @@ mod deepseek_preset_tests {
             default_reasoning_effort_for("grok-4.5", "https://api.x.ai/v1", "xhigh"),
             "xhigh"
         );
-    }
-
-    #[test]
-    fn safe_export_name_strips_path_and_rejects_parent() {
-        assert_eq!(safe_export_name(None), "artifact.txt");
-        assert_eq!(safe_export_name(Some("note.md")), "note.md");
-        assert_eq!(safe_export_name(Some("../etc/passwd")), "passwd");
-        assert_eq!(safe_export_name(Some("C:\\\\Windows\\\\a.txt")), "a.txt");
-        assert_eq!(safe_export_name(Some("..")), "artifact.txt");
-        assert_eq!(safe_export_name(Some("")), "artifact.txt");
     }
 }

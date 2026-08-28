@@ -342,7 +342,8 @@ pub fn list_threads(current_cwd: &str, limit: Option<u32>) -> Result<Vec<ThreadR
 
 /// 侧栏「工作台」分组：画布/编制干活会话。
 /// 第一次开口就会挂 binding；保存 Flow / Agent 后另有产物行。不和主聊天混排。
-const WORKBENCH_THREAD_WHERE: &str = "id IN (SELECT DISTINCT session_id FROM thread_workbench_artifacts)
+const WORKBENCH_THREAD_WHERE: &str =
+    "id IN (SELECT DISTINCT session_id FROM thread_workbench_artifacts)
              OR id IN (
                SELECT id FROM thread_workbench_bindings
                WHERE active_workbench_view IN ('flow-canvas', 'agents')

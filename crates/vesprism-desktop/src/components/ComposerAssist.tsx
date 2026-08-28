@@ -33,6 +33,15 @@ import { openChatTab } from '../lib/openChatTab'
 
 type Item = ComposerCommand
 
+function runLogin() {
+  openSettings('general')
+  void startAccountLogin()
+}
+
+function runLogout() {
+  void signOutAccount()
+}
+
 function localCommand(
   id: string,
   rest: Pick<Item, 'insert' | 'run'>,
@@ -103,19 +112,8 @@ const LOCAL_SLASH: Item[] = [
       void openChatTab({ title: '自动化任务', utilityKind: 'workflows' })
     },
   }),
-  localCommand('login', {
-    insert: '',
-    run: () => {
-      openSettings('general')
-      void startAccountLogin()
-    },
-  }),
-  localCommand('logout', {
-    insert: '',
-    run: () => {
-      void signOutAccount()
-    },
-  }),
+  localCommand('login', { insert: '', run: runLogin }),
+  localCommand('logout', { insert: '', run: runLogout }),
 ]
 
 function bindComposerCommand(c: ComposerCommand): ComposerCommand {
@@ -174,15 +172,10 @@ function bindComposerCommand(c: ComposerCommand): ComposerCommand {
     return open(() => openSettings('plugins'))
   }
   if (name === 'login') {
-    return open(() => {
-      openSettings('general')
-      void startAccountLogin()
-    })
+    return open(runLogin)
   }
   if (name === 'logout') {
-    return open(() => {
-      void signOutAccount()
-    })
+    return open(runLogout)
   }
   if (name === 'feedback') {
     return open(() => openFeedback())

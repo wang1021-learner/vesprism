@@ -13,7 +13,7 @@ fn login_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn load_agent_config() -> Result<xai_grok_shell::agent::config::Config, String> {
+pub(crate) fn load_agent_config() -> Result<xai_grok_shell::agent::config::Config, String> {
     let raw = xai_grok_shell::config::load_effective_config()
         .map_err(|e| format!("加载配置失败: {e}"))?;
     xai_grok_shell::agent::config::Config::new_from_toml_cfg(&raw)

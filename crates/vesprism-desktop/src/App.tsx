@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react'
+import { useStoreSelect } from './lib/useStoreSelect'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { SandboxBanner } from './components/SandboxBanner'
@@ -429,12 +430,12 @@ function AppComposer() {
   const effort = useStore($reasoningEffort)
   const cwd = useStore($workspaceCwd)
   const wsOptions = useStore($workspaceOptions)
-  const messages = useStore($messages)
+  const hasUserMessage = useStoreSelect($messages, (m) => m.some((msg) => msg.role === 'user'))
   const queued = useStore($queuedPrompts)
   const caps = useStore($sessionCaps)
   const [combineQueued, setCombineQueued] = useState(false)
   const canSend = ready
-  const canSwitchWs = ready && !generating && !messages.some((m) => m.role === 'user')
+  const canSwitchWs = ready && !generating && !hasUserMessage
 
   const onSend = useCallback(async (
     text?: string,

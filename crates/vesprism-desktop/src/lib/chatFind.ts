@@ -6,7 +6,7 @@ export function messageFindText(m: ChatMessage): string {
 }
 
 /** 对话里可搜的行下标（用户 / 助手 / 工具标题）。 */
-export function findMessageHits(messages: ChatMessage[], query: string): number[] {
+export function findMessageHits(messages: readonly ChatMessage[], query: string): number[] {
   const q = query.trim().toLowerCase()
   if (!q) return []
   const hits: number[] = []

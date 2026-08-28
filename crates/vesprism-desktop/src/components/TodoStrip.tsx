@@ -1,16 +1,28 @@
-import { useMemo } from 'react'
-import { useStore } from '@nanostores/react'
 import { $messages } from '../store'
+import { useStoreSelect } from '../lib/useStoreSelect'
+import type { TodoSnapshotData } from '../types'
+
+function latestTodo(
+  messages: readonly { toolCall?: { todo?: TodoSnapshotData | null } }[],
+) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const t = messages[i]?.toolCall?.todo
+    if (t?.todos?.length) return t
+  }
+  return null
+}
+
+function todosEqual(a: TodoSnapshotData | null, b: TodoSnapshotData | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (a.summary !== b.summary || a.todos.length !== b.todos.length) return false
+  return a.todos.every(
+    (t, i) => t.content === b.todos[i].content && t.status === b.todos[i].status,
+  )
+}
 
 export function TodoStrip() {
-  const messages = useStore($messages)
-  const todo = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const t = messages[i]?.toolCall?.todo
-      if (t?.todos?.length) return t
-    }
-    return null
-  }, [messages])
+  const todo = useStoreSelect($messages, latestTodo, todosEqual)
   if (!todo) return null
   const done = todo.todos.filter((t) => t.status === 'completed').length
   return (

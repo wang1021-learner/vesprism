@@ -3,8 +3,8 @@
 
 use crate::commands::{desktop_home_dir, load_config_root, write_config_root};
 use serde::{Deserialize, Serialize};
-use toml::map::Map;
 use toml::Value;
+use toml::map::Map;
 
 const DEFAULT_IMAGE_GEN: i64 = 8;
 const DEFAULT_VIDEO_GEN: i64 = 4;
@@ -24,7 +24,10 @@ pub struct EnginePrefsDto {
     pub combine_queued_prompts: bool,
 }
 
-fn table_mut<'a>(root: &'a mut Map<String, Value>, key: &str) -> Result<&'a mut Map<String, Value>, String> {
+fn table_mut<'a>(
+    root: &'a mut Map<String, Value>,
+    key: &str,
+) -> Result<&'a mut Map<String, Value>, String> {
     let entry = root
         .entry(key.to_string())
         .or_insert_with(|| Value::Table(Map::new()));
@@ -143,7 +146,10 @@ pub fn set_engine_prefs(prefs: EnginePrefsDto) -> Result<EnginePrefsDto, String>
 
     {
         let features = table_mut(root_tbl, "features")?;
-        features.insert("session_search".into(), Value::Boolean(prefs.session_search));
+        features.insert(
+            "session_search".into(),
+            Value::Boolean(prefs.session_search),
+        );
     }
 
     {
@@ -226,7 +232,9 @@ pub fn get_worktree_status() -> Result<WorktreeStatusDto, String> {
     let home = desktop_home_dir();
     match xai_fast_worktree::WorktreeDb::open_read_only(&home) {
         xai_fast_worktree::RegistryOpen::Opened { db, .. } => {
-            let stats = db.stats().map_err(|e| format!("读取 worktree 索引失败: {e}"))?;
+            let stats = db
+                .stats()
+                .map_err(|e| format!("读取 worktree 索引失败: {e}"))?;
             Ok(WorktreeStatusDto {
                 home: home.display().to_string(),
                 total: stats.total_records,
@@ -329,14 +337,15 @@ fn parse_handler(v: &Value) -> Option<HookHandlerDto> {
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string(),
-        url: t.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        timeout: t.get("timeout").and_then(|x| x.as_integer()).and_then(|i| {
-            if i > 0 {
-                Some(i as u64)
-            } else {
-                None
-            }
-        }),
+        url: t
+            .get("url")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        timeout: t
+            .get("timeout")
+            .and_then(|x| x.as_integer())
+            .and_then(|i| if i > 0 { Some(i as u64) } else { None }),
     })
 }
 
@@ -423,7 +432,10 @@ pub fn set_config_hooks(groups: Vec<HookGroupDto>) -> Result<Vec<HookGroupDto>, 
         }
         let mut tbl = Map::new();
         if !g.matcher.trim().is_empty() {
-            tbl.insert("matcher".into(), Value::String(g.matcher.trim().to_string()));
+            tbl.insert(
+                "matcher".into(),
+                Value::String(g.matcher.trim().to_string()),
+            );
         }
         tbl.insert("hooks".into(), Value::Array(handlers));
         let arr = by_event
@@ -501,7 +513,10 @@ mod memory_prefs_tests {
         off.memory_enabled = false;
         let back = set_engine_prefs(off).unwrap();
         assert!(!back.memory_enabled);
-        assert_eq!(load_config_root().unwrap()["memory"]["enabled"], Value::Boolean(false));
+        assert_eq!(
+            load_config_root().unwrap()["memory"]["enabled"],
+            Value::Boolean(false)
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
