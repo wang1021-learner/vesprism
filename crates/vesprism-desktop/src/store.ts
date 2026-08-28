@@ -291,7 +291,7 @@ export function getTabState(id: string): TabState | undefined {
   return tabStates.get(id)
 }
 
-/** 查找已打开的专用面板 Tab（技能 / 工具 / MCP / 自动化任务 / 流程画布 各只应有一个） */
+/** 查找已打开的专用面板 Tab。技能/工具/MCP 等各复用一个；流程画布可并列多个，这里返回最先打开的。 */
 export function findTabByUtilityKind(kind: UtilityKind): string | undefined {
   for (const [id, st] of tabStates) {
     if (st.utilityKind === kind) return id
@@ -937,6 +937,21 @@ export const $shellReady = computed($sessionPhase, (p) => p === 'ready')
 export const $hasRunningSubagents = computed($subagents, (list) =>
   list.some((s) => s.status === 'running'),
 )
+
+/** 所有 Tab 上的子代理（试跑详情不在画布 Tab，不能只用当前投影）。 */
+export function collectAllTabSubagents(): SubagentRuntime[] {
+  const out: SubagentRuntime[] = []
+  const seen = new Set<string>()
+  for (const st of tabStates.values()) {
+    for (const s of st.subagents) {
+      const keys = [s.subagentId, s.childSessionId].map((x) => x.trim()).filter(Boolean)
+      if (keys.length === 0 || keys.some((k) => seen.has(k))) continue
+      for (const k of keys) seen.add(k)
+      out.push(s)
+    }
+  }
+  return out
+}
 
 /** 合并/更新某 tab 的子 agent 条目，并同步对话内 scaffold 行 */
 export function upsertSubagent(

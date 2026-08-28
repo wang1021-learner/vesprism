@@ -27,12 +27,15 @@ export function SubagentRunTree({
   workflows,
   subagents,
   readonly = false,
+  onViewConversation,
 }: {
   /** 传入则用传入数据（试跑详情面板）；缺省用活跃 tab 投影 */
   workflows?: WorkflowInfoDto[]
   subagents?: SubagentRuntime[]
-  /** 只读：隐藏「打开」子会话按钮（试跑详情面板用，避免误导成可聊天） */
+  /** 只读：不取消、不进编码壳聊天；对话走 onViewConversation */
   readonly?: boolean
+  /** 试跑详情：在本页打开只读对话，避免新开编码 Tab 把工作台切走 */
+  onViewConversation?: (m: MemberRow) => void
 } = {}) {
   const storeWorkflows = useStore($workflows)
   const storeSubagents = useStore($subagents)
@@ -43,7 +46,12 @@ export function SubagentRunTree({
   return (
     <div className="st-list" role="region" aria-label="子代理">
       {forest.map((tree) => (
-        <RunView key={tree.runId} tree={tree} readonly={readonly} />
+        <RunView
+          key={tree.runId}
+          tree={tree}
+          readonly={readonly}
+          onViewConversation={onViewConversation}
+        />
       ))}
     </div>
   )
@@ -84,7 +92,15 @@ function capabilityClass(mode: string): string {
   }
 }
 
-function RunView({ tree, readonly }: { tree: RunTree; readonly: boolean }) {
+function RunView({
+  tree,
+  readonly,
+  onViewConversation,
+}: {
+  tree: RunTree
+  readonly: boolean
+  onViewConversation?: (m: MemberRow) => void
+}) {
   const [userOpen, setUserOpen] = useState<boolean | null>(null)
   const shown = userOpen ?? tree.runRequiresExpansion
   return (
@@ -111,7 +127,14 @@ function RunView({ tree, readonly }: { tree: RunTree; readonly: boolean }) {
           {tree.phases.length === 0 ? (
             <span className="st-empty">暂无子代理</span>
           ) : (
-            tree.phases.map((p) => <PhaseView key={p.key || p.title} phase={p} readonly={readonly} />)
+            tree.phases.map((p) => (
+              <PhaseView
+                key={p.key || p.title}
+                phase={p}
+                readonly={readonly}
+                onViewConversation={onViewConversation}
+              />
+            ))
           )}
         </div>
       ) : null}
@@ -120,7 +143,15 @@ function RunView({ tree, readonly }: { tree: RunTree; readonly: boolean }) {
   )
 }
 
-function PhaseView({ phase, readonly }: { phase: PhaseGroup; readonly: boolean }) {
+function PhaseView({
+  phase,
+  readonly,
+  onViewConversation,
+}: {
+  phase: PhaseGroup
+  readonly: boolean
+  onViewConversation?: (m: MemberRow) => void
+}) {
   const requires = phaseRequiresExpansion(phase)
   const [userOpen, setUserOpen] = useState<boolean | null>(null)
   const shown = userOpen ?? requires
@@ -145,7 +176,12 @@ function PhaseView({ phase, readonly }: { phase: PhaseGroup; readonly: boolean }
       {shown ? (
         <div className="st-members">
           {phase.members.map((m) => (
-            <MemberRowView key={m.agentId} m={m} readonly={readonly} />
+            <MemberRowView
+              key={m.agentId}
+              m={m}
+              readonly={readonly}
+              onViewConversation={onViewConversation}
+            />
           ))}
         </div>
       ) : null}
@@ -153,7 +189,15 @@ function PhaseView({ phase, readonly }: { phase: PhaseGroup; readonly: boolean }
   )
 }
 
-function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
+function MemberRowView({
+  m,
+  readonly,
+  onViewConversation,
+}: {
+  m: MemberRow
+  readonly: boolean
+  onViewConversation?: (m: MemberRow) => void
+}) {
   const [opening, setOpening] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [bodyOpen, setBodyOpen] = useState(false)
@@ -175,6 +219,10 @@ function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
     }
   }
   const onOpen = async () => {
+    if (onViewConversation) {
+      onViewConversation(m)
+      return
+    }
     if (!m.childSessionId || opening) return
     setOpening(true)
     try {
@@ -232,15 +280,19 @@ function MemberRowView({ m, readonly }: { m: MemberRow; readonly: boolean }) {
             {cancelling ? '…' : '取消'}
           </button>
         ) : null}
-        {m.childSessionId ? (
+        {m.childSessionId || m.output ? (
           <button
             type="button"
             className="st-action"
             disabled={opening}
             onClick={() => void onOpen()}
-            title="查看该子代理完整交互与工具调用对话流"
+            title={
+              readonly || onViewConversation
+                ? '在本页查看该子代理对话'
+                : '查看该子代理完整交互与工具调用对话流'
+            }
           >
-            {opening ? '…' : readonly ? '对话' : '打开'}
+            {opening ? '…' : readonly || onViewConversation ? '对话' : '打开'}
           </button>
         ) : null}
       </div>

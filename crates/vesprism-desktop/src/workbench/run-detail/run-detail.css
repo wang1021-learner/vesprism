@@ -152,6 +152,79 @@
   gap: 10px;
 }
 
+.run-detail-back-btn {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-solid, #e5e7eb);
+  background: var(--surface-muted, #f3f4f6);
+  color: var(--text-secondary, #4b5563);
+  cursor: pointer;
+}
+
+.run-detail-back-btn:hover {
+  background: var(--surface-hover, #e5e7eb);
+  color: var(--text-primary, #111827);
+}
+
+.run-detail-chat-agent {
+  font-size: 12.5px;
+  color: var(--text-secondary, #4b5563);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
+
+.run-detail-chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.run-detail-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 720px;
+}
+
+.run-detail-bubble-role {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary, #9ca3af);
+}
+
+.run-detail-bubble-text {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-elevated, #fff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  color: var(--text-primary, #111827);
+}
+
+.run-detail-bubble.is-user .run-detail-bubble-text {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.run-detail-bubble.is-tool .run-detail-bubble-text {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+}
+
 /* 工作栏：运行状态卡里的操作行 */
 .wb-run-actions {
   display: flex;
