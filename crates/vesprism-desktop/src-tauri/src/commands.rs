@@ -1306,11 +1306,50 @@ pub fn env_file_location() -> String {
     env_file_path().display().to_string()
 }
 
-/// 把 Artifact 预览内容写入用户通过系统"另存为"对话框选择的路径。
-/// 这里的目标路径完全由用户在系统对话框中主动选择，不做工作区范围校验。
+/// 另存为默认文件名：只要叶子名，挡住 `../` 和盘符。
+fn safe_export_name(raw: Option<&str>) -> String {
+    let base = raw
+        .unwrap_or("")
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    if base.is_empty() || base == "." || base == ".." {
+        return "artifact.txt".into();
+    }
+    if base.contains(':') {
+        return "artifact.txt".into();
+    }
+    base.to_string()
+}
+
+/// 另存 Artifact：路径只来自系统「另存为」对话框，前端传不了任意路径。
 #[tauri::command]
-pub fn save_artifact_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| format!("保存文件失败: {e}"))
+pub async fn save_artifact_file(
+    app: tauri::AppHandle,
+    content: String,
+    default_name: Option<String>,
+) -> Result<String, String> {
+    const MAX: usize = 10 * 1024 * 1024;
+    if content.len() > MAX {
+        return Err("内容过大，上限 10MB".into());
+    }
+    let name = safe_export_name(default_name.as_deref());
+    let picked = tokio::task::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        app.dialog().file().set_file_name(&name).blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("打开另存为失败: {e}"))?;
+    let Some(file) = picked else {
+        return Ok(String::new());
+    };
+    let path = file
+        .into_path()
+        .map_err(|e| format!("路径无效: {e}"))?;
+    std::fs::write(&path, content.as_bytes()).map_err(|e| format!("保存文件失败: {e}"))?;
+    Ok(path.display().to_string())
 }
 
 /// API Key 设置状态（不含明文值）。
@@ -3859,7 +3898,9 @@ pub fn mount_mcp(cwd: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod deepseek_preset_tests {
-    use super::{default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for};
+    use super::{
+        default_reasoning_effort_for, looks_like_deepseek, reasoning_efforts_for, safe_export_name,
+    };
 
     #[test]
     fn detects_official_host_and_model_prefix() {
@@ -3908,5 +3949,15 @@ mod deepseek_preset_tests {
             default_reasoning_effort_for("grok-4.5", "https://api.x.ai/v1", "xhigh"),
             "xhigh"
         );
+    }
+
+    #[test]
+    fn safe_export_name_strips_path_and_rejects_parent() {
+        assert_eq!(safe_export_name(None), "artifact.txt");
+        assert_eq!(safe_export_name(Some("note.md")), "note.md");
+        assert_eq!(safe_export_name(Some("../etc/passwd")), "passwd");
+        assert_eq!(safe_export_name(Some("C:\\\\Windows\\\\a.txt")), "a.txt");
+        assert_eq!(safe_export_name(Some("..")), "artifact.txt");
+        assert_eq!(safe_export_name(Some("")), "artifact.txt");
     }
 }
