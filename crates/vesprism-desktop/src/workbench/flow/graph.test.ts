@@ -8,6 +8,11 @@ import {
   sanitizeStartFields,
   subgraphFrom,
   testInputTemplate,
+  defaultTestInput,
+  isLegacyDefaultTestInput,
+  parseTestInputForRun,
+  resolveTestInput,
+  shouldPersistTestInput,
 } from './graph'
 import type { FlowDraft, FlowGraphJson, FlowGraphNode } from './types'
 
@@ -47,6 +52,24 @@ describe('graph topological layout & utilities', () => {
     expect(tpl).toContain('"retryCount": "0"')
     expect(testInputTemplate([])).toBeNull()
     expect(testInputTemplate(undefined)).toBeNull()
+  })
+
+  it('resolveTestInput 忽略旧占位，按 start 字段出模板；用户改过的保留', () => {
+    const phone = [{ name: 'phoneNumber', type: 'string' as const, required: true }]
+    expect(isLegacyDefaultTestInput('{\n  "input": ""\n}')).toBe(true)
+    expect(resolveTestInput('{\n  "input": ""\n}', phone)).toContain('"phoneNumber"')
+    expect(resolveTestInput(null, phone)).toContain('"phoneNumber"')
+    expect(resolveTestInput('{\n  "phoneNumber": "138"\n}', phone)).toContain('138')
+    const onlyInput = [{ name: 'input', type: 'string' as const, required: true }]
+    expect(resolveTestInput('{\n  "input": ""\n}', onlyInput)).toContain('"input"')
+    expect(defaultTestInput(undefined)).toBe('{\n}')
+    expect(shouldPersistTestInput('{\n}', defaultTestInput(phone))).toBe(false)
+    expect(shouldPersistTestInput('{\n  "phoneNumber": "138"\n}', defaultTestInput(phone))).toBe(
+      true,
+    )
+    expect(parseTestInputForRun('')).toEqual({ ok: true, value: {} })
+    expect(parseTestInputForRun('{\n}')).toEqual({ ok: true, value: {} })
+    expect(parseTestInputForRun('{').ok).toBe(false)
   })
 
   it('assigns progressive x-coordinates based on topological layer', () => {

@@ -3,7 +3,7 @@
  */
 import type { ChatMessage } from '../../types'
 import { innermostUserQuery } from '../../lib/sessionTitle'
-import { isFlowRunUserText } from './applyCanvasOutput'
+import { isFlowRunUserText } from '../flow/namedWorkflowSlash'
 
 const GENERATE_MARKERS = [
   '你是 Vesprism 流程画布的图生成器',
@@ -19,7 +19,7 @@ const GENERATE_MARKERS = [
 export function unwrapCanvasUserText(text: string): string | null {
   const t = (text || '').trim()
   if (!t) return null
-  if (/^\//.test(t)) return null
+  if (isFlowRunUserText(t)) return null
   if (t.startsWith('Your previous graph had a validation error:')) return null
   if (t.startsWith('Emit only a closed JSON')) return null
   if (t.startsWith('生成流程图：')) {

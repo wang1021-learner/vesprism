@@ -93,4 +93,13 @@ describe('pickCanvasApplyTargets', () => {
     ]
     expect(pickCanvasApplyTargets(messages, false)).toEqual([])
   })
+
+  it('带 --effort / --agent-budget 的试跑斜杠也不能拿来改画布', () => {
+    expectCanvasGraph('p_run3')
+    const messages = [
+      u('/demo-linear --effort medium {"input":""}', 'p_run3'),
+      a(callJson, 'p_run3'),
+    ]
+    expect(pickCanvasApplyTargets(messages, false)).toEqual([])
+  })
 })

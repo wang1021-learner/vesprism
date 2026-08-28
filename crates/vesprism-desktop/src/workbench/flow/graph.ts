@@ -175,6 +175,75 @@ export function testInputTemplate(fields: SchemaField[] | undefined | null): str
   return JSON.stringify(obj, null, 2)
 }
 
+export function startFieldsFromNodes(
+  nodes: Array<{ type: string; params?: unknown }> | undefined | null,
+): SchemaField[] | undefined {
+  const start = (nodes ?? []).find((n) => n.type === 'start')
+  return (start?.params as { fields?: SchemaField[] } | undefined)?.fields
+}
+
+/** 无 start 字段时的空对象（pretty），避免用 `{ "input": "" }` 冒充用户已填。 */
+export function defaultTestInput(fields?: SchemaField[] | null): string {
+  return testInputTemplate(fields) ?? '{\n}'
+}
+
+export function isEmptyTestInput(text: string): boolean {
+  const t = (text || '').trim()
+  if (!t) return true
+  try {
+    const v = JSON.parse(t) as unknown
+    return Boolean(
+      v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v as object).length === 0,
+    )
+  } catch {
+    return false
+  }
+}
+
+/** 旧默认占位 `{ "input": "" }`：新流程 start 字段就叫 input 时这是合法模板，否则当残留。 */
+export function isLegacyDefaultTestInput(text: string): boolean {
+  try {
+    const v = JSON.parse((text || '').trim()) as unknown
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+    const keys = Object.keys(v as object)
+    return keys.length === 1 && keys[0] === 'input' && (v as { input: unknown }).input === ''
+  } catch {
+    return false
+  }
+}
+
+export function resolveTestInput(
+  saved: string | null | undefined,
+  fields?: SchemaField[] | null,
+): string {
+  const auto = defaultTestInput(fields)
+  if (!saved || isEmptyTestInput(saved)) return auto
+  if (isLegacyDefaultTestInput(saved)) {
+    const names = (fields ?? []).map((f) => f.name).filter(Boolean)
+    const onlyInput = names.length === 1 && names[0] === 'input'
+    if (!onlyInput) return auto
+  }
+  return saved
+}
+
+export function shouldPersistTestInput(text: string, autoTemplate: string): boolean {
+  const t = (text || '').trim()
+  const auto = (autoTemplate || '').trim()
+  if (!t || isEmptyTestInput(t) || t === auto) return false
+  if (isLegacyDefaultTestInput(t) && t !== auto) return false
+  return true
+}
+
+export function parseTestInputForRun(text: string): { ok: true; value: unknown } | { ok: false } {
+  const t = (text || '').trim()
+  if (!t || isEmptyTestInput(t)) return { ok: true, value: {} }
+  try {
+    return { ok: true, value: JSON.parse(t) as unknown }
+  } catch {
+    return { ok: false }
+  }
+}
+
 export function summarizeInputSchema(nodes: FlowGraphNode[]): JsonSchema {
   const start = nodes.find((n) => n.type === 'start')
   if (!start) return { type: 'object' }

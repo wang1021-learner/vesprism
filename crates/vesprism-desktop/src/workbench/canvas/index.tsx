@@ -56,7 +56,11 @@ import {
   isValidFlowId,
   layoutDraft,
   subgraphFrom,
-  testInputTemplate,
+  defaultTestInput,
+  parseTestInputForRun,
+  resolveTestInput,
+  shouldPersistTestInput,
+  startFieldsFromNodes,
   type FlowDraft,
   type FlowListItem,
   type FlowNodeType,
@@ -167,7 +171,7 @@ function FlowCanvasInner() {
   const [aiError, setAiError] = useState('')
   const [diffGlow, setDiffGlow] = useState<Record<string, 'add' | 'update'>>({})
   const glowTimerRef = useRef(0)
-  const [testInput, setTestInput] = useState('{\n  "input": ""\n}')
+  const [testInput, setTestInput] = useState('{\n}')
   const [runSteps, setRunSteps] = useState<FlowRunStep[]>([])
   const [stepOutputs, setStepOutputs] = useState<Record<string, { output: unknown; status: string; timestamp: number }>>({})
   const [replayOpen, setReplayOpen] = useState(false)
@@ -195,10 +199,24 @@ function FlowCanvasInner() {
   edgesRef.current = edges
   const lastSaveHash = useRef('')
   const rhaiCache = useRef<{ key: string; rhai: string } | null>(null)
+  /** 试跑参数：水合当帧跳过落盘，避免用上一份流程的 JSON 盖住新流程。 */
+  const skipTestInputPersist = useRef(true)
+  const lastAutoTestInput = useRef('{\n}')
   const persistRef = useRef<(
     d: FlowDraft,
     extra?: { publish?: boolean; stage?: boolean; bind?: boolean; ephemeral?: boolean },
   ) => Promise<unknown>>(async () => {})
+
+  const hydrateTestInput = useCallback((flowId: string, fields?: SchemaField[] | null) => {
+    const auto = defaultTestInput(fields)
+    lastAutoTestInput.current = auto
+    const next = resolveTestInput(localStorage.getItem(testKey(flowId)), fields)
+    skipTestInputPersist.current = true
+    setTestInput(next)
+    if (!shouldPersistTestInput(next, auto)) {
+      localStorage.removeItem(testKey(flowId))
+    }
+  }, [])
 
   const matchedNodes = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -432,15 +450,7 @@ function FlowCanvasInner() {
       // 重挂载恢复靠它，避免切走再切回时画布回落 demo 或旧流程。
       if (tabId) patchTab(tabId, { flowId: rec.id })
       localStorage.setItem('vesprism.flow-canvas.lastId', rec.id)
-      const savedTestInput = localStorage.getItem(testKey(rec.id))
-      if (savedTestInput) {
-        setTestInput(savedTestInput)
-      } else {
-        // 未自定义过试跑参数：按 start 节点字段生成模板，用户填值即可试跑
-        const start = (Array.isArray(rec.nodes) ? rec.nodes : []).find((n) => n.type === 'start')
-        const tpl = testInputTemplate((start?.params as { fields?: SchemaField[] } | undefined)?.fields)
-        if (tpl) setTestInput(tpl)
-      }
+      hydrateTestInput(rec.id, startFieldsFromNodes(Array.isArray(rec.nodes) ? rec.nodes : []))
       applyDraft(
         {
           id: rec.id,
@@ -457,7 +467,7 @@ function FlowCanvasInner() {
         markDirty,
       )
     },
-    [applyDraft, tabId],
+    [applyDraft, tabId, hydrateTestInput],
   )
 
   const reloadList = useCallback(async () => {
@@ -798,6 +808,14 @@ function FlowCanvasInner() {
     overrideOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>,
   ) => {
     setDockOpen(true)
+    if (!tabId) {
+      pushToast('未找到活动会话 Tab', 'error')
+      return
+    }
+    if ($generating.get()) {
+      pushToast('当前回合还在进行，请结束后再试跑', 'error')
+      return
+    }
     // 试跑只走本 Tab 开会话时的 cwd，禁止用全局 workspace_cwd 把画布拽到主聊天项目。
     resetCanvasGraphWait()
     let current = fromRf(nodes, edges, draft)
@@ -831,13 +849,12 @@ function FlowCanvasInner() {
       pushToast('流程 id 不合法，请先在发布弹窗确认 id', 'error')
       return
     }
-    let input: unknown = {}
-    try {
-      input = testInput.trim() ? JSON.parse(testInput) : {}
-    } catch {
+    const parsedInput = parseTestInputForRun(testInput)
+    if (!parsedInput.ok) {
       pushToast('测试输入不是合法 JSON', 'error')
       return
     }
+    let input: unknown = parsedInput.value
 
     const effectiveOutputs = overrideOutputs ?? stepOutputs
     if (fromNodeId) {
@@ -1111,14 +1128,45 @@ function FlowCanvasInner() {
     if (promptId) expectCanvasGraph(promptId)
   }
 
-  useEffect(() => {
-    const saved = localStorage.getItem(testKey(draft.id))
-    setTestInput(saved || '{\n  "input": ""\n}')
-  }, [draft.id])
+  const startFieldsKey = useMemo(
+    () => JSON.stringify(startFieldsFromNodes(draft.nodes) ?? null),
+    [draft.nodes],
+  )
 
   useEffect(() => {
+    hydrateTestInput(draft.id, startFieldsFromNodes(draft.nodes))
+  }, [draft.id, hydrateTestInput])
+
+  useEffect(() => {
+    const fields = JSON.parse(startFieldsKey) as SchemaField[] | null
+    const auto = defaultTestInput(fields)
+    if (auto === lastAutoTestInput.current) return
+    setTestInput((prev) => {
+      const keep =
+        prev === lastAutoTestInput.current
+          ? false
+          : shouldPersistTestInput(prev, lastAutoTestInput.current)
+      lastAutoTestInput.current = auto
+      if (!keep) {
+        skipTestInputPersist.current = true
+        if (draft.id) localStorage.removeItem(testKey(draft.id))
+      }
+      return keep ? prev : auto
+    })
+  }, [startFieldsKey, draft.id])
+
+  useEffect(() => {
+    if (skipTestInputPersist.current) {
+      skipTestInputPersist.current = false
+      return
+    }
     if (!draft.id) return
-    localStorage.setItem(testKey(draft.id), testInput)
+    const key = testKey(draft.id)
+    if (shouldPersistTestInput(testInput, lastAutoTestInput.current)) {
+      localStorage.setItem(key, testInput)
+    } else {
+      localStorage.removeItem(key)
+    }
   }, [draft.id, testInput])
 
   const idOptions = useMemo(

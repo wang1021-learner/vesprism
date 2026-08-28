@@ -51,7 +51,7 @@ import {
   markCanvasContractPrimed,
 } from '../flow/prompt'
 import { consumeCanvasGraph, expectCanvasGraph, resetHealBudget } from '../generateWait'
-import { isFlowRunUserText } from './applyCanvasOutput'
+import { isFlowRunUserText } from '../flow/namedWorkflowSlash'
 
 function stopCanvasWheel(e: WheelEvent) {
   e.stopPropagation()

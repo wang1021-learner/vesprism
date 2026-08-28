@@ -9,21 +9,14 @@ import {
   looksLikeCanvasGraphJson,
   parseCanvasModelOutput,
 } from '../flow/schema'
+import { isFlowRunUserText } from '../flow/namedWorkflowSlash'
 import {
   isCanvasHeal,
   isPendingCanvasGraph,
   latestExpectedCanvasGraph,
 } from '../generateWait'
 
-/** 试跑斜杠（如 /demo-linear 或 /demo-linear { "input": 1 }）及其后的编排输出，不能拿来改画布。排除以 / 开头的文件路径 */
-export function isFlowRunUserText(text: string): boolean {
-  const t = (text || '').trim()
-  if (!t.startsWith('/')) return false
-  // 排除多级文件系统路径（如 /app/src/auth.ts, /etc/nginx 等）
-  if (t.includes('/', 1)) return false
-  // 严格匹配单个斜杠指令：/slug 或 /slug { JSON payload }
-  return /^\/[A-Za-z0-9_-]+(?:\s*\{|\s*$)/.test(t)
-}
+export { isFlowRunUserText }
 
 export function lastUserIndexForPrompt(messages: ChatMessage[], promptId: string): number {
   for (let i = messages.length - 1; i >= 0; i--) {

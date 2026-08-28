@@ -9,6 +9,13 @@ function msg(role: ChatMessage['role'], text: string): ChatMessage {
 describe('visibleCanvasMessages', () => {
   it('试跑斜杠命令不当对话', () => {
     expect(unwrapCanvasUserText('/demo-linear {}')).toBeNull()
+    expect(unwrapCanvasUserText('/demo-linear --effort medium {"input":""}')).toBeNull()
+  })
+
+  it('以斜杠开头的文件路径仍是用户原话', () => {
+    expect(unwrapCanvasUserText('/app/src/auth.ts 请帮我分析并画出认证流程')).toBe(
+      '/app/src/auth.ts 请帮我分析并画出认证流程',
+    )
   })
 
   it('自愈纠错指令不进工作栏', () => {
@@ -87,6 +94,25 @@ describe('visibleCanvasMessages', () => {
       '加一个审查节点',
       '已根据对话更新画布。',
       '把审查改成只读',
+    ])
+  })
+
+  it('默认带 --effort 的试跑斜杠及其后回复不进对话', () => {
+    const rows = visibleCanvasMessages([
+      msg('user', '加一个审查节点'),
+      msg('assistant', '```json\n{"nodes":[],"edges":[]}\n```'),
+      msg('user', '/demo-linear --effort medium {"input":""}'),
+      msg('assistant', 'Workflow started in the background. Watch it in /workflow runs'),
+      msg('thought', '正在跑审查节点'),
+      msg('assistant', 'phase 完成：审查 · agent-review'),
+      msg('user', '/app/src/auth.ts 请帮我分析'),
+      msg('assistant', '已根据对话更新画布。'),
+    ])
+    expect(rows.map((m) => m.text)).toEqual([
+      '加一个审查节点',
+      '已根据对话更新画布。',
+      '/app/src/auth.ts 请帮我分析',
+      '已根据对话更新画布。',
     ])
   })
 
