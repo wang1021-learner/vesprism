@@ -2,6 +2,9 @@
 //! facts/gates and retry, sampler config reconstruction, sampling-failure
 //! recovery, and per-response usage recording.
 use super::*;
+use crate::auth::backend::{ActiveAuthBackend, AuthBackend};
+use xai_grok_telemetry::region;
+use xai_grok_telemetry::region::Parent;
 const CLASSIFIER_REQUEST_TOKEN_RESERVE: u64 = 16_384;
 fn classifier_request_fits_context(input_tokens: u64, context_window: u64) -> bool {
     input_tokens <= context_window.saturating_sub(CLASSIFIER_REQUEST_TOKEN_RESERVE)
@@ -132,14 +135,10 @@ impl SessionActor {
     pub(super) async fn prepare_tool_definitions(&self) -> Vec<ToolDefinition> {
         self.prepare_tool_definitions_timed().await.0
     }
-    /// The exact tool specs a turn sends, BEFORE the turn-specific
-    /// structured-output append. Single source of truth shared by the turn
-    /// (`acp_session_impl/turn.rs`) and the `SnapshotToolDefinitions` handler, so
-    /// a verbatim-fork child's tool prefix can never silently drift from what the
-    /// parent turn actually sends. `defs` is the already-resolved tool list
-    /// (`prepare_tool_definitions_*`); this applies only the `web_search` drop
-    /// under backend search, the `ToolSpec::from` mapping, and the
-    /// // jike: 会话级 `toolOverrides.disabled` 通用工具停用（桌面端组装单扩展）。
+    /// The exact tool specs a turn sends before its structured-output append.
+    /// Shared with `SnapshotToolDefinitions` so verbatim mirrors preserve the
+    /// parent schema.
+    /// jike: 会话级 `toolOverrides.disabled` 通用工具停用（桌面端组装单扩展）。
     pub(crate) fn turn_base_tool_specs(&self, defs: &[ToolDefinition]) -> Vec<ToolSpec> {
         let backend_search_active = self.backend_search_active();
         // jike: 有效停用集 = 每轮 patch 优先、否则 seed（与 resolve_configured_cutoff 同规则）。
@@ -484,6 +483,7 @@ impl SessionActor {
         let api_key = if use_bearer_resolver {
             self.auth_manager
                 .as_ref()
+                .filter(|_| ActiveAuthBackend::default().is_xai_authority())
                 .and_then(|am| am.current_wire_valid().map(|a| a.key))
         } else {
             creds.api_key
@@ -613,6 +613,7 @@ impl SessionActor {
         let session = Arc::clone(self);
         tokio::task::spawn_local(async move {
             while let Some((messages, respond_to)) = rx.recv().await {
+                let request_span = region!("permission.classifier_request", Parent::Root);
                 let result = async {
                     let (sampling_client, model, context_window) = match &aux_classifier_sampler {
                         Some((client, model, context_window)) => {
@@ -690,6 +691,7 @@ impl SessionActor {
                 if let Err(error) = &result {
                     tracing::warn!(%error, "permission auto classifier side-query failed");
                 }
+                request_span.close();
                 let _ = respond_to.send(result);
             }
         });
@@ -1229,7 +1231,10 @@ impl SessionActor {
         let request_id = xai_grok_sampler::RequestId::random();
         let request_id_str = request_id.as_str().to_string();
         let submit_outcome = {
+            let gate_span = region!("turn.sampling_gate", Parent::Inherit);
             let _permit = acquire_subagent_sampling_permit(&self.sampling_gate).await;
+            gate_span.close();
+            let _sampling_span = region!("turn.sampling", Parent::Inherit);
             self.sampler_handle
                 .submit_and_collect(request_id, request)
                 .await
@@ -1244,6 +1249,7 @@ impl SessionActor {
                 if metrics.attempts > 0 {
                     span.record("attempt", i64::from(metrics.attempts));
                 }
+                let _drain_span = region!("turn.stream_drain_barrier", Parent::Inherit);
                 if tokio::time::timeout(std::time::Duration::from_secs(5), stream_drained_rx)
                     .await
                     .is_err()
@@ -1356,7 +1362,9 @@ impl SessionActor {
                 .await
                 .map(|c| (c.model, c.base_url))
                 .unwrap_or_default();
-            if self.auth_gate(&model_id, &base_url).active() {
+            if self.auth_gate(&model_id, &base_url).active()
+                && ActiveAuthBackend::default().is_xai_authority()
+            {
                 match am.get_valid_token().await {
                     Ok(key) => {
                         if creds.api_key.as_deref() != Some(&key) {
