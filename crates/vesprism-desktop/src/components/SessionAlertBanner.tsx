@@ -1,5 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { $activeTabId, $sessionAlert, openSettings, patchTab } from '../store'
+import { startAccountLogin } from '../lib/accountAuth'
 import { Notice, type NoticeTone } from './Notice'
 
 const META: Record<string, { title: string; tone: NoticeTone }> = {
@@ -28,10 +29,11 @@ export function SessionAlertBanner() {
             className="notice-action"
             onClick={() => {
               dismiss()
-              openSettings('models')
+              openSettings('general')
+              void startAccountLogin()
             }}
           >
-            去设置
+            登录
           </button>
         ) : null
       }

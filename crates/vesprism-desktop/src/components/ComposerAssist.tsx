@@ -27,6 +27,7 @@ import {
 import { zhCommandPurpose } from '../lib/toolChinese'
 import { attachKindFromPath, enableSessionSandbox } from '../lib/sessionSandbox'
 import { openPlanPreview, toggleAskMode } from '../lib/planMode'
+import { signOutAccount, startAccountLogin } from '../lib/accountAuth'
 import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, sendEngineSlashToast } from '../lib/engineSlash'
 import { openChatTab } from '../lib/openChatTab'
 
@@ -102,6 +103,19 @@ const LOCAL_SLASH: Item[] = [
       void openChatTab({ title: '自动化任务', utilityKind: 'workflows' })
     },
   }),
+  localCommand('login', {
+    insert: '',
+    run: () => {
+      openSettings('general')
+      void startAccountLogin()
+    },
+  }),
+  localCommand('logout', {
+    insert: '',
+    run: () => {
+      void signOutAccount()
+    },
+  }),
 ]
 
 function bindComposerCommand(c: ComposerCommand): ComposerCommand {
@@ -158,6 +172,17 @@ function bindComposerCommand(c: ComposerCommand): ComposerCommand {
   }
   if (name === 'plugins' || name === 'marketplace') {
     return open(() => openSettings('plugins'))
+  }
+  if (name === 'login') {
+    return open(() => {
+      openSettings('general')
+      void startAccountLogin()
+    })
+  }
+  if (name === 'logout') {
+    return open(() => {
+      void signOutAccount()
+    })
   }
   if (name === 'feedback') {
     return open(() => openFeedback())

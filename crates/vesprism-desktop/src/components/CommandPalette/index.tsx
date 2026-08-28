@@ -15,6 +15,7 @@ import {
   type ChatSummary,
 } from '../../store'
 import { searchSessions } from '../../bridge'
+import { startAccountLogin } from '../../lib/accountAuth'
 import { openChatFind, openSessionInsight, openSessionSchedule, requestRecap, shareCurrentSession } from '../../lib/engineSlash'
 import { openChatTab } from '../../lib/openChatTab'
 
@@ -302,6 +303,15 @@ export function CommandPalette() {
       subtitle: '多路检索并交叉核对，写出带引用的报告',
       action: () => {
         openSessionIntent('research')
+      },
+    },
+    {
+      id: 'cmd-login',
+      title: '登录账号',
+      subtitle: '打开浏览器完成官方授权',
+      action: () => {
+        openSettings('general')
+        void startAccountLogin()
       },
     },
     {

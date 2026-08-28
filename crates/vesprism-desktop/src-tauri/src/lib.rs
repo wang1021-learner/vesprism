@@ -1,3 +1,4 @@
+mod account;
 mod catalog;
 mod commands;
 mod computer;
@@ -238,6 +239,9 @@ pub fn run() {
             commands::restart_session,
             commands::get_env_status,
             commands::save_env_key,
+            account::account_status,
+            account::account_login,
+            account::account_logout,
             commands::env_file_location,
             commands::get_model_settings,
             commands::save_model_settings,

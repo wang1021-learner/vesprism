@@ -73,6 +73,7 @@ import {
   headersToText,
   type SettingsTab,
 } from './settingsHelpers'
+import { AccountCard } from './AccountCard'
 import { EngineSettings } from './EngineSettings'
 import { HooksSettings } from './HooksSettings'
 import { McpPanel } from './McpPanel'
@@ -666,6 +667,7 @@ export function SettingsModal() {
           <div className="settings-panel">
             {tab === 'general' && (
               <div className="settings-panel-inner">
+                <AccountCard />
                 <section className="settings-card">
                   <h3 className="settings-card-title">工作目录</h3>
                   <p className="settings-card-desc">

@@ -14,6 +14,7 @@ describe('formatEngineError', () => {
 
   it('鉴权 / 限流 / 网络', () => {
     expect(formatEngineError('401 Unauthorized')).toContain('鉴权')
+    expect(formatEngineError('401 Unauthorized')).toContain('登录')
     expect(formatEngineError('invalid API key')).toContain('密钥')
     expect(formatEngineError('429 rate limit')).toContain('频繁')
     expect(formatEngineError('error sending request for url: connect ECONNREFUSED')).toContain(

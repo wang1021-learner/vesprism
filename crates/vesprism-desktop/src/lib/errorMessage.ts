@@ -13,7 +13,7 @@ export function formatEngineError(raw: unknown): string {
   const lower = s.toLowerCase()
 
   if (/api.?key|unauthor|401|鉴权|authentication|forbidden|403/.test(lower)) {
-    return '鉴权失败，请到设置检查密钥'
+    return '鉴权失败，请到设置登录账号或检查密钥'
   }
   if (/429|rate limit|too many requests|限流/.test(lower)) {
     return '请求过于频繁，请稍后再试'

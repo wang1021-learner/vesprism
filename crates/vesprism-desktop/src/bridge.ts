@@ -56,6 +56,19 @@ export const setSecurityPolicy = (policy: SecurityPolicyDto) =>
   invoke<SecurityPolicyDto>('set_security_policy', { policy })
 
 export const getComputerUse = () => invoke<boolean>('get_computer_use')
+
+export type AccountStatus = {
+  logged_in: boolean
+  email?: string | null
+  display_name?: string | null
+  team_name?: string | null
+  mode?: string | null
+  api_key_env: boolean
+}
+
+export const accountStatus = () => invoke<AccountStatus>('account_status')
+export const accountLogin = () => invoke<AccountStatus>('account_login')
+export const accountLogout = () => invoke<AccountStatus>('account_logout')
 export const setComputerUse = (enabled: boolean, cwd?: string | null) =>
   invoke<boolean>('set_computer_use', { enabled, cwd: cwd ?? null })
 
