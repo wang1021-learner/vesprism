@@ -14,6 +14,7 @@ export interface FlowToolbarProps {
   onAutoLayout: () => void
   onExport: (format: ExportFormat) => void
   onImport: () => void
+  onNew: () => void
   onCopy: () => void
   onDelete: () => void
   onRun: () => void
@@ -32,6 +33,7 @@ export const FlowToolbar = React.memo(function FlowToolbar({
   onAutoLayout,
   onExport,
   onImport,
+  onNew,
   onCopy,
   onDelete,
   onRun,
@@ -185,6 +187,14 @@ export const FlowToolbar = React.memo(function FlowToolbar({
 
           <button type="button" className="flow-btn icon-btn" title="导入流程（支持 .zip / .yaml / .json）" onClick={onImport}>
             <span>↑</span> 导入
+          </button>
+          <button
+            type="button"
+            className="flow-btn icon-btn"
+            title="新开一张空白画布 Tab（起点和终点）"
+            onClick={onNew}
+          >
+            <span>＋</span> 新建
           </button>
           <button type="button" className="flow-btn icon-btn" title="复制当前流程副本" onClick={onCopy}>
             <span>⎘</span> 复制

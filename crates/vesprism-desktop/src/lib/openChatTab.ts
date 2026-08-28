@@ -28,6 +28,10 @@ export type OpenChatTabOpts = {
   utilityKind?: UtilityKind | null
   /** 只开面板、不启引擎会话（试跑详情只读） */
   skipSession?: boolean
+  /** 跳过「同类型面板复用」，画布「新建」要并列开新 Tab */
+  forceNew?: boolean
+  /** 画布 Tab 一创建就带上流程 id，避免挂载恢复读到上一张图 */
+  flowId?: string
 }
 
 /**
@@ -40,7 +44,8 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
   const cwd = resolveNewTabCwd() || $scratchCwd.get()
 
   // 专用面板：同类型已打开则直接切过去。已有 cwd 一律不动，避免主聊天换仓把画布拽走。
-  if (utilityKind) {
+  // forceNew：画布允许并列多 Tab，侧栏入口仍走复用。
+  if (utilityKind && !opts.forceNew) {
     const existing = findTabByUtilityKind(utilityKind)
     if (existing) {
       const st = getTabState(existing)
@@ -79,6 +84,7 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       chatTitle: title,
       utilityKind,
       cwd,
+      ...(opts.flowId ? { flowId: opts.flowId } : {}),
     })
     switchTab(tabId)
     if (!opts.skipSession && utilityKind !== 'flow-run') {
@@ -98,6 +104,7 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       utilityKind,
       cwd,
       error: '',
+      ...(opts.flowId ? { flowId: opts.flowId } : {}),
     })
     return tabId
   } catch (e) {

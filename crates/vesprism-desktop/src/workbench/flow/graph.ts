@@ -11,7 +11,7 @@ import type {
   JsonSchema,
   SchemaField,
 } from './types'
-import { slugifyFlowId } from './types'
+import { isValidFlowId, slugifyFlowId } from './types'
 import { AI_GRAPH_FAIL_MESSAGE, validateFlowGraph } from './schema'
 
 export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[] = [
@@ -72,6 +72,49 @@ export function defaultParams(type: FlowNodeType): FlowGraphNode['params'] {
       return { label: '结果汇聚', mergeMode: 'merge_json' }
     case 'end':
       return { label: '终点', outputSchema: { type: 'object' } }
+  }
+}
+
+/** 空白画布 id：`untitled-flow-xxxxxx`，避开已占用。 */
+export function nextBlankFlowId(taken: Iterable<string> = []): string {
+  const used = new Set(taken)
+  for (let n = 0; n < 48; n++) {
+    const id = `untitled-flow-${Math.random().toString(36).slice(2, 8)}`
+    if (isValidFlowId(id) && !used.has(id)) return id
+  }
+  const fallback = `untitled-flow-${Date.now().toString(36)}`
+  return isValidFlowId(fallback) && !used.has(fallback) ? fallback : 'untitled-flow'
+}
+
+/** 空白画布：起点 → 终点，不带示例 Agent。 */
+export function createBlankDraft(id?: string): FlowDraft {
+  const startId = createNodeId('start')
+  const endId = createNodeId('end')
+  const flowId = id && isValidFlowId(id) ? id : nextBlankFlowId()
+  return {
+    id: flowId,
+    name: '未命名流程',
+    description: '',
+    version: '1',
+    input_schema: fieldsToSchema([{ name: 'input', type: 'string', required: true }]),
+    output_schema: { type: 'object' },
+    dirty: true,
+    published: false,
+    nodes: [
+      {
+        id: startId,
+        type: 'start',
+        position: { x: 80, y: 180 },
+        params: defaultParams('start'),
+      },
+      {
+        id: endId,
+        type: 'end',
+        position: { x: 460, y: 180 },
+        params: defaultParams('end'),
+      },
+    ],
+    edges: [{ id: `e-${startId}-${endId}`, from: startId, to: endId }],
   }
 }
 

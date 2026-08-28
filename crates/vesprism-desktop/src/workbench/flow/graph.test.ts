@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   applyFlowPatch,
   bumpVersion,
+  createBlankDraft,
   createDemoDraft,
+  nextBlankFlowId,
   layoutDraft,
   layoutGraph,
   sanitizeStartFields,
@@ -184,6 +186,38 @@ describe('graph topological layout & utilities', () => {
     // join 有兄弟入边（不在无入边集合）；a/b 无入边 → 由重跑起点接入，不会成孤岛
     const noIn = sub.nodes.filter((n) => !sub.edges.some((e) => e.to === n.id)).map((n) => n.id)
     expect(noIn.sort()).toEqual(['a', 'b'])
+  })
+})
+
+describe('createBlankDraft', () => {
+  it('只有起点和终点，新 id，不带示例 Agent', () => {
+    const d = createBlankDraft('untitled-flow-test')
+    expect(d.id).toBe('untitled-flow-test')
+    expect(d.name).toBe('未命名流程')
+    expect(d.dirty).toBe(true)
+    expect(d.published).toBe(false)
+    expect(d.nodes.map((n) => n.type)).toEqual(['start', 'end'])
+    expect(d.edges).toHaveLength(1)
+    expect(d.edges[0].from).toBe(d.nodes[0].id)
+    expect(d.edges[0].to).toBe(d.nodes[1].id)
+    expect(d.nodes.some((n) => n.type === 'agent')).toBe(false)
+  })
+
+  it('非法 id 时自动生成 untitled-flow- 前缀', () => {
+    const d = createBlankDraft('Not Valid')
+    expect(d.id.startsWith('untitled-flow-')).toBe(true)
+    expect(d.id).not.toBe('Not Valid')
+  })
+
+  it('nextBlankFlowId 避开已占用', () => {
+    const taken = new Set<string>()
+    for (let i = 0; i < 8; i++) {
+      const id = nextBlankFlowId(taken)
+      expect(id.startsWith('untitled-flow-')).toBe(true)
+      expect(taken.has(id)).toBe(false)
+      taken.add(id)
+    }
+    expect(taken.size).toBe(8)
   })
 })
 

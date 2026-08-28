@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createDemoDraft, saveHash, type FlowGraphNode } from '../flow'
+import { createBlankDraft, createDemoDraft, saveHash, type FlowGraphNode } from '../flow'
 import {
   compileDraftRhai,
   draftAfterPersist,
@@ -30,6 +30,14 @@ describe('draftAfterPersist', () => {
     expect(next.published).toBe(true)
     expect(next.version).toBe('2')
   })
+
+  it('保存完成时已经切到别的流程，不把旧元数据盖上来', () => {
+    const prev = { ...createBlankDraft('untitled-flow-new'), dirty: true }
+    const persisted = { ...createDemoDraft(), dirty: true, id: 'ship' }
+    const next = draftAfterPersist(prev, persisted, { published: true, version: '9' }, saveHash(prev))
+    expect(next).toBe(prev)
+    expect(next.id).toBe('untitled-flow-new')
+  })
 })
 
 afterEach(() => {
@@ -58,6 +66,7 @@ describe('shouldSkipDraftPersist', () => {
     expect(shouldSkipDraftPersist('demo-linear', { stage: true })).toBe(false)
     expect(shouldSkipDraftPersist('demo-linear', { publish: true })).toBe(false)
     expect(shouldSkipDraftPersist('ship')).toBe(false)
+    expect(shouldSkipDraftPersist('untitled-flow-ab12')).toBe(false)
   })
 })
 

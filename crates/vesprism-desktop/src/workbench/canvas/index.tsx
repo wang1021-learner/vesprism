@@ -49,8 +49,10 @@ import {
   FLOW_RETRY_STRICT,
   bumpVersion,
   collectPromptsMarkdown,
+  createBlankDraft,
   createDemoDraft,
   createNodeId,
+  nextBlankFlowId,
   defaultParams,
   draftHasAbsolutePath,
   isValidFlowId,
@@ -1042,6 +1044,50 @@ function FlowCanvasInner() {
     pushToast(`已复制为 ${newId}`, 'success')
   }
 
+  const doNewBlank = async () => {
+    const current = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
+    if (tabId) patchTab(tabId, { flowId: current.id })
+    if (current.dirty && !shouldSkipDraftPersist(current.id)) {
+      try {
+        await persistRef.current(current)
+      } catch (e) {
+        pushToast(`保存当前草稿失败：${String(e)}`, 'error')
+        return
+      }
+    }
+    const taken = list.map((x) => x.id)
+    taken.push(current.id)
+    const blank = createBlankDraft(nextBlankFlowId(taken))
+    try {
+      await saveFlow({
+        id: blank.id,
+        name: blank.name,
+        description: blank.description,
+        version: blank.version,
+        input_schema: blank.input_schema,
+        output_schema: blank.output_schema,
+        nodes: blank.nodes,
+        edges: blank.edges,
+      })
+    } catch (e) {
+      pushToast(`新建失败：${String(e)}`, 'error')
+      return
+    }
+    await reloadList()
+    const newTab = await openChatTab({
+      title: blank.name,
+      utilityKind: 'flow-canvas',
+      forceNew: true,
+      flowId: blank.id,
+    })
+    if (!newTab) {
+      pushToast('空白流程已保存，但没能打开新 Tab', 'error')
+      return
+    }
+    patchTab(newTab, { flowId: blank.id, chatTitle: blank.name })
+    pushToast('已新开空白画布', 'success')
+  }
+
   const doDelete = async () => {
     if (!draft.id) return
     const id = draft.id
@@ -1293,6 +1339,8 @@ function FlowCanvasInner() {
   openPublishRef.current = openPublish
   const doCopyRef = useRef(doCopy)
   doCopyRef.current = doCopy
+  const doNewBlankRef = useRef(doNewBlank)
+  doNewBlankRef.current = doNewBlank
 
   const onToolbarExport = useCallback((fmt: 'zip' | 'yaml' | 'json' | 'rhai') => {
     void doExportRef.current(fmt)
@@ -1314,6 +1362,9 @@ function FlowCanvasInner() {
   }, [])
   const onToolbarCopy = useCallback(() => {
     doCopyRef.current()
+  }, [])
+  const onToolbarNew = useCallback(() => {
+    void doNewBlankRef.current()
   }, [])
   const onDockRetry = useCallback(() => {
     void onRetryStrictRef.current()
@@ -1350,6 +1401,7 @@ function FlowCanvasInner() {
         onAutoLayout={onAutoLayout}
         onExport={onToolbarExport}
         onImport={onToolbarImport}
+        onNew={onToolbarNew}
         onCopy={onToolbarCopy}
         onDelete={onToolbarDelete}
         onRun={onToolbarRun}

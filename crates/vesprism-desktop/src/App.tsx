@@ -319,6 +319,7 @@ function AppError() {
 function AppMainBody() {
   const shell = useStore($appShell)
   const kind = useStore($utilityKind)
+  const tabId = useStore($activeTabId)
   const product = getProduct(shell)
   if (product.emptyView === 'home' && !productOwnsUtility(shell, kind)) {
     return <ProductHome product={product} />
@@ -350,7 +351,7 @@ function AppMainBody() {
         )}
       >
         <Suspense fallback={<div className="flow-canvas-loading">加载流程画布…</div>}>
-          <FlowCanvas />
+          <FlowCanvas key={tabId} />
         </Suspense>
       </ErrorBoundary>
     )

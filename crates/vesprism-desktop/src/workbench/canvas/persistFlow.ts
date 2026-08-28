@@ -29,6 +29,7 @@ export function draftAfterPersist(
   saved: { published?: boolean; version: string },
   liveHash: string,
 ): FlowDraft {
+  if (prev.id !== persisted.id) return prev
   const same = liveHash === saveHash(persisted)
   return {
     ...prev,

@@ -5,7 +5,7 @@ import {
   parseGeneratedGraph,
   validateFlowGraph,
 } from './schema'
-import { createDemoDraft, graphJsonFromDraft, layoutGraph } from './graph'
+import { createBlankDraft, createDemoDraft, graphJsonFromDraft, layoutGraph } from './graph'
 
 describe('validateFlowGraph', () => {
   it('接受合法三节点线性图', () => {
@@ -14,6 +14,15 @@ describe('validateFlowGraph', () => {
     if (r.ok) {
       expect(r.graph.nodes).toHaveLength(3)
       expect(r.graph.edges).toHaveLength(2)
+    }
+  })
+
+  it('接受空白画布（起点 → 终点，无 Agent）', () => {
+    const r = validateFlowGraph(graphJsonFromDraft(createBlankDraft('untitled-flow-test')))
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.graph.nodes.map((n) => n.type).sort()).toEqual(['end', 'start'])
+      expect(r.graph.edges).toHaveLength(1)
     }
   })
 
