@@ -298,6 +298,13 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
   })
 
+  it('findTabByUtilityKind 可复用 writing-desk 专用 Tab', () => {
+    createTab('tab-writing', { utilityKind: 'writing-desk', chatTitle: '写台' })
+    expect(findTabByUtilityKind('writing-desk')).toBe('tab-writing')
+    expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
+    expect(isWorkbenchUtility('writing-desk')).toBe(true)
+  })
+
   it('collectAllTabSubagents 从画布 Tab 收集，不跟当前试跑详情投影走', () => {
     createTab('tab-flow', {
       utilityKind: 'flow-canvas',

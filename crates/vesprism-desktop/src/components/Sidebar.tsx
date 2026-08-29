@@ -272,6 +272,16 @@ function AgentsIcon() {
   )
 }
 
+function WritingDeskIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M7 4h8l3 3v13H7z" />
+      <path d="M15 4v3h3" />
+      <path d="M10 11h6M10 15h4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 function SettingsIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
@@ -314,6 +324,7 @@ function iconForNavKind(kind: ProductNavKind) {
   if (kind === 'workflows') return WorkflowIcon
   if (kind === 'flow-canvas') return FlowCanvasIcon
   if (kind === 'agents') return AgentsIcon
+  if (kind === 'writing-desk') return WritingDeskIcon
   return GenericNavIcon
 }
 

@@ -123,6 +123,10 @@
   gap: 10px;
 }
 
+.workbench-home-cards:has(> :only-child) {
+  grid-template-columns: minmax(0, 22rem);
+}
+
 .workbench-home-card {
   display: flex;
   flex-direction: column;

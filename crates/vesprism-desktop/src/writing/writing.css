@@ -1,0 +1,1281 @@
+/* ═══════════════════════════════════════════════════════════════════
+   写完 · 白纸书斋（浅色系）
+   白底 + 柔雾青绿主色 + 柔珊瑚候选章 + 衬线正文。柔和、安静、留白。
+   ═══════════════════════════════════════════════════════════════════ */
+
+.wd-desk,
+.wd-shelf {
+  --wd-hall: #f4f5f8;
+  --wd-lot: #ffffff;
+  --wd-lot-2: #f7f8fb;
+  --wd-lot-3: #eef1f5;
+  --wd-paper: #ffffff;
+  --wd-ink: #3d444f;
+  --wd-ink-soft: #525b68;
+  --wd-iron: #7d8591;
+  --wd-iron-2: #a6adba;
+  --wd-accent: #5c8d85;
+  --wd-accent-deep: #497a72;
+  --wd-accent-ink: #3f6b64;
+  --wd-accent-soft: rgba(92, 141, 133, 0.10);
+  --wd-cinnabar: #c97b64;
+  --wd-cinnabar-deep: #b6634b;
+  --wd-cinnabar-ink: #a55742;
+  --wd-cinnabar-soft: rgba(201, 123, 100, 0.12);
+  --wd-green: #6f9a80;
+  --wd-green-ink: #4f7c62;
+  --wd-green-soft: rgba(111, 154, 128, 0.12);
+  --wd-gold: #c2a05c;
+  --wd-line: rgba(61, 68, 79, 0.08);
+  --wd-line-2: rgba(61, 68, 79, 0.16);
+  --wd-paper-line: rgba(61, 68, 79, 0.05);
+  --wd-radius: 16px;
+  --wd-radius-sm: 11px;
+  --wd-shadow: 0 12px 32px rgba(70, 80, 100, 0.10), 0 2px 6px rgba(70, 80, 100, 0.06);
+  --wd-shadow-soft: 0 6px 18px rgba(70, 80, 100, 0.08);
+  --wd-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --wd-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", sans-serif;
+  font-family: var(--wd-sans);
+  color: var(--wd-ink);
+  letter-spacing: 0;
+}
+
+.wd-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  color: var(--wd-iron);
+}
+
+/* ── 写台骨架 ─────────────────────────────────────────── */
+.wd-desk {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(1100px 700px at 72% -8%, color-mix(in srgb, var(--wd-accent) 6%, transparent), transparent 60%),
+    radial-gradient(900px 600px at 8% 112%, color-mix(in srgb, var(--wd-gold) 5%, transparent), transparent 55%),
+    var(--wd-hall);
+}
+
+/* ── 顶栏：书名 + 仪表盘 ─────────────────────────────── */
+.wd-head {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem 1.1rem;
+  padding: 0.9rem 1.15rem 0.8rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.wd-head h1 {
+  margin: 0;
+  font-family: var(--wd-serif);
+  font-size: 23px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+.wd-kicker {
+  margin: 0 0 0.12rem;
+  font-size: 10.5px;
+  letter-spacing: 0.3em;
+  color: var(--wd-accent);
+  font-weight: 700;
+}
+.wd-back {
+  flex-shrink: 0;
+  padding: 0.5rem 0.8rem;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.wd-title { min-width: 0; }
+.wd-plat {
+  font-size: 11px;
+  color: var(--wd-iron);
+  border: 1px solid var(--wd-line-2);
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wd-head-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--wd-cinnabar);
+  flex: 1;
+  min-width: 180px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.wd-spacer { flex: 1; min-width: 8px; }
+.wd-dash {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.wd-ditem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.wd-dn {
+  font-family: var(--wd-serif);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.wd-dn em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  font-weight: 600;
+}
+.wd-dk {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--wd-iron-2);
+}
+.wd-dbar {
+  width: 150px;
+  height: 5px;
+  border-radius: 5px;
+  background: var(--wd-line);
+  overflow: hidden;
+}
+.wd-dbar-in {
+  height: 100%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--wd-gold), var(--wd-cinnabar));
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.wd-save {
+  font-size: 11px;
+  color: var(--wd-green-ink);
+  background: var(--wd-green-soft);
+  border: 1px solid color-mix(in srgb, var(--wd-green) 38%, transparent);
+  padding: 3px 10px;
+  border-radius: 999px;
+  letter-spacing: 0.08em;
+}
+
+/* ── 模式条：四个工作面 ─────────────────────────────── */
+.wd-modes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0 1.15rem 0.85rem;
+  padding: 5px;
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius);
+  flex-shrink: 0;
+  box-shadow: var(--wd-shadow-soft);
+}
+.wd-mode {
+  appearance: none;
+  border: 0;
+  border-radius: var(--wd-radius-sm);
+  background: transparent;
+  color: var(--wd-iron);
+  font: inherit;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.wd-mode:hover { color: var(--wd-ink); background: var(--wd-lot-2); }
+.wd-mode.is-on {
+  background: var(--wd-lot-3);
+  color: var(--wd-ink);
+  box-shadow: inset 0 0 0 1px var(--wd-line-2);
+}
+.wd-mode-label { font-size: 13.5px; font-weight: 700; }
+.wd-mode-does {
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  line-height: 1.4;
+}
+.wd-mode.is-on .wd-mode-does { color: var(--wd-accent); }
+
+/* ── 三栏 ───────────────────────────────────────────── */
+.wd-body {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) 304px;
+  gap: 13px;
+  min-height: 0;
+  flex: 1;
+  padding: 0 1.15rem 1.15rem;
+}
+.wd-tree, .wd-main, .wd-rail {
+  min-height: 0;
+  border-radius: var(--wd-radius);
+  box-shadow: var(--wd-shadow-soft);
+}
+
+/* ── 左：结构树 ─────────────────────────────────────── */
+.wd-tree {
+  overflow: auto;
+  padding: 0.85rem 0.6rem 1.3rem;
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+}
+.wd-tree-book {
+  margin: 0.9rem 0.7rem 0.45rem;
+  font-size: 10.5px;
+  letter-spacing: 0.24em;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+}
+.wd-tree-book:first-child { margin-top: 0.15rem; }
+.wd-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  margin: 0 0 2px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--wd-iron);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 0.42rem 0.62rem;
+  min-height: 32px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.wd-tree-item:hover { background: var(--wd-lot-2); color: var(--wd-ink); }
+.wd-tree-item.is-on {
+  color: var(--wd-ink);
+  background: var(--wd-lot-3);
+  font-weight: 700;
+  box-shadow: inset 2.5px 0 0 var(--wd-accent);
+}
+.wd-tree-item.is-lock { opacity: 0.55; }
+.wd-tree-lock {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--wd-iron-2);
+  flex-shrink: 0;
+}
+.wd-tree-add {
+  margin: 0.4rem 0.6rem 0.2rem;
+  color: var(--wd-iron);
+  font-size: 12px;
+  border-color: var(--wd-line-2);
+}
+
+/* ── 中：主卡 ───────────────────────────────────────── */
+.wd-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+  overflow: hidden;
+}
+
+/* 步骤横幅 */
+.wd-step {
+  padding: 0.95rem 1.25rem 0.8rem;
+  background: var(--wd-lot);
+  border-bottom: 1px solid var(--wd-line);
+  flex-shrink: 0;
+}
+.wd-step h2 {
+  margin: 0 0 0.25rem;
+  font-family: var(--wd-serif);
+  font-size: 18px;
+  font-weight: 700;
+}
+.wd-step p {
+  margin: 0 0 0.15rem;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--wd-iron);
+}
+.wd-step-you { color: var(--wd-ink) !important; font-weight: 600; }
+
+/* 门禁条 */
+.wd-gates {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.9rem;
+  padding: 0.5rem 1.25rem;
+  border-bottom: 1px solid var(--wd-line);
+  flex-shrink: 0;
+}
+.wd-gate-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+}
+.wd-gate-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.35rem;
+  font-size: 11.5px;
+  color: var(--wd-iron);
+}
+.wd-gate-list li.is-ok { color: var(--wd-green-ink); }
+.wd-gate-list li.is-block {
+  color: var(--wd-cinnabar);
+  font-weight: 700;
+}
+.wd-gate-from { font-weight: 700; color: var(--wd-ink-soft); }
+.wd-gate-arrow { opacity: 0.5; }
+.wd-gate-need { font-size: 11px; }
+
+/* 节拍条（叙事流） */
+.wd-bstrip {
+  display: flex;
+  gap: 9px;
+  padding: 0.7rem 1.25rem 0;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.wd-bcell {
+  flex: 1 1 0;
+  min-width: 150px;
+  position: relative;
+  padding: 10px 14px 10px 38px;
+  background: var(--wd-lot-2);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius-sm);
+  text-align: left;
+  color: var(--wd-ink-soft);
+  cursor: pointer;
+  transition: border-color 0.13s ease, background 0.13s ease, transform 0.12s ease;
+}
+.wd-bcell:hover { border-color: var(--wd-line-2); transform: translateY(-1px); }
+.wd-bcell.is-on {
+  border-color: var(--wd-accent);
+  box-shadow: 0 0 0 1px var(--wd-accent);
+  background: var(--wd-lot-3);
+}
+.wd-bcell .wd-bnum {
+  position: absolute;
+  left: 13px;
+  top: 11px;
+  font-family: var(--wd-serif);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--wd-iron-2);
+}
+.wd-bcell.is-on .wd-bnum { color: var(--wd-accent); }
+.wd-bcell .wd-bt { font-size: 12.5px; font-weight: 700; }
+.wd-bcell .wd-bs {
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+/* 滚动区 */
+.wd-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 1.05rem 1.25rem 1.4rem;
+}
+
+/* ── 卡片件 ─────────────────────────────────────────── */
+.wd-section {
+  background: var(--wd-lot-2);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius-sm);
+  padding: 1.1rem 1.2rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.wd-section.is-wide { margin-bottom: 0; }
+.wd-section-h {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.7rem;
+}
+.wd-section-h h2 {
+  margin: 0;
+  font-family: var(--wd-serif);
+  font-size: 17px;
+  font-weight: 700;
+}
+.wd-lot {
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  color: var(--wd-accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.wd-lead {
+  margin: 0 0 0.8rem;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--wd-iron);
+}
+
+.wd-zone { margin-bottom: 1.05rem; }
+.wd-zone:last-child { margin-bottom: 0; }
+.wd-zone-h {
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px dashed var(--wd-line-2);
+}
+
+.wd-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.7rem 1.1rem;
+  margin-bottom: 0.7rem;
+}
+.wd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.6rem;
+  min-width: 0;
+}
+.wd-field-row .wd-field { margin-bottom: 0; }
+.wd-field-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  justify-content: space-between;
+}
+.wd-field-k {
+  font-size: 11px;
+  color: var(--wd-iron);
+  letter-spacing: 0.02em;
+}
+.wd-field.is-warn .wd-field-k { color: var(--wd-cinnabar); font-weight: 600; }
+.wd-field-ai {
+  appearance: none;
+  font-size: 10.5px;
+  color: var(--wd-accent-ink);
+  background: var(--wd-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--wd-accent) 35%, transparent);
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.13s ease;
+}
+.wd-field-ai:hover { background: color-mix(in srgb, var(--wd-accent) 18%, transparent); }
+.wd-field-v {
+  font-size: 13px;
+  line-height: 1.65;
+  padding: 8px 11px;
+  background: var(--wd-paper);
+  color: var(--wd-ink);
+  border-radius: 9px;
+  white-space: pre-wrap;
+  min-height: 34px;
+  border: 1px solid var(--wd-line);
+}
+.wd-field.is-empty .wd-field-v { color: var(--wd-iron-2); background: transparent; border: 1px dashed var(--wd-line-2); }
+.wd-field-input {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--wd-ink);
+  background: var(--wd-paper);
+  border: 1px solid var(--wd-line);
+  border-radius: 9px;
+  padding: 8px 11px;
+  width: 100%;
+  resize: vertical;
+}
+.wd-field-input:focus { border-color: var(--wd-accent); }
+.wd-field.is-empty .wd-field-input { background: transparent; border: 1px dashed var(--wd-line-2); }
+.wd-field-input::placeholder { color: var(--wd-iron-2); }
+.wd-field-hint {
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  line-height: 1.5;
+}
+
+/* 印章 */
+.wd-stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 3px 10px 3px 11px;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.wd-stamp.is-cand, .wd-stamp.is-due {
+  color: var(--wd-cinnabar-ink);
+  border-color: var(--wd-cinnabar);
+  background: var(--wd-cinnabar-soft);
+}
+.wd-stamp.is-ok {
+  color: var(--wd-green-ink);
+  border-color: var(--wd-green);
+  background: var(--wd-green-soft);
+}
+.wd-stamp.is-open, .wd-stamp.is-lock {
+  color: var(--wd-iron-2);
+  border-color: var(--wd-line-2);
+  background: transparent;
+}
+
+/* 按钮 */
+.wd-btn, .wd-action {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--wd-radius-sm);
+  background: var(--wd-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 0.55rem 0.95rem;
+  min-height: 38px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.12s ease, filter 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+}
+.wd-btn:hover:not(:disabled), .wd-action:hover:not(:disabled) {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+.wd-btn:active:not(:disabled), .wd-action:active:not(:disabled) { transform: translateY(0); }
+.wd-action:disabled, .wd-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.wd-btn-primary {
+  background: linear-gradient(180deg, var(--wd-accent), var(--wd-accent-deep));
+  color: #fff;
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--wd-accent) 28%, transparent);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 54px;
+  padding: 0.6rem 1rem;
+}
+.wd-btn-primary .wd-btn-label { font-size: 15px; }
+.wd-btn-primary .wd-btn-does { font-size: 11px; opacity: 0.85; font-weight: 500; }
+.wd-btn-ghost {
+  background: transparent;
+  color: var(--wd-ink-soft);
+  border: 1px solid var(--wd-line-2);
+}
+.wd-btn-ghost:hover:not(:disabled) { color: var(--wd-ink); border-color: var(--wd-iron-2); }
+.wd-btn-danger {
+  background: var(--wd-cinnabar-soft);
+  color: var(--wd-cinnabar-ink);
+  border: 1px solid color-mix(in srgb, var(--wd-cinnabar) 42%, transparent);
+}
+.wd-btn-does {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.82;
+  line-height: 1.35;
+}
+
+/* 稿纸（正文） */
+.wd-mast {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+.wd-mast-stat { font-size: 12px; color: var(--wd-iron); }
+.wd-mast-mood { font-size: 12px; color: var(--wd-iron-2); }
+.wd-cand-bar {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.wd-paper {
+  background: var(--wd-paper);
+  color: var(--wd-ink-soft);
+  border-radius: var(--wd-radius-sm);
+  padding: 1.6rem 2.1rem 1.8rem;
+  box-shadow: var(--wd-shadow);
+  border: 1px solid var(--wd-line);
+  position: relative;
+}
+.wd-paper::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: repeating-linear-gradient(transparent 0 31px, var(--wd-paper-line) 31px 32px);
+}
+.wd-paper.is-cand { outline: 1px solid color-mix(in srgb, var(--wd-cinnabar) 50%, transparent); outline-offset: 3px; }
+.wd-paper-title {
+  font-family: var(--wd-serif);
+  font-size: 21px;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 1.1rem;
+  letter-spacing: 0.08em;
+  color: var(--wd-ink);
+}
+.wd-paper-beat {
+  margin-bottom: 1.1rem;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  margin-left: -0.7rem;
+  margin-right: -0.7rem;
+}
+.wd-paper-beat.is-on {
+  background: var(--wd-cinnabar-soft);
+  outline: 1px solid color-mix(in srgb, var(--wd-cinnabar) 28%, transparent);
+}
+.wd-paper h3 {
+  font-family: var(--wd-serif);
+  font-size: 14.5px;
+  margin: 0 0 0.4rem;
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  color: var(--wd-ink);
+}
+.wd-paper h3 .wd-bn { color: var(--wd-cinnabar-ink); }
+.wd-paper p {
+  font-family: var(--wd-serif);
+  font-size: 16px;
+  line-height: 2.05;
+  margin: 0 0 0.5rem;
+  color: var(--wd-ink-soft);
+}
+.wd-paper-input {
+  font-family: var(--wd-serif);
+  font-size: 16px;
+  line-height: 2.05;
+  color: var(--wd-ink);
+  background: transparent;
+  border: 0;
+  width: 100%;
+  resize: vertical;
+  padding: 0;
+}
+.wd-paper-input:focus { outline: none; }
+
+/* 圣经 / 瓦片 */
+.wd-hero {
+  background: var(--wd-lot-3);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius-sm);
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+.wd-hero .wd-field { margin-bottom: 0.5rem; }
+.wd-bible-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.8rem;
+}
+.wd-bible-col h3 {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+.wd-tile {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  background: var(--wd-lot-2);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius-sm);
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 0.55rem;
+  cursor: pointer;
+  transition: border-color 0.13s ease, transform 0.12s ease;
+}
+.wd-tile:hover { border-color: var(--wd-line-2); transform: translateY(-1px); }
+.wd-tile-h { font-size: 13px; font-weight: 700; color: var(--wd-ink); }
+.wd-tile-now {
+  font-size: 11.5px;
+  color: var(--wd-iron);
+  line-height: 1.5;
+}
+.wd-tile-ban {
+  font-size: 11px;
+  color: var(--wd-cinnabar-ink);
+  line-height: 1.5;
+}
+
+/* 表格（伏笔账） */
+.wd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.wd-table caption {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+  padding-bottom: 0.45rem;
+}
+.wd-table th, .wd-table td {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px dashed var(--wd-line);
+  vertical-align: top;
+}
+.wd-table th {
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.wd-table input, .wd-table textarea, .wd-table select {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--wd-ink);
+  background: transparent;
+  border: 0;
+  width: 100%;
+}
+.wd-table textarea { resize: vertical; }
+
+/* 章内切块卡（BeatsView） */
+.wd-beat {
+  background: var(--wd-lot-2);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius-sm);
+  padding: 0.75rem 0.95rem;
+  margin-bottom: 0.6rem;
+}
+.wd-beat h3 {
+  margin: 0 0 0.3rem;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--wd-ink);
+}
+
+/* 拆法 / 角色 / 工作链 */
+.wd-start {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: wdstart;
+}
+.wd-start li {
+  counter-increment: wdstart;
+  display: flex;
+  gap: 0.7rem;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--wd-iron);
+  padding: 0.35rem 0;
+}
+.wd-start li strong {
+  color: var(--wd-ink);
+  flex-shrink: 0;
+}
+.wd-start li::before {
+  content: counter(wdstart);
+  font-family: var(--wd-serif);
+  font-weight: 700;
+  color: var(--wd-accent);
+  flex-shrink: 0;
+}
+.wd-role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.7rem;
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+.wd-role-card {
+  background: var(--wd-lot-2);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius-sm);
+  padding: 0.8rem 0.95rem;
+}
+.wd-role-card h3 { margin: 0 0 0.3rem; font-size: 14px; font-weight: 700; }
+.wd-role-card p { margin: 0 0 0.25rem; font-size: 12px; line-height: 1.55; color: var(--wd-iron); }
+.wd-job-list {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+.wd-job-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px dashed var(--wd-line);
+  font-size: 13px;
+}
+.wd-job-list li .wd-ticket-id { margin-right: 0.2rem; }
+.wd-prompt { margin-top: 0.8rem; }
+.wd-prompt pre {
+  font-size: 12px;
+  line-height: 1.65;
+  background: var(--wd-lot-3);
+  border: 1px solid var(--wd-line);
+  border-radius: 9px;
+  padding: 0.7rem 0.9rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  margin: 0 0 0.8rem;
+  color: var(--wd-ink-soft);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.wd-lock-banner {
+  background: var(--wd-cinnabar-soft);
+  border: 1px solid color-mix(in srgb, var(--wd-cinnabar) 35%, transparent);
+  color: var(--wd-cinnabar-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 0.6rem 0.85rem;
+  border-radius: 10px;
+  margin: 0 0 0.8rem;
+}
+
+/* ── 命令坞（底部横贯） ─────────────────────────────── */
+.wd-dock {
+  flex-shrink: 0;
+  padding: 0.7rem 1.05rem 0.85rem;
+  background: var(--wd-lot-2);
+  border-top: 1px solid var(--wd-line);
+}
+.wd-dock .wd-cmd {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem 0.8rem;
+  align-items: center;
+}
+.wd-dock .wd-kicker { grid-column: 1 / -1; grid-row: 1; }
+.wd-dock .wd-btn-primary { grid-column: 1; grid-row: 2 / 4; min-height: 64px; }
+.wd-dock .wd-cmd-chips { grid-column: 2; grid-row: 2; display: flex; gap: 7px; flex-wrap: wrap; }
+.wd-dock .wd-cmd-chip {
+  appearance: none;
+  font-size: 12.5px;
+  color: var(--wd-iron);
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line-2);
+  border-radius: 999px;
+  padding: 6px 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.13s ease, border-color 0.13s ease;
+}
+.wd-dock .wd-cmd-chip:hover:not(:disabled) { color: var(--wd-ink); border-color: var(--wd-iron-2); }
+.wd-dock .wd-cmd-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+.wd-dock .wd-cmd-chip.is-read {
+  grid-column: 2;
+  grid-row: 4;
+  justify-self: start;
+  color: var(--wd-green-ink);
+  border-color: color-mix(in srgb, var(--wd-green) 45%, transparent);
+  background: var(--wd-green-soft);
+}
+.wd-dock .wd-cmd-chip.is-off { opacity: 0.45; }
+.wd-dock .wd-cmd-box {
+  grid-column: 2;
+  grid-row: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line-2);
+  border-radius: var(--wd-radius-sm);
+  padding: 0 0.9rem;
+  min-height: 42px;
+}
+.wd-dock .wd-cmd-box:focus-within { border-color: var(--wd-accent); }
+.wd-dock .wd-cmd-box .wd-field-k { white-space: nowrap; }
+.wd-dock .wd-cmd-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--wd-ink);
+  font: inherit;
+  font-size: 13px;
+}
+.wd-dock .wd-cmd-input::placeholder { color: var(--wd-iron-2); }
+.wd-dock .wd-cmd-preview {
+  grid-column: 1 / -1;
+  grid-row: 5;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--wd-iron);
+  line-height: 1.5;
+}
+.wd-dock .wd-ask {
+  grid-column: 1 / -1;
+  grid-row: 6;
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--wd-ink-soft);
+}
+.wd-dock .wd-ask .wd-kicker { margin-bottom: 0.3rem; }
+.wd-dock .wd-ask .wd-btn-ghost { margin-top: 0.5rem; font-size: 11.5px; }
+
+/* ── 右栏：候选 + 账本 ─────────────────────────────── */
+.wd-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  overflow: auto;
+  background: transparent;
+  box-shadow: none;
+}
+.wd-rail > * {
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius);
+  box-shadow: var(--wd-shadow-soft);
+}
+
+.wd-cand {
+  padding: 1rem 1.1rem;
+  flex-shrink: 0;
+}
+.wd-cand-h {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+.wd-cand-h h2 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+}
+.wd-cand-h .wd-cand-n {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--wd-accent-ink);
+  background: var(--wd-accent-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.wd-cand-empty {
+  border: 1.5px dashed var(--wd-line-2);
+  border-radius: var(--wd-radius-sm);
+  padding: 1.1rem 0.9rem;
+  text-align: center;
+  color: var(--wd-iron-2);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.wd-ledger {
+  padding: 1rem 1.1rem 1.2rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.wd-ledger > .wd-kicker { margin-bottom: 0.5rem; }
+.wd-ledger-title {
+  margin: 0.95rem 0 0.45rem;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--wd-iron-2);
+  font-weight: 700;
+}
+.wd-ticket-list { margin: 0; padding: 0; list-style: none; }
+.wd-ticket {
+  appearance: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: var(--wd-lot-2);
+  border: 1px solid var(--wd-line);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  margin-bottom: 0.45rem;
+  cursor: pointer;
+  transition: border-color 0.13s ease, transform 0.12s ease;
+}
+.wd-ticket:hover { border-color: var(--wd-line-2); transform: translateY(-1px); }
+.wd-ticket.is-due { border-color: color-mix(in srgb, var(--wd-cinnabar) 40%, transparent); }
+.wd-ticket-id {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--wd-iron-2);
+  white-space: nowrap;
+}
+.wd-ticket.is-due .wd-ticket-id { color: var(--wd-cinnabar-ink); }
+.wd-ticket-line {
+  font-size: 12px;
+  color: var(--wd-ink-soft);
+  line-height: 1.45;
+  min-width: 0;
+}
+.wd-ticket-sub {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  line-height: 1.5;
+  margin-top: -0.2rem;
+}
+.wd-ledger-closed { margin-top: 0.4rem; }
+.wd-ledger-closed summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--wd-iron-2);
+  padding: 0.3rem 0;
+}
+.wd-ledger-closed .wd-ticket { opacity: 0.65; }
+
+/* ── 书库（书架卡片） ─────────────────────────────────── */
+.wd-shelf {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(1100px 700px at 72% -8%, color-mix(in srgb, var(--wd-accent) 6%, transparent), transparent 60%),
+    radial-gradient(900px 600px at 8% 112%, color-mix(in srgb, var(--wd-gold) 5%, transparent), transparent 55%),
+    var(--wd-hall);
+}
+.wd-shelf .wd-head {
+  padding: 1.7rem 6vw 0.9rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+.wd-shelf .wd-head h1 { font-size: 30px; font-weight: 700; }
+.wd-head-lead {
+  margin: 0.2rem 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--wd-iron);
+  max-width: 560px;
+}
+.wd-shelf-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6vw 2.4rem;
+  max-width: 1000px;
+  width: 100%;
+  margin: 0 auto;
+}
+.wd-shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  align-content: start;
+}
+.wd-shelf-card {
+  appearance: none;
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius);
+  box-shadow: var(--wd-shadow-soft);
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.13s ease;
+}
+.wd-shelf-card:hover { border-color: var(--wd-line-2); transform: translateY(-2px); }
+.wd-shelf-card.is-last {
+  border-color: color-mix(in srgb, var(--wd-accent) 38%, transparent);
+  background: linear-gradient(180deg, var(--wd-lot), color-mix(in srgb, var(--wd-accent) 4%, var(--wd-lot)));
+}
+.wd-shelf-cover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 80px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--wd-accent) 78%, #fff), var(--wd-accent-deep));
+  color: #fff;
+  font-family: var(--wd-serif);
+  font-size: 24px;
+  font-weight: 700;
+  box-shadow: inset 2px 0 4px rgba(255, 255, 255, 0.28), 0 4px 10px color-mix(in srgb, var(--wd-accent) 24%, transparent);
+}
+.wd-shelf-cover.is-new {
+  background: transparent;
+  color: var(--wd-iron-2);
+  border: 1.5px dashed var(--wd-line-2);
+  box-shadow: none;
+}
+.wd-shelf-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.wd-shelf-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--wd-iron);
+}
+.wd-shelf-meta .wd-stamp { letter-spacing: 0.08em; }
+.wd-shelf-title {
+  font-family: var(--wd-serif);
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--wd-ink);
+}
+.wd-shelf-sub {
+  font-size: 12.5px;
+  color: var(--wd-iron);
+  line-height: 1.55;
+}
+.wd-shelf-prog {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+.wd-shelf-prog .fill {
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--wd-line);
+  overflow: hidden;
+  position: relative;
+  min-width: 0;
+}
+.wd-shelf-prog .fill i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--wd-gold), var(--wd-cinnabar));
+}
+.wd-shelf-prog em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--wd-iron-2);
+  white-space: nowrap;
+}
+.wd-shelf-new {
+  appearance: none;
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1.5px dashed var(--wd-line-2);
+  border-radius: var(--wd-radius);
+  padding: 16px 18px;
+  cursor: pointer;
+  color: var(--wd-iron-2);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.wd-shelf-new:hover { color: var(--wd-accent); border-color: var(--wd-accent); }
+.wd-shelf-new .wd-shelf-title { color: inherit; font-size: 18px; }
+.wd-shelf-new .wd-shelf-sub { color: inherit; }
+.wd-shelf-new-form {
+  background: var(--wd-lot);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius);
+  box-shadow: var(--wd-shadow-soft);
+  padding: 1.1rem 1.2rem;
+  margin-top: 16px;
+  max-width: 560px;
+}
+.wd-shelf-new-form .wd-field { margin-bottom: 0.8rem; }
+.wd-shelf-new-form .wd-cmd-input {
+  width: 100%;
+  background: var(--wd-paper);
+  border: 1px solid var(--wd-line);
+  border-radius: 9px;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--wd-ink);
+  resize: vertical;
+}
+.wd-shelf-new-form .wd-cmd-input:focus { border-color: var(--wd-accent); }
+.wd-cmd-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.4rem;
+}
+.wd-cmd-preview {
+  flex: 1;
+  font-size: 12px;
+  color: var(--wd-iron);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── 响应式 ─────────────────────────────────────────── */
+@media (max-width: 1280px) {
+  .wd-body { grid-template-columns: 228px minmax(0, 1fr) 276px; }
+}
+@media (max-width: 1080px) {
+  .wd-body { grid-template-columns: 210px minmax(0, 1fr); }
+  .wd-rail { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+  .wd-rail > * { flex: 1 1 300px; }
+  .wd-dock .wd-cmd { grid-template-columns: minmax(0, 1fr); }
+  .wd-dock .wd-btn-primary { grid-row: auto; min-height: 48px; }
+}
+@media (max-width: 760px) {
+  .wd-modes { grid-template-columns: repeat(2, 1fr); }
+  .wd-body { grid-template-columns: 1fr; }
+  .wd-tree { display: none; }
+  .wd-bible-cols { grid-template-columns: 1fr; }
+  .wd-shelf-grid { grid-template-columns: 1fr; }
+}

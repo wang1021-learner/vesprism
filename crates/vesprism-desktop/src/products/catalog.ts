@@ -19,6 +19,7 @@ export type ProductNavKind =
   | 'agents'
   | 'memory'
   | 'plugins'
+  | 'writing-desk'
 
 export type ProductSidebarEntry = {
   kind: ProductNavKind
@@ -134,6 +135,34 @@ export const PRODUCTS: readonly ProductDef[] = [
       { kind: 'flow-canvas', label: '流程画布' },
       { kind: 'agents', label: 'Agent 编制' },
     ],
+  },
+  {
+    id: 'writing',
+    label: '写完',
+    utilityKinds: ['writing-desk'],
+    emptyView: 'home',
+    showRightPanel: false,
+    showNewChat: false,
+    showTabPlus: false,
+    showAddProject: false,
+    sessionList: 'product',
+    sessionGroupKey: '__writing__',
+    sidebarNavLabel: '写作入口',
+    sidebarListLabel: '文稿',
+    emptyHint: '还没有文稿。从入口打开写台。',
+    home: {
+      kicker: '写完',
+      title: 'AI 写百万字小说',
+      lead: '入口是书库。打开一本，停在缺的那张卡上，用工位下令。不是聊天框。',
+      cards: [
+        {
+          kind: 'writing-desk',
+          title: '打开写台',
+          hint: '新建一本或打开上一本',
+        },
+      ],
+    },
+    sidebarEntries: [{ kind: 'writing-desk', label: '写台' }],
   },
 ]
 

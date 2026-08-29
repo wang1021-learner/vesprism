@@ -44,19 +44,24 @@ describe('产品表', () => {
     expect(productOwnsUtility('workbench', 'agents')).toBe(true)
     expect(productOwnsUtility('workbench', null)).toBe(false)
     expect(productOwnsUtility('coding', null)).toBe(true)
+    expect(getProduct('writing').label).toBe('写完')
+    expect(getProduct('writing').utilityKinds).toEqual(['writing-desk'])
+    expect(productIdForUtility('writing-desk')).toBe('writing')
+    expect(productIdForUtility('flow-canvas')).toBe('workbench')
   })
 
   it('未登记 id 回落到默认产品；顶栏只列 listed 产品', () => {
     expect(isRegisteredProduct('coding')).toBe(true)
     expect(isRegisteredProduct('nope')).toBe(false)
     expect(getProduct('nope').id).toBe('coding')
-    expect(listedProducts().map((p) => p.id)).toEqual(['coding', 'workbench'])
+    expect(listedProducts().map((p) => p.id)).toEqual(['coding', 'workbench', 'writing'])
   })
 
   it('干活会话分组 key 来自表，不写死壳名', () => {
-    expect(productSessionGroupKeys()).toEqual(['__workbench__'])
+    expect(productSessionGroupKeys()).toEqual(['__workbench__', '__writing__'])
     expect(navLabelForKind('flow-canvas')).toBe('流程画布')
     expect(navLabelForKind('schedule')).toBe('定时任务')
+    expect(navLabelForKind('writing-desk')).toBe('写台')
   })
 
   it('往表里加第三条即可被索引，不必改联合类型', () => {
@@ -79,6 +84,6 @@ describe('产品表', () => {
     expect(idx.utilityToProduct.get('flow-canvas')).toBe('workbench')
     expect(idx.byId.has('draft')).toBe(true)
     const visible = [...idx.byId.values()].filter((p) => p.listed !== false).map((p) => p.id)
-    expect(visible).toEqual(['coding', 'workbench', 'design'])
+    expect(visible).toEqual(['coding', 'workbench', 'writing', 'design'])
   })
 })

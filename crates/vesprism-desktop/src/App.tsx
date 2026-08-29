@@ -63,6 +63,7 @@ import { getProduct, productOwnsUtility } from './products/catalog'
 const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
+const WritingDesk = lazy(() => import('./writing'))
 import {
   addProject,
   getModelSettings, isTauriRuntime, listSessions,
@@ -368,6 +369,20 @@ function AppMainBody() {
       <Suspense fallback={<div className="agents-panel-loading">加载 Agent 编制…</div>}>
         <AgentsPanel />
       </Suspense>
+    )
+  }
+  if (kind === 'writing-desk') {
+    return (
+      <ErrorBoundary
+        name="写台"
+        fallback={(error, reset) => (
+          <MainViewportErrorFallback error={error} onReset={reset} />
+        )}
+      >
+        <Suspense fallback={<div className="wd-loading">加载写台…</div>}>
+          <WritingDesk />
+        </Suspense>
+      </ErrorBoundary>
     )
   }
   return (

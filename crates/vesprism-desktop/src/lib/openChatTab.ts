@@ -26,7 +26,7 @@ export type OpenChatTabOpts = {
   title?: string
   /** 专用面板：mcp / tools / skills / workflows / flow-canvas / agents；普通对话省略 */
   utilityKind?: UtilityKind | null
-  /** 只开面板、不启引擎会话（试跑详情只读） */
+  /** 只开面板、不启引擎会话（试跑详情 / 写台演示） */
   skipSession?: boolean
   /** 跳过「同类型面板复用」，画布「新建」要并列开新 Tab */
   forceNew?: boolean
@@ -87,7 +87,7 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       ...(opts.flowId ? { flowId: opts.flowId } : {}),
     })
     switchTab(tabId)
-    if (!opts.skipSession && utilityKind !== 'flow-run') {
+    if (!opts.skipSession && utilityKind !== 'flow-run' && utilityKind !== 'writing-desk') {
       await startSession(tabId, cwd, {
         modelId: model.modelId,
         reasoningEffort: model.reasoningEffort,
