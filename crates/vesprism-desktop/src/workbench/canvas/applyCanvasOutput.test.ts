@@ -13,6 +13,12 @@ function a(text: string, promptId?: string): ChatMessage {
 const qaJson = '```json\n{"nodes":[{"id":"start-qa","type":"start","params":{}}],"edges":[]}\n```'
 const callJson = '```json\n{"nodes":[{"id":"start-call","type":"start","params":{}}],"edges":[]}\n```'
 
+describe('decideCanvasApply', () => {
+  it('散文提到 nodes/edges 不当成坏图去自愈', () => {
+    expect(decideCanvasApply('我会给 nodes 和 edges 起名字', false)).toBe('drop')
+  })
+})
+
 describe('pickCanvasApplyTargets', () => {
   beforeEach(() => {
     resetCanvasGraphWaitForTests()
@@ -101,5 +107,16 @@ describe('pickCanvasApplyTargets', () => {
       a(callJson, 'p_run3'),
     ]
     expect(pickCanvasApplyTargets(messages, false)).toEqual([])
+  })
+
+  it('只认本 Tab 的 pending，不拿隔壁画布的 expect', () => {
+    expectCanvasGraph('p_a', 'tab-a')
+    expectCanvasGraph('p_b', 'tab-b')
+    const messages = [
+      u('画外呼', 'p_a'),
+      a(callJson, 'p_a'),
+    ]
+    expect(pickCanvasApplyTargets(messages, false, 'tab-a')).toEqual([{ index: 1, promptId: 'p_a' }])
+    expect(pickCanvasApplyTargets(messages, false, 'tab-b')).toEqual([])
   })
 })

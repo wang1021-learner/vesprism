@@ -22,6 +22,8 @@ import {
   tabsForShell,
 } from '../store'
 import { closeTab, killTask, restartSession, startSession, stopPty } from '../bridge'
+import { resetCanvasGraphWait } from '../workbench/generateWait'
+import { unmarkCanvasContractPrimed } from '../workbench/flow/prompt'
 
 /** 关 Tab 时先杀该会话登记的后台进程，避免条目没了进程还在。 */
 function killTabBackgroundTasks(tabId: string): void {
@@ -49,6 +51,8 @@ export function closeChatTab(id: string): boolean {
 
   killTabBackgroundTasks(id)
   markPtyAlive(id, false)
+  resetCanvasGraphWait(id)
+  if (st?.sessionId) unmarkCanvasContractPrimed(st.sessionId)
 
   if (isLast) {
     const cwd = resolveWorkspaceCwd()

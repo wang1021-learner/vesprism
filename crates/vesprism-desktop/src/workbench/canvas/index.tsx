@@ -11,10 +11,12 @@ import {
   ReactFlow,
   ReactFlowProvider,
   addEdge,
+  applyEdgeChanges,
   useEdgesState,
   useNodesState,
   useReactFlow,
   type Connection,
+  type EdgeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useStore } from '@nanostores/react'
@@ -26,11 +28,11 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { ErrorBoundary } from '../../components/ErrorBoundary'
-import { $activeTabId, $generating, $workflows, getTabState, patchTab, pushToast } from '../../store'
+import { $activeTabId, $workflows, getTabState, patchTab, pushToast, upsertRecentWorkflow } from '../../store'
 import { sendPrompt } from '../../bridge'
 import { buildNamedWorkflowSlash } from '../flow/namedWorkflowSlash'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
-import { expectCanvasGraph, resetCanvasGraphWait } from '../generateWait'
+import { expectCanvasGraph } from '../generateWait'
 import { CanvasGraphApplier } from './CanvasGraphApplier'
 import { openChatTab } from '../../lib/openChatTab'
 import {
@@ -47,6 +49,7 @@ import {
 } from '../bridge'
 import {
   FLOW_RETRY_STRICT,
+  buildDialoguePrompt,
   bumpVersion,
   collectPromptsMarkdown,
   createBlankDraft,
@@ -58,6 +61,7 @@ import {
   isValidFlowId,
   layoutDraft,
   subgraphFrom,
+  validateFlowGraph,
   defaultTestInput,
   parseTestInputForRun,
   resolveTestInput,
@@ -96,7 +100,11 @@ import { NodeInspector } from './components/NodeInspector'
 import { PublishFlowModal } from './components/PublishFlowModal'
 import { PromoteAgentModal } from './components/PromoteAgentModal'
 import { FlowRunSync } from './FlowRunSync'
-import { type SubmittedRun } from './runSync'
+import {
+  deserializeSubmittedRun,
+  serializeSubmittedRun,
+  type SubmittedRun,
+} from './runSync'
 import {
   agentNodeData,
   fromRf,
@@ -110,6 +118,7 @@ import {
 } from './rfGraph'
 import {
   compileDraftRhai,
+  DEMO_FLOW_ID,
   draftAfterPersist,
   enqueueFlowWrite,
   pendingFlowWrites,
@@ -160,7 +169,7 @@ function FlowCanvasInner() {
 
   const [draft, setDraft] = useState<FlowDraft>(createDemoDraft)
   const [nodes, setNodes, onNodesChange] = useNodesState<RfNode>(toRfNodes(createDemoDraft()))
-  const [edges, setEdges, onEdgesChange] = useEdgesState<RfEdge>(toRfEdges(createDemoDraft()))
+  const [edges, setEdges] = useEdgesState<RfEdge>(toRfEdges(createDemoDraft()))
   const [list, setList] = useState<FlowListItem[]>([])
   const [agents, setAgents] = useState<AgentListItem[]>([])
   const [dockOpen, setDockOpen] = useState(false)
@@ -186,6 +195,12 @@ function FlowCanvasInner() {
   const [promoteName, setPromoteName] = useState('')
   const [promoteDesc, setPromoteDesc] = useState('')
   const [promoteBusy, setPromoteBusy] = useState(false)
+  const [importConflict, setImportConflict] = useState<{
+    path: string
+    id: string
+    existing: string
+    incoming: string
+  } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchText, setSearchText] = useState('')
   const [searchIdx, setSearchIdx] = useState(0)
@@ -292,7 +307,18 @@ function FlowCanvasInner() {
     }
   }, [tabId, draft.name, draft.id])
 
-  useEffect(() => () => resetCanvasGraphWait(), [])
+  // 切走不清 in-flight expect：回来还能把这一轮图画上。关 Tab / 试跑才 reset。
+
+  const demoDirtyNoted = useRef(false)
+  useEffect(() => {
+    if (draft.id !== DEMO_FLOW_ID) {
+      demoDirtyNoted.current = false
+      return
+    }
+    if (!draft.dirty || demoDirtyNoted.current) return
+    demoDirtyNoted.current = true
+    pushToast('示例流程不会写入本地，请先点「复制」再改', 'info')
+  }, [draft.id, draft.dirty])
 
   // 画布 tab 打开时把内置 MCP server 挂载进会话 cwd（.mcp.json，官方热加载），
   // 这样数据库/知识库节点的 agent 才能拿到 database_query / knowledge_search 工具。
@@ -353,11 +379,13 @@ function FlowCanvasInner() {
   }, [onDeleteNodes])
 
   const onDuplicate = useCallback(
-    (nodeId: string) => {
-      setDraft((cur) => {
-        pushHistory(cur)
-        return cur
-      })
+    (nodeId: string, opts?: { history?: boolean }) => {
+      if (opts?.history !== false) {
+        setDraft((cur) => {
+          pushHistory(cur)
+          return cur
+        })
+      }
       setNodes((ns) => {
         const target = ns.find((n) => n.id === nodeId)
         if (!target) return ns
@@ -393,8 +421,13 @@ function FlowCanvasInner() {
 
   const onDuplicateSelected = useCallback(() => {
     const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : []
-    for (const id of ids) onDuplicate(id)
-  }, [onDuplicate, selectedId, selectedIds])
+    if (ids.length === 0) return
+    setDraft((cur) => {
+      pushHistory(cur)
+      return cur
+    })
+    for (const id of ids) onDuplicate(id, { history: false })
+  }, [onDuplicate, pushHistory, selectedId, selectedIds])
 
   const onAutoLayout = useCallback(() => {
     setDraft((curDraft) => {
@@ -417,6 +450,17 @@ function FlowCanvasInner() {
       setEdges(toRfEdges(d))
     },
     [setEdges, setNodes],
+  )
+
+  const applyAiDraft = useCallback(
+    (next: FlowDraft, markDirty = true) => {
+      const prev = draftRef.current
+      if (saveHash(prev) !== saveHash({ ...next, dirty: prev.dirty })) {
+        pushHistory(prev)
+      }
+      applyDraft(next, markDirty)
+    },
+    [applyDraft, pushHistory],
   )
 
   const flashDiff = useCallback((next: Record<string, 'add' | 'update'>) => {
@@ -522,8 +566,10 @@ function FlowCanvasInner() {
   // 本次 tab 内精确），其次 localStorage lastId（跨 tab 会话兜底），避免画布回落 demo 草稿。
   useEffect(() => {
     if (focusFlowId) return
-    const tabFlowId = tabId ? getTabState(tabId)?.flowId : undefined
-    const flowId = tabFlowId || localStorage.getItem('vesprism.flow-canvas.lastId')
+    const st = tabId ? getTabState(tabId) : undefined
+    const tabFlowId = st?.flowId
+    const lastId = localStorage.getItem('vesprism.flow-canvas.lastId')
+    const flowId = tabFlowId || (!(st?.messages && st.messages.length) ? lastId : null)
     if (!flowId) return
     let cancelled = false
     void (async () => {
@@ -532,7 +578,7 @@ function FlowCanvasInner() {
         if (cancelled) return
         const rec = await getFlow(flowId)
         if (cancelled) return
-        if (rec && Array.isArray(rec.nodes) && rec.nodes.length) {
+        if (rec && Array.isArray(rec.nodes)) {
           applyFlowRecord(rec, false)
         }
       } catch {
@@ -545,6 +591,18 @@ function FlowCanvasInner() {
     // 仅挂载时执行：后续流程切换走 focusFlowId / applyFlowRecord 显式路径。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!tabId) return
+    const st = getTabState(tabId)
+    if (st?.flowRunSteps?.length) {
+      setRunSteps(st.flowRunSteps as FlowRunStep[])
+      setStepOutputs(st.flowStepOutputs ?? {})
+      submittedRunRef.current = deserializeSubmittedRun(st.flowSubmittedRun)
+      setDockOpen(true)
+    }
+    if (st?.flowMounted) setMounted(true)
+  }, [tabId])
 
   const persist = useCallback(
     async (d: FlowDraft, extra?: { publish?: boolean; stage?: boolean; bind?: boolean; ephemeral?: boolean }) => {
@@ -625,7 +683,10 @@ function FlowCanvasInner() {
             id: `e-${c.source}-${c.target}-${Date.now()}`,
             source: c.source,
             target: c.target,
-            label: c.sourceHandle === 'failure' ? 'failure' : c.sourceHandle === 'success' ? 'success' : undefined,
+            label:
+              c.sourceHandle === 'failure' || c.sourceHandle === 'success'
+                ? c.sourceHandle
+                : c.sourceHandle || undefined,
             sourceHandle: c.sourceHandle ?? undefined,
             targetHandle: c.targetHandle ?? undefined,
             animated: false,
@@ -654,6 +715,26 @@ function FlowCanvasInner() {
       return next
     })
   }, [pushHistory])
+
+  const onRfEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      const structural = changes.some(
+        (c) => c.type === 'remove' || c.type === 'add' || c.type === 'replace',
+      )
+      setEdges((eds) => {
+        const next = applyEdgeChanges(changes, eds)
+        if (structural) {
+          setDraft((d) => {
+            const graph = fromRf(nodesRef.current, next, d)
+            if (saveHash(graph) !== saveHash(d)) pushHistory(d)
+            return graph
+          })
+        }
+        return next
+      })
+    },
+    [pushHistory, setEdges],
+  )
 
   const onNodeDragStart = useCallback(() => {
     setRfBusy(true)
@@ -748,17 +829,25 @@ function FlowCanvasInner() {
 
   const selected = nodes.find((n) => n.id === selectedId) ?? null
 
-  const patchSelected = (patch: Partial<FlowRfData>) => {
-    if (!selected) return
-    beginEdit(`node:${selected.id}`)
-    setNodes((ns) => {
-      const next = ns.map((n) => (n.id === selected.id ? { ...n, data: { ...n.data, ...patch } } : n))
-      setEdges((es) => {
-        commitGraph(next, es, false)
-        return es
+  const patchNode = useCallback(
+    (nodeId: string, patch: Partial<FlowRfData>) => {
+      if (!nodeId) return
+      beginEdit(`node:${nodeId}`)
+      setNodes((ns) => {
+        const next = ns.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n))
+        setEdges((es) => {
+          commitGraph(next, es, false)
+          return es
+        })
+        return next
       })
-      return next
-    })
+    },
+    [beginEdit, commitGraph, setEdges, setNodes],
+  )
+
+  const patchSelected = (patch: Partial<FlowRfData>) => {
+    if (!selectedId) return
+    patchNode(selectedId, patch)
   }
 
   const openPublish = () => {
@@ -781,7 +870,10 @@ function FlowCanvasInner() {
     try {
       await persist(current, { publish: true })
       clearFlowStale(current.id)
-      setDraft((d) => ({ ...d, description: pubDesc.trim(), version: pubVersion, published: true, dirty: false }))
+      applyDraft(
+        { ...current, description: pubDesc.trim(), version: pubVersion, published: true, dirty: false },
+        false,
+      )
       setPublishOpen(false)
       pushToast('已发布，运行时将使用当前编制权限', 'success')
     } catch (e) {
@@ -799,6 +891,7 @@ function FlowCanvasInner() {
       await persist(current, { stage: true })
       await updateSessionFlows(tabId, [current.id])
       setMounted(true)
+      patchTab(tabId, { flowMounted: true })
       pushToast(`已成功热挂载 /${current.id} 至当前会话`, 'success')
     } catch (e) {
       pushToast(`挂载失败: ${String(e)}`, 'error')
@@ -814,12 +907,13 @@ function FlowCanvasInner() {
       pushToast('未找到活动会话 Tab', 'error')
       return
     }
-    if ($generating.get()) {
+    const tabBusy = getTabState(tabId)?.status === 'generating'
+    if (tabBusy) {
       pushToast('当前回合还在进行，请结束后再试跑', 'error')
       return
     }
     // 试跑只走本 Tab 开会话时的 cwd，禁止用全局 workspace_cwd 把画布拽到主聊天项目。
-    resetCanvasGraphWait()
+    // 不 resetCanvasGraphWait：对话改图的 expect 靠斜杠过滤，清掉会丢正在等的图。
     let current = fromRf(nodes, edges, draft)
     if (fromNodeId) {
       const sub = subgraphFrom(current.nodes, current.edges, fromNodeId)
@@ -856,6 +950,17 @@ function FlowCanvasInner() {
       pushToast('测试输入不是合法 JSON', 'error')
       return
     }
+    const graphCheck = validateFlowGraph(
+      {
+        nodes: current.nodes.map(({ id, type, params }) => ({ id, type, params })),
+        edges: current.edges.map(({ from, to, label }) => (label ? { from, to, label } : { from, to })),
+      },
+      { allowStartFanout: Boolean(fromNodeId) },
+    )
+    if (!graphCheck.ok) {
+      pushToast(graphCheck.error || '流程图不合法，无法试跑', 'error')
+      return
+    }
     let input: unknown = parsedInput.value
 
     const effectiveOutputs = overrideOutputs ?? stepOutputs
@@ -888,6 +993,13 @@ function FlowCanvasInner() {
     setRunSteps(steps)
     setReplayOpen(true)
     setDockOpen(true)
+    if (tabId) {
+      patchTab(tabId, {
+        flowRunSteps: steps,
+        flowStepOutputs: fromNodeId ? getTabState(tabId)?.flowStepOutputs : {},
+        flowSubmittedRun: null,
+      })
+    }
     // 试跑前确保内置 MCP 挂载在会话 cwd（切换项目后 .mcp.json 也要跟着走）。
     const st0 = getTabState(tabId)
     const cwd0 = st0?.cwd
@@ -915,6 +1027,12 @@ function FlowCanvasInner() {
         id: current.id,
         baseId: draft.id,
         name: draft.name,
+      }
+      if (tabId) {
+        patchTab(tabId, { flowSubmittedRun: serializeSubmittedRun(submittedRunRef.current) })
+      }
+      if (current.id === DEMO_FLOW_ID) {
+        pushToast('示例已临时编译试跑，不会当成已发布流程', 'info')
       }
       setRunSteps((prev) => prev.map((s) => (s.type === 'start' ? { ...s, status: 'running', startedAt: Date.now() } : s)))
       pushToast('已提交试跑', 'success')
@@ -964,7 +1082,11 @@ function FlowCanvasInner() {
       return
     }
     try {
-      await persist(current, { publish: true })
+      if (format === 'zip' || format === 'rhai') {
+        await persist(current, { publish: true })
+      } else {
+        await persist(current)
+      }
       let defaultPath = `${current.id}.zip`
       let filters = [{ name: '流程包 (*.zip)', extensions: ['zip'] }]
 
@@ -991,10 +1113,14 @@ function FlowCanvasInner() {
     }
   }
 
-  const doImport = async (conflictMode?: string | null) => {
+  const doImport = async (conflictMode?: string | null, path?: string) => {
     try {
-      let selectedPath = ''
-      if (!conflictMode) {
+      let selectedPath = (path || '').trim()
+      if (!selectedPath) {
+        if (conflictMode) {
+          pushToast('导入冲突重试缺少文件路径，请重新选择文件', 'error')
+          return
+        }
         const selected = await open({
           filters: [
             {
@@ -1009,6 +1135,7 @@ function FlowCanvasInner() {
       }
       const res = await importFlow(selectedPath, conflictMode)
       if (res.status === 'ok') {
+        setImportConflict(null)
         pushToast(`导入成功：${res.id} v${res.version}`, 'success')
         await reloadList()
         const rec = await getFlow(res.id)
@@ -1018,8 +1145,14 @@ function FlowCanvasInner() {
           pushToast(`导入提示：缺少依赖工具 ${missing.join(', ')}`, 'info')
         }
       } else if (res.status === 'conflict') {
-        pushToast(`导入冲突：已有版本 v${res.existing_version}，包内版本 v${res.incoming_version}`, 'error')
+        setImportConflict({
+          path: selectedPath,
+          id: res.id,
+          existing: res.existing_version,
+          incoming: res.incoming_version,
+        })
       } else if (res.status === 'missing_deps') {
+        setImportConflict(null)
         pushToast(`导入失败：缺少依赖流程 ${res.missing.join(', ')}`, 'error')
       }
     } catch (e) {
@@ -1046,7 +1179,6 @@ function FlowCanvasInner() {
 
   const doNewBlank = async () => {
     const current = fromRf(nodesRef.current, edgesRef.current, draftRef.current)
-    if (tabId) patchTab(tabId, { flowId: current.id })
     if (current.dirty && !shouldSkipDraftPersist(current.id)) {
       try {
         await persistRef.current(current)
@@ -1095,6 +1227,14 @@ function FlowCanvasInner() {
       await deleteFlow(id)
       pushToast(`已删除流程 ${id}`, 'success')
       await reloadList()
+      try {
+        if (localStorage.getItem('vesprism.flow-canvas.lastId') === id) {
+          localStorage.removeItem('vesprism.flow-canvas.lastId')
+        }
+      } catch {
+        /* ignore */
+      }
+      if (tabId) patchTab(tabId, { flowId: undefined })
       const demo = createDemoDraft()
       applyDraft(demo, true)
     } catch (e) {
@@ -1102,13 +1242,15 @@ function FlowCanvasInner() {
     }
   }
 
-  const openPromote = () => {
-    if (!selected) return
-    const currentName = String(selected.data.label || '').trim() || '新 Agent'
+  const openPromote = (node?: typeof selected) => {
+    const target = node ?? selected
+    if (!target) return
+    setSelectedId(target.id)
+    const currentName = String(target.data.label || '').trim() || '新 Agent'
     const genId = slugifyAgentId(currentName) || `agent-${Date.now().toString(36).slice(2, 6)}`
     setPromoteName(currentName)
     setPromoteId(genId)
-    setPromoteDesc(String((selected.data as { role?: string }).role || '').trim())
+    setPromoteDesc(String((target.data as { role?: string }).role || '').trim())
     setPromoteOpen(true)
   }
 
@@ -1165,13 +1307,15 @@ function FlowCanvasInner() {
   }
 
   const onRetryStrict = async () => {
-    if (!tabId || $generating.get()) return
+    if (!tabId || getTabState(tabId)?.status === 'generating') return
     setAiError('')
     const promptId = await sendSessionPrompt({
       text: '强制纯 JSON 重试',
-      wireText: FLOW_RETRY_STRICT,
+      wireText: `${FLOW_RETRY_STRICT}
+
+${buildDialoguePrompt('强制纯 JSON 重试', { name: draft.name, id: draft.id }, { primed: true, nodeIds: dockNodeIds })}`,
     })
-    if (promptId) expectCanvasGraph(promptId)
+    if (promptId) expectCanvasGraph(promptId, tabId)
   }
 
   const startFieldsKey = useMemo(
@@ -1373,8 +1517,12 @@ function FlowCanvasInner() {
     void onRerunFromMockRef.current(nodeId, mockOutput)
   }, [])
   const onDockDetails = useCallback(() => {
+    const st = tabId ? getTabState(tabId) : undefined
+    for (const w of Object.values(st?.workflows ?? {})) {
+      upsertRecentWorkflow(w)
+    }
     void openChatTab({ title: '试跑详情', utilityKind: 'flow-run', skipSession: true })
-  }, [])
+  }, [tabId])
   const onDockClose = useCallback(() => setDockOpen(false), [])
 
   return (
@@ -1385,6 +1533,7 @@ function FlowCanvasInner() {
         </div>
       ) : null}
       <FlowRunSync
+        tabId={tabId}
         submittedRef={submittedRunRef}
         runSteps={runSteps}
         setRunSteps={setRunSteps}
@@ -1415,7 +1564,7 @@ function FlowCanvasInner() {
         <div className="flow-stage">
           <CanvasGraphApplier
             draft={draft}
-            applyDraft={applyDraft}
+            applyDraft={applyAiDraft}
             flashDiff={flashDiff}
             setAiError={setAiError}
           />
@@ -1425,11 +1574,14 @@ function FlowCanvasInner() {
                 nodes={nodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
+                onEdgesChange={onRfEdgesChange}
                 onConnect={onConnect}
                 onNodeDragStart={onNodeDragStart}
                 onNodeDragStop={onNodeDragStop}
-                onNodeDoubleClick={(_, node) => setDblNodeId(node.id)}
+                onNodeDoubleClick={(_, node) => {
+                  setSelectedId(node.id)
+                  setDblNodeId(node.id)
+                }}
                 onMoveStart={onPaneMoveStart}
                 onMoveEnd={onPaneMoveEnd}
                 onSelectionChange={onRfSelectionChange}
@@ -1487,26 +1639,6 @@ function FlowCanvasInner() {
                   onChange={(e) => {
                     setSearchText(e.target.value)
                     setSearchIdx(0)
-                    const q = e.target.value.trim().toLowerCase()
-                    if (q) {
-                      const first = nodes.find((n) => {
-                        const label = String(n.data.label || '').toLowerCase()
-                        const id = n.id.toLowerCase()
-                        const role = String(n.data.role || '').toLowerCase()
-                        const prompt = String(n.data.prompt || '').toLowerCase()
-                        const cmd = String(n.data.command || '').toLowerCase()
-                        const tool = String(n.data.toolName || '').toLowerCase()
-                        return (
-                          label.includes(q) ||
-                          id.includes(q) ||
-                          role.includes(q) ||
-                          prompt.includes(q) ||
-                          cmd.includes(q) ||
-                          tool.includes(q)
-                        )
-                      })
-                      if (first) focusNode(first)
-                    }
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -1617,11 +1749,11 @@ function FlowCanvasInner() {
                 </div>
                 <NodeInspector
                   selected={dblSelected}
-                  patchSelected={patchSelected}
+                  patchSelected={(patch) => patchNode(dblSelected.id, patch)}
                   agents={agents}
                   openBoundAgent={openBoundAgent}
                   demoteToTrial={demoteToTrial}
-                  openPromote={openPromote}
+                  openPromote={() => openPromote(dblSelected)}
                   onRerunFromNode={(nodeId) => void startRun(nodeId)}
                   upstreamNodes={upstreamNodesOf(dblSelected.id)}
                   openFlow={requestFlowFocus}
@@ -1652,6 +1784,42 @@ function FlowCanvasInner() {
         pubOut={pubOut}
         onPublish={() => void doPublish()}
       />
+
+      {importConflict ? (
+        <div
+          className="flow-modal-back"
+          role="dialog"
+          aria-modal="true"
+          aria-label="导入冲突"
+          onMouseDown={() => setImportConflict(null)}
+        >
+          <div className="flow-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <h2>导入冲突</h2>
+            <p>
+              已有流程「{importConflict.id}」v{importConflict.existing}，包内是 v{importConflict.incoming}。
+            </p>
+            <div className="flow-modal-actions">
+              <button type="button" className="flow-btn" onClick={() => setImportConflict(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="flow-btn"
+                onClick={() => void doImport('keep-both', importConflict.path)}
+              >
+                两边都留
+              </button>
+              <button
+                type="button"
+                className="flow-btn primary"
+                onClick={() => void doImport('overwrite', importConflict.path)}
+              >
+                覆盖
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <PromoteAgentModal
         open={promoteOpen}

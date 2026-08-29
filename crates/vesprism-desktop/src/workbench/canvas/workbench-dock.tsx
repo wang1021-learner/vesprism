@@ -8,6 +8,7 @@ import { canRecallUser, canRetryAssistant } from '../../lib/userMessage'
 import { $generating, $messages } from '../../store'
 import type { ChatMessage } from '../../types'
 import { visibleCanvasMessages } from './visibleMessages'
+import { dockRunStatus } from './runSync'
 
 type FlowRunStepLike = {
   nodeId: string
@@ -148,9 +149,10 @@ export const WorkbenchDock = memo(function WorkbenchDock({
   const [mockText, setMockText] = useState<string>('')
   const [editingMockId, setEditingMockId] = useState<string | null>(null)
   const completedCount = runSteps.filter((s) => s.status === 'completed').length
-  const failed = runSteps.some((s) => s.status === 'failed')
-  const running = runSteps.some((s) => s.status === 'running')
-  const runStatus = failed ? '失败' : running ? '运行中' : runSteps.length > 0 ? '完成' : '待运行'
+  const runStatus = dockRunStatus(runSteps)
+  const failed = runStatus === '失败'
+  const running = runStatus === '运行中'
+  const pending = runStatus === '进行中'
 
   if (!dockOpen && runSteps.length === 0) return null
 
@@ -180,7 +182,7 @@ export const WorkbenchDock = memo(function WorkbenchDock({
           <span className="wb-run-head-left">
             <span className="wb-head-chevron">{runOpen ? '▾' : '▸'}</span>
             <span className="wb-head-title">运行状态</span>
-            <span className={`wb-run-status is-${failed ? 'failed' : running ? 'running' : completedCount > 0 ? 'completed' : 'pending'}`}>
+            <span className={`wb-run-status is-${failed ? 'failed' : running ? 'running' : pending ? 'pending' : completedCount > 0 ? 'completed' : 'pending'}`}>
               {runStatus}
             </span>
           </span>

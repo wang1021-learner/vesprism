@@ -2,7 +2,11 @@
  * React Flow 节点/边 ↔ 流程草稿。执行态字段进 data，写回前走 stripRfRuntime。
  */
 import {
+  displayBranchLabel,
   layoutGraph,
+  persistEdgeLabel,
+  persistSourceHandle,
+  saveHash,
   type FlowDraft,
   type FlowGraphNode,
   type FlowNodeType,
@@ -81,12 +85,7 @@ export function patchExecStatuses(
 
 export function toRfEdges(draft: FlowDraft): RfEdge[] {
   return draft.edges.map((e, idx) => {
-    let edgeLabel = e.label
-    if (!edgeLabel && e.sourceHandle) {
-      if (e.sourceHandle === 'success') edgeLabel = '成功'
-      else if (e.sourceHandle === 'failure') edgeLabel = '失败'
-      else edgeLabel = e.sourceHandle
-    }
+    const edgeLabel = displayBranchLabel(e.sourceHandle, e.label)
     return {
       id: e.id || `e-${e.from}-${e.to}-${idx}`,
       source: e.from,
@@ -113,15 +112,20 @@ export function fromRf(ns: RfNode[], es: RfEdge[], base: FlowDraft): FlowDraft {
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     }
   })
-  const edges = es.map((e) => ({
-    id: e.id,
-    from: e.source,
-    to: e.target,
-    label: typeof e.label === 'string' ? e.label : undefined,
-    sourceHandle: e.sourceHandle ?? undefined,
-    targetHandle: e.targetHandle ?? undefined,
-  }))
-  return { ...base, nodes, edges, dirty: true }
+  const edges = es.map((e) => {
+    const rawLabel = typeof e.label === 'string' ? e.label : undefined
+    return {
+      id: e.id,
+      from: e.source,
+      to: e.target,
+      label: persistEdgeLabel(e.sourceHandle, rawLabel),
+      sourceHandle: persistSourceHandle(e.sourceHandle, rawLabel),
+      targetHandle: e.targetHandle ?? undefined,
+    }
+  })
+  const next: FlowDraft = { ...base, nodes, edges }
+  const dirty = Boolean(base.dirty) || saveHash(next) !== saveHash(base)
+  return { ...next, dirty }
 }
 
 export function testKey(flowId: string): string {

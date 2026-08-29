@@ -115,7 +115,7 @@ function memberFromAgent(
 ): MemberRow {
   const sub = subById.get(a.agentId)
   const output = outputs.get(a.agentId) || sub?.output || undefined
-  const child = (sub?.childSessionId || a.agentId).trim()
+  const child = (sub?.childSessionId || '').trim() || a.agentId.trim()
   return {
     agentId: a.agentId,
     label: (a.label || sub?.description || '').trim() || '子代理',
@@ -261,7 +261,21 @@ export function buildRunForest(
     if (child && claimed.has(child)) return false
     return Boolean(id)
   })
-  if (orphans.length > 0) trees.push(buildOrphanTree(orphans))
+  if (orphans.length > 0) {
+    const solo = trees.length === 1 ? trees[0] : null
+    const soloEmpty = Boolean(solo && solo.phases.every((p) => p.members.length === 0))
+    if (solo && soloEmpty) {
+      const folded = buildOrphanTree(orphans)
+      trees[0] = {
+        ...solo,
+        phases: folded.phases,
+        agentsUsed: folded.agentsUsed,
+        runRequiresExpansion: runRequiresExpansion(solo.status, folded.phases),
+      }
+    } else {
+      trees.push(buildOrphanTree(orphans))
+    }
+  }
   trees.sort((a, b) => {
     const ar = a.runRequiresExpansion ? 0 : 1
     const br = b.runRequiresExpansion ? 0 : 1

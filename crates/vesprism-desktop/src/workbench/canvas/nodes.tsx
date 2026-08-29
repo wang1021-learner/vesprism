@@ -235,6 +235,21 @@ function FlowNodeView({ id, data, selected }: NodeProps<FlowRfNode>) {
             style={{ top: '68%' }}
             title="失败/默认分支 (Failure / Fallback)"
           />
+          <Handle
+            type="source"
+            id="case-2"
+            position={Position.Right}
+            className="flow-handle"
+            style={{ top: '88%' }}
+            title="其它分支 2"
+          />
+          <Handle
+            type="source"
+            id="case-3"
+            position={Position.Bottom}
+            className="flow-handle"
+            title="其它分支 3"
+          />
         </div>
       ) : (
         showOut && (

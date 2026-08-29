@@ -3,16 +3,24 @@
  */
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { useStore } from '@nanostores/react'
-import { $workflows } from '../../store'
+import { $workflows, patchTab } from '../../store'
 import type { FlowRunStep } from '../flow'
-import { applyRunToSteps, pickNewRuns, runFingerprint, type SubmittedRun } from './runSync'
+import {
+  applyRunToSteps,
+  pickNewRuns,
+  runFingerprint,
+  serializeSubmittedRun,
+  type SubmittedRun,
+} from './runSync'
 
 export function FlowRunSync({
+  tabId,
   submittedRef,
   runSteps,
   setRunSteps,
   setStepOutputs,
 }: {
+  tabId?: string
   submittedRef: MutableRefObject<SubmittedRun | null>
   runSteps: FlowRunStep[]
   setRunSteps: Dispatch<SetStateAction<FlowRunStep[]>>
@@ -38,12 +46,26 @@ export function FlowRunSync({
       setStepOutputs((cur) => {
         const next = { ...cur }
         for (const o of applied.outputs) {
-          next[o.nodeId] = { output: o.output, status: 'completed', timestamp: Date.now() }
+          const prev = next[o.nodeId]
+          if (prev?.status === 'completed' && o.status === 'running' && prev.output !== undefined) {
+            continue
+          }
+          next[o.nodeId] = {
+            output: o.output,
+            status: o.status || 'completed',
+            timestamp: Date.now(),
+          }
         }
         return next
       })
     }
-  }, [workflows, runSteps, setRunSteps, setStepOutputs, submittedRef])
+    if (tabId) {
+      patchTab(tabId, {
+        flowRunSteps: applied.steps,
+        flowSubmittedRun: serializeSubmittedRun(submitted),
+      })
+    }
+  }, [workflows, runSteps, setRunSteps, setStepOutputs, submittedRef, tabId])
 
   return null
 }

@@ -39,6 +39,7 @@ export function decideCanvasApply(
 export function pickCanvasApplyTargets(
   messages: ChatMessage[],
   generating: boolean,
+  tabId?: string,
 ): Array<{ index: number; promptId: string }> {
   const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.text)
   const lastIdx = last ? messages.lastIndexOf(last) : -1
@@ -48,7 +49,7 @@ export function pickCanvasApplyTargets(
     const m = messages[i]
     if (m.role !== 'assistant' || !m.text) continue
     const pid = resolveAssistantPromptId(messages, i)
-    if (!pid || !isPendingCanvasGraph(pid)) continue
+    if (!pid || !isPendingCanvasGraph(pid, tabId)) continue
     const userIdx = lastUserIndexForPrompt(messages, pid)
     if (userIdx >= 0 && isFlowRunUserText(messages[userIdx].text)) continue
     lastByPid.set(pid, i)
@@ -59,8 +60,8 @@ export function pickCanvasApplyTargets(
     out.push({ index, promptId })
   }
 
-  const live = latestExpectedCanvasGraph()
-  if (!generating && live && isPendingCanvasGraph(live) && !lastByPid.has(live)) {
+  const live = latestExpectedCanvasGraph(tabId)
+  if (!generating && live && isPendingCanvasGraph(live, tabId) && !lastByPid.has(live)) {
     const userIdx = lastUserIndexForPrompt(messages, live)
     if (userIdx >= 0) {
       if (isFlowRunUserText(messages[userIdx].text)) {
@@ -72,7 +73,7 @@ export function pickCanvasApplyTargets(
         }
         if (lastA >= 0) out.push({ index: lastA, promptId: live })
       }
-    } else if (isCanvasHeal(live) && lastIdx >= 0 && looksLikeCanvasGraphJson(messages[lastIdx].text)) {
+    } else if (isCanvasHeal(live, tabId) && lastIdx >= 0 && looksLikeCanvasGraphJson(messages[lastIdx].text)) {
       const lastPid = resolveAssistantPromptId(messages, lastIdx)
       if (!lastPid || lastPid === live) {
         out.push({ index: lastIdx, promptId: live })

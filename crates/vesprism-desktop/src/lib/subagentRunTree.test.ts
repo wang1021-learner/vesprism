@@ -161,6 +161,17 @@ describe('buildRunForest', () => {
     expect(orphan.runRequiresExpansion).toBe(true)
   })
 
+  it('单条空 agents 的 run 把未认领 spawn 折进本 run，方便试跑详情点对话', () => {
+    const forest = buildRunForest(
+      [wf({ runId: 'ship', name: '发版', status: 'complete', agents: [] })],
+      [sub('child-1', { description: '摘要', childSessionId: 'sess-child' })],
+    )
+    expect(forest).toHaveLength(1)
+    expect(forest[0].runId).toBe('ship')
+    expect(forest[0].name).toBe('发版')
+    expect(forest[0].phases[0].members.map((m) => m.childSessionId)).toEqual(['sess-child'])
+  })
+
   it('散装成员带上最近工具', () => {
     const forest = buildRunForest([], [
       sub('x', { description: '查', status: 'running', toolsUsed: ['grep'] }),

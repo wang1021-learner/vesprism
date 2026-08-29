@@ -12,6 +12,7 @@ import type {
   SchemaField,
 } from './types'
 import { isValidFlowId, slugifyFlowId } from './types'
+import { persistEdgeLabel, persistSourceHandle } from './edges'
 import { AI_GRAPH_FAIL_MESSAGE, validateFlowGraph } from './schema'
 
 export const NODE_LIBRARY: { type: FlowNodeType; label: string; hint: string }[] = [
@@ -82,8 +83,8 @@ export function nextBlankFlowId(taken: Iterable<string> = []): string {
     const id = `untitled-flow-${Math.random().toString(36).slice(2, 8)}`
     if (isValidFlowId(id) && !used.has(id)) return id
   }
-  const fallback = `untitled-flow-${Date.now().toString(36)}`
-  return isValidFlowId(fallback) && !used.has(fallback) ? fallback : 'untitled-flow'
+  const fallback = `untitled-flow-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`
+  return isValidFlowId(fallback) ? fallback : `untitled-flow-${Date.now().toString(36).slice(-8)}`
 }
 
 /** 空白画布：起点 → 终点，不带示例 Agent。 */
@@ -499,9 +500,10 @@ export function graphJsonFromDraft(draft: FlowDraft): FlowGraphJson {
 export function draftFromGraph(
   graph: FlowGraphJson,
   meta: { id?: string; name?: string; description?: string; version?: string },
+  previous?: Pick<FlowDraft, 'nodes' | 'published'>,
 ): FlowDraft {
   // 清洗 AI 生成的 start 字段（name 纯标识符），防 `{"phoneNumber"` 类污染进草稿。
-  const nodes = layoutGraph({
+  const laid = layoutGraph({
     ...graph,
     nodes: graph.nodes.map((n) =>
       n.type === 'start'
@@ -514,6 +516,15 @@ export function draftFromGraph(
           }
         : n,
     ),
+  })
+  const prevPos = new Map(
+    (previous?.nodes ?? [])
+      .filter((n) => n.position)
+      .map((n) => [n.id, n.position as { x: number; y: number }]),
+  )
+  const nodes = laid.map((n) => {
+    const keep = prevPos.get(n.id)
+    return keep ? { ...n, position: keep } : n
   })
   const name = meta.name?.trim() || '未命名流程'
   return {
@@ -528,10 +539,12 @@ export function draftFromGraph(
       id: `e-${e.from}-${e.to}-${i}`,
       from: e.from,
       to: e.to,
-      label: e.label,
+      label: persistEdgeLabel(e.sourceHandle, e.label),
+      sourceHandle: persistSourceHandle(e.sourceHandle, e.label),
+      targetHandle: e.targetHandle,
     })),
     dirty: true,
-    published: false,
+    published: previous?.published ?? false,
   }
 }
 
@@ -564,7 +577,16 @@ export function applyFlowPatch(
   if (drop.size) edges = edges.filter((e) => !drop.has(edgeKey(e)))
 
   for (const add of patch.add_edges ?? []) {
-    edges = [...edges, { from: add.from, to: add.to, label: add.label }]
+    edges = [
+      ...edges,
+      {
+        from: add.from,
+        to: add.to,
+        label: persistEdgeLabel(add.sourceHandle, add.label),
+        sourceHandle: persistSourceHandle(add.sourceHandle, add.label),
+        targetHandle: add.targetHandle,
+      },
+    ]
   }
 
   const checked = validateFlowGraph({
@@ -590,12 +612,17 @@ export function applyFlowPatch(
     draft: {
       ...draft,
       nodes: nextNodes,
-      edges: checked.graph.edges.map((e, i) => ({
-        id: `e-${e.from}-${e.to}-${i}`,
-        from: e.from,
-        to: e.to,
-        label: e.label,
-      })),
+      edges: checked.graph.edges.map((e, i) => {
+        const prev = edges.find((x) => x.from === e.from && x.to === e.to)
+        return {
+          id: prev?.id || `e-${e.from}-${e.to}-${i}`,
+          from: e.from,
+          to: e.to,
+          label: persistEdgeLabel(prev?.sourceHandle, e.label || prev?.label),
+          sourceHandle: persistSourceHandle(prev?.sourceHandle, e.label || prev?.label),
+          targetHandle: prev?.targetHandle,
+        }
+      }),
       input_schema: summarizeInputSchema(nextNodes),
       output_schema: summarizeOutputSchema(nextNodes),
       dirty: true,

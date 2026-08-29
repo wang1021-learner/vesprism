@@ -5,9 +5,9 @@ export const FLOW_EDGE_RULES = `Edge-degree rules (STRICT, the validator enforce
 - start has exactly 1 outgoing edge.
 - agent / tool / http / database / knowledge / variable / transform / loop / flow each have exactly 1 outgoing edge.
 - loop_end has exactly 1 incoming edge (from the loop body) and exactly 1 outgoing edge.
-- loop body: the single node right after a "loop" must be one executable node (agent/tool/http/variable/transform) connected directly into "loop_end"; no control nodes as loop body.
+- loop body: the single node right after a "loop" must be one executable node (agent/tool/http/database/knowledge/variable/transform) connected directly into "loop_end"; no control nodes as loop body.
 - branch has at least 2 outgoing edges (binary branch: label edges "success" / "failure"; N-way: use semantic labels).
-- parallel has at least 2 outgoing edges; every direct branch target MUST be a single "agent" or "tool" node (no nested chains inside a parallel branch — if you need multiple steps, extract them into a subflow).
+- parallel has at least 2 outgoing edges; every direct branch target MUST be a single executable node (agent/tool/http/database/knowledge/variable/transform) (no nested chains inside a parallel branch — if you need multiple steps, extract them into a subflow).
 - every parallel branch node must connect DIRECTLY into one "join" node (or "end"); no chaining past the branch into other node types.
 - join has at least 2 incoming edges and exactly 1 outgoing edge.
 - end has 0 outgoing edges.`
@@ -120,6 +120,11 @@ export function isCanvasContractPrimed(sessionId?: string | null): boolean {
 export function markCanvasContractPrimed(sessionId?: string | null): void {
   const id = (sessionId ?? '').trim()
   if (id) primedSessions.add(id)
+}
+
+export function unmarkCanvasContractPrimed(sessionId?: string | null): void {
+  const id = (sessionId ?? '').trim()
+  if (id) primedSessions.delete(id)
 }
 
 export function buildGeneratePrompt(userText: string): string {

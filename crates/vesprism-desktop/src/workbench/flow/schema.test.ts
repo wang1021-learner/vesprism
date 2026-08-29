@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  AI_GRAPH_FAIL_MESSAGE,
+  looksLikeCanvasGraphJson,
   parseCanvasModelOutput,
   parseGeneratedGraph,
   validateFlowGraph,
@@ -71,6 +71,49 @@ describe('validateFlowGraph', () => {
     expect(r2.ok).toBe(true)
   })
 
+  it('重跑允许 start 扇出；编辑图不允许', () => {
+    const fan = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'a', type: 'agent', params: {} },
+        { id: 'b', type: 'agent', params: {} },
+        { id: 'j', type: 'join', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'a' },
+        { from: 's', to: 'b' },
+        { from: 'a', to: 'j' },
+        { from: 'b', to: 'j' },
+        { from: 'j', to: 'e' },
+      ],
+    }
+    expect(validateFlowGraph(fan).ok).toBe(false)
+    expect(validateFlowGraph(fan, { allowStartFanout: true }).ok).toBe(true)
+  })
+
+  it('并行直接下游允许 HTTP/变量等可执行节点', () => {
+    const g = {
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'par', type: 'parallel', params: {} },
+        { id: 'h', type: 'http', params: {} },
+        { id: 'v', type: 'variable', params: {} },
+        { id: 'j', type: 'join', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [
+        { from: 's', to: 'par' },
+        { from: 'par', to: 'h' },
+        { from: 'par', to: 'v' },
+        { from: 'h', to: 'j' },
+        { from: 'v', to: 'j' },
+        { from: 'j', to: 'e' },
+      ],
+    }
+    expect(validateFlowGraph(g).ok).toBe(true)
+  })
+
   it('拒绝 parallel 嵌套串行复杂子链，给出友好提示', () => {
     const complexParallel = {
       nodes: [
@@ -131,10 +174,15 @@ describe('validateFlowGraph', () => {
       ],
       edges: [],
     }
-    for (const item of [extraOut, joinOnly1In, disconnected]) {
-      const r = validateFlowGraph(item)
-      expect(r.ok, JSON.stringify(item)).toBe(false)
-    }
+    expect(validateFlowGraph(extraOut).ok).toBe(false)
+    const extra = validateFlowGraph(extraOut)
+    if (!extra.ok) expect(extra.error).toMatch(/必须恰好 1 条出边/)
+    const joinErr = validateFlowGraph(joinOnly1In)
+    expect(joinErr.ok).toBe(false)
+    if (!joinErr.ok) expect(joinErr.error).toMatch(/至少需要 2 条输入边/)
+    const disc = validateFlowGraph(disconnected)
+    expect(disc.ok).toBe(false)
+    if (!disc.ok) expect(disc.error).toMatch(/必须恰好 1 条出边/)
   })
 
   it('拒绝缺 start / 缺 end / 非法 type / 悬空边 / 无出边 branch', () => {
@@ -169,8 +217,24 @@ describe('validateFlowGraph', () => {
     for (const item of bad) {
       const r = validateFlowGraph(item)
       expect(r.ok, JSON.stringify(item)).toBe(false)
-      if (!r.ok) expect(r.error).toBe(AI_GRAPH_FAIL_MESSAGE)
+      if (!r.ok) expect(r.error.length).toBeGreaterThan(0)
     }
+    expect(validateFlowGraph(null).ok).toBe(false)
+    const noEnd = validateFlowGraph({
+      nodes: [{ id: 's', type: 'start', params: {} }],
+      edges: [],
+    })
+    expect(noEnd.ok).toBe(false)
+    if (!noEnd.ok) expect(noEnd.error).toMatch(/终点/)
+    const dangling = validateFlowGraph({
+      nodes: [
+        { id: 's', type: 'start', params: {} },
+        { id: 'e', type: 'end', params: {} },
+      ],
+      edges: [{ from: 's', to: 'missing' }],
+    })
+    expect(dangling.ok).toBe(false)
+    if (!dangling.ok) expect(dangling.error).toMatch(/不存在的节点/)
   })
 
   it('非法 JSON 文本安全报错，不半渲染', () => {
@@ -246,6 +310,19 @@ describe('layoutGraph', () => {
     expect(laid.map((n) => n.id)).toEqual(['s', 'a', 'e'])
     expect(laid.every((n) => n.position && typeof n.position.x === 'number')).toBe(true)
     expect((laid[1].position?.x ?? 0) > (laid[0].position?.x ?? 0)).toBe(true)
+  })
+})
+
+describe('looksLikeCanvasGraphJson', () => {
+  it('散文里提到 nodes/edges 不算图', () => {
+    expect(looksLikeCanvasGraphJson('我会加一些 nodes 和 edges 进去')).toBe(false)
+    expect(looksLikeCanvasGraphJson('请给 nodes 和 edges 起名')).toBe(false)
+  })
+
+  it('JSON 键带冒号才认', () => {
+    expect(looksLikeCanvasGraphJson('{"nodes":[],"edges":[]}')).toBe(true)
+    expect(looksLikeCanvasGraphJson('```json\n{"patch":{"add_nodes":[]}}\n```')).toBe(true)
+    expect(looksLikeCanvasGraphJson('"update_nodes": []')).toBe(true)
   })
 })
 

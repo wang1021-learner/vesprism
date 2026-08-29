@@ -45,6 +45,8 @@ import {
   $preferredWorkspaceCwd,
   $registeredProjects,
   collectAllTabSubagents,
+  upsertSubagent,
+  $subagentRevision,
 } from './store'
 import type { ModelInfo } from './types'
 
@@ -313,6 +315,19 @@ describe('Tab 活动灯', () => {
     createTab('tab-run', { utilityKind: 'flow-run' })
     $activeTabId.set('tab-run')
     expect(collectAllTabSubagents().map((s) => s.childSessionId)).toEqual(['sess-child'])
+  })
+
+  it('upsertSubagent 会 bump 版本，试跑详情才能看到新 spawn', () => {
+    createTab('tab-flow', { utilityKind: 'flow-canvas' })
+    const before = $subagentRevision.get()
+    upsertSubagent('tab-flow', {
+      subagentId: 'x',
+      childSessionId: 'sess-x',
+      parentSessionId: 'p',
+      description: '摘要',
+    })
+    expect($subagentRevision.get()).toBeGreaterThan(before)
+    expect(getTabState('tab-flow')?.subagents.map((s) => s.childSessionId)).toEqual(['sess-x'])
   })
 
   it('编码/工作台壳：切 tab 跟着换壳，标签按壳过滤', () => {

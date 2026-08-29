@@ -36,71 +36,101 @@ export function noteGenerateProgress(
   return 'finish'
 }
 
-/** 画布发出去的 prompt：只有这些回复才允许改拓扑，避免切 Tab 回来把历史图盖上草稿。 */
-const pendingCanvasGraphs = new Set<string>()
-let lastExpectedCanvasGraph = ''
+type TabGraphWait = {
+  pending: Set<string>
+  lastExpected: string
+  healPrompts: Set<string>
+  healBudget: number
+}
 
-export function expectCanvasGraph(promptId: string): void {
+/** 空 key = 单测 / 未标明 Tab。生产路径必须传入 tabId，避免两个画布互相覆盖。 */
+const DEFAULT_TAB = ''
+const HEAL_BUDGET = 2
+const canvasWaits = new Map<string, TabGraphWait>()
+
+function tabKey(tabId?: string): string {
+  return (tabId ?? '').trim()
+}
+
+function bucket(tabId?: string): TabGraphWait {
+  const key = tabKey(tabId)
+  let wait = canvasWaits.get(key)
+  if (!wait) {
+    wait = {
+      pending: new Set(),
+      lastExpected: '',
+      healPrompts: new Set(),
+      healBudget: HEAL_BUDGET,
+    }
+    canvasWaits.set(key, wait)
+  }
+  return wait
+}
+
+/** 画布发出去的 prompt：只有这些回复才允许改拓扑。按 Tab 分片；切走不清 in-flight。 */
+export function expectCanvasGraph(promptId: string, tabId?: string): void {
   const id = promptId.trim()
   if (!id) return
-  pendingCanvasGraphs.add(id)
-  lastExpectedCanvasGraph = id
+  const wait = bucket(tabId)
+  wait.pending.add(id)
+  wait.lastExpected = id
 }
 
-export function latestExpectedCanvasGraph(): string {
-  return lastExpectedCanvasGraph
+export function latestExpectedCanvasGraph(tabId?: string): string {
+  return bucket(tabId).lastExpected
 }
 
-export function consumeCanvasGraph(promptId: string): boolean {
-  return pendingCanvasGraphs.delete(promptId)
+export function consumeCanvasGraph(promptId: string, tabId?: string): boolean {
+  return bucket(tabId).pending.delete(promptId)
 }
 
-export function isPendingCanvasGraph(promptId: string | undefined): boolean {
-  return Boolean(promptId && pendingCanvasGraphs.has(promptId))
+export function isPendingCanvasGraph(promptId: string | undefined, tabId?: string): boolean {
+  return Boolean(promptId && bucket(tabId).pending.has(promptId))
 }
 
-/** 自愈等没有用户气泡时，正文分片挂到当前待收图的 prompt。 */
-export function inheritCanvasPromptId(fallback?: string): string | undefined {
-  if (fallback && pendingCanvasGraphs.has(fallback)) return fallback
-  if (lastExpectedCanvasGraph && pendingCanvasGraphs.has(lastExpectedCanvasGraph)) {
-    return lastExpectedCanvasGraph
-  }
+/**
+ * 自愈等没有用户气泡时，正文分片挂到当前待收图的 prompt。
+ * 必须带 tabId：否则编码 Tab 的助手分片会吃到画布的 pid。
+ */
+export function inheritCanvasPromptId(fallback?: string, tabId?: string): string | undefined {
+  const wait = bucket(tabId)
+  if (fallback && wait.pending.has(fallback)) return fallback
+  if (wait.lastExpected && wait.pending.has(wait.lastExpected)) return wait.lastExpected
   return fallback
 }
 
-export function resetCanvasGraphWait(): void {
-  pendingCanvasGraphs.clear()
-  lastExpectedCanvasGraph = ''
-  canvasHealPrompts.clear()
+/** 清掉某 Tab 的认图等待（试跑 / 关 Tab）。不传 tabId 则全清（测试）。切走画布不要调用。 */
+export function resetCanvasGraphWait(tabId?: string): void {
+  const key = tabKey(tabId)
+  if (tabId !== undefined && key) {
+    canvasWaits.delete(key)
+    return
+  }
+  canvasWaits.clear()
 }
 
 export function resetCanvasGraphWaitForTests(): void {
   resetCanvasGraphWait()
 }
 
-/** 某次失败已经静默自愈过；该自愈回合的 promptId 记在这里。 */
-const canvasHealPrompts = new Set<string>()
-
-export function markCanvasHeal(promptId: string): void {
+export function markCanvasHeal(promptId: string, tabId?: string): void {
   const id = promptId.trim()
-  if (id) canvasHealPrompts.add(id)
+  if (id) bucket(tabId).healPrompts.add(id)
 }
 
-export function isCanvasHeal(promptId: string | undefined): boolean {
-  return Boolean(promptId && canvasHealPrompts.has(promptId))
+export function isCanvasHeal(promptId: string | undefined, tabId?: string): boolean {
+  return Boolean(promptId && bucket(tabId).healPrompts.has(promptId))
 }
 
-/** 每个用户回合最多自动自愈 2 次，超过就停下来让用户手动重试，避免死循环。 */
-let healBudget = 2
-
-export function canHeal(): boolean {
-  return healBudget > 0
+export function canHeal(tabId?: string): boolean {
+  return bucket(tabId).healBudget > 0
 }
 
-export function spendHeal(): void {
-  healBudget = healBudget > 0 ? healBudget - 1 : 0
+export function spendHeal(tabId?: string): void {
+  const wait = bucket(tabId)
+  wait.healBudget = wait.healBudget > 0 ? wait.healBudget - 1 : 0
 }
 
-export function resetHealBudget(): void {
-  healBudget = 2
+export function resetHealBudget(tabId?: string): void {
+  bucket(tabId).healBudget = HEAL_BUDGET
 }

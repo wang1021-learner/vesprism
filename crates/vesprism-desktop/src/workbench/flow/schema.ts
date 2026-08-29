@@ -97,10 +97,17 @@ export function extractJsonObject(text: string): unknown | null {
   }
 }
 
-function expectedOutDegree(type: FlowNodeType): { min: number; max: number } {
+export type ValidateFlowOpts = {
+  /** 从此处重跑：start 可扇出到多个入口，编译端会当 parallel 走。 */
+  allowStartFanout?: boolean
+}
+
+function expectedOutDegree(type: FlowNodeType, opts?: ValidateFlowOpts): { min: number; max: number } {
   switch (type) {
     case 'end':
       return { min: 0, max: 0 }
+    case 'start':
+      return opts?.allowStartFanout ? { min: 1, max: 20 } : { min: 1, max: 1 }
     case 'branch':
       return { min: 2, max: 20 }
     case 'parallel':
@@ -112,12 +119,32 @@ function expectedOutDegree(type: FlowNodeType): { min: number; max: number } {
   }
 }
 
+function outDegreeError(type: FlowNodeType, id: string, count: number, min: number, max: number): string {
+  if (type === 'end') return `终点 (${id}) 不能有出边（当前 ${count}）`
+  if (type === 'start') return `起点 (${id}) 必须恰好 1 条出边（当前 ${count}）`
+  if (type === 'branch') return `分支 (${id}) 至少需要 2 条出边（当前 ${count}）`
+  if (type === 'parallel') return `并行 (${id}) 至少需要 2 条出边（当前 ${count}）`
+  if (type === 'join') return `汇聚 (${id}) 必须恰好 1 条出边（当前 ${count}）`
+  if (min === 1 && max === 1) return `节点 ${id} (${type}) 必须恰好 1 条出边（当前 ${count}）`
+  return `节点 ${id} (${type}) 出边数应为 ${min}–${max}（当前 ${count}）`
+}
+
 /**
  * 严格校验 AI / 导入 / 发布 graph。
- * 约束：nodes/edges 形状、type 八选一、连线端点存在、至少各一个 start/end、
+ * 约束：nodes/edges 形状、type 属于 FLOW_NODE_TYPES、连线端点存在、至少各一个 start/end、
  * 支持 parallel 扇出、join 汇聚、多路 branch 路由。
  */
-export function validateFlowGraph(input: unknown): SchemaResult {
+const PARALLEL_OK = new Set([
+  'agent',
+  'tool',
+  'http',
+  'database',
+  'knowledge',
+  'variable',
+  'transform',
+])
+
+export function validateFlowGraph(input: unknown, opts?: ValidateFlowOpts): SchemaResult {
   if (!isRecord(input)) {
     return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
   }
@@ -133,8 +160,10 @@ export function validateFlowGraph(input: unknown): SchemaResult {
   for (const item of input.nodes) {
     if (!isRecord(item)) return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
     const id = typeof item.id === 'string' ? item.id.trim() : ''
-    if (!id || ids.has(id) || !isNodeType(item.type)) {
-      return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
+    if (!id) return { ok: false, error: '节点 id 不能为空' }
+    if (ids.has(id)) return { ok: false, error: `重复节点 id：${id}` }
+    if (!isNodeType(item.type)) {
+      return { ok: false, error: `未知节点类型：${String(item.type)}` }
     }
     ids.add(id)
     if (item.type === 'start') starts += 1
@@ -142,8 +171,11 @@ export function validateFlowGraph(input: unknown): SchemaResult {
     nodes.push({ id, type: item.type, params: asParams(item.params) })
   }
 
-  if (starts < 1 || ends < 1) {
-    return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
+  if (starts < 1) {
+    return { ok: false, error: '图中至少需要一个起点 (start)' }
+  }
+  if (ends < 1) {
+    return { ok: false, error: '图中至少需要一个终点 (end)' }
   }
 
   const outCount = new Map<string, number>()
@@ -153,8 +185,14 @@ export function validateFlowGraph(input: unknown): SchemaResult {
     if (!isRecord(item)) return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
     const from = typeof item.from === 'string' ? item.from.trim() : ''
     const to = typeof item.to === 'string' ? item.to.trim() : ''
-    if (!from || !to || !ids.has(from) || !ids.has(to) || from === to) {
-      return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
+    if (!from || !to) {
+      return { ok: false, error: '连线 from/to 不能为空' }
+    }
+    if (!ids.has(from) || !ids.has(to)) {
+      return { ok: false, error: `连线引用了不存在的节点：${from} → ${to}` }
+    }
+    if (from === to) {
+      return { ok: false, error: `不允许自环：${from}` }
     }
     const label = typeof item.label === 'string' ? item.label : undefined
     edges.push(label ? { from, to, label } : { from, to })
@@ -163,10 +201,10 @@ export function validateFlowGraph(input: unknown): SchemaResult {
   }
 
   for (const n of nodes) {
-    const { min, max } = expectedOutDegree(n.type)
+    const { min, max } = expectedOutDegree(n.type, opts)
     const count = outCount.get(n.id) ?? 0
     if (count < min || count > max) {
-      return { ok: false, error: AI_GRAPH_FAIL_MESSAGE }
+      return { ok: false, error: outDegreeError(n.type, n.id, count, min, max) }
     }
     if (n.type === 'join') {
       const inDegree = inCount.get(n.id) ?? 0
@@ -178,10 +216,10 @@ export function validateFlowGraph(input: unknown): SchemaResult {
       const branchEdges = edges.filter((e) => e.from === n.id)
       for (const bEdge of branchEdges) {
         const targetNode = nodes.find((x) => x.id === bEdge.to)
-        if (!targetNode || (targetNode.type !== 'agent' && targetNode.type !== 'tool')) {
+        if (!targetNode || !PARALLEL_OK.has(targetNode.type)) {
           return {
             ok: false,
-            error: `并行节点 (${n.id}) 的直接分支必须为单一 Agent 或工具任务节点（当前 ${bEdge.to} 为 ${targetNode?.type || '未知'}）`,
+            error: `并行节点 (${n.id}) 的直接分支必须是可执行节点（Agent/工具/HTTP/数据库/知识库/变量/代码）（当前 ${bEdge.to} 为 ${targetNode?.type || '未知'}）`,
           }
         }
         const targetOutEdges = edges.filter((e) => e.from === targetNode.id)
@@ -374,13 +412,11 @@ function parsePatch(raw: unknown): FlowGraphPatch | null {
 
 export function looksLikeCanvasGraphJson(text: string): boolean {
   const t = text || ''
-  return (
-    /```(?:json)?\s*\{/i.test(t) ||
-    (t.includes('"nodes"') && t.includes('"edges"')) ||
-    t.includes('"patch"') ||
-    t.includes('"update_nodes"') ||
-    t.includes('"add_nodes"')
-  )
+  if (!t.trim()) return false
+  // 必须是 JSON 键（带冒号），避免散文里提到 nodes / edges 误触发自愈。
+  if (/"nodes"\s*:/.test(t) && /"edges"\s*:/.test(t)) return true
+  if (/"patch"\s*:/.test(t) || /"update_nodes"\s*:/.test(t) || /"add_nodes"\s*:/.test(t)) return true
+  return false
 }
 
 /** 全量图或局部 patch。含 patch 键时优先当 patch，避免和带 nodes 的混图打架。 */

@@ -109,7 +109,7 @@ export const CanvasComposer = memo(function CanvasComposer({
       const primed = isCanvasContractPrimed(sessionId)
       const promptId = generateId('p_')
       const expectGraph = !isFlowRunUserText(userLine)
-      if (expectGraph) expectCanvasGraph(promptId)
+      if (expectGraph) expectCanvasGraph(promptId, tabId)
       const sent = await sendSessionPrompt({
         text: msg,
         wireText: buildDialoguePrompt(
@@ -123,9 +123,9 @@ export const CanvasComposer = memo(function CanvasComposer({
       })
       if (sent) {
         markCanvasContractPrimed(sessionId)
-        resetHealBudget()
+        resetHealBudget(tabId)
       } else if (expectGraph) {
-        consumeCanvasGraph(promptId)
+        consumeCanvasGraph(promptId, tabId)
       }
     },
     [flowName, flowId, tabId, nodeIds],

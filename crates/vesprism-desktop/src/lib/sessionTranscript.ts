@@ -10,6 +10,7 @@ import type {
 } from '../types'
 import { generateId } from './generateId'
 import { inheritCanvasPromptId } from '../workbench/generateWait'
+import { isFlowRunUserText } from '../workbench/flow/namedWorkflowSlash'
 
 /** 与后端 FrontendEvent / ToolCallInfo 对齐 */
 export type TranscriptEvent = {
@@ -111,6 +112,7 @@ export function applyTranscriptEvent(
   messages: ChatMessage[],
   ev: TranscriptEvent,
   bgTaskIds?: Set<string>,
+  tabId?: string,
 ): ChatMessage[] {
   switch (ev.type) {
     case 'agent_text_chunk': {
@@ -120,7 +122,7 @@ export function applyTranscriptEvent(
         messages,
         'assistant',
         text,
-        ev.prompt_id || inheritCanvasPromptId(lastUserPromptId(messages)),
+        ev.prompt_id || inheritAssistantPromptId(messages, tabId),
       )
     }
     case 'agent_thought_chunk': {
@@ -130,7 +132,7 @@ export function applyTranscriptEvent(
         messages,
         'thought',
         text,
-        ev.prompt_id || inheritCanvasPromptId(lastUserPromptId(messages)),
+        ev.prompt_id || inheritAssistantPromptId(messages, tabId),
       )
     }
     case 'user_text_chunk': {
@@ -421,6 +423,21 @@ export function lastUserPromptId(messages: ChatMessage[]): string | undefined {
     if (m.role === 'user' && m.promptId) return m.promptId
   }
   return undefined
+}
+
+function lastUserMessage(messages: ChatMessage[]): ChatMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i]
+  }
+  return undefined
+}
+
+/** 试跑斜杠回合不要继承画布 expect，否则试跑回复会被认成新图。 */
+function inheritAssistantPromptId(messages: ChatMessage[], tabId?: string): string | undefined {
+  const lastUser = lastUserMessage(messages)
+  const fallback = lastUser?.promptId
+  if (lastUser && isFlowRunUserText(lastUser.text)) return fallback
+  return inheritCanvasPromptId(fallback, tabId)
 }
 
 /** 助手气泡若没带 promptId，用它前面最近一条用户消息的。画布改图靠这个对齐 expectCanvasGraph。 */

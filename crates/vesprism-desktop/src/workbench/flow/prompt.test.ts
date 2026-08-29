@@ -8,6 +8,7 @@ import {
   canvasContextAnchor,
   isCanvasContractPrimed,
   markCanvasContractPrimed,
+  unmarkCanvasContractPrimed,
 } from './prompt'
 import { validateFlowGraph } from './schema'
 
@@ -41,6 +42,8 @@ describe('buildDialoguePrompt', () => {
     markCanvasContractPrimed('sess-prompt-1')
     expect(isCanvasContractPrimed('sess-prompt-1')).toBe(true)
     expect(isCanvasContractPrimed('sess-other')).toBe(false)
+    unmarkCanvasContractPrimed('sess-prompt-1')
+    expect(isCanvasContractPrimed('sess-prompt-1')).toBe(false)
   })
 
   it('契约含语义 id 规则和合法并行骨架', () => {

@@ -70,7 +70,7 @@ function flushPendingChunks(): void {
         ev.type === 'agent_thought_chunk' ||
         ev.type === 'user_text_chunk'
       ) {
-        next = applyTranscriptEvent(next, ev, bgs)
+        next = applyTranscriptEvent(next, ev, bgs, target)
       }
     }
     if (target) {
@@ -201,7 +201,7 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
       const cur = target ? (getTabState(target)?.messages ?? $messages.get()) : $messages.get()
       const bgs = target ? new Set(Object.keys(getTabState(target)?.backgroundTasks || {})) : undefined
       if (target) {
-        patchTab(target, { messages: applyTranscriptEvent(cur, ev, bgs) })
+        patchTab(target, { messages: applyTranscriptEvent(cur, ev, bgs, target) })
       }
       // 问卷 / 计划稿审批还需挂起面板，不吞掉
       if (ev.type === 'user_question_request' || ev.type === 'exit_plan_mode_request') {

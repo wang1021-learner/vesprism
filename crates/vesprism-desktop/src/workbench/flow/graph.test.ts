@@ -4,6 +4,7 @@ import {
   bumpVersion,
   createBlankDraft,
   createDemoDraft,
+  draftFromGraph,
   nextBlankFlowId,
   layoutDraft,
   layoutGraph,
@@ -221,6 +222,28 @@ describe('createBlankDraft', () => {
   })
 })
 
+describe('draftFromGraph', () => {
+  it('全量落图时保留已有节点坐标，新节点才自动排', () => {
+    const draft = createDemoDraft()
+    const agentX = draft.nodes[1].position?.x
+    const graph: FlowGraphJson = {
+      nodes: draft.nodes.map(({ id, type, params }) => ({ id, type, params })),
+      edges: draft.edges.map(({ from, to, label }) => (label ? { from, to, label } : { from, to })),
+    }
+    graph.nodes.push({ id: 'agent-new', type: 'agent', params: { label: '新' } })
+    graph.edges = [
+      { from: 'start-1', to: 'agent-1' },
+      { from: 'agent-1', to: 'agent-new' },
+      { from: 'agent-new', to: 'end-1' },
+    ]
+    const published = { ...draft, published: true }
+    const next = draftFromGraph(graph, { id: draft.id, name: draft.name }, published)
+    expect(next.nodes.find((n) => n.id === 'agent-1')?.position?.x).toBe(agentX)
+    expect(next.nodes.find((n) => n.id === 'agent-new')?.position).toBeTruthy()
+    expect(next.published).toBe(true)
+  })
+})
+
 describe('applyFlowPatch', () => {
   it('浅合并 params 并保住原坐标', () => {
     const draft = createDemoDraft()
@@ -235,4 +258,5 @@ describe('applyFlowPatch', () => {
     expect((agent?.params as { prompt?: string }).prompt).toBeTruthy()
     expect(agent?.position?.x).toBe(x)
   })
+
 })

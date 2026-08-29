@@ -14,10 +14,31 @@ describe('rfGraph', () => {
     expect(agent?.params.label).toBe('摘要')
   })
 
-  it('success/failure handle 补中文边标签', () => {
+  it('success/failure handle 展示中文，落盘仍是英文', () => {
     const d = createDemoDraft()
     d.edges = [{ id: 'e1', from: 'a', to: 'b', sourceHandle: 'success' }]
-    expect(toRfEdges(d)[0].label).toBe('成功')
+    const rf = toRfEdges(d)
+    expect(rf[0].label).toBe('成功')
+    const back = fromRf(toRfNodes(d), rf, d)
+    expect(back.edges[0].label).toBe('success')
+    expect(back.edges[0].sourceHandle).toBe('success')
+  })
+
+  it('fromRf 把展示用的「失败」收成 failure', () => {
+    const d = createDemoDraft()
+    const ns = toRfNodes(d)
+    const es = [
+      {
+        id: 'e1',
+        source: 'a',
+        target: 'b',
+        sourceHandle: 'failure',
+        label: '失败',
+      },
+    ]
+    const back = fromRf(ns, es as ReturnType<typeof toRfEdges>, d)
+    expect(back.edges[0].label).toBe('failure')
+    expect(back.edges[0].sourceHandle).toBe('failure')
   })
 
   it('getAncestors 沿入边回溯', () => {

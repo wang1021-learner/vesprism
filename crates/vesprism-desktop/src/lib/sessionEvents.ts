@@ -122,7 +122,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
             type: 'user_text_chunk',
             text: ev.running_text,
             prompt_id: running,
-          }, bgs)
+          }, bgs, tabId)
         }
       }
       patchTab(tabId, patch)
@@ -567,8 +567,9 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     case 'title_changed': {
       if (!ev.title) break
       const kind = getTabState(tabId)?.utilityKind
-      // 技能/工具等面板标题固定；画布和编制跟侧栏会话记录走同一套清洗。
-      if (kind && kind !== 'flow-canvas' && kind !== 'agents') break
+      // 技能/工具等面板标题固定；画布标题跟流程名走，不让引擎 title_changed 抢。
+      if (kind === 'flow-canvas') break
+      if (kind && kind !== 'agents') break
       const title = cleanSessionTitle(ev.title, '')
       if (title) patchTab(tabId, { chatTitle: title })
       const after = getTabState(tabId)

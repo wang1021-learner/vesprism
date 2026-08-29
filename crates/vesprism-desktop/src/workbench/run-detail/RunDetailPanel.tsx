@@ -1,18 +1,24 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@nanostores/react'
-import { $recentWorkflows, clearRecentWorkflows, collectAllTabSubagents } from '../../store'
+import {
+  $recentWorkflows,
+  $subagentRevision,
+  clearRecentWorkflows,
+  collectAllTabSubagents,
+} from '../../store'
 import { SubagentRunTree } from '../../components/SubagentRunTree'
 import { workflowStatusLabel } from '../../lib/workflowCards'
 import { getSessionMessages } from '../../bridge'
-import { mapDisplayMessages } from '../../lib/openSubagentTab'
 import { generateId } from '../../lib/generateId'
 import type { ChatMessage } from '../../types'
 import type { MemberRow } from '../../lib/subagentRunTree'
+import { conversationSessionIds, loadRunConversation } from './loadConversation'
 
 type ChatView = {
   label: string
-  sessionId: string
+  ids: string[]
   output?: string
+  memberKey: string
 }
 
 function roleLabel(role: ChatMessage['role']): string {
@@ -30,45 +36,74 @@ function roleLabel(role: ChatMessage['role']): string {
   }
 }
 
-function withOutputFallback(messages: ChatMessage[], output?: string): ChatMessage[] {
-  const fallback = (output || '').trim()
-  if (!fallback) return messages
-  const hasAssistant = messages.some((m) => m.role === 'assistant' && m.text.trim())
-  if (hasAssistant) return messages
-  return [...messages, { id: generateId('msg_'), role: 'assistant', text: fallback }]
+function memberKeyOf(m: MemberRow): string {
+  return `${m.agentId}\0${m.childSessionId || ''}`
+}
+
+function bubbleText(m: ChatMessage): string {
+  return m.text || m.toolCall?.preview || m.toolCall?.detail || m.tool || '（空）'
 }
 
 export default function RunDetailPanel() {
   const recent = useStore($recentWorkflows)
+  const subRev = useStore($subagentRevision)
   const runs = useMemo(() => Object.values(recent).reverse(), [recent])
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const selected = runs.find((r) => r.runId === selectedRunId) ?? runs[0] ?? null
-  const subagents = useMemo(() => collectAllTabSubagents(), [recent, selectedRunId])
+  const subagents = useMemo(
+    () => collectAllTabSubagents(),
+    [recent, selectedRunId, subRev],
+  )
 
   const [chat, setChat] = useState<ChatView | null>(null)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
+  const chatGen = useRef(0)
 
-  const openConversation = useCallback(async (m: MemberRow) => {
-    const sessionId = (m.childSessionId || m.agentId || '').trim()
-    setChat({ label: m.label, sessionId, output: m.output })
-    setChatError('')
-    setChatMessages(m.output ? withOutputFallback([], m.output) : [])
-    if (!sessionId) {
-      if (!m.output) setChatError('没有可查看的对话')
-      return
-    }
-    setChatLoading(true)
-    try {
-      const raw = await getSessionMessages(sessionId)
-      setChatMessages(withOutputFallback(mapDisplayMessages(raw), m.output))
-    } catch (e) {
-      if (!m.output) setChatError(`加载对话失败：${String(e)}`)
-    } finally {
-      setChatLoading(false)
-    }
+  const refreshChat = useCallback(async (view: ChatView) => {
+    const gen = ++chatGen.current
+    const result = await loadRunConversation(view.ids, view.output, getSessionMessages)
+    if (gen !== chatGen.current) return
+    setChatMessages(result.messages)
+    setChatError(result.error)
+    setChatLoading(false)
   }, [])
+
+  const openConversation = useCallback(
+    (m: MemberRow) => {
+      const ids = conversationSessionIds(m)
+      const view: ChatView = {
+        label: m.label,
+        ids,
+        output: m.output,
+        memberKey: memberKeyOf(m),
+      }
+      chatGen.current += 1
+      setChat(view)
+      setChatError('')
+      setChatMessages(
+        m.output ? [{ id: generateId('msg_'), role: 'assistant', text: m.output }] : [],
+      )
+      if (ids.length === 0 && !m.output) {
+        setChatLoading(false)
+        setChatError('没有可查看的对话')
+        return
+      }
+      setChatLoading(true)
+      void refreshChat(view)
+    },
+    [refreshChat],
+  )
+
+  useEffect(() => {
+    if (!chat || (chat.ids.length === 0 && !chat.output)) return
+    void refreshChat(chat)
+    const t = window.setInterval(() => {
+      void refreshChat(chat)
+    }, 1500)
+    return () => window.clearInterval(t)
+  }, [chat, subRev, refreshChat])
 
   if (runs.length === 0) {
     return (
@@ -92,6 +127,7 @@ export default function RunDetailPanel() {
               type="button"
               className="run-detail-back-btn"
               onClick={() => {
+                chatGen.current += 1
                 setChat(null)
                 setChatMessages([])
                 setChatError('')
@@ -111,15 +147,18 @@ export default function RunDetailPanel() {
           ) : chatError && chatMessages.length === 0 ? (
             <div className="run-detail-empty">{chatError}</div>
           ) : chatMessages.length === 0 ? (
-            <div className="run-detail-empty">没有对话记录</div>
+            <div className="run-detail-empty">没有对话记录。子代理可能还在写盘，稍等会自动刷新。</div>
           ) : (
             chatMessages.map((m) => (
               <article key={m.id} className={`run-detail-bubble is-${m.role}`}>
                 <span className="run-detail-bubble-role">{roleLabel(m.role)}</span>
-                <pre className="run-detail-bubble-text">{m.text || m.toolCall?.preview || m.tool || '（空）'}</pre>
+                <pre className="run-detail-bubble-text">{bubbleText(m)}</pre>
               </article>
             ))
           )}
+          {chatError && chatMessages.length > 0 ? (
+            <div className="run-detail-chat-note">{chatError}</div>
+          ) : null}
         </div>
       </div>
     )
@@ -169,7 +208,7 @@ export default function RunDetailPanel() {
         <div className="run-detail-ov-item">
           <span className="run-detail-ov-label">子代理</span>
           <span className="run-detail-ov-value">
-            {total > 0 ? `${completed}/${total} 完成` : '—'}
+            {total > 0 ? `${completed}/${total} 完成` : subagents.length > 0 ? `${subagents.length} 个` : '—'}
           </span>
         </div>
         <div className="run-detail-ov-item">
@@ -183,7 +222,7 @@ export default function RunDetailPanel() {
           workflows={selected ? [selected] : []}
           subagents={subagents}
           readonly
-          onViewConversation={(m) => void openConversation(m)}
+          onViewConversation={openConversation}
         />
       </div>
     </div>

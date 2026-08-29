@@ -11,6 +11,7 @@ import {
   sealStreamingMessages,
 } from './sessionTranscript'
 import type { ChatMessage } from '../types'
+import { expectCanvasGraph, resetCanvasGraphWaitForTests } from '../workbench/generateWait'
 
 function user(text: string, promptId?: string): ChatMessage {
   return {
@@ -47,6 +48,34 @@ describe('applyTranscriptEvent', () => {
     msgs = applyTranscriptEvent(msgs, { type: 'agent_text_chunk', text: '"nodes":[]}\n```' })
     expect(msgs[1]?.role).toBe('assistant')
     expect(msgs[1]?.promptId).toBe('p_flow')
+  })
+
+  it('试跑斜杠回合不把画布 expect 盖到助手气泡上', () => {
+    resetCanvasGraphWaitForTests()
+    expectCanvasGraph('p_canvas', 'tab-flow')
+    const msgs = [user('/demo-linear {}', 'p_run')]
+    const next = applyTranscriptEvent(
+      msgs,
+      { type: 'agent_text_chunk', text: 'running' },
+      undefined,
+      'tab-flow',
+    )
+    expect(next[1]?.promptId).toBe('p_run')
+    resetCanvasGraphWaitForTests()
+  })
+
+  it('画布 pending 不会盖到其他 Tab 的助手分片', () => {
+    resetCanvasGraphWaitForTests()
+    expectCanvasGraph('p_canvas', 'tab-flow')
+    const chat = [user('随便问一句', 'p_chat')]
+    const next = applyTranscriptEvent(
+      chat,
+      { type: 'agent_text_chunk', text: '好的' },
+      undefined,
+      'tab-chat',
+    )
+    expect(next[1]?.promptId).toBe('p_chat')
+    resetCanvasGraphWaitForTests()
   })
 
   it('resolveAssistantPromptId：助手没带 id 时回退到前面的用户回合', () => {

@@ -1,5 +1,5 @@
 /**
- * 画布 JSON → 官方 Rhai 工作流。v1 线性 + 分支；不生成循环/并行节点。
+ * 画布 JSON → 官方 Rhai 工作流。线性、分支、并行、join、loop 均 emit。
  */
 import { graphJsonFromDraft, nodeLabel } from './graph'
 import { validateFlowGraph } from './schema'
@@ -813,7 +813,7 @@ function walk(
       !outs.some(
         (e) =>
           e.label &&
-          !/^(success|yes|true|ok|是|failure|no|false|否)$/i.test(e.label.trim()),
+          !/^(success|yes|true|ok|是|成功|failure|no|false|否|失败)$/i.test(e.label.trim()),
       )
 
     if (isBinarySuccessFailure) {
@@ -824,7 +824,7 @@ function walk(
             ? p.expression.trim()
             : `${prevVar} != () && ${prevVar}.success`
       const yes =
-        outs.find((e) => /^(success|yes|true|ok|是)$/i.test((e.label || '').trim())) ??
+        outs.find((e) => /^(success|yes|true|ok|是|成功)$/i.test((e.label || '').trim())) ??
         outs[0]
       const no = outs.find((e) => e !== yes)
       lines.push(`if (${cond}) {`)
@@ -881,7 +881,10 @@ function walk(
 }
 
 export function compileToRhai(draft: FlowDraft, opts: CompileOpts = {}): string {
-  const checked = validateFlowGraph(graphJsonFromDraft(draft))
+  const startFanout = draft.nodes.some(
+    (n) => n.type === 'start' && draft.edges.filter((e) => e.from === n.id).length > 1,
+  )
+  const checked = validateFlowGraph(graphJsonFromDraft(draft), { allowStartFanout: startFanout })
   if (!checked.ok) {
     throw new Error(`流程图校验失败: ${checked.error}`)
   }

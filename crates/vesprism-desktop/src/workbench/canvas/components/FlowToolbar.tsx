@@ -92,6 +92,11 @@ export const FlowToolbar = React.memo(function FlowToolbar({
             未保存
           </span>
         )}
+        {draft.dirty && draft.id === 'demo-linear' && (
+          <span className="flow-badge dirty" title="示例不会写入本地，请先复制再保存">
+            示例不保存
+          </span>
+        )}
       </div>
 
       <div className="flow-toolbar-actions">

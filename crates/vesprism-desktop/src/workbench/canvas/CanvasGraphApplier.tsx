@@ -11,7 +11,7 @@
  */
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { useStore } from '@nanostores/react'
-import { $generating, $messages } from '../../store'
+import { $activeTabId, $generating, $messages } from '../../store'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
 import { generateId } from '../../lib/generateId'
 import {
@@ -47,6 +47,7 @@ export function CanvasGraphApplier({
 }) {
   const messages = useStore($messages)
   const generating = useStore($generating)
+  const tabId = useStore($activeTabId)
 
   // 最新 draft 走 ref：effect 依赖数组不含 draft，切断「applyDraft → draft 变 → effect 重跑」回路。
   const draftRef = useRef(draft)
@@ -56,7 +57,7 @@ export function CanvasGraphApplier({
 
   useEffect(() => {
     const current = draftRef.current
-    const targets = pickCanvasApplyTargets(messages, generating)
+    const targets = pickCanvasApplyTargets(messages, generating, tabId)
     for (const { index, promptId: pid } of targets) {
       const m = messages[index]
       if (!m?.text) continue
@@ -64,7 +65,7 @@ export function CanvasGraphApplier({
       if (action === 'wait') continue
       // 只有在整轮流式结束（!generating）或明确丢弃时才消费 PID，避免流式早期中间 JSON 误杀后续完整图谱
       if (!generating || action === 'drop') {
-        consumeCanvasGraph(pid)
+        consumeCanvasGraph(pid, tabId)
       }
       if (action === 'drop') continue
       const parsed = parseCanvasModelOutput(m.text)
@@ -72,10 +73,13 @@ export function CanvasGraphApplier({
       // 每帧变化都会重跑本 effect，没有指纹拦截会重复落图/重建画布）。
       if (parsed.ok) {
         const fingerprint = JSON.stringify(parsed.kind === 'graph' ? parsed.graph : parsed.patch)
-        if (appliedRef.current.get(pid) === fingerprint) continue
+        const prevFp = appliedRef.current.get(pid)
+        if (prevFp === fingerprint) continue
+        // 流式中先落一次，结构继续变也不反复重建；整轮结束再收最终稿。
+        if (generating && prevFp) continue
         appliedRef.current.set(pid, fingerprint)
       }
-      const healed = isCanvasHeal(pid)
+      const healed = isCanvasHeal(pid, tabId)
       const noteOk = (kind: 'graph' | 'patch') => {
         setAiError('')
         if (!generating) {
@@ -86,34 +90,38 @@ export function CanvasGraphApplier({
         }
       }
       const healOrToast = (err: string) => {
-        if (healed || !canHeal()) {
+        if (healed || !canHeal(tabId)) {
           setAiError(err)
           pushToast(err, 'error')
           return
         }
-        spendHeal()
+        spendHeal(tabId)
         const hid = generateId('p_')
-        markCanvasHeal(hid)
-        expectCanvasGraph(hid)
+        markCanvasHeal(hid, tabId)
+        expectCanvasGraph(hid, tabId)
         void sendSessionPrompt({
           hidden: true,
           promptId: hid,
           wireText: buildHealPrompt(err),
         }).then((sent) => {
           if (sent) return
-          consumeCanvasGraph(hid)
+          consumeCanvasGraph(hid, tabId)
           setAiError(err)
           pushToast(err, 'error')
         })
       }
       if (parsed.ok && parsed.kind === 'graph') {
         applyDraft(
-          draftFromGraph(parsed.graph, {
-            id: current.id,
-            name: current.name,
-            description: current.description,
-            version: current.version,
-          }),
+          draftFromGraph(
+            parsed.graph,
+            {
+              id: current.id,
+              name: current.name,
+              description: current.description,
+              version: current.version,
+            },
+            current,
+          ),
           true,
         )
         noteOk('graph')
@@ -137,7 +145,7 @@ export function CanvasGraphApplier({
         healOrToast(parsed.ok ? AI_GRAPH_FAIL_MESSAGE : parsed.error || AI_GRAPH_FAIL_MESSAGE)
       }
     }
-  }, [messages, generating, applyDraft, flashDiff, setAiError])
+  }, [messages, generating, tabId, applyDraft, flashDiff, setAiError])
 
   return null
 }

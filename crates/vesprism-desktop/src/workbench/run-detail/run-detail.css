@@ -225,6 +225,11 @@
   font-size: 12px;
 }
 
+.run-detail-chat-note {
+  font-size: 12px;
+  color: var(--text-tertiary, #9ca3af);
+}
+
 /* 工作栏：运行状态卡里的操作行 */
 .wb-run-actions {
   display: flex;

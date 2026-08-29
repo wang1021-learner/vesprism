@@ -107,6 +107,20 @@ export interface TabState {
   utilityKind: UtilityKind | null
   /** 画布当前编辑的流程 id（flow-canvas tab；组件卸载重挂载时据此恢复，避免回落 demo） */
   flowId?: string
+  /** 画布试跑条：随 Tab 走，打开试跑详情卸载 FlowCanvas 也不丢 */
+  flowRunSteps?: Array<{
+    nodeId: string
+    label: string
+    type: string
+    status: string
+    output?: string
+    startedAt?: number
+    endedAt?: number
+  }>
+  flowStepOutputs?: Record<string, { output: unknown; status: string; timestamp: number }>
+  flowSubmittedRun?: { keys: string[]; id: string; baseId: string; name: string } | null
+  /** 「挂载至会话」是否已对这个画布 Tab 做过 updateSessionFlows */
+  flowMounted?: boolean
   /** 本 tab 临时覆盖执行策略（/sandbox）；空则用全局 $securityPolicy */
   executionPolicyOverride: ExecutionPolicy | null
   /** 隔离 worktree 绝对路径；空=未沙箱 */
@@ -925,6 +939,8 @@ export const $lastPlanContent = atom('')
 export const $lastPlanHasBody = atom(false)
 export const $lastPlanToolCallId = atom('')
 export const $subagents = atom<SubagentRuntime[]>([])
+/** 任意 Tab 的子代理有更新就 +1。试跑详情不在画布 Tab，靠它重新收集。 */
+export const $subagentRevision = atom(0)
 export const $error = atom('')
 export const $sessionAlert = atom<SessionAlert | null>(null)
 export const $sessionCaps = atom<SessionCaps>(GROK_SESSION_CAPS)
@@ -996,6 +1012,7 @@ export function upsertSubagent(
   if (!entry) return
   const messages = upsertSubagentMessage(st.messages, entry)
   patchTab(tabId, { subagents: list, messages })
+  $subagentRevision.set($subagentRevision.get() + 1)
 }
 
 // ── 模型 ──
