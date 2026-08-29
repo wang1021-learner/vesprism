@@ -54,7 +54,7 @@ describe('turn_ended status', () => {
     expect(getTabState('tab-1')?.status).toBe('generating')
   })
 
-  it('画布 Tab 的 title_changed 洗成用户原话，与侧栏一致', () => {
+  it('画布 Tab 忽略引擎 title_changed，标题跟流程名走', () => {
     resetTabsForTests()
     createTab('tab-flow', {
       utilityKind: 'flow-canvas',
@@ -66,7 +66,7 @@ describe('turn_ended status', () => {
       title:
         '<user_query>\n<instructions>\nYou are the Vesprism flow-canvas orchestrator\n</instructions>\n<user_query>\n你根据他的agent配置一个agent\n</user_query>\n</user_query>',
     })
-    expect(getTabState('tab-flow')?.chatTitle).toBe('你根据他的agent配置一个agent')
+    expect(getTabState('tab-flow')?.chatTitle).toBe('流程画布')
   })
 
   it('迟到的旧回合：不改下一轮状态和权限条', () => {
