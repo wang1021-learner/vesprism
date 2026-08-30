@@ -57,8 +57,8 @@ import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
-import { ProductHome } from './products/ProductHome'
-import { getProduct, productOwnsUtility } from './products/catalog'
+import { ProductHome, ProductLand } from './products/ProductHome'
+import { getProduct, landsOnOwnPanel, productOwnsUtility } from './products/catalog'
 
 const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
@@ -325,6 +325,9 @@ function AppMainBody() {
   if (product.emptyView === 'home' && !productOwnsUtility(shell, kind)) {
     return <ProductHome product={product} />
   }
+  if (landsOnOwnPanel(product) && !productOwnsUtility(shell, kind)) {
+    return <ProductLand product={product} />
+  }
   if (kind === 'mcp') {
     return <McpPanel />
   }
@@ -382,12 +385,23 @@ function AppMainBody() {
         <Suspense fallback={<div className="wd-loading">加载写台…</div>}>
           <WritingDesk />
         </Suspense>
+        <SessionAlertBanner />
+        <AppUserQuestion />
+        <AppMcpElicit />
+        <AppPermission />
       </ErrorBoundary>
     )
   }
+  return <CodingSession />
+}
+
+function CodingSession() {
+  const blank = useStoreSelect($messages, (m) => m.length === 0)
+  const phase = useStore($sessionPhase)
+  const empty = blank && (phase === 'ready' || phase === 'idle')
   return (
     <div className="session-workspace">
-      <div className="session-chat">
+      <div className={`session-chat${empty ? ' is-blank' : ''}`}>
         <ErrorBoundary
           name="消息区"
           fallback={(error, reset) => (
@@ -412,7 +426,7 @@ function AppMainBody() {
         <AppPermission />
         <SandboxBanner />
         <BgTaskBar />
-        <AppComposer />
+        <AppComposer empty={empty} />
       </div>
       <SessionTermDock />
     </div>
@@ -444,7 +458,7 @@ function AppMessages() {
   )
 }
 
-function AppComposer() {
+function AppComposer({ empty = false }: { empty?: boolean }) {
   const generating = useStore($generating)
   const ready = useStore($shellReady)
   const phase = useStore($sessionPhase)
@@ -600,6 +614,7 @@ function AppComposer() {
       combineQueued={combineQueued}
       onToggleCombineQueued={(v) => void onToggleCombineQueued(v)}
       onCancel={() => void onCancel()}
+      empty={empty}
     />
   )
 }

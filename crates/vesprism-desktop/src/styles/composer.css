@@ -12,6 +12,19 @@
   flex-direction: column;
   gap: 8px;
 }
+.composer-container.is-empty {
+  margin: 0 auto 12vh;
+  gap: 16px;
+}
+.composer-hello {
+  margin: 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
 
 .composer-container.is-dock {
   max-width: none;
