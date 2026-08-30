@@ -369,7 +369,8 @@ fn plan_session_cwd(
     origin: &str,
     state: &AppState,
 ) -> Result<(String, Option<String>), String> {
-    if !tab_wants_sandbox(tab_id, origin, state) {
+    // 写台 cwd 不是 git 仓库。全局若是沙箱模式，worktree 会直接失败，书在引擎不在。
+    if crate::writing_store::is_writing_cwd(origin) || !tab_wants_sandbox(tab_id, origin, state) {
         teardown_tab_sandbox(tab_id, state);
         return Ok((origin.to_string(), None));
     }
@@ -1495,20 +1496,41 @@ pub fn set_computer_use(enabled: bool, cwd: Option<String>) -> Result<bool, Stri
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let tmp = parent.join(format!(
-        ".{}.tmp-{}",
+        ".{}.tmp-{}-{}",
         path.file_name().and_then(|s| s.to_str()).unwrap_or("tmp"),
-        std::process::id()
+        std::process::id(),
+        nanos
     ));
     std::fs::write(&tmp, bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(_) => {
-            let _ = std::fs::remove_file(path);
-            let r = std::fs::rename(&tmp, path).or_else(|_| std::fs::copy(&tmp, path).map(|_| ()));
-            let _ = std::fs::remove_file(&tmp);
-            r.map_err(|e| format!("替换文件失败: {e}"))
-        }
+    replace_without_unlinking_dest(&tmp, path)
+}
+
+/// 替换目标文件：成功前绝不删正本。Windows 上 dest 已存在时 `rename` 会失败，
+/// 旧实现先 `remove_file(dest)` 再 rename，断电/杀毒锁文件会把唯一副本弄没。
+fn replace_without_unlinking_dest(tmp: &Path, dest: &Path) -> Result<(), String> {
+    if std::fs::rename(tmp, dest).is_ok() {
+        return Ok(());
+    }
+    if dest.exists() {
+        let bak_name = format!(
+            "{}.bak",
+            dest.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file")
+        );
+        let bak = dest.with_file_name(bak_name);
+        std::fs::copy(dest, &bak).map_err(|e| format!("备份失败: {e}"))?;
+    }
+    let copied = std::fs::copy(tmp, dest);
+    let _ = std::fs::remove_file(tmp);
+    match copied {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("替换文件失败: {e}")),
     }
 }
 
@@ -1733,6 +1755,16 @@ pub struct ModelEntryDto {
     /// compaction_at_tokens："" | "dynamic" | "off" | 数字字符串
     #[serde(default)]
     pub compaction_at_tokens: String,
+    /// official = 登录账号带上的官方目录；custom = 自己写进 config.toml
+    #[serde(default = "default_source_custom")]
+    pub source: String,
+    /// 该模型可选推理档；空 = 用通用表。官方目录按 default_models.json。
+    #[serde(default)]
+    pub reasoning_efforts: Vec<String>,
+}
+
+fn default_source_custom() -> String {
+    "custom".into()
 }
 
 fn default_true() -> bool {
@@ -1947,6 +1979,8 @@ fn parse_model_entries(root: &toml::Value) -> Vec<ModelEntryDto> {
                 laziness_max_nudges,
                 compactions_remaining: parse_tri_mode(t, "compactions_remaining"),
                 compaction_at_tokens: parse_tri_mode(t, "compaction_at_tokens"),
+                source: "custom".into(),
+                reasoning_efforts: Vec::new(),
             })
         })
         .collect();
@@ -1984,30 +2018,188 @@ fn validate_model_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn json_tri_mode(v: Option<&serde_json::Value>) -> String {
+    let Some(v) = v else {
+        return String::new();
+    };
+    if let Some(b) = v.as_bool() {
+        return if b { "dynamic".into() } else { "off".into() };
+    }
+    if let Some(n) = v.as_i64() {
+        return n.to_string();
+    }
+    v.as_str().unwrap_or("").to_string()
+}
+
+/// 引擎内置官方 Grok 目录（`default_models.json`）。登录后并进设置列表。
+fn official_xai_model_dtos() -> Vec<ModelEntryDto> {
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(xai_grok_shell::models::DEFAULT_MODELS_JSON)
+    else {
+        return Vec::new();
+    };
+    let Some(arr) = root.get("models").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|m| {
+            if m.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return None;
+            }
+            let model = m.get("model")?.as_str()?.trim();
+            if model.is_empty() {
+                return None;
+            }
+            let id = m
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(model)
+                .trim()
+                .to_string();
+            let name = m
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(model)
+                .to_string();
+            let backend = m
+                .get("api_backend")
+                .and_then(|v| v.as_str())
+                .unwrap_or("responses");
+            let effort = m
+                .get("reasoning_effort")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let reasoning_efforts = m
+                .get("reasoning_efforts")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|el| {
+                            el.get("value")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| el.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some(ModelEntryDto {
+                id,
+                name,
+                model: model.to_string(),
+                base_url: xai_grok_shell::agent::config::XAI_API_BASE_URL_DEFAULT.to_string(),
+                env_key: String::new(),
+                context_window: m
+                    .get("context_window")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(200_000),
+                system_prompt_label: m
+                    .get("system_prompt_label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(model)
+                    .to_string(),
+                api_backend: backend.to_string(),
+                description: m
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                temperature: m.get("temperature").and_then(|v| v.as_f64()),
+                top_p: m.get("top_p").and_then(|v| v.as_f64()),
+                max_completion_tokens: m.get("max_completion_tokens").and_then(|v| v.as_u64()),
+                extra_headers: Default::default(),
+                query_params: Default::default(),
+                env_http_headers: Default::default(),
+                api_base_url: String::new(),
+                max_retries: 0,
+                inference_idle_timeout_secs: 0,
+                stream_tool_calls: None,
+                agent_type: default_agent_type(),
+                use_concise: false,
+                auto_compact_threshold_percent: m
+                    .get("auto_compact_threshold_percent")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    .min(100) as u8,
+                supports_reasoning_effort: m
+                    .get("supports_reasoning_effort")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    || m.get("reasoning_effort").is_some(),
+                reasoning_effort: effort.to_string(),
+                hidden: false,
+                supported_in_api: m
+                    .get("supported_in_api")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+                laziness_enabled: false,
+                laziness_max_nudges: 0,
+                compactions_remaining: json_tri_mode(m.get("compactions_remaining")),
+                compaction_at_tokens: json_tri_mode(m.get("compaction_at_tokens")),
+                source: "official".into(),
+                reasoning_efforts,
+            })
+        })
+        .collect()
+}
+
+fn desktop_has_xai_credentials() -> bool {
+    if xai_grok_shell::agent::auth_method::has_xai_api_key_env() {
+        return true;
+    }
+    let path = desktop_home_dir().join("auth.json");
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| v.as_object().map(|o| !o.is_empty()))
+        .unwrap_or(false)
+}
+
+/// 已登录 / 有 XAI_API_KEY 时，把官方目录补进列表。用户 `[model.*]` 同 id 覆盖。
+fn merge_official_xai_models(user: Vec<ModelEntryDto>) -> Vec<ModelEntryDto> {
+    if !desktop_has_xai_credentials() {
+        return user;
+    }
+    let user_ids: std::collections::HashSet<String> = user.iter().map(|m| m.id.clone()).collect();
+    let mut out: Vec<ModelEntryDto> = official_xai_model_dtos()
+        .into_iter()
+        .filter(|m| !user_ids.contains(&m.id))
+        .collect();
+    out.extend(user);
+    out
+}
+
 /// 读取桌面 `config.toml` 中的模型列表与默认模型。
 #[tauri::command]
 pub fn get_model_settings() -> Result<ModelSettings, String> {
     let path = desktop_config_path();
     let config_path = path.display().to_string();
-    if !path.exists() {
-        return Ok(ModelSettings {
-            default_id: String::new(),
-            models: Vec::new(),
-            config_path,
-        });
+    let (mut default_id, models) = if path.exists() {
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| format!("读取 config.toml 失败: {e}"))?;
+        // toml 0.9：必须用 from_str，不能用 str::parse::<Value>()（后者会把 [table] 当成非法）
+        let root: toml::Value =
+            toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))?;
+        let default_id = root
+            .get("models")
+            .and_then(|m| m.get("default"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        (default_id, parse_model_entries(&root))
+    } else {
+        (String::new(), Vec::new())
+    };
+    let models = merge_official_xai_models(models);
+    if default_id.is_empty() {
+        default_id = models
+            .iter()
+            .find(|m| m.id == xai_grok_shell::models::default_model())
+            .or_else(|| models.first())
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
     }
-    let content =
-        std::fs::read_to_string(&path).map_err(|e| format!("读取 config.toml 失败: {e}"))?;
-    // toml 0.9：必须用 from_str，不能用 str::parse::<Value>()（后者会把 [table] 当成非法）
-    let root: toml::Value =
-        toml::from_str(&content).map_err(|e| format!("解析 config.toml 失败: {e}"))?;
-    let default_id = root
-        .get("models")
-        .and_then(|m| m.get("default"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let models = parse_model_entries(&root);
     Ok(ModelSettings {
         default_id,
         models,
@@ -2310,18 +2502,23 @@ fn write_tri_mode(tbl: &mut toml::map::Map<String, toml::Value>, key: &str, raw:
 /// - 磁盘上有、但不在本次列表中的 id：**删除**（与设置 UI 列表一致）
 #[tauri::command]
 pub fn save_model_settings(default_id: String, models: Vec<ModelEntryDto>) -> Result<(), String> {
-    if models.is_empty() {
-        return Err("至少需要配置一个模型".into());
-    }
     validate_model_id(&default_id)?;
     if !models.iter().any(|m| m.id == default_id) {
         return Err(format!("默认模型 `{default_id}` 不在提交的模型列表中"));
     }
 
+    let custom: Vec<ModelEntryDto> = models
+        .iter()
+        .filter(|m| m.source != "official")
+        .cloned()
+        .collect();
+
     // 列表内 id 不得重复
     let mut seen = std::collections::HashSet::new();
     for entry in &models {
-        validate_model_entry(entry)?;
+        if entry.source != "official" {
+            validate_model_entry(entry)?;
+        }
         if !seen.insert(entry.id.clone()) {
             return Err(format!("模型 id 重复: {}", entry.id));
         }
@@ -2365,11 +2562,11 @@ pub fn save_model_settings(default_id: String, models: Vec<ModelEntryDto>) -> Re
         .as_table_mut()
         .ok_or_else(|| "[model] 必须是 table".to_string())?;
 
-    // 先删掉本次未提交的 id
-    let keep: std::collections::HashSet<String> = models.iter().map(|m| m.id.clone()).collect();
+    // 只把「自己配置」写入 [model.*]；官方登录目录不落盘。
+    let keep: std::collections::HashSet<String> = custom.iter().map(|m| m.id.clone()).collect();
     model_map.retain(|id, _| keep.contains(id));
 
-    for entry in &models {
+    for entry in &custom {
         upsert_model_entry(model_map, entry)?;
     }
 
@@ -3950,5 +4147,30 @@ mod deepseek_preset_tests {
             default_reasoning_effort_for("grok-4.5", "https://api.x.ai/v1", "xhigh"),
             "xhigh"
         );
+    }
+}
+
+#[cfg(test)]
+mod official_xai_catalog_tests {
+    use super::official_xai_model_dtos;
+
+    #[test]
+    fn embeds_grok_46_and_45() {
+        let models = official_xai_model_dtos();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"grok-4.6"), "{ids:?}");
+        assert!(ids.contains(&"grok-4.5"), "{ids:?}");
+        let g = models.iter().find(|m| m.id == "grok-4.6").unwrap();
+        assert_eq!(g.base_url, "https://api.x.ai/v1");
+        assert_eq!(g.api_backend, "responses");
+        assert!(g.supports_reasoning_effort);
+        assert_eq!(g.env_key, "");
+        assert_eq!(g.source, "official");
+        assert_eq!(
+            g.reasoning_efforts,
+            vec!["xhigh", "high", "medium", "low"]
+        );
+        let g45 = models.iter().find(|m| m.id == "grok-4.5").unwrap();
+        assert_eq!(g45.reasoning_efforts, vec!["high", "medium", "low"]);
     }
 }

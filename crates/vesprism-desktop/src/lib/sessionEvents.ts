@@ -651,8 +651,8 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         void sessionCaps(tabId)
           .then((caps) => patchTab(tabId, { sessionCaps: caps }))
           .catch(() => {})
-        // 工具面板（画布/编制等）会话不进主聊天历史；绑过产物的进侧栏「工作台」
-        if (prev?.utilityKind) {
+        // 工具面板（画布/编制等）会话不进主聊天历史；写台要进「写完」分组，不当工具会话藏掉
+        if (prev?.utilityKind && prev.utilityKind !== 'writing-desk') {
           void markToolSession(ev.session_id).catch(() => {})
         }
       }

@@ -9,6 +9,7 @@ mod sandbox;
 mod session_index;
 mod state;
 mod workbench;
+mod writing_store;
 
 use state::{AppState, spawn_supervisor};
 use tauri::Manager;
@@ -335,6 +336,11 @@ pub fn run() {
             commands::pty_resize,
             commands::pty_detach,
             commands::stop_pty,
+            writing_store::writing_list_books,
+            writing_store::writing_load_book,
+            writing_store::writing_save_book,
+            writing_store::writing_delete_book,
+            writing_store::writing_session_cwd,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");
