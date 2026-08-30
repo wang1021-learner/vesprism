@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import { applyVendorTemplate, envKeyChoices, hostFromBaseUrl } from './modelTemplates'
-import { emptyModelEntry, prepareModelsForSave } from './models'
+import { emptyModelEntry, isOfficialModel, prepareModelsForSave } from './models'
+
+describe('isOfficialModel', () => {
+  it('登录目录与自配分开', () => {
+    expect(isOfficialModel({ source: 'official' })).toBe(true)
+    expect(isOfficialModel({ source: 'custom' })).toBe(false)
+    expect(isOfficialModel({})).toBe(false)
+  })
+})
 
 describe('applyVendorTemplate', () => {
+  it('xAI 走官方 responses 且不强制环境变量密钥', () => {
+    const m = applyVendorTemplate('grok-4.6', 'xai')
+    expect(m.base_url).toBe('https://api.x.ai/v1')
+    expect(m.api_backend).toBe('responses')
+    expect(m.env_key).toBe('')
+    expect(m.model).toBe('grok-4.6')
+    expect(m.supports_reasoning_effort).toBe(true)
+  })
+
   it('OpenAI 填 /v1 与共用 OPENAI_API_KEY', () => {
     const m = applyVendorTemplate('m-1', 'openai')
     expect(m.base_url).toBe('https://api.openai.com/v1')

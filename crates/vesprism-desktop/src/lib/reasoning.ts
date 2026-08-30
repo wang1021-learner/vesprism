@@ -23,10 +23,19 @@ export function looksLikeDeepSeek(model: string, baseUrl: string): boolean {
   return m.startsWith('deepseek-') || url.includes('api.deepseek.com')
 }
 
+const KNOWN_EFFORTS = new Set<string>(DEFAULT_EFFORTS)
+
 export function reasoningEffortValuesFor(
   model: string,
   baseUrl: string,
+  allowed?: readonly string[],
 ): readonly ReasoningEffort[] {
+  if (allowed && allowed.length > 0) {
+    const picked = allowed
+      .map((s) => s.trim().toLowerCase())
+      .filter((s): s is ReasoningEffort => KNOWN_EFFORTS.has(s))
+    if (picked.length) return picked
+  }
   return looksLikeDeepSeek(model, baseUrl) ? DEEPSEEK_EFFORTS : DEFAULT_EFFORTS
 }
 
@@ -34,30 +43,34 @@ export function defaultReasoningEffortFor(
   model: string,
   baseUrl: string,
   raw: string,
+  allowed?: readonly string[],
 ): ReasoningEffort {
+  const values = reasoningEffortValuesFor(model, baseUrl, allowed)
   const normalized = raw.trim().toLowerCase()
-  if (looksLikeDeepSeek(model, baseUrl)) {
-    if (normalized === 'low' || normalized === 'high' || normalized === 'max') {
-      return normalized
-    }
-    return 'high'
-  }
-  if (!normalized) return 'medium'
-  if ((DEFAULT_EFFORTS as readonly string[]).includes(normalized)) {
+  if ((values as readonly string[]).includes(normalized)) {
     return normalized as ReasoningEffort
   }
-  return 'medium'
+  if (!allowed?.length) {
+    return looksLikeDeepSeek(model, baseUrl) ? 'high' : 'medium'
+  }
+  const preferred = values.includes('high' as ReasoningEffort)
+    ? 'high'
+    : values.includes('medium' as ReasoningEffort)
+      ? 'medium'
+      : values[0]
+  return preferred ?? 'medium'
 }
 
 export function clampReasoningEffort(
   model: string,
   baseUrl: string,
   raw: string,
+  allowed?: readonly string[],
 ): ReasoningEffort {
-  const allowed = reasoningEffortValuesFor(model, baseUrl)
+  const values = reasoningEffortValuesFor(model, baseUrl, allowed)
   const n = raw.trim().toLowerCase()
-  if ((allowed as readonly string[]).includes(n)) return n as ReasoningEffort
-  return defaultReasoningEffortFor(model, baseUrl, n)
+  if ((values as readonly string[]).includes(n)) return n as ReasoningEffort
+  return defaultReasoningEffortFor(model, baseUrl, n, allowed)
 }
 
 /** 输入栏展示的档位（Messages 协议静默忽略 none/minimal，这里一并藏掉） */
@@ -65,8 +78,9 @@ export function reasoningLevelsFor(opts: {
   model: string
   baseUrl: string
   apiBackend?: string
+  allowed?: readonly string[]
 }): { value: ReasoningEffort; label: string }[] {
-  let values = reasoningEffortValuesFor(opts.model, opts.baseUrl)
+  let values = reasoningEffortValuesFor(opts.model, opts.baseUrl, opts.allowed)
   if (opts.apiBackend === 'messages') {
     values = values.filter((v) => v !== 'none' && v !== 'minimal')
   }
@@ -81,7 +95,11 @@ export function spawnReasoningEffort(
   entry:
     | Pick<
         ModelInfo,
-        'model' | 'base_url' | 'supports_reasoning_effort' | 'reasoning_effort'
+        | 'model'
+        | 'base_url'
+        | 'supports_reasoning_effort'
+        | 'reasoning_effort'
+        | 'reasoning_efforts'
       >
     | undefined,
   fallback?: string,
@@ -94,5 +112,6 @@ export function spawnReasoningEffort(
     entry.model,
     entry.base_url,
     entry.reasoning_effort || fallback || '',
+    entry.reasoning_efforts,
   )
 }

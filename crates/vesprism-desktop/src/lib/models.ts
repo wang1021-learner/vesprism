@@ -59,7 +59,15 @@ export function emptyModelEntry(partial?: Partial<ModelInfo>): ModelInfo {
     laziness_max_nudges: partial?.laziness_max_nudges ?? 0,
     compactions_remaining: partial?.compactions_remaining ?? '',
     compaction_at_tokens: partial?.compaction_at_tokens ?? '',
+    source: partial?.source === 'official' ? 'official' : 'custom',
+    reasoning_efforts: Array.isArray(partial?.reasoning_efforts)
+      ? partial.reasoning_efforts.filter((s) => typeof s === 'string')
+      : [],
   }
+}
+
+export function isOfficialModel(m: Pick<ModelInfo, 'source'>): boolean {
+  return m.source === 'official'
 }
 
 /** 从磁盘读回的模型补全缺省字段 */
@@ -182,8 +190,9 @@ export function prepareModelsForSave(models: ModelInfo[]): ModelInfo[] {
           : 0,
       supports_reasoning_effort: Boolean(m.supports_reasoning_effort),
       reasoning_effort: m.supports_reasoning_effort
-        ? clampReasoningEffort(model, m.base_url, m.reasoning_effort)
+        ? clampReasoningEffort(model, m.base_url, m.reasoning_effort, m.reasoning_efforts)
         : '',
+      reasoning_efforts: Array.isArray(m.reasoning_efforts) ? m.reasoning_efforts : [],
       hidden: Boolean(m.hidden),
       supported_in_api: m.supported_in_api !== false,
       laziness_enabled: Boolean(m.laziness_enabled),

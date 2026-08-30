@@ -6,6 +6,7 @@ import { autoEnvKey, emptyModelEntry } from './models'
 
 export type ModelVendorId =
   | 'copy'
+  | 'xai'
   | 'openai'
   | 'anthropic'
   | 'deepseek'
@@ -21,6 +22,24 @@ export type ModelVendorTemplate = {
 }
 
 export const MODEL_VENDOR_TEMPLATES: ModelVendorTemplate[] = [
+  {
+    id: 'xai',
+    label: 'xAI Grok',
+    hint: 'api.x.ai/v1 · 登录账号即可',
+    patch: {
+      base_url: 'https://api.x.ai/v1',
+      api_backend: 'responses',
+      env_key: '',
+      context_window: 500_000,
+      extra_headers: {},
+      query_params: {},
+      env_http_headers: {},
+      supports_reasoning_effort: true,
+      reasoning_effort: 'high',
+      model: 'grok-4.6',
+      name: 'Grok 4.6',
+    },
+  },
   {
     id: 'openai',
     label: 'OpenAI',
@@ -156,6 +175,7 @@ export function envKeyChoices(models: ModelInfo[]): string[] {
   const seen = new Set<string>()
   const out: string[] = []
   const prefer = [
+    'XAI_API_KEY',
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
     'DEEPSEEK_API_KEY',

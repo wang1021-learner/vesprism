@@ -330,6 +330,10 @@ export interface ModelInfo {
   compactions_remaining: string
   compaction_at_tokens: string
   provider?: string
+  /** official = 登录账号带上的官方目录；custom = 自己写进 config.toml */
+  source?: 'official' | 'custom'
+  /** 该模型可选推理档；空则用通用表 */
+  reasoning_efforts?: string[]
 }
 
 export type SessionStatus = 'unknown' | 'initializing' | 'idle' | 'generating' | 'ended'

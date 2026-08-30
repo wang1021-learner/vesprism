@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { ModelInfo, SessionPhase } from '../types'
+import { isOfficialModel } from '../lib/models'
 import {
   defaultReasoningEffortFor,
   looksLikeDeepSeek,
@@ -106,6 +107,8 @@ interface ComposerProps {
   /** 精简工具条：只留附件 / @ / 发送 */
   compactActions?: boolean
   extraActions?: ReactNode
+  /** 空会话：输入框上方一句，由外层把栏居中 */
+  empty?: boolean
 }
 
 type AttachChip = {
@@ -277,6 +280,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     showShellChips = true,
     compactActions = false,
     extraActions,
+    empty = false,
   }: ComposerProps,
   ref,
 ) {
@@ -423,6 +427,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       model: selectedModel.model,
       baseUrl: selectedModel.base_url,
       apiBackend: selectedModel.api_backend,
+      allowed: selectedModel.reasoning_efforts,
     })
   }, [selectedModel])
 
@@ -434,6 +439,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       selectedModel.model,
       selectedModel.base_url,
       '',
+      selectedModel.reasoning_efforts,
     )
     const j = availableReasoningLevels.findIndex((x) => x.value === fb)
     return j >= 0 ? j : 0
@@ -664,7 +670,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   )
 
   return (
-    <footer className={`composer-container${variant === 'dock' ? ' is-dock' : ''}`}>
+    <footer className={`composer-container${variant === 'dock' ? ' is-dock' : ''}${empty ? ' is-empty' : ''}`}>
+      {empty && variant !== 'dock' ? (
+        <p className="composer-hello">有什么要做的？</p>
+      ) : null}
       {queuedPrompts.length > 0 ? (
         <div className="composer-queue" aria-label="排队中的消息">
           <span className="composer-queue-label">排队 {queuedPrompts.length}</span>
@@ -1298,43 +1307,56 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       <div className="composer-menu-divider" />
                     )}
 
-                    <div className="composer-menu-label">模型</div>
-                    {models.map((m) => {
-                      const active = m.id === selectedModelId
-                      const title = m.model?.trim() || m.id
-                      const subBits = [
-                        m.supports_reasoning_effort ? '支持推理' : '',
-                        m.api_backend && m.api_backend !== 'chat_completions'
-                          ? m.api_backend
-                          : '',
-                        m.context_window > 0
-                          ? `上下文 ${formatTokenK(m.context_window)}`
-                          : '',
-                      ].filter(Boolean)
+                    {(['official', 'custom'] as const).map((src) => {
+                      const group = models.filter((m) =>
+                        src === 'official' ? isOfficialModel(m) : !isOfficialModel(m),
+                      )
+                      if (!group.length) return null
                       return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          role="option"
-                          aria-selected={active}
-                          className={`composer-menu-item${active ? ' active' : ''}`}
-                          onClick={() => {
-                            setModelOpen(false)
-                            onSwitchModel(m.id)
-                          }}
-                        >
-                          <span className="menu-item-body">
-                            <span className="menu-item-title">{title}</span>
-                            {subBits.length > 0 && (
-                              <span className="menu-item-sub">{subBits.join(' · ')}</span>
-                            )}
-                          </span>
-                          {active && (
-                            <span className="menu-item-check">
-                              <CheckIcon />
-                            </span>
-                          )}
-                        </button>
+                        <div key={src}>
+                          <div className="composer-menu-label">
+                            {src === 'official' ? '登录账号 · 官方 Grok' : '自己配置'}
+                          </div>
+                          {group.map((m) => {
+                            const active = m.id === selectedModelId
+                            const title = m.model?.trim() || m.id
+                            const subBits = [
+                              src === 'official' ? '订阅' : '',
+                              m.supports_reasoning_effort ? '支持推理' : '',
+                              m.api_backend && m.api_backend !== 'chat_completions'
+                                ? m.api_backend
+                                : '',
+                              m.context_window > 0
+                                ? `上下文 ${formatTokenK(m.context_window)}`
+                                : '',
+                            ].filter(Boolean)
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                role="option"
+                                aria-selected={active}
+                                className={`composer-menu-item${active ? ' active' : ''}`}
+                                onClick={() => {
+                                  setModelOpen(false)
+                                  onSwitchModel(m.id)
+                                }}
+                              >
+                                <span className="menu-item-body">
+                                  <span className="menu-item-title">{title}</span>
+                                  {subBits.length > 0 && (
+                                    <span className="menu-item-sub">{subBits.join(' · ')}</span>
+                                  )}
+                                </span>
+                                {active && (
+                                  <span className="menu-item-check">
+                                    <CheckIcon />
+                                  </span>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
                       )
                     })}
                   </div>

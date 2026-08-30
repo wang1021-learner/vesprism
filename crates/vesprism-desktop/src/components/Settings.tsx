@@ -42,6 +42,7 @@ import {
   autoEnvKey,
   CONTEXT_WINDOW_PRESETS,
   formatContextTokens,
+  isOfficialModel,
   modelSetupWarnings,
   normalizeModelFromDisk,
   parseContextWindowInput,
@@ -147,12 +148,14 @@ export function SettingsModal() {
 
   const selectedModel = models.find((m) => m.id === selectedModelId)
   const isDraft = selectedModelId ? draftModelIds.includes(selectedModelId) : false
+  const officialSelected = Boolean(selectedModel && isOfficialModel(selectedModel))
   const setupWarnings = selectedModel ? modelSetupWarnings(selectedModel) : []
   const reasoningLevels = selectedModel
     ? reasoningLevelsFor({
         model: selectedModel.model,
         baseUrl: selectedModel.base_url,
         apiBackend: selectedModel.api_backend,
+        allowed: selectedModel.reasoning_efforts,
       })
     : []
 
@@ -247,6 +250,8 @@ export function SettingsModal() {
 
   const updateSelectedModel = (patch: Partial<ModelInfo>) => {
     if (!selectedModelId) return
+    const cur = models.find((m) => m.id === selectedModelId)
+    if (cur && isOfficialModel(cur)) return
     setModels((prev) =>
       prev.map((m) => {
         if (m.id !== selectedModelId) return m
@@ -405,12 +410,13 @@ export function SettingsModal() {
         /* 无会话可忽略 */
       }
 
-      $models.set(trimmed)
-      $settingsDefaultModelId.set(def)
+      const refreshed = await getModelSettings()
+      $models.set(refreshed.models)
+      $settingsDefaultModelId.set(refreshed.default_id || def)
       $preferredWorkspaceCwd.set(appliedCwd)
       patchActiveTab({ cwd: appliedCwd })
-      setModels(trimmed)
-      setDefaultId(def)
+      setModels(refreshed.models)
+      setDefaultId(refreshed.default_id || def)
       setDraftModelIds([])
       setKeyInput('')
       setForceKeyEdit(false)
@@ -422,9 +428,9 @@ export function SettingsModal() {
       const tabId = $activeTabId.get()
       const tabModel = tabId ? getTabState(tabId)?.modelId : ''
       const liveId =
-        tabModel && trimmed.some((m) => m.id === tabModel) ? tabModel : ''
+        tabModel && refreshed.models.some((m) => m.id === tabModel) ? tabModel : ''
       if (tabId && liveId) {
-        const ent = trimmed.find((m) => m.id === liveId)
+        const ent = refreshed.models.find((m) => m.id === liveId)
         const keep = getTabState(tabId)?.reasoningEffort
         const effort = spawnReasoningEffort(ent, keep)
         try {
@@ -882,7 +888,7 @@ export function SettingsModal() {
               <div className="settings-models-layout">
                 <div className="settings-models-list">
                   <div className="settings-models-list-header">
-                    <span>已配置</span>
+                    <span>模型</span>
                     <button
                       type="button"
                       className="btn-inline"
@@ -912,38 +918,60 @@ export function SettingsModal() {
 
                   {models.length === 0 ? (
                     <p className="settings-hint settings-models-empty">
-                      尚无模型。用上方厂商模板新增，或「拷贝当前」。
+                      尚无模型。登录官方账号后会带上 Grok；也可以用上方厂商模板新增。
                     </p>
                   ) : (
-                    <ul className="settings-models-items">
-                      {models.map((m) => {
-                        const draft = draftModelIds.includes(m.id)
-                        const active = m.id === selectedModelId
-                        const title = m.model?.trim() || m.id
-                        const host = hostFromBaseUrl(m.base_url)
-                        const sub = host || m.api_backend || 'chat_completions'
+                    <>
+                      {(['official', 'custom'] as const).map((src) => {
+                        const group = models.filter((m) =>
+                          src === 'official' ? isOfficialModel(m) : !isOfficialModel(m),
+                        )
+                        if (!group.length) return null
                         return (
-                          <li key={m.id}>
-                            <button
-                              type="button"
-                              className={`settings-model-item${active ? ' active' : ''}`}
-                              onClick={() => onSelectModel(m.id)}
-                            >
-                              <span className="settings-model-item-name">
-                                {draft ? (
-                                  <span className="settings-badge-new">新</span>
-                                ) : null}
-                                {title}
-                                {m.id === defaultId && !draft ? (
-                                  <span className="settings-badge-default">默认</span>
-                                ) : null}
-                              </span>
-                              <span className="settings-model-item-sub">{sub}</span>
-                            </button>
-                          </li>
+                          <div key={src} className="settings-models-group">
+                            <p className="settings-models-group-h">
+                              {src === 'official' ? '登录账号 · 官方 Grok' : '自己配置'}
+                            </p>
+                            <ul className="settings-models-items">
+                              {group.map((m) => {
+                                const draft = draftModelIds.includes(m.id)
+                                const active = m.id === selectedModelId
+                                const title = m.model?.trim() || m.id
+                                const host = hostFromBaseUrl(m.base_url)
+                                const sub =
+                                  src === 'official'
+                                    ? '订阅 · 不写入本机配置'
+                                    : host || m.api_backend || 'chat_completions'
+                                return (
+                                  <li key={m.id}>
+                                    <button
+                                      type="button"
+                                      className={`settings-model-item${active ? ' active' : ''}`}
+                                      onClick={() => onSelectModel(m.id)}
+                                    >
+                                      <span className="settings-model-item-name">
+                                        {draft ? (
+                                          <span className="settings-badge-new">新</span>
+                                        ) : isOfficialModel(m) ? (
+                                          <span className="settings-badge-official">官方</span>
+                                        ) : (
+                                          <span className="settings-badge-custom">自配</span>
+                                        )}
+                                        {title}
+                                        {m.id === defaultId && !draft ? (
+                                          <span className="settings-badge-default">默认</span>
+                                        ) : null}
+                                      </span>
+                                      <span className="settings-model-item-sub">{sub}</span>
+                                    </button>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </div>
                         )
                       })}
-                    </ul>
+                    </>
                   )}
 
                   {modelConfigPath && (
@@ -970,12 +998,14 @@ export function SettingsModal() {
                       <div className="settings-models-detail-header">
                         <div>
                           <h3 className="settings-panel-title">
-                            {isDraft ? '新增模型' : '编辑模型'}
+                            {isDraft ? '新增模型' : officialSelected ? '官方模型' : '自己配置'}
                           </h3>
                           <p className="settings-hint">
-                            {defaultId === selectedModel.id
-                              ? '新对话默认用这条。编辑旁边条目再保存，不会改掉默认。'
-                              : '点「设为默认」后再保存，新对话才会用这条。'}
+                            {officialSelected
+                              ? '登录账号带上的官方 Grok，参数以官方目录为准，不能在这里改。'
+                              : defaultId === selectedModel.id
+                                ? '新对话默认用这条。编辑旁边条目再保存，不会改掉默认。'
+                                : '点「设为默认」后再保存，新对话才会用这条。'}
                           </p>
                         </div>
                         <div className="settings-models-detail-actions">
@@ -1000,7 +1030,7 @@ export function SettingsModal() {
                             >
                               取消新增
                             </button>
-                          ) : (
+                          ) : officialSelected ? null : (
                             <button
                               type="button"
                               className="btn-secondary btn-danger-outline"
@@ -1021,6 +1051,48 @@ export function SettingsModal() {
                         </div>
                       </div>
 
+                      {officialSelected ? (
+                        <section className="settings-official-readonly" aria-label="官方模型只读">
+                          <dl className="settings-official-meta">
+                            <div>
+                              <dt>名称</dt>
+                              <dd>{selectedModel.name || selectedModel.model}</dd>
+                            </div>
+                            <div>
+                              <dt>模型 id</dt>
+                              <dd>{selectedModel.model}</dd>
+                            </div>
+                            <div>
+                              <dt>接口</dt>
+                              <dd>{selectedModel.base_url}</dd>
+                            </div>
+                            <div>
+                              <dt>协议</dt>
+                              <dd>{selectedModel.api_backend || 'responses'}</dd>
+                            </div>
+                            <div>
+                              <dt>上下文</dt>
+                              <dd>
+                                {selectedModel.context_window > 0
+                                  ? formatContextTokens(selectedModel.context_window)
+                                  : '—'}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>推理</dt>
+                              <dd>
+                                {selectedModel.supports_reasoning_effort
+                                  ? selectedModel.reasoning_effort || '支持'
+                                  : '无'}
+                              </dd>
+                            </div>
+                          </dl>
+                          {selectedModel.description ? (
+                            <p className="settings-hint">{selectedModel.description}</p>
+                          ) : null}
+                        </section>
+                      ) : (
+                      <>
                       {/* —— 连接 —— */}
                       <section className="settings-field-section">
                         <h4 className="settings-field-section-title">连接</h4>
@@ -1218,6 +1290,7 @@ export function SettingsModal() {
                                 selectedModel.model,
                                 selectedModel.base_url,
                                 selectedModel.reasoning_effort,
+                                selectedModel.reasoning_efforts,
                               )}
                               onChange={(e) =>
                                 updateSelectedModel({
@@ -1779,6 +1852,8 @@ export function SettingsModal() {
                           </div>
                         )}
                       </section>
+                      </>
+                      )}
                     </div>
                   )}
                 </div>

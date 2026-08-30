@@ -49,6 +49,20 @@ describe('default / clamp', () => {
 })
 
 describe('reasoningLevelsFor', () => {
+  it('官方 Grok 4.6 只用目录档，没有最高/关闭', () => {
+    const allowed = ['xhigh', 'high', 'medium', 'low']
+    const levels = reasoningLevelsFor({
+      model: 'grok-4.6',
+      baseUrl: 'https://api.x.ai/v1',
+      apiBackend: 'responses',
+      allowed,
+    })
+    expect(levels.map((l) => l.value)).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(clampReasoningEffort('grok-4.6', 'https://api.x.ai/v1', 'max', allowed)).toBe(
+      'high',
+    )
+  })
+
   it('Messages 藏掉 none/minimal', () => {
     const levels = reasoningLevelsFor({
       model: 'claude-sonnet-4-6',
