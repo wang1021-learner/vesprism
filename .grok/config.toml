@@ -1,0 +1,6 @@
+# Project-scoped plugin enablement.
+# Grok only loads [plugins], [mcp_servers], and [permission] from this file.
+# Plugins default to disabled until listed in enabled.
+
+[plugins]
+enabled = ["superpowers", "gstack", "ecc"]

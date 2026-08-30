@@ -1,0 +1,20 @@
+{
+  "name": "gstack",
+  "description": "Curated Garry Tan gstack skills for product thinking, plan review, visual design (consultation, shotgun, html), staff review, security (CSO), ship, and docs. Browser/QA/design CLI binaries are not vendored; preambles degrade and the methodology still runs.",
+  "version": "1.75.0",
+  "author": {
+    "name": "Garry Tan",
+    "url": "https://x.com/garrytan"
+  },
+  "homepage": "https://github.com/garrytan/gstack",
+  "repository": "https://github.com/garrytan/gstack",
+  "license": "MIT",
+  "keywords": [
+    "gstack",
+    "office-hours",
+    "review",
+    "ship",
+    "cso",
+    "design"
+  ]
+}

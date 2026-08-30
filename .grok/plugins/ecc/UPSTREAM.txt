@@ -1,0 +1,9 @@
+name: ecc
+repo: https://github.com/affaan-m/ECC
+version: 2.2.0
+commit: d8e6a51755c6971a65eef73419076d449df0f490
+license: MIT
+vendored skills: security-scan, security-review, rust-patterns, rust-testing, verification-loop, e2e-testing, codebase-onboarding, git-workflow, delivery-gate, production-audit, santa-method, eval-harness
+vendored agents: planner.md, architect.md, security-reviewer.md, code-reviewer.md, rust-reviewer.md, rust-build-resolver.md, silent-failure-hunter.md, build-error-resolver.md, performance-optimizer.md, code-simplifier.md, code-explorer.md
+vendored commands: plan.md, code-review.md, quality-gate.md, santa-loop.md, orch-review.md, build-fix.md, rust-review.md, rust-build.md, rust-test.md, security-scan.md
+omitted: remaining ~270 skills, hooks runtime / AgentShield, language packs except Rust, ecc2 control plane, npm installer

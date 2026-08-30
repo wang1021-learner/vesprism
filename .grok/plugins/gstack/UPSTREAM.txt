@@ -1,0 +1,8 @@
+name: gstack
+repo: https://github.com/garrytan/gstack
+version: 1.75.0.0
+commit: 07b59e396c6be5a86619a43151cb9ed62a15ae69
+license: MIT
+vendored skills: office-hours, plan-ceo-review, plan-eng-review, plan-design-review, autoplan, spec, review, investigate, cso, ship, retro, learn, document-release, document-generate, design-consultation, design-shotgun, design-html
+omitted: browse/qa browser daemon, bun toolchain, iOS QA, land-and-deploy, bin/, design CLI binary
+note: SKILL.md preambles look for ~/.claude/skills/gstack/bin; missing binaries is expected. Skills continue in degraded mode.

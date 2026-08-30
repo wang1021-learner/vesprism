@@ -1,0 +1,18 @@
+{
+  "name": "ecc",
+  "description": "Curated ECC subset for this repo: security scan/review, Rust patterns and reviewers, quality gates, and specialist agents. Not the full 286-skill distribution.",
+  "version": "2.2.0",
+  "author": {
+    "name": "Affaan Mustafa",
+    "url": "https://x.com/affaanmustafa"
+  },
+  "homepage": "https://github.com/affaan-m/ECC",
+  "repository": "https://github.com/affaan-m/ECC",
+  "license": "MIT",
+  "keywords": [
+    "ecc",
+    "security",
+    "rust",
+    "code-review"
+  ]
+}

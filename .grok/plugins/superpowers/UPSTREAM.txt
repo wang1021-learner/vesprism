@@ -1,0 +1,7 @@
+﻿name: superpowers
+repo: https://github.com/obra/superpowers
+version: 6.3.0
+commit: b36e0829c6d0140e93cfef2ca599b1b07d4a7797
+license: MIT
+vendored: skills/, hooks/, LICENSE, README.md
+omitted: tests/, docs/, assets/, harness adapter dirs
