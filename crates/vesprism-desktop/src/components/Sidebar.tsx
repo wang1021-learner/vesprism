@@ -1459,20 +1459,22 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             <div className="sidebar-rail-divider" />
               </>
             ) : null}
-            {product.sidebarEntries.map(({ kind, label }) => {
-              const Icon = iconForNavKind(kind)
-              return (
-                <button
-                  key={kind}
-                  type="button"
-                  className="sidebar-icon-btn"
-                  title={label}
-                  onClick={() => onProductNav(kind)}
-                >
-                  <Icon />
-                </button>
-              )
-            })}
+            {usesEngineSessionList(product)
+              ? product.sidebarEntries.map(({ kind, label }) => {
+                  const Icon = iconForNavKind(kind)
+                  return (
+                    <button
+                      key={kind}
+                      type="button"
+                      className="sidebar-icon-btn"
+                      title={label}
+                      onClick={() => onProductNav(kind)}
+                    >
+                      <Icon />
+                    </button>
+                  )
+                })
+              : null}
             <div className="sidebar-spacer" />
             <button
               type="button"

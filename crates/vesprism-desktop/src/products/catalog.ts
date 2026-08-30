@@ -197,7 +197,7 @@ export function isProductSessionGroup(cwdKey: string): boolean {
   return productSessionGroupKeys().includes(cwdKey)
 }
 
-/** 写完列书，不列引擎会话。sessionList=none 时侧栏禁止走项目/干活会话。 */
+/** 写完列书，不列引擎会话。sessionList=none 时侧栏禁止走项目/干活会话，展开和收起都不画能力入口。 */
 export function usesEngineSessionList(product: ProductDef): boolean {
   return product.sessionList !== 'none'
 }

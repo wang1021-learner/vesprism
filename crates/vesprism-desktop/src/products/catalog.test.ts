@@ -52,6 +52,9 @@ describe('产品表', () => {
     expect(usesEngineSessionList(getProduct('writing'))).toBe(false)
     expect(usesEngineSessionList(getProduct('coding'))).toBe(true)
     expect(usesEngineSessionList(getProduct('workbench'))).toBe(true)
+    expect(getProduct('writing').sidebarEntries).toEqual([
+      { kind: 'writing-desk', label: '写台' },
+    ])
     expect(getProduct('writing').emptyView).toBe('panel')
     expect(getProduct('writing').showTabPlus).toBe(true)
     expect(landsOnOwnPanel(getProduct('writing'))).toBe(true)

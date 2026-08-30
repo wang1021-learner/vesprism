@@ -35,7 +35,3 @@ export const WRITE_JOBS: readonly WriteJob[] = [
   { id: 'fill-review', role: 'reviewer', label: '检查这一章', from: '正文', to: '检查' },
   { id: 'adopt-ledger', role: 'reviewer', label: '入卷', from: '检查', to: '案卷 / 下一章' },
 ]
-
-export function jobByLabel(label: string): WriteJob | undefined {
-  return WRITE_JOBS.find((j) => j.label === label)
-}

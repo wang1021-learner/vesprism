@@ -41,7 +41,7 @@ export function TabBar() {
       const product = getProduct(shell)
       if (product.emptyView === 'panel') {
         const kind = product.utilityKinds.find((k) => k !== 'schedule')
-        if (kind && kind !== 'schedule') {
+        if (kind) {
           await openChatTab({
             title: navLabelForKind(kind),
             utilityKind: kind,
