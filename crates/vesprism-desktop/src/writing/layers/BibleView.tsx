@@ -96,6 +96,12 @@ export function RuleView({ card }: { card: RuleCard }) {
           value={card.quota}
           onChange={(v) => set({ quota: v })}
         />
+        <Field
+          label="剩余配额"
+          warn
+          value={card.quotaLeft ?? ''}
+          onChange={(v) => set({ quotaLeft: v })}
+        />
         <Field label="明确不能做什么" value={card.cannot} onChange={(v) => set({ cannot: v })} />
       </Zone>
     </Section>

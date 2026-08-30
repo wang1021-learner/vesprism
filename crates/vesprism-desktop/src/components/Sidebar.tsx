@@ -52,9 +52,11 @@ import {
   getProduct,
   isProductSessionGroup,
   navLabelForKind,
+  usesEngineSessionList,
   type ProductNavKind,
 } from '../products/catalog'
 import { clearSessionAllowed } from '../lib/permissionMemory'
+import { isWritingSessionCwd } from '../lib/writingCwd'
 import { formatEngineError } from '../lib/errorMessage'
 import { tabStates, pushToast } from '../store'
 import {
@@ -82,6 +84,7 @@ import {
 } from '../lib/sessionOpen'
 import type { ChatMessage, ToolCallData } from '../types'
 import { openChatTab } from '../lib/openChatTab'
+import { WritingLibraryNav } from '../writing/chrome/LibraryNav'
 import { spawnReasoningEffort } from '../lib/reasoning'
 import { openSessionSchedule } from '../lib/engineSlash'
 import { normalizeWorkspacePath, workspaceFolderName } from '../lib/workspacePath'
@@ -375,6 +378,7 @@ function normalizeCwdKey(cwd: string | undefined): string {
 
 /** 工作台分组 key 来自产品表，不参与 cwd 分组。 */
 const WORKBENCH_GROUP_KEY = getProduct('workbench').sessionGroupKey ?? '__workbench__'
+const WRITING_GROUP_KEY = getProduct('writing').sessionGroupKey ?? '__writing__'
 /** 闲聊分组（scratch cwd，未绑定项目）专用 key。 */
 const CASUAL_GROUP_KEY = '__casual__'
 
@@ -641,7 +645,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         casual.push(c)
         continue
       }
-      const key = normalizeCwdKey(c.cwd)
+      const key = isWritingSessionCwd(c.cwd) ? WRITING_GROUP_KEY : normalizeCwdKey(c.cwd)
       if (!byWs.has(key)) byWs.set(key, [])
       byWs.get(key)!.push(c)
     }
@@ -679,8 +683,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       )
       groups.push({
         cwdKey: key,
-        label: workspaceDisplayName(key),
-        fullPath: key,
+        label: key === WRITING_GROUP_KEY ? '写完' : workspaceDisplayName(key),
+        fullPath: key === WRITING_GROUP_KEY ? '' : key,
         isCurrent: Boolean(pinKey) && key === pinKey,
         registered: registeredKeys.has(key),
         chats: sorted,
@@ -702,7 +706,8 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     groups.sort((a, b) => {
       const rank = (g: WorkspaceGroup) => {
         if (g.cwdKey === WORKBENCH_GROUP_KEY) return 0
-        if (g.cwdKey === CASUAL_GROUP_KEY) return 1
+        if (g.cwdKey === WRITING_GROUP_KEY) return 1
+        if (g.cwdKey === CASUAL_GROUP_KEY) return 2
         if (g.isCurrent) return 2
         return 3
       }
@@ -1226,7 +1231,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
     </nav>
   )
 
-  const renderSessionList = () => (
+  const renderSessionList = () => {
+    if (!usesEngineSessionList(product)) return null
+    return (
     <div className="sidebar-recent-list" ref={listRef}>
       {workspaceGroups
         .filter((ws) =>
@@ -1250,7 +1257,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
                   ? '未绑定项目的会话'
                   : ws.cwdKey === WORKBENCH_GROUP_KEY
                     ? '画布 / 编制干活会话'
-                    : ws.fullPath
+                    : ws.cwdKey === WRITING_GROUP_KEY
+                      ? '写台书稿会话'
+                      : ws.fullPath
               }
               aria-expanded={!folded}
               onClick={() => void onWorkspaceTitleClick(ws)}
@@ -1319,6 +1328,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       )}
     </div>
   )
+  }
 
   /** 展开态 / peek 共用：壳切换 → 新对话 → 能力入口 → 会话 → 设置 */
   const renderExpandedPanel = () => (
@@ -1327,6 +1337,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         <div className="sidebar-top-bar">
           <ShellSwitch />
           <div className="sidebar-top-actions">
+            {usesEngineSessionList(product) ? (
             <button
               type="button"
               className="sidebar-icon-btn"
@@ -1335,6 +1346,7 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
             >
               <SearchIcon />
             </button>
+            ) : null}
             <button
               type="button"
               className="sidebar-icon-btn"
@@ -1358,10 +1370,14 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         )}
       </div>
 
-      <div className="sidebar-compose">
-        {renderUtilityGrid()}
-      </div>
+      {usesEngineSessionList(product) ? (
+        <div className="sidebar-compose">{renderUtilityGrid()}</div>
+      ) : null}
 
+      {!usesEngineSessionList(product) ? (
+        <WritingLibraryNav />
+      ) : (
+        <>
       <div className="sidebar-section-label">
         <span>{product.sidebarListLabel}</span>
         {product.showAddProject && (
@@ -1376,8 +1392,9 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         </button>
         )}
       </div>
-
       {renderSessionList()}
+        </>
+      )}
 
       <div className="sidebar-footer">
         <button

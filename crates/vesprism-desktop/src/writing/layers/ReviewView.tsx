@@ -5,9 +5,15 @@ import type { ReviewCard } from '../model/types'
 export function ReviewView({
   card,
   chapterNo,
+  blocks,
+  styleNotes,
+  onRegisterUnnumbered,
 }: {
   card: ReviewCard | undefined
   chapterNo: number
+  blocks?: string[]
+  styleNotes?: string[]
+  onRegisterUnnumbered?: () => void
 }) {
   const patch = usePatch()
   if (!card) {
@@ -33,8 +39,22 @@ export function ReviewView({
       lead="没点「入卷」，不准开下一章。"
     >
       <p className="wd-lead">
-        <Stamp tone={card.adopted ? 'ok' : 'lock'}>{card.adopted ? '已入卷' : '试笔 · 还没入卷'}</Stamp>
+        <Stamp tone={card.adopted ? 'ok' : 'lock'}>
+          {card.adopted
+            ? '已入卷'
+            : blocks && blocks.length
+              ? '红项未过，不准入卷'
+              : '试笔 · 还没入卷'}
+        </Stamp>
       </p>
+      {blocks && blocks.length > 0 ? (
+        <p className="wd-lead" role="status">
+          {blocks.join('；')}
+        </p>
+      ) : null}
+      {styleNotes && styleNotes.length > 0 ? (
+        <p className="wd-lead">去稿纸点一块，用「洗这块」。不挡入卷。</p>
+      ) : null}
       <Zone title="对照章纲">
         <Field
           label="开场钩是否在前 300 字落地"
@@ -76,6 +96,11 @@ export function ReviewView({
           value={card.unnumbered}
           onChange={(v) => set({ unnumbered: v })}
         />
+        {onRegisterUnnumbered && card.unnumbered.trim() && !/^(无|没有|无新埋|无未编号)[。.]?$/.test(card.unnumbered.trim()) ? (
+          <button type="button" className="wd-btn wd-btn-ghost" onClick={onRegisterUnnumbered}>
+            编号进伏笔表
+          </button>
+        ) : null}
       </Zone>
       <Zone title="建议入卷">
         {card.states.map((s, i) => (

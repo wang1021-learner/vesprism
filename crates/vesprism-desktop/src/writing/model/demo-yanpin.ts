@@ -1,6 +1,9 @@
 import type { BookDemo } from './types'
 
-/** 演示书《赝品眼》。字段按写台分层契约填满，供纯界面预览。 */
+/**
+ * 测试夹具《赝品眼》：字段按写台分层契约填满，供纯函数测试使用。
+ * 不参与运行时：书库从用户新建开始，不再种子任何演示数据。
+ */
 export const YANPIN_EYE: BookDemo = {
   id: 'yanpin-eye',
   title: '赝品眼',
@@ -98,6 +101,8 @@ export const YANPIN_EYE: BookDemo = {
       firstTwo: '层理、修缮、来处残影（只看物）。',
       third: '叠加「与自己有关的死局」。',
       quota: '每日三次；连开三次后半天不能再开，瞳孔出血。',
+      quotaLeft: '',
+      quotaAsOfChapter: 0,
       cannot: '看人心、隔空鉴定、关闭第三次的死局画面。',
       boundTo: '第4章必须第一次主动面对「要不要开第三次」。',
     },
@@ -630,7 +635,7 @@ export const YANPIN_EYE: BookDemo = {
       forbiddenKnow: '那张脸身份未给；来历未说完。',
       cheatAbuse: '第三次有代价：见血（入卷）。未隔空、未看心。',
       dueSeen: 'F001 被看见；身份未收。',
-      unnumbered: '无。F004 已编号。',
+      unnumbered: '无',
       states: [
         '沈见真：第一次主动面对第三次，看见死局，听见「别回头」；配额用尽，瞳孔见血。',
         '顾晚宁：没能阻止开瞳，知道旧门后的人比她更清楚残器。',

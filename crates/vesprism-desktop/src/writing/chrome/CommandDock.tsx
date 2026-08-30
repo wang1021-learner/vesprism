@@ -9,6 +9,7 @@ export function CommandDock({
   askReply,
   onClearAsk,
   onDispatch,
+  busy,
 }: {
   verbs: StationVerb[]
   fallback: StationVerb
@@ -16,6 +17,8 @@ export function CommandDock({
   askReply?: string | null
   onClearAsk?: () => void
   onDispatch: (verb: StationVerb, extra: string) => void
+  /** 引擎生成中：禁用所有动作 */
+  busy?: boolean
 }) {
   const [line, setLine] = useState(extraSeed ?? '')
   const others = verbs.filter((v) => v.id !== fallback.id && v.id !== 'ask')
@@ -34,11 +37,11 @@ export function CommandDock({
         fire(fallback)
       }}
     >
-      <p className="wd-kicker">这一步能做的事</p>
+      <p className="wd-kicker">这一步能做的事{busy ? ' · 生成中…' : ''}</p>
       <button
         type="submit"
         className="wd-btn wd-btn-primary"
-        disabled={!fallback.ok && fallback.id !== 'ask'}
+        disabled={busy || (!fallback.ok && fallback.id !== 'ask')}
         title={fallback.hint}
       >
         <span className="wd-btn-label">{fallback.label}</span>
@@ -52,7 +55,7 @@ export function CommandDock({
               type="button"
               className={`wd-cmd-chip${!v.ok ? ' is-off' : ''}${v.kind === 'read' ? ' is-read' : ''}`}
               title={v.hint}
-              disabled={!v.ok && v.id !== 'ask'}
+              disabled={busy || (!v.ok && v.id !== 'ask')}
               onClick={() => fire(v)}
             >
               {v.label}
@@ -67,21 +70,22 @@ export function CommandDock({
           className="wd-cmd-input"
           aria-label="一句约束，可空"
           value={line}
+          disabled={busy}
           placeholder={fallback.hint}
           onChange={(e) => setLine(e.target.value)}
         />
       </label>
       <p className="wd-cmd-preview">
-        {fallback.kind === 'read' ? '只读 · ' : '将下达 · '}
-        {fallback.label}
-        {line.trim() ? ` · ${line.trim()}` : ' · 无额外约束'}
-        {fallback.ok ? '' : ` · ${fallback.hint}`}
+        {busy
+          ? '引擎生成中…这一轮完自动回来'
+          : `${fallback.kind === 'read' ? '只读 · ' : '将下达 · '}${fallback.label}${line.trim() ? ` · ${line.trim()}` : ' · 无额外约束'}${fallback.ok ? '' : ` · ${fallback.hint}`}`}
       </p>
       {ask ? (
         <button
           type="button"
           className="wd-cmd-chip is-read"
           title={ask.hint}
+          disabled={busy}
           onClick={() => fire(ask)}
         >
           {ask.label}

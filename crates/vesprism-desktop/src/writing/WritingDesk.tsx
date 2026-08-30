@@ -1,12 +1,26 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import { pushToast } from '../store'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useStore } from '@nanostores/react'
+import {
+  $activeTabId,
+  $defaultModelId,
+  $generating,
+  $messages,
+  $reasoningEffort,
+  getTabState,
+  looksAbsolutePath,
+  normPathKey,
+  patchTab,
+  pushToast,
+} from '../store'
+import { restartSession, setSessionMode, startSession } from '../bridge'
+import { cancelActiveTurn } from '../lib/cancelActiveTurn'
+import { sendSessionPrompt } from '../lib/sendSessionPrompt'
 import { BeatStrip } from './chrome/BeatStrip'
-import { BookShelf } from './chrome/BookShelf'
 import { BookTree } from './chrome/BookTree'
 import { CandidatePanel } from './chrome/CandidatePanel'
 import { CommandDock } from './chrome/CommandDock'
-import { GateStrip } from './chrome/GateStrip'
 import { DossierRail } from './chrome/DossierRail'
+import { GateStrip } from './chrome/GateStrip'
 import { ModeStrip } from './chrome/ModeStrip'
 import { SlicePanel } from './chrome/SlicePanel'
 import { StepBanner } from './chrome/StepBanner'
@@ -16,15 +30,52 @@ import { BeatsView } from './layers/BeatsView'
 import { CanonView } from './layers/CanonView'
 import { ChapterView } from './layers/ChapterView'
 import { DraftView } from './layers/DraftView'
-import { OutlineView } from './layers/OutlineView'
 import { EngineView } from './layers/EngineView'
+import { OutlineView } from './layers/OutlineView'
 import { PitchView } from './layers/PitchView'
 import { ReviewView } from './layers/ReviewView'
 import { UnitView } from './layers/UnitView'
 import { VolumeView } from './layers/VolumeView'
-import { answerAsk, defaultVerb, gapLabel, landNode, verbsForStation } from './framework/station'
-import type { StationVerb } from './framework/station'
-import { chapterCountFor } from './framework/scale'
+import { answerAsk, defaultVerb, gapLabel, landNode, washSpanGate, verbsForStation, type StationVerb } from './framework/station'
+import {
+  assembleWriteChapter,
+  assistantTextAfter,
+  extractJson,
+  fillCardUser,
+  lastTaskUser,
+  reviewerJsonHint,
+  reviewerSystem,
+  reviewerUser,
+  rewriteUser,
+  splitterSystem,
+  taskWire,
+  washerSystem,
+  washUser,
+  writerSystem,
+} from './framework/prompt'
+import {
+  FILL_TARGET_LABEL,
+  adoptIntoDossier,
+  applyBeatBody,
+  applyFillResult,
+  applyReviewFromJson,
+  asFillScope,
+  fillTargetOf,
+  mergeJsonIntoCard,
+  parseDraftFromText,
+  registerForeshadowsFromReview,
+  upsertDraft,
+  type FillCardTarget,
+  type FillScope,
+} from './model/apply'
+import { reviewBlocksAdopt, styleHits } from './model/review-gate'
+import {
+  WRITING_SESSION_MODE,
+  needsFreshSession,
+  sessionReady,
+  taskBelongsToBook,
+  waitUntil,
+} from './isolate'
 import {
   addBeat,
   addChapter,
@@ -35,10 +86,16 @@ import {
   addUnit,
   addVolume,
 } from './model/create'
-import { YANPIN_EYE } from './model/demo-yanpin'
-import { emptyBook } from './model/empty-book'
-import { gatesForNode } from './model/gates'
 import { bookDossier } from './model/dossier'
+import {
+  $writingBooks,
+  $writingLoaded,
+  $writingOpenId,
+  bootWritingLibrary,
+  mapWritingBooks,
+  rememberLastBook,
+} from './library'
+import { gatesForNode } from './model/gates'
 import {
   beatsNode,
   jumpMode,
@@ -51,20 +108,19 @@ import {
 } from './model/nodes'
 import { writeSlice } from './model/slice'
 import type { BookDemo, DeskNodeId } from './model/types'
+import { chapterCountFor } from './framework/scale'
+import { persistBook, writingSessionCwd } from './storage'
 
-type DraftFlag = { draftAccepted?: boolean; draftDiscarded?: boolean; reviewAdopted?: boolean }
-
-function withFlags(book: BookDemo, flags: Record<string, DraftFlag>): BookDemo {
-  return {
-    ...book,
-    drafts: book.drafts
-      .filter((d) => !flags[d.chapterId]?.draftDiscarded)
-      .map((d) => (flags[d.chapterId]?.draftAccepted ? { ...d, accepted: true } : d)),
-    reviews: book.reviews.map((r) =>
-      flags[r.chapterId]?.reviewAdopted ? { ...r, adopted: true } : r,
-    ),
-  }
-}
+/** 写台任务：发给引擎的一个动词（回合并按 TASK 标记归属） */
+type DeskTask = {
+  bookId: string
+} & (
+  | { kind: 'write-chapter'; chapterId: string }
+  | { kind: 'fill-review'; chapterId: string }
+  | { kind: 'rewrite'; chapterId: string; beatId: string }
+  | { kind: 'wash'; chapterId: string; beatId: string }
+  | { kind: 'fill-card'; target: FillCardTarget; chapterId?: string; scope?: FillScope }
+)
 
 function MainCard({
   node,
@@ -74,11 +130,15 @@ function MainCard({
   onSelectBeat,
   onAdopt,
   onDiscard,
+  onRevert,
   onAddPerson,
   onAddRule,
   onAddPlace,
   onAddBeat,
   onAddForeshadow,
+  reviewBlocks,
+  styleNotes,
+  onRegisterUnnumbered,
 }: {
   node: DeskNodeId
   book: BookDemo
@@ -87,15 +147,22 @@ function MainCard({
   onSelectBeat?: (id: string) => void
   onAdopt?: () => void
   onDiscard?: () => void
+  onRevert?: () => void
   onAddPerson?: () => void
   onAddRule?: () => void
   onAddPlace?: () => void
   onAddBeat?: (chapterId: string) => void
   onAddForeshadow?: () => void
+  reviewBlocks?: string[]
+  styleNotes?: string[]
+  onRegisterUnnumbered?: () => void
 }) {
   const parsed = parseNode(node)
   if (parsed.kind === 'engine') {
-    const chapterId = workChapterId(parsed, book.chapters.filter((c) => !c.locked).at(-1)?.id || 'ch-4')
+    const chapterId = workChapterId(
+      parsed,
+      book.chapters.filter((c) => !c.locked).at(-1)?.id || book.chapters.at(-1)?.id || '',
+    )
     return <EngineView book={book} chapterId={chapterId} />
   }
   if (parsed.kind === 'pitch') return <PitchView card={book.pitch} />
@@ -164,11 +231,20 @@ function MainCard({
         onSelectBeat={onSelectBeat}
         onAdopt={onAdopt}
         onDiscard={onDiscard}
+        onRevert={onRevert}
       />
     )
   }
   if (parsed.kind === 'review') {
-    return <ReviewView chapterNo={ch.no} card={book.reviews.find((r) => r.chapterId === ch.id)} />
+    return (
+      <ReviewView
+        chapterNo={ch.no}
+        card={book.reviews.find((r) => r.chapterId === ch.id)}
+        blocks={reviewBlocks}
+        styleNotes={styleNotes}
+        onRegisterUnnumbered={onRegisterUnnumbered}
+      />
+    )
   }
   const castLabels = ch.cast
     .map((id) => {
@@ -185,45 +261,356 @@ function MainCard({
 }
 
 export function WritingDesk() {
-  const [books, setBooks] = useState<BookDemo[]>([YANPIN_EYE])
-  const [openId, setOpenId] = useState<string | null>(null)
-  const [lastId, setLastId] = useState<string | null>(YANPIN_EYE.id)
+  const tabId = useStore($activeTabId)
+  const generating = useStore($generating)
+  const modelId = useStore($defaultModelId)
+  const effort = useStore($reasoningEffort)
+
+  const books = useStore($writingBooks)
+  const loaded = useStore($writingLoaded)
+  const openId = useStore($writingOpenId)
   const [node, setNode] = useState<DeskNodeId>('pitch')
   const [selectedBeatId, setSelectedBeatId] = useState<string | undefined>()
   const [askReply, setAskReply] = useState<string | null>(null)
-  const [flags, setFlags] = useState<Record<string, DraftFlag>>({})
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
 
-  const raw = books.find((b) => b.id === openId)
-  const book = useMemo(() => (raw ? withFlags(raw, flags) : undefined), [raw, flags])
+  const saveTimer = useRef<number | undefined>(undefined)
+  const latestByBookRef = useRef<Map<string, BookDemo>>(new Map())
+  const pendingTaskRef = useRef<DeskTask | null>(null)
+  const reconciledRef = useRef(false)
+  const openIdRef = useRef<string | null>(null)
+  openIdRef.current = openId
 
-  const openBook = (id: string) => {
-    const next = books.find((b) => b.id === id)
-    if (!next) return
-    setOpenId(id)
-    setLastId(id)
-    setNode(landNode(next))
-    setAskReply(null)
-    setSelectedBeatId(undefined)
+  const book = useMemo(() => books.find((b) => b.id === openId), [books, openId])
+
+  // ── 持久化：每书一份待写快照；切书先冲刷上一本，禁止共用一个 timer 把 A 冲成 B ──
+  const flushSave = (b: BookDemo) => {
+    latestByBookRef.current.set(b.id, b)
+    setSaveState('saving')
+    void persistBook(b)
+      .then(() => {
+        if (openIdRef.current === b.id) setSaveState('saved')
+      })
+      .catch((e) => {
+        if (openIdRef.current === b.id) setSaveState('error')
+        pushToast(`保存失败：${String(e)}`, 'error')
+      })
   }
-
-  const createBook = (init: { title: string; platform: string; logline: string }) => {
-    const next = emptyBook(init)
-    setBooks((prev) => [...prev, next])
-    setFlags({})
-    setOpenId(next.id)
-    setLastId(next.id)
-    setNode('pitch')
-    setAskReply(null)
+  const flushBookNow = (id: string | null | undefined) => {
+    if (!id) return
+    const pending = latestByBookRef.current.get(id)
+    if (!pending) return
+    window.clearTimeout(saveTimer.current)
+    flushSave(pending)
   }
+  const scheduleSave = (b: BookDemo) => {
+    latestByBookRef.current.set(b.id, b)
+    window.clearTimeout(saveTimer.current)
+    const id = b.id
+    saveTimer.current = window.setTimeout(() => {
+      const pending = latestByBookRef.current.get(id)
+      if (pending) flushSave(pending)
+    }, 400)
+  }
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(saveTimer.current)
+      for (const pending of latestByBookRef.current.values()) {
+        void persistBook(pending).catch(() => {})
+      }
+    }
+  }, [])
 
   const patch: PatchBook = (fn) => {
     if (!openId) return
-    setBooks((prev) => prev.map((b) => (b.id === openId ? fn(b) : b)))
+    mapWritingBooks((prev) =>
+      prev.map((b) => {
+        if (b.id !== openId) return b
+        const next = fn(b)
+        scheduleSave(next)
+        return next
+      }),
+    )
   }
 
-  if (!book || !raw) {
+  // ── 会话：每书一个工作目录；切到 ask（只答、无工具），避免模型去写文件 ──
+  const lockAskMode = async (): Promise<boolean> => {
+    if (!tabId) return false
+    try {
+      await setSessionMode(tabId, WRITING_SESSION_MODE)
+      patchTab(tabId, { sessionMode: 'ask' })
+      return true
+    } catch (e) {
+      pushToast(`写台没切到只答模式（无工具）：${String(e)}`, 'error')
+      return false
+    }
+  }
+
+  const ensureBookSession = async (b: BookDemo, fresh = false): Promise<boolean> => {
+    if (!tabId) return false
+    try {
+      const cwd = await writingSessionCwd(b.id)
+      const st = getTabState(tabId)
+      const sameCwd = Boolean(
+        st && looksAbsolutePath(st.cwd) && normPathKey(st.cwd) === normPathKey(cwd),
+      )
+      const readyNow = sessionReady({ sessionId: st?.sessionId, phase: st?.phase })
+      if (sameCwd && readyNow && (!fresh || (st?.messages.length ?? 0) === 0)) {
+        if (st?.sessionMode === 'ask') return true
+        return lockAskMode()
+      }
+      patchTab(tabId, {
+        messages: [],
+        phase: 'booting',
+        status: 'idle',
+        error: '',
+        permission: null,
+        userQuestion: null,
+        mcpElicit: null,
+      })
+      const opts = { modelId: modelId || undefined, reasoningEffort: effort || undefined }
+      if (st?.sessionId) {
+        await restartSession(tabId, cwd, opts)
+      } else {
+        await startSession(tabId, cwd, opts)
+      }
+      patchTab(tabId, { cwd, phase: 'ready', status: 'idle' })
+      const ok = await waitUntil(() => Boolean(getTabState(tabId)?.sessionId))
+      if (!ok) {
+        pushToast('写台会话还没拿到 session，稍后再点。', 'error')
+        return false
+      }
+      return lockAskMode()
+    } catch (e) {
+      pushToast(`写台会话启动失败：${String(e)}`, 'error')
+      return false
+    }
+  }
+
+  // ── 启动：侧栏和写台共用书库 ──
+  useEffect(() => {
+    void bootWritingLibrary()
+  }, [])
+
+  const prevOpenRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!loaded) return
+    if (!openId) {
+      if (prevOpenRef.current) flushBookNow(prevOpenRef.current)
+      prevOpenRef.current = null
+      return
+    }
+    const next = books.find((b) => b.id === openId)
+    if (!next) return
+    const prev = prevOpenRef.current
+    if (prev === openId) return
+    if (prev) {
+      flushBookNow(prev)
+      pendingTaskRef.current = null
+      reconciledRef.current = false
+      if (tabId && generating) void cancelActiveTurn(tabId)
+      if (tabId) {
+        patchTab(tabId, {
+          messages: [],
+          permission: null,
+          userQuestion: null,
+          mcpElicit: null,
+        })
+      }
+    }
+    prevOpenRef.current = openId
+    setNode(landNode(next))
+    setAskReply(null)
+    setSelectedBeatId(undefined)
+    void ensureBookSession(next, Boolean(prev))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, openId, books])
+
+  // ── 任务：回合收集（generating → idle 边沿） ──
+  const applyTaskText = (task: DeskTask, text: string) => {
+    if (task.bookId !== openIdRef.current) {
+      pushToast('已切书，上一本的产出没有写入当前书。', 'info')
+      return
+    }
+    if (!book || book.id !== task.bookId) return
+    if (task.kind === 'write-chapter') {
+      patch((b) => {
+        const slice = writeSlice(b, task.chapterId)
+        return upsertDraft(b, parseDraftFromText(text, task.chapterId, slice))
+      })
+      setNode(`${task.chapterId}:draft`)
+      pushToast('试笔完成。可在稿纸上改，或点「采纳进正史」。', 'success')
+      return
+    }
+    if (task.kind === 'fill-review') {
+      const json = extractJson(text)
+      if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        pushToast('这轮检查没解析出 JSON 检查单，请稍后手动填。', 'error')
+        return
+      }
+      patch((b) => applyReviewFromJson(b, task.chapterId, json as Record<string, unknown>))
+      setNode(`${task.chapterId}:review`)
+      pushToast('检查单已填，确认后点「入卷」。', 'success')
+      return
+    }
+    if (task.kind === 'rewrite' || task.kind === 'wash') {
+      let wrote = false
+      patch((b) => {
+        if (!b.drafts.some((d) => d.chapterId === task.chapterId)) return b
+        wrote = true
+        return applyBeatBody(b, task.chapterId, task.beatId, text)
+      })
+      const okMsg = task.kind === 'wash' ? '这一块已去掉套话。' : '这一块已重写。'
+      const miss = task.kind === 'wash' ? '还没有试笔稿纸，无法洗。' : '还没有试笔稿纸，无法重写。'
+      pushToast(wrote ? okMsg : miss, wrote ? 'success' : 'info')
+      return
+    }
+    if (task.kind === 'fill-card') {
+      const json = extractJson(text)
+      if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        pushToast('补卡输出不是 JSON，未应用。可手动填。', 'error')
+        return
+      }
+      patch((b) => {
+        const scope = task.scope || { chapterId: task.chapterId }
+        const current = fillTargetOf(b, task.target, scope)
+        const merged = mergeJsonIntoCard(current.card, json as Record<string, unknown>)
+        return applyFillResult(current.book, task.target, merged, scope)
+      })
+      pushToast('已按 AI 补全，可在卡上继续改。', 'success')
+      return
+    }
+  }
+
+  const applyTaskOutput = (task: DeskTask) => {
+    if (task.bookId !== openIdRef.current) {
+      pushToast('已切书，上一本的产出没有写入当前书。', 'info')
+      return
+    }
+    const now = (tabId ? getTabState(tabId)?.messages : null) ?? $messages.get()
+    const found = lastTaskUser(now)
+    if (!found || found.kind !== task.kind || !taskBelongsToBook(found, task.bookId)) {
+      pushToast('这轮任务没找到属于这本书的产出。', 'info')
+      return
+    }
+    const text = assistantTextAfter(now, found.idx)
+    if (!text) {
+      pushToast('这轮没有产出。', 'info')
+      return
+    }
+    applyTaskText(task, text)
+  }
+
+  useEffect(() => {
+    if (generating) return
+    const task = pendingTaskRef.current
+    if (!task) return
+    pendingTaskRef.current = null
+    reconciledRef.current = true
+    applyTaskOutput(task)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generating])
+
+  // ── 挂载恢复：切走再回来，把已完成但没落地的产出补上（幂等） ──
+  useEffect(() => {
+    if (!loaded || !book || generating) return
+    if (pendingTaskRef.current) return
+    if (reconciledRef.current) return
+    const now = (tabId ? getTabState(tabId)?.messages : null) ?? $messages.get()
+    const found = lastTaskUser(now)
+    if (!found) return
+    if (!taskBelongsToBook(found, book.id)) return
+    if (found.kind !== 'write-chapter' && found.kind !== 'fill-review') return
+    if (!book.chapters.some((c) => c.id === found.ref)) return
+    if (found.kind === 'write-chapter' && book.drafts.some((d) => d.chapterId === found.ref)) {
+      return
+    }
+    if (found.kind === 'fill-review' && book.reviews.some((r) => r.chapterId === found.ref)) {
+      return
+    }
+    const text = assistantTextAfter(now, found.idx)
+    if (!text) return
+    reconciledRef.current = true
+    applyTaskText(
+      found.kind === 'write-chapter'
+        ? { kind: 'write-chapter', chapterId: found.ref, bookId: book.id }
+        : { kind: 'fill-review', chapterId: found.ref, bookId: book.id },
+      text,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, book, generating])
+
+  // ── 下令：真实调用引擎 ──
+  const runTask = async (task: DeskTask, system: string, user: string) => {
+    if (!tabId) return
+    if (generating) {
+      pushToast('上一轮还在生成，先等它完。', 'info')
+      return
+    }
+    const current = books.find((b) => b.id === task.bookId)
+    if (!current) {
+      pushToast('这本书不在书库里。', 'error')
+      return
+    }
+    const fresh = needsFreshSession(task.kind)
+    const ready = await ensureBookSession(current, fresh)
+    if (!ready) return
+    const st = getTabState(tabId)
+    if (!sessionReady({ sessionId: st?.sessionId, phase: 'ready' })) {
+      pushToast('写台会话还没就绪，稍等。', 'info')
+      return
+    }
+    const ref =
+      task.kind === 'fill-card'
+        ? task.target
+        : task.kind === 'rewrite' || task.kind === 'wash'
+          ? task.beatId
+          : task.chapterId
+    pendingTaskRef.current = task
+    try {
+      const ok = await sendSessionPrompt({
+        text: taskWire(task.kind, ref, system, user, task.bookId),
+        tabId,
+      })
+      if (!ok) {
+        pendingTaskRef.current = null
+        pushToast('下达失败：会话未就绪。', 'error')
+      }
+    } catch (e) {
+      pendingTaskRef.current = null
+      pushToast(`下达失败：${String(e)}`, 'error')
+    }
+  }
+
+  const isolateSwitch = () => {
+    flushBookNow(openIdRef.current)
+    pendingTaskRef.current = null
+    reconciledRef.current = false
+    if (tabId && generating) void cancelActiveTurn(tabId)
+    if (tabId) {
+      patchTab(tabId, {
+        messages: [],
+        permission: null,
+        userQuestion: null,
+        mcpElicit: null,
+      })
+    }
+  }
+
+  if (!loaded) {
     return (
-      <BookShelf books={books} lastId={lastId} onOpen={openBook} onCreate={createBook} />
+      <div className="wd-desk wd-desk--loading" role="status">
+        加载书库…
+      </div>
+    )
+  }
+  if (!book) {
+    return (
+      <div className="wd-desk wd-desk--empty" role="status">
+        <p className="wd-kicker">写完</p>
+        <h1>从左边打开一本书</h1>
+        <p>入口是书库。点 + 只问书名、平台、一句话。打开一本才进写台。不是聊天框。</p>
+      </div>
     )
   }
 
@@ -236,9 +623,15 @@ export function WritingDesk() {
       setSelectedBeatId={setSelectedBeatId}
       askReply={askReply}
       setAskReply={setAskReply}
-      setFlags={setFlags}
       patch={patch}
-      onClose={() => setOpenId(null)}
+      busy={generating}
+      runTask={runTask}
+      saveState={saveState}
+      onClose={() => {
+        isolateSwitch()
+        $writingOpenId.set(null)
+        rememberLastBook(null)
+      }}
     />
   )
 }
@@ -251,8 +644,10 @@ function OpenDesk({
   setSelectedBeatId,
   askReply,
   setAskReply,
-  setFlags,
   patch,
+  busy,
+  runTask,
+  saveState,
   onClose,
 }: {
   book: BookDemo
@@ -262,30 +657,48 @@ function OpenDesk({
   setSelectedBeatId: (id: string | undefined) => void
   askReply: string | null
   setAskReply: (s: string | null) => void
-  setFlags: Dispatch<SetStateAction<Record<string, DraftFlag>>>
   patch: PatchBook
+  busy: boolean
+  runTask: (task: DeskTask, system: string, user: string) => Promise<void>
+  saveState: 'idle' | 'saving' | 'saved' | 'error'
   onClose: () => void
 }) {
   const parsed = parseNode(node)
   const mode = modeOf(parsed)
   const chapterId = workChapterId(
     parsed,
-    book.chapters.filter((c) => !c.locked).at(-1)?.id || book.chapters.at(-1)?.id || 'ch-4',
+    book.chapters.filter((c) => !c.locked).at(-1)?.id || book.chapters.at(-1)?.id || '',
   )
+  const fillScope: FillScope = {
+    chapterId:
+      parsed.kind === 'chapter'
+        ? parsed.id
+        : parsed.kind === 'beats' || parsed.kind === 'draft' || parsed.kind === 'review'
+          ? parsed.chapterId
+          : chapterId || undefined,
+    volumeId: parsed.kind === 'volume' ? parsed.id : undefined,
+    unitId: parsed.kind === 'unit' ? parsed.id : undefined,
+  }
   const gates = useMemo(() => gatesForNode(book, node), [book, node])
   const dossier = useMemo(() => bookDossier(book), [book])
   const slice = useMemo(() => writeSlice(book, chapterId), [book, chapterId])
   const showSlice = parsed.kind === 'chapter' || parsed.kind === 'beats' || parsed.kind === 'draft'
-  const verbs = useMemo(() => verbsForStation(book, node), [book, node])
+  const verbs = useMemo(() => verbsForStation(book, node, selectedBeatId), [book, node, selectedBeatId])
+  const reviewGate = useMemo(
+    () => (chapterId ? reviewBlocksAdopt(book, chapterId) : { ok: true, hints: [] as string[] }),
+    [book, chapterId],
+  )
+  const styleNotes = useMemo(() => (chapterId ? styleHits(book, chapterId) : []), [book, chapterId])
   const written = book.drafts.filter((d) => d.accepted).length
   const aim = chapterCountFor()
   const beats = chapterId ? book.beatsByChapter[chapterId] || [] : []
   const pct = aim > 0 ? Math.min(100, Math.round((written / aim) * 1000) / 10) : 0
-
-  const patchChapter = (partial: DraftFlag) => {
-    if (!chapterId) return
-    setFlags((prev) => ({ ...prev, [chapterId]: { ...prev[chapterId], ...partial } }))
-  }
+  const candidates = book.drafts
+    .filter((d) => !d.accepted)
+    .map((d) => {
+      const ch = book.chapters.find((c) => c.id === d.chapterId)
+      return { chapterId: d.chapterId, label: `第${ch?.no ?? '?'}章 ${ch?.title || '未拟题'}` }
+    })
 
   const goAdd = (
     factory: (b: BookDemo) => { book: BookDemo; id: string },
@@ -300,7 +713,23 @@ function OpenDesk({
     if (id) setNode(to(id))
   }
 
-  const onDispatch = (verb: StationVerb, extra: string, beatNo?: number) => {
+  const runFillCard = (target: FillCardTarget, extra: string, scope: FillScope = fillScope) => {
+    const { book: next, card } = fillTargetOf(book, target, scope)
+    if (next !== book) patch(() => next)
+    void runTask(
+      {
+        kind: 'fill-card',
+        target,
+        chapterId: asFillScope(scope).chapterId,
+        scope,
+        bookId: book.id,
+      },
+      splitterSystem(FILL_TARGET_LABEL[target]),
+      fillCardUser(next !== book ? next : book, target, card, extra),
+    )
+  }
+
+  const onDispatch = (verb: StationVerb, extra: string) => {
     if (verb.id === 'ask') {
       setAskReply(answerAsk(book, extra))
       return
@@ -309,46 +738,130 @@ function OpenDesk({
       pushToast(verb.hint, 'info')
       return
     }
-    if (verb.id === 'adopt-ledger') {
-      patchChapter({ reviewAdopted: true })
-      pushToast('已标记入卷（演示不落盘）。案卷数字仍未改。', 'info')
-      return
-    }
-    if (verb.id === 'rewrite-span') {
-      const beats = book.beatsByChapter[chapterId] || []
-      const target =
-        beatNo && beats[beatNo - 1]
-          ? beats[beatNo - 1]
-          : beats.find((b) => b.id === selectedBeatId)
-      if (!target) {
-        pushToast('先在稿纸上点一块。', 'info')
+    switch (verb.id) {
+      case 'write-chapter': {
+        const wire = assembleWriteChapter(book, chapterId, extra)
+        if (!wire) {
+          pushToast('这一章还不能写（门槛未过）。', 'info')
+          return
+        }
+        void runTask({ kind: 'write-chapter', chapterId, bookId: book.id }, wire.system, wire.user)
         return
       }
-      setSelectedBeatId(target.id)
-      pushToast(`将重写「${target.title}」${extra ? ` · ${extra}` : ''}。出试笔。演示未接会话。`, 'info')
-      return
+      case 'fill-review': {
+        const user = reviewerUser(book, chapterId, extra)
+        if (!user) {
+          pushToast('还没有正文可检查。', 'info')
+          return
+        }
+        const jsonUser = `${user}\n\n${reviewerJsonHint()}`
+        void runTask({ kind: 'fill-review', chapterId, bookId: book.id }, reviewerSystem(), jsonUser)
+        return
+      }
+      case 'rewrite-span': {
+        const target = beats.find((b) => b.id === selectedBeatId)
+        if (!target) {
+          pushToast('先在稿纸上点一块。', 'info')
+          return
+        }
+        void runTask(
+          { kind: 'rewrite', chapterId, beatId: target.id, bookId: book.id },
+          writerSystem(),
+          rewriteUser(book, chapterId, target, extra),
+        )
+        return
+      }
+      case 'wash-span': {
+        const gate = washSpanGate(book, chapterId, selectedBeatId)
+        if (!gate.ok) {
+          pushToast(gate.hint, 'info')
+          return
+        }
+        const target = beats.find((b) => b.id === selectedBeatId)
+        if (!target) {
+          pushToast('先在稿纸上点一块。', 'info')
+          return
+        }
+        const user = washUser(book, chapterId, target, extra)
+        if (!user) {
+          pushToast('还没有试笔稿纸。', 'info')
+          return
+        }
+        void runTask(
+          { kind: 'wash', chapterId, beatId: target.id, bookId: book.id },
+          washerSystem(),
+          user,
+        )
+        return
+      }
+      case 'adopt-ledger': {
+        const blocks = reviewBlocksAdopt(book, chapterId)
+        if (!blocks.ok) {
+          pushToast(blocks.hints.join('；'), 'info')
+          return
+        }
+        patch((b) => adoptIntoDossier(b, chapterId))
+        pushToast('已入卷：人物当前态与伏线已更新，下一章解锁。', 'success')
+        const cur = book.chapters.find((c) => c.id === chapterId)
+        const next = book.chapters.find((c) => c.no === (cur?.no ?? 0) + 1)
+        setNode(next ? next.id : `${chapterId}:review`)
+        return
+      }
+      case 'split-next': {
+        const no = Math.max(0, ...book.chapters.map((c) => c.no)) + 1
+        patch((b) => addChapter(b).book)
+        setNode(`ch-${no}`)
+        pushToast(`第${no}章纲已建。可点「写章纲」让 AI 拆。`, 'success')
+        return
+      }
+      case 'fill-pitch':
+        return void runFillCard('pitch', extra)
+      case 'write-canon':
+        return void runFillCard('canon', extra)
+      case 'fill-lead':
+        return void runFillCard('lead', extra)
+      case 'split-outline':
+        return void runFillCard('outline', extra)
+      case 'split-volume':
+        return void runFillCard('volume', extra)
+      case 'split-unit':
+        return void runFillCard('unit', extra)
+      case 'split-chapter':
+        return void runFillCard('chapter', extra)
+      case 'split-beats':
+        return void runFillCard('beats', extra, { chapterId })
+      default:
+        pushToast(`「${verb.label}」暂未接引擎，稍后再来。`, 'info')
     }
-    if (verb.id === 'write-chapter' || verb.id === 'fill-review') {
-      pushToast(
-        `将下达：${verb.label}${extra ? ` · ${extra}` : ''}。先试笔，不进正史。演示未接会话。`,
-        'info',
-      )
-      return
-    }
-    pushToast(`将下达：${verb.label}${extra ? ` · ${extra}` : ''}。先试笔。演示未接会话。`, 'info')
   }
 
   return (
     <DeskEdit
       patch={patch}
-      onAiFill={(label) =>
-        pushToast(`AI 会按本栏契约填「${label}」，先试笔，不进正史。演示未接会话。`, 'info')
-      }
+      onAiFill={(label) => {
+        const fill = verbs.find((v) =>
+          [
+            'fill-pitch',
+            'write-canon',
+            'fill-lead',
+            'split-outline',
+            'split-volume',
+            'split-unit',
+            'split-chapter',
+            'split-beats',
+          ].includes(v.id),
+        )
+        if (!fill || !fill.ok) {
+          pushToast(fill?.hint || `先点右侧动词补「${label}」。`, 'info')
+          return
+        }
+        onDispatch(fill, `请重点补全字段：${label}`)
+      }}
     >
       <div className="wd-desk" role="main" aria-label="写台" data-layout="v2">
         <header className="wd-head">
           <button type="button" className="wd-btn wd-btn-ghost wd-back" onClick={onClose}>
-            ← 书库
+            ← 书
           </button>
           <div className="wd-title">
             <p className="wd-kicker">写完 · 百万字</p>
@@ -371,8 +884,10 @@ function OpenDesk({
               <div className="wd-dbar-in" style={{ width: `${pct}%` }} />
             </div>
             <div className="wd-ditem">
-              <span className="wd-save">已保存</span>
-              <span className="wd-dk">本地 · 演示</span>
+              <span className="wd-save">
+                {saveState === 'saving' ? '保存中…' : saveState === 'error' ? '保存失败' : '已保存'}
+              </span>
+              <span className="wd-dk">本地 · 每书一档</span>
             </div>
           </div>
         </header>
@@ -402,13 +917,43 @@ function OpenDesk({
                 onOpen={setNode}
                 selectedBeatId={selectedBeatId}
                 onSelectBeat={setSelectedBeatId}
-                onAdopt={() => patchChapter({ draftAccepted: true })}
-                onDiscard={() => patchChapter({ draftDiscarded: true })}
+                onAdopt={() => {
+                  patch((b) => ({
+                    ...b,
+                    drafts: b.drafts.map((d) =>
+                      d.chapterId === chapterId ? { ...d, accepted: true } : d,
+                    ),
+                  }))
+                  pushToast('已进正史。下一步检查这一章。', 'success')
+                  setNode(`${chapterId}:review`)
+                }}
+                onDiscard={() => {
+                  patch((b) => ({
+                    ...b,
+                    drafts: b.drafts.filter((d) => d.chapterId !== chapterId),
+                  }))
+                  pushToast('已丢掉这版试笔，可重新下令。', 'info')
+                }}
+                onRevert={() => {
+                  patch((b) => ({
+                    ...b,
+                    drafts: b.drafts.map((d) =>
+                      d.chapterId === chapterId ? { ...d, accepted: false } : d,
+                    ),
+                  }))
+                  pushToast('已退回试笔，可以重写。正史标记已去掉。', 'info')
+                }}
                 onAddPerson={() => goAdd(addPerson, personNode)}
                 onAddRule={() => goAdd(addRule, ruleNode)}
                 onAddPlace={() => goAdd(addPlace, placeNode)}
                 onAddBeat={(id) => goAdd((b) => addBeat(b, id), () => beatsNode(id))}
                 onAddForeshadow={() => goAdd(addForeshadow, () => 'outline')}
+                reviewBlocks={reviewGate.ok ? [] : reviewGate.hints}
+                styleNotes={styleNotes}
+                onRegisterUnnumbered={() => {
+                  patch((b) => registerForeshadowsFromReview(b, chapterId))
+                  pushToast('未编号已写进伏笔表。', 'success')
+                }}
               />
             </div>
             <div className="wd-dock">
@@ -418,11 +963,12 @@ function OpenDesk({
                 askReply={askReply}
                 onClearAsk={() => setAskReply(null)}
                 onDispatch={onDispatch}
+                busy={busy}
               />
             </div>
           </div>
           <aside className="wd-rail" aria-label="试笔与案卷">
-            <CandidatePanel />
+            <CandidatePanel candidates={candidates} onOpen={setNode} />
             <DossierRail dossier={dossier} onOpen={setNode} />
           </aside>
         </div>

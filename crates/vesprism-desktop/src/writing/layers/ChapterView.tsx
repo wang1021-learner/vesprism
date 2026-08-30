@@ -1,21 +1,13 @@
 import { Field, FieldRow, Section, Zone } from '../fields/Field'
 import { usePatch } from '../fields/edit-ctx'
-import { splitSlash } from '../model/create'
+import { resolveCastIds, splitSlash } from '../model/create'
 import type { BookDemo, ChapterCard } from '../model/types'
 
 const JOBS = ['推进', '兑现', '缓冲', '翻盘'] as const
 const HOOKS = ['悬念', '反转', '危机', '信息差', '选择'] as const
 
 function parseCast(book: BookDemo, text: string): string[] {
-  return splitSlash(text).map((token) => {
-    const p = book.people.find((x) => x.name === token || x.id === token)
-    if (p) return p.id
-    const pl = book.places.find((x) => x.name === token || x.id === token)
-    if (pl) return pl.id
-    const r = book.rules.find((x) => x.name === token || x.id === token)
-    if (r) return r.id
-    return token
-  })
+  return resolveCastIds(book, splitSlash(text))
 }
 
 export function ChapterView({ card, castLabels }: { card: ChapterCard; castLabels?: string }) {

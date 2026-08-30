@@ -14,7 +14,7 @@ export function EngineView({ book, chapterId }: { book: BookDemo; chapterId: str
     <Section
       lot="拆法"
       title="框架管案卷，写手每次只吃一章"
-      lead="100 万汉字拆成可循环的章。不另起一套模型运行时。现在只展示契约，不发请求。"
+      lead="100 万汉字拆成可循环的章。写手每次只吃一章切片；真写字在「正文」下令，走当前登录的模型。"
       wide
     >
       <ol className="wd-start">

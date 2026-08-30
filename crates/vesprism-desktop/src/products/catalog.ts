@@ -49,14 +49,15 @@ export type ProductDef = {
   /**
    * home：当前 Tab 不属于本产品时显示入口页（工作台）。
    * stay：切过来时尽量落到已有对话 Tab（编码）。
+   * panel：只有一个专用面板，切过来就打开它，不再套一层入口页（写完）。
    */
-  emptyView: 'home' | 'stay'
+  emptyView: 'home' | 'stay' | 'panel'
   showRightPanel: boolean
   showNewChat: boolean
   showTabPlus: boolean
   showAddProject: boolean
-  /** projects=按仓库分组；product=本产品干活会话一组。 */
-  sessionList: 'projects' | 'product'
+  /** projects=按仓库分组；product=本产品干活会话一组；none=不列引擎会话（写完用书库）。 */
+  sessionList: 'projects' | 'product' | 'none'
   /** sessionList=product 时侧栏分组 key */
   sessionGroupKey?: string
   sidebarNavLabel: string
@@ -140,28 +141,16 @@ export const PRODUCTS: readonly ProductDef[] = [
     id: 'writing',
     label: '写完',
     utilityKinds: ['writing-desk'],
-    emptyView: 'home',
+    emptyView: 'panel',
     showRightPanel: false,
     showNewChat: false,
-    showTabPlus: false,
+    showTabPlus: true,
     showAddProject: false,
-    sessionList: 'product',
+    sessionList: 'none',
     sessionGroupKey: '__writing__',
     sidebarNavLabel: '写作入口',
-    sidebarListLabel: '文稿',
-    emptyHint: '还没有文稿。从入口打开写台。',
-    home: {
-      kicker: '写完',
-      title: 'AI 写百万字小说',
-      lead: '入口是书库。打开一本，停在缺的那张卡上，用工位下令。不是聊天框。',
-      cards: [
-        {
-          kind: 'writing-desk',
-          title: '打开写台',
-          hint: '新建一本或打开上一本',
-        },
-      ],
-    },
+    sidebarListLabel: '书',
+    emptyHint: '还没有书。点 + 新建一本。',
     sidebarEntries: [{ kind: 'writing-desk', label: '写台' }],
   },
 ]
@@ -206,6 +195,16 @@ export function productSessionGroupKeys(): string[] {
 
 export function isProductSessionGroup(cwdKey: string): boolean {
   return productSessionGroupKeys().includes(cwdKey)
+}
+
+/** 写完列书，不列引擎会话。sessionList=none 时侧栏禁止走项目/干活会话。 */
+export function usesEngineSessionList(product: ProductDef): boolean {
+  return product.sessionList !== 'none'
+}
+
+/** 切到该产品时直接打开专用面板，不经过营销入口页。 */
+export function landsOnOwnPanel(product: ProductDef): boolean {
+  return product.emptyView === 'panel'
 }
 
 export function navLabelForKind(kind: string): string {

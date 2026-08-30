@@ -131,13 +131,13 @@ export function jumpMode(mode: WorkMode, book: BookDemo, chapterId: string): Des
   return ch ? reviewNode(ch.id) : 'outline'
 }
 
-export function workChapterId(node: ParsedNode, fallback = 'ch-4'): string {
+export function workChapterId(node: ParsedNode, fallback = ''): string {
   if (node.kind === 'chapter') return node.id
   if (node.kind === 'beats' || node.kind === 'draft' || node.kind === 'review') return node.chapterId
   return fallback
 }
 
-export function jumpNode(layer: LayerId, chapterId: string): DeskNodeId {
+export function jumpNode(layer: LayerId, chapterId: string, book?: BookDemo): DeskNodeId {
   switch (layer) {
     case 'pitch':
       return 'pitch'
@@ -148,9 +148,9 @@ export function jumpNode(layer: LayerId, chapterId: string): DeskNodeId {
     case 'outline':
       return 'outline'
     case 'volume':
-      return 'vol-1'
+      return book?.volumes[0]?.id ?? 'outline'
     case 'unit':
-      return 'unit-b'
+      return book?.units[0]?.id ?? 'outline'
     case 'chapter':
       return chapterId
     case 'beats':

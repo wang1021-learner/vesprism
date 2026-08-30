@@ -10,6 +10,8 @@ import {
   productOwnsUtility,
   productSessionGroupKeys,
   PRODUCTS,
+  usesEngineSessionList,
+  landsOnOwnPanel,
   type ProductDef,
 } from './catalog'
 
@@ -46,6 +48,15 @@ describe('产品表', () => {
     expect(productOwnsUtility('coding', null)).toBe(true)
     expect(getProduct('writing').label).toBe('写完')
     expect(getProduct('writing').utilityKinds).toEqual(['writing-desk'])
+    expect(getProduct('writing').sessionList).toBe('none')
+    expect(usesEngineSessionList(getProduct('writing'))).toBe(false)
+    expect(usesEngineSessionList(getProduct('coding'))).toBe(true)
+    expect(usesEngineSessionList(getProduct('workbench'))).toBe(true)
+    expect(getProduct('writing').emptyView).toBe('panel')
+    expect(getProduct('writing').showTabPlus).toBe(true)
+    expect(landsOnOwnPanel(getProduct('writing'))).toBe(true)
+    expect(landsOnOwnPanel(getProduct('workbench'))).toBe(false)
+    expect(getProduct('writing').home).toBeUndefined()
     expect(productIdForUtility('writing-desk')).toBe('writing')
     expect(productIdForUtility('flow-canvas')).toBe('workbench')
   })

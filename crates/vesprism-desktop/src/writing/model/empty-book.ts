@@ -1,3 +1,4 @@
+import { DEFAULT_SENTENCE_BAN } from './sentence-ban'
 import type { BookDemo, CanonCard, PitchCard } from './types'
 
 const emptyPitch = (): PitchCard => ({
@@ -25,7 +26,7 @@ const emptyCanon = (): CanonCard => ({
   povRule: '',
   narrativeBan: '',
   settingBan: '',
-  sentenceBan: '',
+  sentenceBan: DEFAULT_SENTENCE_BAN,
   doneWhen: '',
 })
 

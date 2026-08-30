@@ -26,10 +26,12 @@ describe('写台节点路由', () => {
   it('设定集叶子归 L2；章内子页带出工作章', () => {
     expect(layerOf(parseNode('person-gu'))).toBe('bible')
     expect(layerOf(parseNode('engine'))).toBeNull()
-    expect(workChapterId(parseNode('pitch'))).toBe('ch-4')
-    expect(workChapterId(parseNode('engine'))).toBe('ch-4')
+    expect(workChapterId(parseNode('pitch'))).toBe('')
+    expect(workChapterId(parseNode('engine'))).toBe('')
     expect(workChapterId(parseNode('ch-1:draft'))).toBe('ch-1')
     expect(jumpNode('beats', 'ch-1')).toBe(beatsNode('ch-1'))
+    expect(jumpNode('volume', 'ch-1', YANPIN_EYE)).toBe('vol-1')
+    expect(jumpNode('unit', 'ch-1', YANPIN_EYE)).toBe(YANPIN_EYE.units[0]?.id)
   })
 
   it('四个工作面按节点分流', () => {

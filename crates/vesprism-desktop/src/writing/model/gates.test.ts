@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { YANPIN_EYE } from './demo-yanpin'
+import { emptyBook } from './empty-book'
 import { actionForNode, chapterGate, gatesForBook, gatesForNode } from './gates'
 
 describe('写台门槛', () => {
@@ -25,7 +26,7 @@ describe('写台门槛', () => {
     })
     expect(actionForNode(YANPIN_EYE, 'ch-4:review')).toMatchObject({
       label: '入卷',
-      ok: true,
+      ok: false,
     })
     expect(actionForNode(YANPIN_EYE, 'ch-5').ok).toBe(false)
     expect(actionForNode(YANPIN_EYE, 'ch-4').ok).toBe(true)
@@ -39,5 +40,12 @@ describe('写台门槛', () => {
     expect(ch5).toHaveLength(1)
     expect(ch5[0]?.id).toBe('review-next')
     expect(ch5[0]?.ok).toBe(false)
+  })
+
+  it('空书门槛不拿演示书的 unit-b / ch-4 去套', () => {
+    const all = gatesForBook(emptyBook({ title: '试', platform: '番茄', logline: '一句' }))
+    expect(all.find((g) => g.id === 'volume-unit')?.ok).toBe(false)
+    expect(all.find((g) => g.id === 'unit-chapter')?.ok).toBe(false)
+    expect(all.find((g) => g.id === 'chapter-beats')?.ok).toBe(false)
   })
 })

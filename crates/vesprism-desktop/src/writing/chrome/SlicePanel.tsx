@@ -18,6 +18,15 @@ export function SlicePanel({ slice }: { slice: WriteSlice }) {
       </Field>
       <Field label="叙事禁">{slice.canon.narrativeBan}</Field>
       <Field label="句式禁">{slice.canon.sentenceBan}</Field>
+      {slice.canon.samples.filter((s) => s.trim()).length > 0 ? (
+        <Field label="文风样本">
+          {slice.canon.samples
+            .filter((s) => s.trim())
+            .slice(0, 3)
+            .map((s, i) => `样本${i + 1}：「${s}」`)
+            .join('\n')}
+        </Field>
+      ) : null}
       <Field label="一章算写完">{slice.canon.doneWhen}</Field>
       {slice.people.map((p) => (
         <Field key={p.id} label={`出场 · ${p.name} · 当前态`} warn>

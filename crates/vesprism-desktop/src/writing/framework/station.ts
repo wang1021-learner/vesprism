@@ -2,6 +2,7 @@
 
 import { VERB_DOES } from './copy'
 import { parseNode, type ParsedNode } from '../model/nodes'
+import { chapterIsTomato, reviewBlocksAdopt } from '../model/review-gate'
 import type { BookDemo, DeskNodeId } from '../model/types'
 
 export type StationKind = 'write' | 'read'
@@ -82,8 +83,15 @@ export function writeChapterGate(book: BookDemo, chapterId: string): { ok: boole
   const ch = book.chapters.find((c) => c.id === chapterId)
   if (!ch) return { ok: false, hint: '没有章纲。' }
   if (ch.locked) return { ok: false, hint: ch.lockReason || '已锁。' }
+  if (chapterIsTomato(book, ch) && !filled(ch.openHook)) {
+    return { ok: false, hint: '番茄章开场钩必须是物理事件，不能空着。' }
+  }
   if (!ch.endHookKind) return { ok: false, hint: '章纲必须有章末钩类型。' }
   if (!beatsReady(book, ch.id)) return { ok: false, hint: '节拍要对上章目标，至少 3 块。' }
+  const draft = book.drafts.find((d) => d.chapterId === chapterId)
+  if (draft?.accepted) {
+    return { ok: false, hint: '已进正史。要重写先退回试笔。' }
+  }
   return { ok: true, hint: '点「写这一章」。先试笔，点进正史才作数。' }
 }
 
@@ -124,7 +132,26 @@ export function gapLabel(book: BookDemo): string {
   return '这一步可以下令'
 }
 
-export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb[] {
+export function washSpanGate(
+  book: BookDemo,
+  chapterId: string,
+  selectedBeatId?: string,
+): { ok: boolean; hint: string } {
+  const draft = book.drafts.find((d) => d.chapterId === chapterId)
+  if (!draft) return { ok: false, hint: '还没有试笔稿纸。' }
+  if (draft.accepted) return { ok: false, hint: '要洗先退回试笔。' }
+  const beats = book.beatsByChapter[chapterId] || []
+  if (!selectedBeatId || !beats.some((b) => b.id === selectedBeatId)) {
+    return { ok: false, hint: '先在稿纸上点一块。' }
+  }
+  return { ok: true, hint: '只改这一块的套话，情节不动。' }
+}
+
+export function verbsForStation(
+  book: BookDemo,
+  nodeId: DeskNodeId,
+  selectedBeatId?: string,
+): StationVerb[] {
   const parsed = parseNode(nodeId)
   const ch = chapterOf(book, parsed)
   const chapterId = ch?.id || ''
@@ -181,11 +208,30 @@ export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb
     parsed.kind === 'draft' ||
     parsed.kind === 'review'
   ) {
+    const tomatoHook = ch && (!chapterIsTomato(book, ch) || filled(ch.openHook))
+    const washable = Boolean(draft && !draft.accepted)
+    const blocks =
+      review && draft?.accepted ? reviewBlocksAdopt(book, chapterId) : { ok: false, hints: [] as string[] }
     const list: StationVerb[] = [
       verb('split-chapter', '写章纲', Boolean(ch), ch ? '按单元写本章纲。' : '没有章。'),
-      verb('split-beats', '把这章切开', Boolean(ch?.endHookKind), ch?.endHookKind ? '按章纲切成可写的块。' : '章末钩类型为空。'),
+      verb(
+        'split-beats',
+        '把这章切开',
+        Boolean(ch?.endHookKind) && Boolean(tomatoHook),
+        !ch?.endHookKind
+          ? '章末钩类型为空。'
+          : !tomatoHook
+            ? '番茄章开场钩必须是物理事件，不能空着。'
+            : '按章纲切成可写的块。',
+      ),
       verb('write-chapter', '写这一章', write.ok, write.hint),
       verb('rewrite-span', '重写这一块', Boolean(draft), draft ? '先在稿纸上点一块。' : '还没有试笔稿纸。'),
+      verb(
+        'wash-span',
+        '洗这块',
+        washable,
+        washable ? '只改这一块的套话，情节不动。' : washSpanGate(book, chapterId, selectedBeatId).hint,
+      ),
       verb(
         'fill-review',
         '检查这一章',
@@ -197,8 +243,16 @@ export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb
       verb(
         'adopt-ledger',
         '入卷',
-        Boolean(review && !review.adopted),
-        review?.adopted ? '已经入卷。' : review ? '确认后才改当前态和伏线。' : '先检查，再入卷。',
+        Boolean(review && !review.adopted && draft?.accepted && blocks.ok),
+        review?.adopted
+          ? '已经入卷。'
+          : !draft?.accepted
+            ? '先把试笔采纳进正史，再入卷。'
+            : !review
+              ? '先检查，再入卷。'
+              : !blocks.ok
+                ? blocks.hints[0] || '检查红项未过。'
+                : '确认后才改当前态和伏线。',
         'write',
         'check',
       ),
@@ -232,7 +286,8 @@ function preferredVerbId(book: BookDemo, parsed: ParsedNode): string {
   if (parsed.kind === 'chapter') return 'write-chapter'
   if (parsed.kind === 'draft') {
     const draft = book.drafts.find((d) => d.chapterId === parsed.chapterId)
-    return draft && !draft.accepted ? 'fill-review' : 'write-chapter'
+    if (draft) return 'fill-review'
+    return 'write-chapter'
   }
   if (parsed.kind === 'review') {
     const review = book.reviews.find((r) => r.chapterId === parsed.chapterId)

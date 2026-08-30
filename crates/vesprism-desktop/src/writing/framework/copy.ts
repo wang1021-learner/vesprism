@@ -97,7 +97,7 @@ export function stepJob(kind: ParsedNode['kind']): StepJob {
       return {
         title: '正文：先试笔，点进正史才作数',
         does: '按切块写。未采纳不进正史，也不入案卷。',
-        you: '可直接改稿纸。要 AI 写，点「写这一章」。重写先点一块再点「重写这一块」。',
+        you: '可直接改稿纸。要 AI 写，点「写这一章」。重写或洗套话，先点一块再点芯片。',
       }
     case 'review':
       return {
@@ -109,7 +109,7 @@ export function stepJob(kind: ParsedNode['kind']): StepJob {
 }
 
 export const VERB_DOES: Record<string, string> = {
-  'fill-pitch': '按你填的三问，补金手指、代价和不能写成的书。先出试笔。',
+  'fill-pitch': '按你填的三问，补金手指、代价和不能写成的书。产出落开卷卡。',
   'write-canon': '起草全书不能破的规矩。写手之后只吃切片。',
   'fill-lead': '写一张有当前态和不能知道的主角卡。',
   'split-outline': '按设定拆长线、三幕和伏线。',
@@ -119,6 +119,7 @@ export const VERB_DOES: Record<string, string> = {
   'split-beats': '把章纲切成至少三块可写的场面。',
   'write-chapter': '按切块写这一章。先试笔，不进正史。',
   'rewrite-span': '只重写你点中的那一块，其余不动。',
+  'wash-span': '只改这一块的套话。情节、对白要点、落点不动。',
   'fill-review': '对照章纲和设定检查这一章。先出检查单。',
   'adopt-ledger': '把检查结果写入人物当前态和伏线。入卷后不可撤销（演示标记）。',
   'split-next': '上一章已入卷，拆下一章纲。',

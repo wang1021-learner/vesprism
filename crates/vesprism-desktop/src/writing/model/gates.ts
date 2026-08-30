@@ -14,16 +14,18 @@ function reviewOf(book: BookDemo, chapterId: string) {
   return book.reviews.find((r) => r.chapterId === chapterId)
 }
 
-/** 全书层间门槛快照（演示书当前卡在第4章入卷）。只供展示。 */
+/** 全书层间门槛快照。按这本书当前工作章计算，不写死演示书的 ch-4 / unit-b。 */
 export function gatesForBook(book: BookDemo): Gate[] {
   const pitch = book.pitch
   const canon = book.canon
   const lead = book.people.find((p) => p.role === '主角')
   const rule = book.rules[0]
   const vol = book.volumes[0]
-  const unitB = book.units.find((u) => u.id === 'unit-b')
-  const ch4 = book.chapters.find((c) => c.id === 'ch-4')
-  const review = reviewOf(book, 'ch-4')
+  const workCh = book.chapters.filter((c) => !c.locked).at(-1) ?? book.chapters.at(-1)
+  const workUnit =
+    (workCh && book.units.find((u) => u.id === workCh.unitId)) || book.units.at(-1)
+  const review = workCh ? reviewOf(book, workCh.id) : undefined
+  const draft = workCh ? book.drafts.find((d) => d.chapterId === workCh.id) : undefined
 
   return [
     {
@@ -58,36 +60,36 @@ export function gatesForBook(book: BookDemo): Gate[] {
       id: 'volume-unit',
       from: '卷纲',
       to: '单元纲',
-      ok: Boolean(unitB && filled(unitB.win)),
+      ok: Boolean(workUnit && filled(workUnit.win)),
       need: '单元必须有胜负条件。',
     },
     {
       id: 'unit-chapter',
       from: '单元纲',
       to: '章纲',
-      ok: Boolean(ch4 && filled(ch4.endHookKind)),
+      ok: Boolean(workCh && filled(workCh.endHookKind)),
       need: '章纲必须有章末钩类型。',
     },
     {
       id: 'chapter-beats',
       from: '章纲',
       to: '节拍',
-      ok: Boolean(ch4 && beatsOf(book, ch4.id).length >= 3),
+      ok: Boolean(workCh && beatsOf(book, workCh.id).length >= 3),
       need: '节拍要对上章目标，至少 3 块。',
     },
     {
       id: 'beats-draft',
       from: '节拍',
       to: '正文',
-      ok: Boolean(lead && lead.stateAsOfChapter >= 3 && beatsOf(book, 'ch-4').length >= 3),
+      ok: Boolean(workCh && !workCh.locked && beatsOf(book, workCh.id).length >= 3),
       need: '人物当前态未过期，且节拍任务在。',
     },
     {
       id: 'draft-review',
       from: '正文',
       to: '入卷',
-      ok: Boolean(review && !review.adopted),
-      need: '正文写完才能入卷；未采纳不算过门槛。',
+      ok: Boolean(review && !review.adopted && draft?.accepted),
+      need: '正文写完并进正史才能入卷。',
     },
     {
       id: 'review-next',

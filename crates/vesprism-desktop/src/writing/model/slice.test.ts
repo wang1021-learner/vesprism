@@ -36,4 +36,26 @@ describe('写本章切片', () => {
     expect(ch4?.due.some((f) => f.id === 'F002')).toBe(false)
     expect(ch4?.due.some((f) => f.id === 'F004')).toBe(false)
   })
+
+  it('本卷写明本章到期的未收伏笔，即便态还是 open 也进切片', () => {
+    const book = {
+      ...YANPIN_EYE,
+      outline: {
+        ...YANPIN_EYE.outline,
+        foreshadows: [
+          ...YANPIN_EYE.outline.foreshadows,
+          {
+            id: 'F099',
+            line: '本章该看见',
+            plantVolume: '卷1第1章',
+            thisVolume: '第4章到期',
+            closeWhen: '看见即可',
+            state: 'open' as const,
+          },
+        ],
+      },
+    }
+    const s = writeSlice(book, 'ch-4')
+    expect(s?.due.some((f) => f.id === 'F099')).toBe(true)
+  })
 })

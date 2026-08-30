@@ -7,6 +7,7 @@ import {
   landNode,
   pitchReady,
   verbsForStation,
+  washSpanGate,
   writeChapterGate,
 } from './station'
 
@@ -51,5 +52,58 @@ describe('案头', () => {
     const verbs = verbsForStation(YANPIN_EYE, 'ch-5')
     expect(verbs.find((v) => v.id === 'write-chapter')?.ok).toBe(false)
     expect(verbs.find((v) => v.id === 'ask')?.ok).toBe(true)
+  })
+
+  it('已进正史不准再点写本章；没进正史不准入卷', () => {
+    expect(writeChapterGate(YANPIN_EYE, 'ch-4').ok).toBe(true)
+    const accepted = {
+      ...YANPIN_EYE,
+      drafts: YANPIN_EYE.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
+    }
+    expect(writeChapterGate(accepted, 'ch-4').ok).toBe(false)
+    expect(writeChapterGate(accepted, 'ch-4').hint).toMatch(/正史/)
+    expect(verbsForStation(YANPIN_EYE, 'ch-4:review').find((v) => v.id === 'adopt-ledger')?.ok).toBe(
+      false,
+    )
+    expect(verbsForStation(accepted, 'ch-4:review').find((v) => v.id === 'adopt-ledger')?.ok).toBe(true)
+  })
+
+  it('稿纸默认仍是检查；洗这块是芯片；没点块 / 已正史不可洗', () => {
+    const verbs = verbsForStation(YANPIN_EYE, 'ch-4:draft')
+    expect(defaultVerb(YANPIN_EYE, 'ch-4:draft').id).toBe('fill-review')
+    expect(verbs.map((v) => v.id)).toContain('wash-span')
+    expect(verbs.find((v) => v.id === 'wash-span')?.ok).toBe(true)
+
+    const noDraft = { ...YANPIN_EYE, drafts: [] }
+    expect(washSpanGate(noDraft, 'ch-4', 'b1').ok).toBe(false)
+    expect(washSpanGate(YANPIN_EYE, 'ch-4', undefined).ok).toBe(false)
+    expect(washSpanGate(YANPIN_EYE, 'ch-4', undefined).hint).toMatch(/点一块/)
+
+    const accepted = {
+      ...YANPIN_EYE,
+      drafts: YANPIN_EYE.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
+    }
+    expect(washSpanGate(accepted, 'ch-4', 'b1').ok).toBe(false)
+    expect(washSpanGate(accepted, 'ch-4', 'b1').hint).toMatch(/试笔/)
+  })
+
+  it('番茄开场钩空不准写本章、不准切开；起点不卡开场钩', () => {
+    const tomato = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) =>
+        c.id === 'ch-4' ? { ...c, platform: 'tomato' as const, openHook: '' } : c,
+      ),
+    }
+    expect(writeChapterGate(tomato, 'ch-4').ok).toBe(false)
+    expect(writeChapterGate(tomato, 'ch-4').hint).toMatch(/物理事件/)
+    expect(verbsForStation(tomato, 'ch-4').find((v) => v.id === 'split-beats')?.ok).toBe(false)
+
+    const qidian = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) =>
+        c.id === 'ch-4' ? { ...c, platform: 'qidian' as const, openHook: '' } : c,
+      ),
+    }
+    expect(writeChapterGate(qidian, 'ch-4').ok).toBe(true)
   })
 })

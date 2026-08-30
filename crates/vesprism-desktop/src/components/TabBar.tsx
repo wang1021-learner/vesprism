@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useState } from 'react'
 import { IconAdjustmentsHorizontal } from '@tabler/icons-react'
-import { getProduct } from '../products/catalog'
+import { getProduct, navLabelForKind } from '../products/catalog'
 import {
   $activeTabId,
   $appShell,
@@ -38,6 +38,18 @@ export function TabBar() {
     if (busy) return
     setBusy(true)
     try {
+      const product = getProduct(shell)
+      if (product.emptyView === 'panel') {
+        const kind = product.utilityKinds.find((k) => k !== 'schedule')
+        if (kind && kind !== 'schedule') {
+          await openChatTab({
+            title: navLabelForKind(kind),
+            utilityKind: kind,
+            forceNew: true,
+          })
+          return
+        }
+      }
       await openChatTab()
     } finally {
       setBusy(false)

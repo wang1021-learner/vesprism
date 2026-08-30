@@ -17,6 +17,7 @@ export function DraftView({
   onSelectBeat,
   onAdopt,
   onDiscard,
+  onRevert,
 }: {
   draft: DraftPage | undefined
   beats: BeatCard[]
@@ -28,6 +29,7 @@ export function DraftView({
   onSelectBeat?: (id: string) => void
   onAdopt?: () => void
   onDiscard?: () => void
+  onRevert?: () => void
 }) {
   const patch = useOptionalPatch()
   if (!draft) {
@@ -58,7 +60,13 @@ export function DraftView({
               丢掉重写
             </button>
           </span>
-        ) : null}
+        ) : (
+          <span className="wd-cand-bar">
+            <button type="button" className="wd-btn wd-btn-ghost" onClick={onRevert}>
+              退回试笔
+            </button>
+          </span>
+        )}
       </div>
       <div
         className={`wd-paper${candidate ? ' is-cand' : ' is-canon'}`}

@@ -53,6 +53,8 @@ export function addRule(book: BookDemo): { book: BookDemo; id: string } {
     firstTwo: '',
     third: '',
     quota: '',
+    quotaLeft: '',
+    quotaAsOfChapter: 0,
     cannot: '',
     boundTo: '',
   }
@@ -129,6 +131,12 @@ export function addChapter(book: BookDemo, unitId?: string): { book: BookDemo; i
   }
   const no = Math.max(0, ...next.chapters.map((c) => c.no)) + 1
   const id = `ch-${no}`
+  const prev = next.chapters.reduce<ChapterCard | undefined>(
+    (acc, c) => (!acc || c.no > acc.no ? c : acc),
+    undefined,
+  )
+  const prevAdopted = prev ? next.reviews.some((r) => r.chapterId === prev.id && r.adopted) : true
+  const locked = Boolean(prev) && !prevAdopted
   const card: ChapterCard = {
     id,
     no,
@@ -151,6 +159,8 @@ export function addChapter(book: BookDemo, unitId?: string): { book: BookDemo; i
     words: next.canon.chapterWords || '2000～2500',
     mood: '',
     platform: next.pitch.platform.includes('起点') ? 'qidian' : 'tomato',
+    locked,
+    lockReason: locked ? `第${prev!.no}章入卷尚未采纳，不准开下一章。` : '',
   }
   return { book: { ...next, chapters: [...next.chapters, card] }, id }
 }
@@ -231,4 +241,25 @@ export function splitList(text: string): string[] {
     .split(/[；;]/)
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+/** 出场栏：名字或 id 都解析成设定集 id，解析不到则原样保留。 */
+export function resolveCastIds(book: BookDemo, tokens: unknown): string[] {
+  const raw = Array.isArray(tokens)
+    ? tokens.map((x) => String(x))
+    : typeof tokens === 'string'
+      ? splitSlash(tokens)
+      : []
+  return raw
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((t) => {
+      const p = book.people.find((x) => x.name === t || x.id === t)
+      if (p) return p.id
+      const pl = book.places.find((x) => x.name === t || x.id === t)
+      if (pl) return pl.id
+      const r = book.rules.find((x) => x.name === t || x.id === t)
+      if (r) return r.id
+      return t
+    })
 }

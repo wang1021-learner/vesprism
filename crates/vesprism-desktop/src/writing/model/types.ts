@@ -60,6 +60,9 @@ export interface RuleCard {
   firstTwo: string
   third: string
   quota: string
+  /** 入卷后的剩余；空表示等于 quota */
+  quotaLeft: string
+  quotaAsOfChapter: number
   cannot: string
   boundTo: string
 }
@@ -195,6 +198,8 @@ export interface ReviewCard {
 export interface BookDemo {
   id: string
   title: string
+  /** 最近保存时间（ISO；落盘时写入，书库排序用） */
+  updatedAt?: string
   pitch: PitchCard
   canon: CanonCard
   people: PersonCard[]

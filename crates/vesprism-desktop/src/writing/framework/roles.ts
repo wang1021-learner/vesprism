@@ -22,8 +22,8 @@ export const WRITER_ROLES: readonly WriterRole[] = [
     id: 'writer',
     name: '写手',
     job: '按切块写这一章。一块只干一件事。',
-    eats: '写这一章的切片',
-    never: '长线全文、未出场档案、解释自己的写法',
+    eats: '写这一章的切片；点「洗这块」时只吃该块旧正文和句式禁',
+    never: '长线全文、未出场档案、解释自己的写法、改节拍事实',
   },
   {
     id: 'reviewer',

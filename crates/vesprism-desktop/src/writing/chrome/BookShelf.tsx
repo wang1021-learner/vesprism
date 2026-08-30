@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { gapLabel } from '../framework/station'
+import { chapterCountFor } from '../framework/scale'
 import type { BookDemo } from '../model/types'
 
-const AIM = 455
+const AIM = chapterCountFor()
 
 function progressPct(book: BookDemo): number {
   const done = book.drafts.filter((d) => d.accepted).length
@@ -16,16 +17,33 @@ function statusOf(book: BookDemo): { label: string; tone: 'is-cand' | 'is-ok' } 
     : { label: '连载中', tone: 'is-ok' }
 }
 
+function landStamp(book: BookDemo): string {
+  const draft = book.drafts.find((d) => !d.accepted)
+  if (draft) {
+    const ch = book.chapters.find((c) => c.id === draft.chapterId)
+    return ch ? `停在第${ch.no}章试笔` : '停在试笔'
+  }
+  const review = book.reviews.find((r) => !r.adopted)
+  if (review) {
+    const ch = book.chapters.find((c) => c.id === review.chapterId)
+    return ch ? `停在第${ch.no}章检查` : '停在检查'
+  }
+  const last = [...book.chapters].reverse().find((c) => !c.locked) ?? book.chapters.at(-1)
+  return last ? `停在第${last.no}章` : '停在开卷'
+}
+
 export function BookShelf({
   books,
   lastId,
   onOpen,
   onCreate,
+  onDelete,
 }: {
   books: BookDemo[]
   lastId: string | null
   onOpen: (id: string) => void
   onCreate: (init: { title: string; platform: string; logline: string }) => void
+  onDelete?: (id: string) => void
 }) {
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
@@ -48,6 +66,7 @@ export function BookShelf({
       <div className="wd-shelf-body">
         <div className="wd-shelf-grid">
           {last ? (
+            <div className="wd-shelf-card-wrap">
             <button
               type="button"
               className="wd-shelf-card is-last"
@@ -59,7 +78,7 @@ export function BookShelf({
               <span className="wd-shelf-main">
                 <span className="wd-shelf-meta">
                   {last.pitch.platform || '继续上次'}
-                  <span className="wd-stamp is-cand">停在第 {last.drafts.filter((d) => !d.accepted).length ? '试笔' : '章'}</span>
+                  <span className="wd-stamp is-cand">{landStamp(last)}</span>
                 </span>
                 <span className="wd-shelf-title">{last.title}</span>
                 <span className="wd-shelf-sub">{gapLabel(last)}</span>
@@ -73,12 +92,27 @@ export function BookShelf({
                 </span>
               </span>
             </button>
+            {onDelete ? (
+              <button
+                type="button"
+                className="wd-btn wd-btn-ghost wd-shelf-del"
+                onClick={() => {
+                  if (window.confirm(`删除《${last.title}》？书稿和本会话目录都会去掉。`)) onDelete(last.id)
+                }}
+              >
+                删除
+              </button>
+            ) : null}
+            </div>
           ) : null}
 
-          {books.map((b) => {
+          {books
+            .filter((b) => b.id !== last?.id)
+            .map((b) => {
             const st = statusOf(b)
             return (
-              <button key={b.id} type="button" className="wd-shelf-card" onClick={() => onOpen(b.id)}>
+              <div key={b.id} className="wd-shelf-card-wrap">
+              <button type="button" className="wd-shelf-card" onClick={() => onOpen(b.id)}>
                 <span className="wd-shelf-cover" aria-hidden>
                   {b.title.slice(0, 1)}
                 </span>
@@ -99,6 +133,19 @@ export function BookShelf({
                   </span>
                 </span>
               </button>
+              {onDelete ? (
+                <button
+                  type="button"
+                  className="wd-btn wd-btn-ghost wd-shelf-del"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm(`删除《${b.title}》？书稿和本会话目录都会去掉。`)) onDelete(b.id)
+                  }}
+                >
+                  删除
+                </button>
+              ) : null}
+              </div>
             )
           })}
 
