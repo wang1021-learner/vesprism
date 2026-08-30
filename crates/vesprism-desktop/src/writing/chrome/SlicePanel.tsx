@@ -38,7 +38,7 @@ export function SlicePanel({ slice }: { slice: WriteSlice }) {
         </Field>
       ))}
       {slice.due.length === 0 ? (
-        <Field label="到期伏笔">本章没有到期票</Field>
+        <Field label="到期伏笔">本章没有到期伏线</Field>
       ) : (
         slice.due.map((f) => (
           <Field key={f.id} label={`到期 · ${f.id}`} warn>

@@ -14,7 +14,7 @@ function reviewOf(book: BookDemo, chapterId: string) {
   return book.reviews.find((r) => r.chapterId === chapterId)
 }
 
-/** 全书层间门禁快照（演示书当前卡在第4章回写）。只供展示。 */
+/** 全书层间门槛快照（演示书当前卡在第4章入卷）。只供展示。 */
 export function gatesForBook(book: BookDemo): Gate[] {
   const pitch = book.pitch
   const canon = book.canon
@@ -28,21 +28,21 @@ export function gatesForBook(book: BookDemo): Gate[] {
   return [
     {
       id: 'pitch-canon',
-      from: '立项',
-      to: '宪法',
+      from: '开卷',
+      to: '尺规',
       ok: filled(pitch.cost) && filled(pitch.platform),
-      need: '立项必须有代价、有平台。',
+      need: '开卷必须有代价、有平台。',
     },
     {
       id: 'canon-bible',
-      from: '宪法',
-      to: '圣经',
+      from: '尺规',
+      to: '设定集',
       ok: filled(canon.powerCap) && filled(canon.narrativeBan),
-      need: '宪法必须有力量上限和硬禁区。',
+      need: '尺规必须有力量上限和硬禁区。',
     },
     {
       id: 'bible-outline',
-      from: '圣经',
+      from: '设定集',
       to: '总纲',
       ok: Boolean(lead && filled(lead.state) && rule && filled(rule.quota)),
       need: '主角要有当前态，规则要有代价。',
@@ -85,16 +85,16 @@ export function gatesForBook(book: BookDemo): Gate[] {
     {
       id: 'draft-review',
       from: '正文',
-      to: '回写',
+      to: '入卷',
       ok: Boolean(review && !review.adopted),
-      need: '正文写完才能填回写；未采纳不算过门。',
+      need: '正文写完才能入卷；未采纳不算过门槛。',
     },
     {
       id: 'review-next',
-      from: '回写',
+      from: '入卷',
       to: '下一章',
       ok: Boolean(review?.adopted),
-      need: '没回写（未采纳）不准开下一章。',
+      need: '没入卷（未采纳）不准开下一章。',
     },
   ]
 }
@@ -109,7 +109,7 @@ function gate(
   return { id, from, to, ok, need }
 }
 
-/** 当前节点相关的门禁。按所看的章计算节拍/回写，不拿第4章去套第1章。 */
+/** 当前节点相关的门槛。按所看的章计算节拍/入卷，不拿第4章去套第1章。 */
 export function gatesForNode(book: BookDemo, nodeId: DeskNodeId): Gate[] {
   const parsed = parseNode(nodeId)
   const all = gatesForBook(book)
@@ -146,7 +146,7 @@ export function gatesForNode(book: BookDemo, nodeId: DeskNodeId): Gate[] {
   if (parsed.kind === 'chapter') {
     if (ch?.locked) {
       return [
-        gate('review-next', '回写', '下一章', false, ch.lockReason || '没回写不准开下一章。'),
+        gate('review-next', '入卷', '下一章', false, ch.lockReason || '没入卷不准开下一章。'),
       ]
     }
     return [
@@ -163,13 +163,13 @@ export function gatesForNode(book: BookDemo, nodeId: DeskNodeId): Gate[] {
   if (parsed.kind === 'draft') {
     return [
       gate('beats-draft', '节拍', '正文', draftOk, '有节拍才能写正文。'),
-      gate('draft-review', '正文', '回写', Boolean(review), '正文写完才能填回写。'),
+      gate('draft-review', '正文', '入卷', Boolean(review), '正文写完才能入卷。'),
     ]
   }
   if (parsed.kind === 'review') {
     return [
-      gate('draft-review', '正文', '回写', Boolean(review), '正文写完才能填回写。'),
-      gate('review-next', '回写', '下一章', adopted, '未采纳不准开下一章。'),
+      gate('draft-review', '正文', '入卷', Boolean(review), '正文写完才能入卷。'),
+      gate('review-next', '入卷', '下一章', adopted, '未采纳不准开下一章。'),
     ]
   }
   return all.slice(0, 2)

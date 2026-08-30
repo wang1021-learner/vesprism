@@ -10,8 +10,8 @@ import {
   writeChapterGate,
 } from './station'
 
-describe('工位', () => {
-  it('演示书三问已齐，打开停在第4章候选', () => {
+describe('案头', () => {
+  it('演示书三问已齐，打开停在第4章试笔', () => {
     expect(entryReady(YANPIN_EYE)).toBe(true)
     expect(landNode(YANPIN_EYE)).toBe('ch-4:draft')
   })
@@ -25,7 +25,7 @@ describe('工位', () => {
     expect(defaultVerb(book, 'pitch').id).toBe('fill-pitch')
   })
 
-  it('只有三问时仍是补立项，写本章仍锁', () => {
+  it('只有三问时仍是补开卷，写本章仍锁', () => {
     const book = emptyBook({ title: '赝品眼', platform: '番茄 / 男频', logline: '学徒开三次瞳' })
     expect(entryReady(book)).toBe(true)
     expect(pitchReady(book)).toBe(false)
@@ -33,7 +33,7 @@ describe('工位', () => {
     expect(writeChapterGate(book, 'ch-1').ok).toBe(false)
   })
 
-  it('第4章工位不含拆宪法 / 开新书，含写本章', () => {
+  it('第4章案头不含起草规矩 / 开新书，含写本章', () => {
     const verbs = verbsForStation(YANPIN_EYE, 'ch-4')
     const ids = verbs.map((v) => v.id)
     expect(ids).toContain('write-chapter')

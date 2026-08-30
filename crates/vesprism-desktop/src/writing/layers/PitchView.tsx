@@ -21,9 +21,9 @@ export function PitchView({ card }: { card: PitchCard }) {
     <Section
       lot="卖点"
       title="这本书凭什么被点开"
-      lead="起点是这张卡，不是第1章。书名、平台、一句话是入口三问；其余用右侧「补全立项」。"
+      lead="起点是这张卡，不是第1章。书名、平台、一句话是入口三问；其余用右侧「补全开卷」。"
     >
-      <Zone title="入口三问（硬门）">
+      <Zone title="入口三问（硬门槛）">
         <FieldRow>
           <Field
             label="书名候选（用 / 分隔）"

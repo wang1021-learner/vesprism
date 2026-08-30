@@ -3,7 +3,7 @@ import { YANPIN_EYE } from './demo-yanpin'
 import { SLICE_FORBIDDEN, writeSlice } from './slice'
 
 describe('写本章切片', () => {
-  it('第4章只带宪法切片、出场当前态、到期伏笔、节拍', () => {
+  it('第4章只带尺规切片、出场当前态、到期伏笔、节拍', () => {
     const s = writeSlice(YANPIN_EYE, 'ch-4')
     expect(s).toBeTruthy()
     if (!s) return

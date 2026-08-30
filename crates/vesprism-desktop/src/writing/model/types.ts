@@ -1,4 +1,4 @@
-/** 写台卡面模型。百万字靠章循环 + 账本，不靠一次读完全书。 */
+/** 写台卡面模型。百万字靠章循环 + 案卷，不靠一次读完全书。 */
 
 export type PersonRole = '主角' | '对手' | '盟友' | '工具'
 export type ForeshadowState = 'open' | 'due' | 'closed'

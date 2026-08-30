@@ -13,7 +13,7 @@ export function EngineView({ book, chapterId }: { book: BookDemo; chapterId: str
   return (
     <Section
       lot="拆法"
-      title="框架管账本，写手每次只吃一章"
+      title="框架管案卷，写手每次只吃一章"
       lead="100 万汉字拆成可循环的章。不另起一套模型运行时。现在只展示契约，不发请求。"
       wide
     >
@@ -28,7 +28,7 @@ export function EngineView({ book, chapterId }: { book: BookDemo; chapterId: str
         </li>
         <li>
           <strong>下令</strong>
-          右侧大按钮是这一步的动作。生成先变候选，点采纳才是正史。
+          右侧大按钮是这一步的动作。生成先试笔，点采纳才是正史。
         </li>
       </ol>
       <FieldRow>

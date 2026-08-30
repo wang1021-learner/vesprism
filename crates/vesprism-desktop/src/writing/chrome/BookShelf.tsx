@@ -12,7 +12,7 @@ function progressPct(book: BookDemo): number {
 function statusOf(book: BookDemo): { label: string; tone: 'is-cand' | 'is-ok' } {
   const hasCandidate = book.drafts.some((d) => !d.accepted) || book.reviews.some((r) => !r.adopted)
   return hasCandidate
-    ? { label: '候选', tone: 'is-cand' }
+    ? { label: '试笔', tone: 'is-cand' }
     : { label: '连载中', tone: 'is-ok' }
 }
 
@@ -59,7 +59,7 @@ export function BookShelf({
               <span className="wd-shelf-main">
                 <span className="wd-shelf-meta">
                   {last.pitch.platform || '继续上次'}
-                  <span className="wd-stamp is-cand">停在第 {last.drafts.filter((d) => !d.accepted).length ? '候选' : '章'}</span>
+                  <span className="wd-stamp is-cand">停在第 {last.drafts.filter((d) => !d.accepted).length ? '试笔' : '章'}</span>
                 </span>
                 <span className="wd-shelf-title">{last.title}</span>
                 <span className="wd-shelf-sub">{gapLabel(last)}</span>

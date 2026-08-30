@@ -1,4 +1,4 @@
-/** 账本：伏笔票、人物当前态、规则配额。回写未采纳前只展示，不改。 */
+/** 案卷：伏线、人物当前态、规则配额。入卷未采纳前只展示，不改。 */
 
 import type { BookDemo, DeskNodeId, ForeshadowRow, ForeshadowState } from './types'
 
@@ -14,7 +14,7 @@ export function foreshadowJump(row: ForeshadowRow): DeskNodeId {
   return 'outline'
 }
 
-export type LedgerPerson = {
+export type DossierPerson = {
   id: string
   name: string
   role: string
@@ -22,27 +22,27 @@ export type LedgerPerson = {
   asOf: number
 }
 
-export type LedgerRule = {
+export type DossierRule = {
   id: string
   name: string
   quota: string
   boundTo: string
 }
 
-export type LedgerPlace = {
+export type DossierPlace = {
   id: string
   name: string
   job: string
 }
 
-export type BookLedger = {
+export type BookDossier = {
   foreshadows: ForeshadowRow[]
-  people: LedgerPerson[]
-  rules: LedgerRule[]
-  places: LedgerPlace[]
+  people: DossierPerson[]
+  rules: DossierRule[]
+  places: DossierPlace[]
 }
 
-export function bookLedger(book: BookDemo): BookLedger {
+export function bookDossier(book: BookDemo): BookDossier {
   return {
     foreshadows: [...book.outline.foreshadows].sort((a, b) => {
       const rank = { due: 0, open: 1, closed: 2 }

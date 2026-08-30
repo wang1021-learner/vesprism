@@ -30,11 +30,11 @@ export type ContextBudget = {
   memory: string
 }
 
-/** 写手上下文预算：百万字靠账本循环，不靠一次塞进模型。 */
+/** 写手上下文预算：百万字靠案卷循环，不靠一次塞进模型。 */
 export function contextBudget(): ContextBudget {
   return {
-    writerEats: '宪法切片 + 出场当前态 + 到期伏笔 + 节拍 + 上章 80 字摘要和章末钩',
+    writerEats: '尺规切片 + 出场当前态 + 到期伏笔 + 节拍 + 上章 80 字摘要和章末钩',
     writerNever: '总纲全文、已写各章正文、未出场人物档案、未到期伏笔的回收方案',
-    memory: '账本只在回写采纳后改。未采纳不准开下一章。',
+    memory: '案卷只在入卷采纳后改。未采纳不准开下一章。',
   }
 }

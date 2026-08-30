@@ -8,10 +8,10 @@ describe('百万字规模', () => {
     expect(NOVEL_SCALE.targetChars).toBe(1_000_000)
   })
 
-  it('写手不吃全书，记忆在账本', () => {
+  it('写手不吃全书，记忆在案卷', () => {
     const b = contextBudget()
     expect(b.writerEats).toMatch(/切片/)
     expect(b.writerNever).toMatch(/总纲全文/)
-    expect(b.memory).toMatch(/回写采纳/)
+    expect(b.memory).toMatch(/入卷采纳/)
   })
 })

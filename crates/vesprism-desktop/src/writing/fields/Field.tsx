@@ -1,5 +1,5 @@
 import { useContext, type ChangeEvent, type ReactNode } from 'react'
-import { foreshadowLabel } from '../model/ledger'
+import { foreshadowLabel } from '../model/dossier'
 import type { ForeshadowState } from '../model/types'
 import { AiFillCtx } from './edit-ctx'
 

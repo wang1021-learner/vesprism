@@ -35,7 +35,7 @@ export function DraftView({
       <Section
         lot="稿纸"
         title={`第${chapterNo}章还没有纸面`}
-        lead="点右侧「写这一章」出候选。未点进正史之前，账本不动。"
+        lead="点右侧「写这一章」出试笔。未点进正史之前，案卷不动。"
       />
     )
   }
@@ -44,7 +44,7 @@ export function DraftView({
   return (
     <Section lot="稿纸" title={`第${chapterNo}章 ${title || ''}`.trim()}>
       <div className="wd-mast">
-        <Stamp tone={candidate ? 'due' : 'ok'}>{candidate ? '候选 · 还不是正史' : '已进正史'}</Stamp>
+        <Stamp tone={candidate ? 'due' : 'ok'}>{candidate ? '试笔 · 还不是正史' : '已进正史'}</Stamp>
         <span className="wd-mast-stat">
           {chars} 字{wordsBudget ? ` · 预算 ${wordsBudget}` : ''}
         </span>
@@ -63,7 +63,7 @@ export function DraftView({
       <div
         className={`wd-paper${candidate ? ' is-cand' : ' is-canon'}`}
         role="document"
-        aria-label={`第${chapterNo}章${candidate ? '候选' : '正文'}`}
+        aria-label={`第${chapterNo}章${candidate ? '试笔' : '正文'}`}
       >
         <p className="wd-paper-title">
           第{chapterNo}章{title ? ` ${title}` : ''}

@@ -34,7 +34,7 @@ describe('写手提示词', () => {
     expect(sys).toMatch(/发明新规则/)
   })
 
-  it('回写词带正文，仍不带总纲全文', () => {
+  it('入卷词带正文，仍不带总纲全文', () => {
     const user = reviewerUser(YANPIN_EYE, 'ch-4')
     expect(user).toContain('看清了吗')
     expect(user).toContain('——正文——')

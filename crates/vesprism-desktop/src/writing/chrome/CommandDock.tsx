@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
-import { commandHint, parseDeskCommand } from '../framework/command'
+import { useState } from 'react'
 import type { StationVerb } from '../framework/station'
 
+/** 令签：主按钮 + 其他动作 + 一句约束。不做斜杠解析，输入只当这一句人话。 */
 export function CommandDock({
   verbs,
   fallback,
@@ -15,22 +15,14 @@ export function CommandDock({
   extraSeed?: string
   askReply?: string | null
   onClearAsk?: () => void
-  onDispatch: (verb: StationVerb, extra: string, beatNo?: number) => void
+  onDispatch: (verb: StationVerb, extra: string) => void
 }) {
   const [line, setLine] = useState(extraSeed ?? '')
-  const parsed = useMemo(() => parseDeskCommand(line, verbs, fallback), [line, verbs, fallback])
   const others = verbs.filter((v) => v.id !== fallback.id && v.id !== 'ask')
   const ask = verbs.find((v) => v.id === 'ask')
 
   const fire = (verb: StationVerb) => {
-    const t = line.trim()
-    if (t.startsWith('/')) {
-      const p = parseDeskCommand(t, verbs, verb)
-      if (p.verb.id === verb.id) onDispatch(verb, p.extra, p.beatNo)
-      else onDispatch(verb, '')
-      return
-    }
-    onDispatch(verb, t)
+    onDispatch(verb, line.trim())
   }
 
   return (
@@ -39,7 +31,7 @@ export function CommandDock({
       aria-label="这一步能做的"
       onSubmit={(e) => {
         e.preventDefault()
-        onDispatch(parsed.verb, parsed.extra, parsed.beatNo)
+        fire(fallback)
       }}
     >
       <p className="wd-kicker">这一步能做的事</p>
@@ -58,7 +50,7 @@ export function CommandDock({
             <button
               key={v.id}
               type="button"
-              className={`wd-cmd-chip${parsed.verb.id === v.id ? ' is-on' : ''}${!v.ok ? ' is-off' : ''}${v.kind === 'read' ? ' is-read' : ''}`}
+              className={`wd-cmd-chip${!v.ok ? ' is-off' : ''}${v.kind === 'read' ? ' is-read' : ''}`}
               title={v.hint}
               disabled={!v.ok && v.id !== 'ask'}
               onClick={() => fire(v)}
@@ -75,16 +67,15 @@ export function CommandDock({
           className="wd-cmd-input"
           aria-label="一句约束，可空"
           value={line}
-          placeholder={commandHint(parsed.verb)}
+          placeholder={fallback.hint}
           onChange={(e) => setLine(e.target.value)}
         />
       </label>
       <p className="wd-cmd-preview">
-        {parsed.verb.kind === 'read' ? '只读 · ' : '将下达 · '}
-        {parsed.verb.label}
-        {parsed.beatNo ? ` · 切块${parsed.beatNo}` : ''}
-        {parsed.extra ? ` · ${parsed.extra}` : ' · 无额外约束'}
-        {parsed.verb.ok ? '' : ` · ${parsed.verb.hint}`}
+        {fallback.kind === 'read' ? '只读 · ' : '将下达 · '}
+        {fallback.label}
+        {line.trim() ? ` · ${line.trim()}` : ' · 无额外约束'}
+        {fallback.ok ? '' : ` · ${fallback.hint}`}
       </p>
       {ask ? (
         <button

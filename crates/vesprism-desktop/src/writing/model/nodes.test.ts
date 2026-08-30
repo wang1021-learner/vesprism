@@ -23,7 +23,7 @@ describe('写台节点路由', () => {
     expect(parseNode('ch-5')).toEqual({ kind: 'chapter', id: 'ch-5' })
   })
 
-  it('圣经叶子归 L2；章内子页带出工作章', () => {
+  it('设定集叶子归 L2；章内子页带出工作章', () => {
     expect(layerOf(parseNode('person-gu'))).toBe('bible')
     expect(layerOf(parseNode('engine'))).toBeNull()
     expect(workChapterId(parseNode('pitch'))).toBe('ch-4')

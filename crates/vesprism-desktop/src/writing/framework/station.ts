@@ -1,4 +1,4 @@
-/** 当前层缺什么，就露出哪些工位动词。写本章有硬门：书名、平台、一句话。 */
+/** 当前层缺什么，就露出哪些案头动作。写本章有硬门槛：书名、平台、一句话。 */
 
 import { VERB_DOES } from './copy'
 import { parseNode, type ParsedNode } from '../model/nodes'
@@ -10,7 +10,6 @@ export type StationCluster = 'write' | 'check' | 'ask'
 export type StationVerb = {
   id: string
   label: string
-  slash: string
   kind: StationKind
   cluster: StationCluster
   ok: boolean
@@ -57,7 +56,6 @@ function askVerb(): StationVerb {
   return {
     id: 'ask',
     label: '查设定',
-    slash: '/问',
     kind: 'read',
     cluster: 'ask',
     ok: true,
@@ -69,13 +67,12 @@ function askVerb(): StationVerb {
 function verb(
   id: string,
   label: string,
-  slash: string,
   ok: boolean,
   hint: string,
   kind: StationKind = 'write',
   cluster: StationCluster = 'write',
 ): StationVerb {
-  return { id, label, slash, kind, cluster, ok, hint, does: VERB_DOES[id] ?? hint }
+  return { id, label, kind, cluster, ok, hint, does: VERB_DOES[id] ?? hint }
 }
 
 export function writeChapterGate(book: BookDemo, chapterId: string): { ok: boolean; hint: string } {
@@ -87,10 +84,10 @@ export function writeChapterGate(book: BookDemo, chapterId: string): { ok: boole
   if (ch.locked) return { ok: false, hint: ch.lockReason || '已锁。' }
   if (!ch.endHookKind) return { ok: false, hint: '章纲必须有章末钩类型。' }
   if (!beatsReady(book, ch.id)) return { ok: false, hint: '节拍要对上章目标，至少 3 块。' }
-  return { ok: true, hint: '点「写这一章」。先出候选，不进正史。' }
+  return { ok: true, hint: '点「写这一章」。先试笔，点进正史才作数。' }
 }
 
-/** 打开书时停在当前缺卡或未采纳候选。 */
+/** 打开书时停在当前缺卡或未采纳试笔。 */
 export function landNode(book: BookDemo): DeskNodeId {
   if (!pitchReady(book)) return 'pitch'
   if (!canonReady(book)) return 'canon'
@@ -111,18 +108,18 @@ export function landNode(book: BookDemo): DeskNodeId {
 
 export function gapLabel(book: BookDemo): string {
   if (!entryReady(book)) return '还差书名、平台或一句话，不能写正文'
-  if (!pitchReady(book)) return '卖点还没写代价，补立项'
+  if (!pitchReady(book)) return '卖点还没写代价，补开卷'
   if (!canonReady(book)) return '规矩还空，先起草力量上限和禁区'
   if (!leadReady(book)) return '主角还没有当前态'
   const unadopted = book.drafts.find((d) => !d.accepted)
   if (unadopted) {
     const ch = book.chapters.find((c) => c.id === unadopted.chapterId)
-    return `第${ch?.no ?? '?'}章还是候选，没点进正史`
+    return `第${ch?.no ?? '?'}章还在试笔，没点进正史`
   }
   const review = book.reviews.find((r) => !r.adopted)
   if (review) {
     const ch = book.chapters.find((c) => c.id === review.chapterId)
-    return `第${ch?.no ?? '?'}章检查还没写入账本`
+    return `第${ch?.no ?? '?'}章检查还没入卷`
   }
   return '这一步可以下令'
 }
@@ -139,21 +136,21 @@ export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb
   if (parsed.kind === 'pitch') {
     if (!pitchReady(book)) {
       return [
-        verb('fill-pitch', '补全立项', '/补立项', true, '先把立项卡缺的字段补齐。'),
+        verb('fill-pitch', '补全开卷', true, '先把开卷卡缺的字段补齐。'),
         ask,
       ]
     }
     return [
-      verb('write-canon', '起草规矩', '/写宪法', !canonReady(book), canonReady(book) ? '规矩已经有了。' : '卖点在，起草规矩。'),
+      verb('write-canon', '起草规矩', !canonReady(book), canonReady(book) ? '规矩已经有了。' : '卖点在，起草规矩。'),
       ask,
     ]
   }
   if (parsed.kind === 'canon') {
     if (!canonReady(book)) {
-      return [verb('write-canon', '起草规矩', '/写宪法', true, '规矩还空，先起草。'), ask]
+      return [verb('write-canon', '起草规矩', true, '规矩还空，先起草。'), ask]
     }
     return [
-      verb('fill-lead', '写主角卡', '/立主角卡', !leadReady(book), leadReady(book) ? '主角已有当前态。' : '规矩在，写主角卡。'),
+      verb('fill-lead', '写主角卡', !leadReady(book), leadReady(book) ? '主角已有当前态。' : '规矩在，写主角卡。'),
       ask,
     ]
   }
@@ -164,18 +161,18 @@ export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb
     parsed.kind === 'place'
   ) {
     if (!leadReady(book)) {
-      return [verb('fill-lead', '写主角卡', '/立主角卡', true, '主角要有当前态和不能知道的。'), ask]
+      return [verb('fill-lead', '写主角卡', true, '主角要有当前态和不能知道的。'), ask]
     }
-    return [verb('split-outline', '拆长线', '/拆总纲', true, '设定在，拆长线。'), ask]
+    return [verb('split-outline', '拆长线', true, '设定在，拆长线。'), ask]
   }
   if (parsed.kind === 'outline') {
-    return [verb('split-volume', '拆这一卷', '/拆卷纲', book.volumes.length > 0 || filled(book.outline.causality), '长线在，拆这一卷。'), ask]
+    return [verb('split-volume', '拆这一卷', book.volumes.length > 0 || filled(book.outline.causality), '长线在，拆这一卷。'), ask]
   }
   if (parsed.kind === 'volume') {
-    return [verb('split-unit', '拆这几章', '/拆单元', true, '卷纲在，拆战役。'), ask]
+    return [verb('split-unit', '拆这几章', true, '卷纲在，拆战役。'), ask]
   }
   if (parsed.kind === 'unit') {
-    return [verb('split-chapter', '写章纲', '/拆章纲', true, '单元在，写这一章纲。'), ask]
+    return [verb('split-chapter', '写章纲', true, '单元在，写这一章纲。'), ask]
   }
 
   if (
@@ -185,14 +182,13 @@ export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb
     parsed.kind === 'review'
   ) {
     const list: StationVerb[] = [
-      verb('split-chapter', '写章纲', '/拆章纲', Boolean(ch), ch ? '按单元写本章纲。' : '没有章。'),
-      verb('split-beats', '把这章切开', '/拆节拍', Boolean(ch?.endHookKind), ch?.endHookKind ? '按章纲切成可写的块。' : '章末钩类型为空。'),
-      verb('write-chapter', '写这一章', '/写本章', write.ok, write.hint),
-      verb('rewrite-span', '重写这一块', '/重写选区', Boolean(draft), draft ? '先在稿纸上点一块。' : '还没有候选稿纸。'),
+      verb('split-chapter', '写章纲', Boolean(ch), ch ? '按单元写本章纲。' : '没有章。'),
+      verb('split-beats', '把这章切开', Boolean(ch?.endHookKind), ch?.endHookKind ? '按章纲切成可写的块。' : '章末钩类型为空。'),
+      verb('write-chapter', '写这一章', write.ok, write.hint),
+      verb('rewrite-span', '重写这一块', Boolean(draft), draft ? '先在稿纸上点一块。' : '还没有试笔稿纸。'),
       verb(
         'fill-review',
         '检查这一章',
-        '/检查',
         Boolean(draft),
         draft ? '对照章纲和设定。' : '没有正文可检查。',
         'write',
@@ -200,16 +196,15 @@ export function verbsForStation(book: BookDemo, nodeId: DeskNodeId): StationVerb
       ),
       verb(
         'adopt-ledger',
-        '写入账本',
-        '/回写',
+        '入卷',
         Boolean(review && !review.adopted),
-        review?.adopted ? '已经入账。' : review ? '确认后才改当前态和伏笔。' : '先检查，再入账。',
+        review?.adopted ? '已经入卷。' : review ? '确认后才改当前态和伏线。' : '先检查，再入卷。',
         'write',
         'check',
       ),
     ]
     if (parsed.kind === 'review' && review?.adopted) {
-      list.push(verb('split-next', '开下一章', '/拆下一章', true, '已经入账，可以开下一章。'))
+      list.push(verb('split-next', '开下一章', true, '已经入卷，可以开下一章。'))
     }
     list.push(ask)
     return list
@@ -257,7 +252,7 @@ export function defaultVerb(book: BookDemo, nodeId: DeskNodeId): StationVerb {
 
 export function answerAsk(book: BookDemo, query: string): string {
   const q = query.trim()
-  if (!q) return '问谁、哪条规则、哪条伏笔。只读，不写回圣经。'
+  if (!q) return '问谁、哪条规则、哪条伏线。只读，不写回设定集。'
   const person = book.people.find((p) => q.includes(p.name))
   if (person) {
     return `${person.name}（${person.role}）当前态截止第${person.stateAsOfChapter}章：${person.state}\n不能知道：${person.mustNotKnow}\n只读。不会写回设定。`
@@ -268,7 +263,7 @@ export function answerAsk(book: BookDemo, query: string): string {
   }
   const foil = book.outline.foreshadows.find((f) => q.includes(f.id) || q.includes(f.line.slice(0, 4)))
   if (foil) {
-    return `${foil.id} ${foil.line} · ${foil.state}\n本卷：${foil.thisVolume}\n只读。不会改伏笔账本。`
+    return `${foil.id} ${foil.line} · ${foil.state}\n本卷：${foil.thisVolume}\n只读。不会改伏线案卷。`
   }
-  return `没有在圣经里点到「${q}」。只读查询，不会改设定。`
+  return `没有在设定集里点到「${q}」。只读查询，不会改设定。`
 }

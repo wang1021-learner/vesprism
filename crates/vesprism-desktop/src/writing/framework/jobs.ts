@@ -21,7 +21,7 @@ export type WriteJob = {
   to: string
 }
 
-/** 一层一岗。百万字是这条链转 400～500 圈，不是一次生成。 */
+/** 一层一席。百万字是这条链转 400～500 圈，不是一次生成。 */
 export const WRITE_JOBS: readonly WriteJob[] = [
   { id: 'start-book', role: 'splitter', label: '开新书', from: '空', to: '卖点' },
   { id: 'split-canon', role: 'splitter', label: '起草规矩', from: '卖点', to: '规矩' },
@@ -33,7 +33,7 @@ export const WRITE_JOBS: readonly WriteJob[] = [
   { id: 'split-beats', role: 'splitter', label: '把这章切开', from: '章纲', to: '切块' },
   { id: 'write-chapter', role: 'writer', label: '写这一章', from: '切块', to: '正文' },
   { id: 'fill-review', role: 'reviewer', label: '检查这一章', from: '正文', to: '检查' },
-  { id: 'adopt-ledger', role: 'reviewer', label: '写入账本', from: '检查', to: '账本 / 下一章' },
+  { id: 'adopt-ledger', role: 'reviewer', label: '入卷', from: '检查', to: '案卷 / 下一章' },
 ]
 
 export function jobByLabel(label: string): WriteJob | undefined {

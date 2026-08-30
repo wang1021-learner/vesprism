@@ -126,7 +126,7 @@ export function BookTree({
   if (mode === 'draft') {
     return (
       <nav className="wd-tree" aria-label="稿纸目录">
-        <p className="wd-tree-book">候选和正史</p>
+        <p className="wd-tree-book">试笔和正史</p>
         {book.chapters.map((c) => {
           const stack = chapterHasStack(book, c.id)
           if (!stack.draft && !stack.beats) return null

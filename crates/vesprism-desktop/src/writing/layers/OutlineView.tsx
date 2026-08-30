@@ -1,7 +1,7 @@
 import { Field, Section, Zone } from '../fields/Field'
 import { usePatch } from '../fields/edit-ctx'
 import { addForeshadow } from '../model/create'
-import { foreshadowLabel } from '../model/ledger'
+import { foreshadowLabel } from '../model/dossier'
 import type { ForeshadowState, OutlineCard } from '../model/types'
 
 const STATES: ForeshadowState[] = ['open', 'due', 'closed']
@@ -54,7 +54,7 @@ export function OutlineView({
       </Zone>
       <Zone title="长线伏笔">
         <table className="wd-table">
-          <caption>伏笔账（正文只吃到期的那些）</caption>
+          <caption>伏线（正文只吃到期的那些）</caption>
           <thead>
             <tr>
               <th>编号</th>

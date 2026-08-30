@@ -364,7 +364,7 @@ export const YANPIN_EYE: BookDemo = {
       mood: '',
       platform: 'tomato',
       locked: true,
-      lockReason: '第4章回写尚未采纳，不准开下一章。',
+      lockReason: '第4章入卷尚未采纳，不准开下一章。',
     },
   ],
   beatsByChapter: {
@@ -628,7 +628,7 @@ export const YANPIN_EYE: BookDemo = {
       endHookOk: '「看清了吗？」不是总结句。',
       voiceLeak: '无。沈见真未解释瞳术。',
       forbiddenKnow: '那张脸身份未给；来历未说完。',
-      cheatAbuse: '第三次有代价：见血（回写）。未隔空、未看心。',
+      cheatAbuse: '第三次有代价：见血（入卷）。未隔空、未看心。',
       dueSeen: 'F001 被看见；身份未收。',
       unnumbered: '无。F004 已编号。',
       states: [

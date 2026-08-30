@@ -29,11 +29,11 @@ export function ReviewView({
     <Section
       lot="检查"
       kicker={`第${chapterNo}章`}
-      title="确认后才准改账本"
-      lead="没点「写入账本」，不准开下一章。"
+      title="确认后才准改案卷"
+      lead="没点「入卷」，不准开下一章。"
     >
       <p className="wd-lead">
-        <Stamp tone={card.adopted ? 'ok' : 'lock'}>{card.adopted ? '已入账' : '候选 · 还没写入账本'}</Stamp>
+        <Stamp tone={card.adopted ? 'ok' : 'lock'}>{card.adopted ? '已入卷' : '试笔 · 还没入卷'}</Stamp>
       </p>
       <Zone title="对照章纲">
         <Field
@@ -77,7 +77,7 @@ export function ReviewView({
           onChange={(v) => set({ unnumbered: v })}
         />
       </Zone>
-      <Zone title="建议写入账本">
+      <Zone title="建议入卷">
         {card.states.map((s, i) => (
           <Field
             key={i}

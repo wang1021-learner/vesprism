@@ -6,7 +6,7 @@ import { BookTree } from './chrome/BookTree'
 import { CandidatePanel } from './chrome/CandidatePanel'
 import { CommandDock } from './chrome/CommandDock'
 import { GateStrip } from './chrome/GateStrip'
-import { LedgerRail } from './chrome/LedgerRail'
+import { DossierRail } from './chrome/DossierRail'
 import { ModeStrip } from './chrome/ModeStrip'
 import { SlicePanel } from './chrome/SlicePanel'
 import { StepBanner } from './chrome/StepBanner'
@@ -38,7 +38,7 @@ import {
 import { YANPIN_EYE } from './model/demo-yanpin'
 import { emptyBook } from './model/empty-book'
 import { gatesForNode } from './model/gates'
-import { bookLedger } from './model/ledger'
+import { bookDossier } from './model/dossier'
 import {
   beatsNode,
   jumpMode,
@@ -273,7 +273,7 @@ function OpenDesk({
     book.chapters.filter((c) => !c.locked).at(-1)?.id || book.chapters.at(-1)?.id || 'ch-4',
   )
   const gates = useMemo(() => gatesForNode(book, node), [book, node])
-  const ledger = useMemo(() => bookLedger(book), [book])
+  const dossier = useMemo(() => bookDossier(book), [book])
   const slice = useMemo(() => writeSlice(book, chapterId), [book, chapterId])
   const showSlice = parsed.kind === 'chapter' || parsed.kind === 'beats' || parsed.kind === 'draft'
   const verbs = useMemo(() => verbsForStation(book, node), [book, node])
@@ -311,7 +311,7 @@ function OpenDesk({
     }
     if (verb.id === 'adopt-ledger') {
       patchChapter({ reviewAdopted: true })
-      pushToast('已标记写入账本（演示不落盘）。账本数字仍未改。', 'info')
+      pushToast('已标记入卷（演示不落盘）。案卷数字仍未改。', 'info')
       return
     }
     if (verb.id === 'rewrite-span') {
@@ -321,28 +321,28 @@ function OpenDesk({
           ? beats[beatNo - 1]
           : beats.find((b) => b.id === selectedBeatId)
       if (!target) {
-        pushToast('先在稿纸上点一块，或打 /重写节拍2。', 'info')
+        pushToast('先在稿纸上点一块。', 'info')
         return
       }
       setSelectedBeatId(target.id)
-      pushToast(`将重写「${target.title}」${extra ? ` · ${extra}` : ''}。出候选。演示未接会话。`, 'info')
+      pushToast(`将重写「${target.title}」${extra ? ` · ${extra}` : ''}。出试笔。演示未接会话。`, 'info')
       return
     }
     if (verb.id === 'write-chapter' || verb.id === 'fill-review') {
       pushToast(
-        `将下达：${verb.label}${extra ? ` · ${extra}` : ''}。先出候选，不进正史。演示未接会话。`,
+        `将下达：${verb.label}${extra ? ` · ${extra}` : ''}。先试笔，不进正史。演示未接会话。`,
         'info',
       )
       return
     }
-    pushToast(`将下达：${verb.label}${extra ? ` · ${extra}` : ''}。先出候选。演示未接会话。`, 'info')
+    pushToast(`将下达：${verb.label}${extra ? ` · ${extra}` : ''}。先试笔。演示未接会话。`, 'info')
   }
 
   return (
     <DeskEdit
       patch={patch}
       onAiFill={(label) =>
-        pushToast(`AI 会按本栏契约填「${label}」，先出候选，不进正史。演示未接会话。`, 'info')
+        pushToast(`AI 会按本栏契约填「${label}」，先试笔，不进正史。演示未接会话。`, 'info')
       }
     >
       <div className="wd-desk" role="main" aria-label="写台" data-layout="v2">
@@ -421,9 +421,9 @@ function OpenDesk({
               />
             </div>
           </div>
-          <aside className="wd-rail" aria-label="候选与账本">
+          <aside className="wd-rail" aria-label="试笔与案卷">
             <CandidatePanel />
-            <LedgerRail ledger={ledger} onOpen={setNode} />
+            <DossierRail dossier={dossier} onOpen={setNode} />
           </aside>
         </div>
       </div>

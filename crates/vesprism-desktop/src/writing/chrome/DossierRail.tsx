@@ -1,21 +1,21 @@
 import { ForeshadowStamp } from '../fields/Field'
-import { foreshadowJump, type BookLedger } from '../model/ledger'
+import { foreshadowJump, type BookDossier } from '../model/dossier'
 import { personNode, placeNode, ruleNode } from '../model/nodes'
 import type { DeskNodeId } from '../model/types'
 
-export function LedgerRail({
-  ledger,
+export function DossierRail({
+  dossier,
   onOpen,
 }: {
-  ledger: BookLedger
+  dossier: BookDossier
   onOpen: (id: DeskNodeId) => void
 }) {
   return (
-    <aside className="wd-ledger" aria-label="还没还上的账">
-      <p className="wd-kicker">还没还上的账</p>
-      <h2 className="wd-ledger-title">伏笔</h2>
+    <aside className="wd-ledger" aria-label="案卷 · 当前态">
+      <p className="wd-kicker">案卷 · 写到现在还欠着这些</p>
+      <h2 className="wd-ledger-title">伏线</h2>
       <ul className="wd-ticket-list">
-        {ledger.foreshadows
+        {dossier.foreshadows
           .filter((f) => f.state !== 'closed')
           .map((f) => (
             <li key={f.id}>
@@ -31,11 +31,11 @@ export function LedgerRail({
             </li>
           ))}
       </ul>
-      {ledger.foreshadows.some((f) => f.state === 'closed') ? (
+      {dossier.foreshadows.some((f) => f.state === 'closed') ? (
         <details className="wd-ledger-closed">
-          <summary>已经收回 · {ledger.foreshadows.filter((f) => f.state === 'closed').length}</summary>
+          <summary>已经收回 · {dossier.foreshadows.filter((f) => f.state === 'closed').length}</summary>
           <ul className="wd-ticket-list">
-            {ledger.foreshadows
+            {dossier.foreshadows
               .filter((f) => f.state === 'closed')
               .map((f) => (
                 <li key={f.id}>
@@ -55,7 +55,7 @@ export function LedgerRail({
       ) : null}
       <h2 className="wd-ledger-title">人物现在怎样</h2>
       <ul className="wd-ticket-list">
-        {ledger.people.map((p) => (
+        {dossier.people.map((p) => (
           <li key={p.id}>
             <button type="button" className="wd-ticket is-cast" onClick={() => onOpen(personNode(p.id))}>
               <span className="wd-ticket-id">{p.role}</span>
@@ -69,7 +69,7 @@ export function LedgerRail({
       </ul>
       <h2 className="wd-ledger-title">地点这一场怎么用</h2>
       <ul className="wd-ticket-list">
-        {ledger.places.map((p) => (
+        {dossier.places.map((p) => (
           <li key={p.id}>
             <button type="button" className="wd-ticket is-place" onClick={() => onOpen(placeNode(p.id))}>
               <span className="wd-ticket-id">地点</span>
@@ -81,7 +81,7 @@ export function LedgerRail({
       </ul>
       <h2 className="wd-ledger-title">规则还剩几次</h2>
       <ul className="wd-ticket-list">
-        {ledger.rules.map((r) => (
+        {dossier.rules.map((r) => (
           <li key={r.id}>
             <button type="button" className="wd-ticket is-quota" onClick={() => onOpen(ruleNode(r.id))}>
               <span className="wd-ticket-id">{r.name}</span>
