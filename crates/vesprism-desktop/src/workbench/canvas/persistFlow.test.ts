@@ -61,7 +61,7 @@ describe('enqueueFlowWrite', () => {
 })
 
 describe('shouldSkipDraftPersist', () => {
-  it('示例流程不落草稿，发布/试跑仍编', () => {
+  it('示例流程不落草稿，发布/试跑仍保存', () => {
     expect(shouldSkipDraftPersist('demo-linear')).toBe(true)
     expect(shouldSkipDraftPersist('demo-linear', { stage: true })).toBe(false)
     expect(shouldSkipDraftPersist('demo-linear', { publish: true })).toBe(false)

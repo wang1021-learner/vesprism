@@ -19,7 +19,7 @@
 |----|--------|--------|
 | 官方引擎 | `crates/codegen/xai-grok-shell` 等 `xai-grok-*` | 能改，但先查有没有现成 ACP / `x.ai/*` 扩展；原则见 `docs/官方代码修改原则.md` |
 | 会话桥 | `crates/grok-session` | 自建。把官方 agent 包进进程内 ACP 双工，给桌面用 |
-| 桌面壳 | `crates/vesprism-desktop` | 自建。UI、Tab、工作台（流程画布 / Agent 编制）、侧栏、设置 |
+| 桌面壳 | `crates/vesprism-desktop` | 自建。三套产品：编码 / 工作台（画布+编制）/ 写完；UI、Tab、侧栏、设置 |
 
 **不要**再写一套 agent 循环、工具执行器、工作流引擎。对话、斜杠、Rhai workflow、MCP、子 agent、排队、插话、Rewind、Fork 都走官方。桌面只做：IPC、状态投影、UI、以及工作台资产（画布 JSON → 官方 sidecar）。
 
@@ -284,8 +284,9 @@ WHERE id NOT IN (SELECT id FROM thread_tool_sessions)
 | `tools` | `ToolsPanel.tsx` | `x.ai/commands/list` | 浏览不执行 |
 | `skills` | `SkillsPanel.tsx` | commands/list（cwd 扫描） | 「使用」填 `/name` 回普通对话 |
 | `workflows` | `WorkflowsPanel.tsx` | `x.ai/workflows/list` | 浏览 `.grok/workflows/*.rhai`；执行仍走斜杠 |
+| `writing-desk` | `writing/WritingDesk.tsx` | 写台自己的 `writing_*` IPC；会话锁 `ask` | 书库 + 章循环；见 §11 |
 
-这些面板会 `startSession`（需要 cwd）。`flow-run` 例外，见 §10。
+这些面板会 `startSession`（需要 cwd）。`flow-run` 例外，见 §10。写完 cwd 是 `~/.vesprism/writing/<id>`。
 
 ---
 
@@ -313,7 +314,7 @@ WHERE id NOT IN (SELECT id FROM thread_tool_sessions)
 
 ### 8.4 组装单 Composition
 
-`CompositionPanel.tsx`：会话级模型/工具停用/权限/挂载流程。IPC `get/save/apply_composition`。与工作台 Agent 资产不是同一套（见 §11）。
+`CompositionPanel.tsx`：会话级模型/工具停用/权限/挂载流程。IPC `get/save/apply_composition`。与工作台 Agent 资产不是同一套（见 §12）。
 
 ### 8.5 终端 Dock
 
@@ -347,7 +348,7 @@ CSS：`src/workbench/flow-canvas.css`。
 
 节点类型：`start | agent | tool | flow | branch | parallel | join | end`。  
 草稿 `FlowDraft`：**含坐标**。  
-发布包：**不含坐标**，只有官方两文件。
+发布 sidecar：`<id>.rhai` + `<id>.flow.yaml`（无坐标）。导出 zip 另带 `graph.json` + `requirements.yaml`。
 
 磁盘：
 
@@ -425,7 +426,7 @@ resetCanvasGraphWait()        // 卸载画布、开始试跑
 
 ### 9.7 编译发布
 
-`workbench/flow_compile.rs`：草稿 JSON → 官方 Rhai。`save_flow` 发布/热挂载时在 Rust 里编译，**忽略**前端送来的 `rhai`。Agent 节点 `presetId` 解析成岗位配置；缺 preset 直接报错，不静默空跑。
+`workbench/flow_compile.rs`：草稿 JSON → 官方 Rhai。`save_flow` 发布/热挂载时在 Rust 里编译。`SaveFlowRequest` **没有** `rhai` 字段，前端不得再送脚本。Agent 节点 `presetId` 解析成岗位配置；缺 preset 直接报错，不静默空跑。
 
 发布：`PublishFlowModal` → `save_flow({ publish: true, ... })`。  
 挂载到当前会话：`update_session_flows`（官方 `x.ai/session/update_flows`），之后 `/{flowId}` 才能被引擎当 workflow 跑。
@@ -464,7 +465,29 @@ resetCanvasGraphWait()        // 卸载画布、开始试跑
 
 ---
 
-## 11. Agent 编制
+## 11. 写完（连载）
+
+第三套产品。入口：顶栏「写完」→ 侧栏书库 → `openChatTab({ utilityKind: 'writing-desk' })`。  
+页面：`src/writing/WritingDesk.tsx`。书库：`src/writing/library.ts` + `src/writing/chrome/LibraryNav.tsx`。
+
+百万字靠章循环 + 窄切片 + 入卷案卷，不靠一次读完全书。
+
+| 路径 | 内容 |
+|------|------|
+| `~/.vesprism/books/<id>/meta.json` | 书库列表（不读章正文） |
+| `book.json` | 结构 / 案卷（章纲仍在这里） |
+| `chapters/NNNN.json` | 节拍、试笔、检查单 |
+| `~/.vesprism/writing/<id>/` | 该书会话 cwd |
+
+打开一本才 `writing_load_book` 拼成 `BookDemo`。保存拆盘。导入旧 `<id>.json` 会迁到目录。
+
+硬门：入卷要 80 字摘要；到期伏笔按章号。写台会话 `is_writing_cwd` 锁 `ask`，不能切到可改文件的模式。导出只出已进正史的 txt。
+
+主循环：写章纲 → 切块 → 写/一键写完（写完进正史并检查，停在入卷）→ 人点入卷 → 开下一章。
+
+---
+
+## 12. Agent 编制
 
 侧栏「Agent 编制」→ `utilityKind: 'agents'` → `AgentsPanel.tsx`。
 
@@ -480,9 +503,9 @@ resetCanvasGraphWait()        // 卸载画布、开始试跑
 
 ---
 
-## 12. 发送 / 事件关键路径（抄作业用）
+## 13. 发送 / 事件关键路径（抄作业用）
 
-### 12.1 主聊天发送
+### 13.1 主聊天发送
 
 ```
 Composer.onSend
@@ -495,7 +518,7 @@ Composer.onSend
   → handleSessionEvent → applyTranscriptEvent → patchTab.messages
 ```
 
-### 12.2 画布发送
+### 13.2 画布发送
 
 ```
 CanvasComposer.onSend
@@ -506,7 +529,7 @@ CanvasComposer.onSend
   → consumeCanvasGraph
 ```
 
-### 12.3 排队与 turn_ended
+### 13.3 排队与 turn_ended
 
 `queue_changed`：服务器队列 + 本地尚未出现的乐观项。队列非空则保持 `generating`。  
 `turn_ended`：按 `prompt_id` 匹配最后 user 气泡收尾；若队列仍有条目**不要**置 idle（否则会把下一轮卡住）。见 `sessionEvents.ts` + `sessionTranscript.ts`。
@@ -515,7 +538,7 @@ CanvasComposer.onSend
 
 ---
 
-## 13. 落盘路径一览
+## 14. 落盘路径一览
 
 | 路径 | 用途 |
 |------|------|
@@ -529,10 +552,12 @@ CanvasComposer.onSend
 | `workflows/*.rhai` + `*.flow.yaml` | 已发布/试跑流程（引擎发现） |
 | `agents/<id>/` | 编制资产 |
 | `compositions/` | 会话组装单 yml |
+| `books/<id>/` | 写完：meta + 结构 + 按章文件 |
+| `writing/<id>/` | 写完每书会话目录 |
 
 ---
 
-## 14. 给接手 AI 的硬约束
+## 15. 给接手 AI 的硬约束
 
 1. **先查官方。** 排队、插话、MCP、rewind、fork、workflow、update_flows、list_running 都已有 `x.ai/*`。不要平行实现。
 2. **官方 crate vs 桌面。** 优先 `vesprism-desktop` + `grok-session`。动 `xai-grok-*` 必须满足 `docs/官方代码修改原则.md`，并在同步说明里记账。
@@ -543,13 +568,14 @@ CanvasComposer.onSend
 7. **画布输入不要挂回工作栏**，不要显示工作区「闲聊」芯片。
 8. **`flow-run` 禁止 startSession。**
 9. **同 utilityKind 复用 Tab**，不要叠三个「流程画布」。
-10. **中文提交信息**沿用：`功能(流程画布)：…` / `功能(桌面端)：…`。
-11. **改 UI 后**在 Tauri 窗口里点一遍；没有浏览器工具就说清楚未手测。
-12. 用户说「不是加模型吗」时：只改设置/config，不要加模型 id 映射表。
+10. **中文提交信息**沿用：`功能(流程画布)：…` / `功能(桌面端)：…` / `功能(写完)：…` / `安全(桌面端)：…`。
+11. **发布流程不要把 rhai 从前端送进 `save_flow`。** 编译只在 Rust `flow_compile.rs`。
+12. **改 UI 后**在 Tauri 窗口里点一遍；没有浏览器工具就说清楚未手测。
+13. 用户说「不是加模型吗」时：只改设置/config，不要加模型 id 映射表。
 
 ---
 
-## 15. 文件索引（按任务跳转）
+## 16. 文件索引（按任务跳转）
 
 | 想改… | 打开 |
 |--------|------|
@@ -569,6 +595,9 @@ CanvasComposer.onSend
 | 契约/校验/补丁/Rhai | `workbench/flow/{prompt,schema,graph,rhai}.ts` |
 | 工作栏 | `workbench/canvas/workbench-dock.tsx` |
 | 流程磁盘 | `src-tauri/src/workbench/flows.rs` |
+| 流程编译 | `src-tauri/src/workbench/flow_compile.rs` |
+| 写完写台 | `src/writing/WritingDesk.tsx`、`src-tauri/src/writing_store.rs` |
+| 写完书库 | `src/writing/library.ts` |
 | Agent 磁盘 | `src-tauri/src/workbench/agents.rs` |
 | 绑定/工具会话 | `workbench/bindings.rs`、`bindings.ts` |
 | ACP 包装 | `crates/grok-session/src/lib.rs` |
@@ -576,7 +605,7 @@ CanvasComposer.onSend
 
 ---
 
-## 16. 当前已知产品边界（不是 bug）
+## 17. 当前已知产品边界（不是 bug）
 
 - 画布试跑**共用画布会话**，靠斜杠过滤认图，不是单独 session。
 - 未绑定产物的画布会话不出现在侧栏。
@@ -584,3 +613,5 @@ CanvasComposer.onSend
 - `config.toml` 改模型需重启 Vesprism 进程。
 - 根 workspace 全量 `cargo build` 极慢；桌面开发用 `npm run desktop`。
 - 官方 TUI（`grok` CLI）与 Vesprism 数据目录隔离，互不影响。
+- 写完打开一本仍把该书各章拼进前端；书库列表不灌正文。
+- 旧流程 zip（无 `graph.json`）不能导入，需在本机重新导出。

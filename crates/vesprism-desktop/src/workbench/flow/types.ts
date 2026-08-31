@@ -1,6 +1,7 @@
 /**
  * 流程画布数据模型。
- * 草稿含坐标；发布包只有官方 sidecar 两文件：`<id>.rhai` + `<id>.flow.yaml`。
+ * 草稿含坐标。发布 sidecar：`<id>.rhai` + `<id>.flow.yaml`。
+ * 导出 zip 另带 `graph.json`（无坐标）+ `requirements.yaml`；导入只用 graph 在 Rust 里重编译。
  * 坐标永不进包；flow 节点在发布时内联，包内不再引用其他流程。
  */
 

@@ -62,7 +62,6 @@ pub struct SaveFlowRequest {
     /// 试跑子图：只写 sidecar，不落草稿、不污染流程列表。
     #[serde(default)]
     pub ephemeral: bool,
-    pub rhai: Option<String>,
     pub prompts: Option<String>,
 }
 
@@ -489,40 +488,49 @@ pub fn register_flows(ids: &[String]) -> Result<(), String> {
             continue;
         }
         if let Some(draft) = load_draft(&id) {
-            if let Some(rhai) = draft
-                .get("rhai")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
+            let req = SaveFlowRequest {
+                id: id.clone(),
+                name: draft
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&id)
+                    .to_string(),
+                description: draft
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                version: draft
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1")
+                    .to_string(),
+                input_schema: draft
+                    .get("input_schema")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default())),
+                output_schema: draft
+                    .get("output_schema")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default())),
+                nodes: draft.get("nodes").cloned().unwrap_or(Value::Array(vec![])),
+                edges: draft.get("edges").cloned().unwrap_or(Value::Array(vec![])),
+                publish: true,
+                stage: false,
+                ephemeral: false,
+                prompts: None,
+            };
+            if let Ok(compiled) = crate::workbench::flow_compile::compile_save_request(&req) {
                 let meta = FlowYaml {
                     id: id.clone(),
-                    name: draft
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&id)
-                        .to_string(),
-                    description: draft
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    input_schema: draft
-                        .get("input_schema")
-                        .cloned()
-                        .unwrap_or(Value::Object(Default::default())),
-                    output_schema: draft
-                        .get("output_schema")
-                        .cloned()
-                        .unwrap_or(Value::Object(Default::default())),
-                    version: draft
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("1")
-                        .to_string(),
+                    name: req.name,
+                    description: req.description,
+                    input_schema: req.input_schema,
+                    output_schema: req.output_schema,
+                    version: req.version,
                     dependencies: Vec::new(),
                 };
-                write_sidecar(&id, &write_yaml(&meta)?, rhai)?;
+                write_sidecar(&id, &write_yaml(&meta)?, &compiled)?;
                 continue;
             }
         }
@@ -859,11 +867,6 @@ pub fn get_flow(id: String) -> Result<FlowRecord, String> {
         if let Some(v) = d.get("edges") {
             rec.edges = v.clone();
         }
-        rec.rhai = d
-            .get("rhai")
-            .and_then(|x| x.as_str())
-            .map(|s| s.to_string())
-            .or(rec.rhai);
         rec.prompts = d
             .get("prompts")
             .and_then(|x| x.as_str())
@@ -1124,7 +1127,6 @@ fn import_flow_from_path(
             publish: false,
             stage: false,
             ephemeral: false,
-            rhai: rec.rhai,
             prompts: rec.prompts,
         };
         let _ = save_flow(save_req)?;
@@ -1152,7 +1154,6 @@ fn import_flow_from_path(
             publish: false,
             stage: false,
             ephemeral: false,
-            rhai: None,
             prompts: None,
         };
         let _ = save_flow(save_req)?;
@@ -1260,7 +1261,6 @@ fn write_imported_with_draft(meta: &FlowYaml, rhai: &str, graph: &str) -> Result
         publish: false,
         stage: false,
         ephemeral: false,
-        rhai: None,
         prompts: None,
     })
 }
@@ -1315,7 +1315,6 @@ fn imported_rhai(
         publish: true,
         stage: false,
         ephemeral: false,
-        rhai: None,
         prompts: None,
     };
     let rhai = crate::workbench::flow_compile::compile_save_request(&req)?;

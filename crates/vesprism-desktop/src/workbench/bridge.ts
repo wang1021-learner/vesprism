@@ -22,7 +22,6 @@ export type FlowSavePayload = {
   publish?: boolean
   stage?: boolean
   ephemeral?: boolean
-  rhai?: string | null
   prompts?: string | null
 }
 

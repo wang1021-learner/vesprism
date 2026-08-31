@@ -1,5 +1,6 @@
 /**
- * 发布/试跑编译：只拉引用子流程，编制提示词用 listAgents，不 N+1 getAgent。
+ * 草稿落盘辅助。发布 sidecar 由 Rust `flow_compile` 编译，前端不再把 rhai 送去 save_flow。
+ * `compileDraftRhai` 只给测试和预览对照用，不走写盘。
  */
 import { AGENT_CAPABILITY_OFFICIAL, type AgentListItem } from '../types'
 import {

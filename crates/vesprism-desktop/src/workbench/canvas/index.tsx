@@ -117,7 +117,6 @@ import {
   type RfNode,
 } from './rfGraph'
 import {
-  compileDraftRhai,
   DEMO_FLOW_ID,
   draftAfterPersist,
   enqueueFlowWrite,
@@ -214,7 +213,6 @@ function FlowCanvasInner() {
   nodesRef.current = nodes
   edgesRef.current = edges
   const lastSaveHash = useRef('')
-  const rhaiCache = useRef<{ key: string; rhai: string } | null>(null)
   /** 试跑参数：水合当帧跳过落盘，避免用上一份流程的 JSON 盖住新流程。 */
   const skipTestInputPersist = useRef(true)
   const lastAutoTestInput = useRef('{\n}')
@@ -610,10 +608,6 @@ function FlowCanvasInner() {
         return d
       }
       return enqueueFlowWrite(async () => {
-        let rhai: string | null = null
-        if (extra?.publish || extra?.stage) {
-          rhai = await compileDraftRhai(d, getFlow, listAgents, rhaiCache)
-        }
         const saved = await saveFlow({
           id: d.id,
           name: d.name,
@@ -626,7 +620,6 @@ function FlowCanvasInner() {
           publish: extra?.publish ?? false,
           stage: extra?.stage ?? false,
           ephemeral: extra?.ephemeral ?? false,
-          rhai,
           prompts: collectPromptsMarkdown(d),
         })
         if (!extra?.ephemeral) {

@@ -1354,22 +1354,20 @@ mod tests {
     }
 
     #[test]
-    fn ignores_client_supplied_script_shape() {
-        let req = SaveFlowRequest {
-            id: "demo-linear".into(),
-            name: "示例".into(),
-            description: "说明".into(),
-            version: "1".into(),
-            input_schema: serde_json::json!({"type":"object"}),
-            output_schema: serde_json::json!({"type":"object"}),
-            nodes: demo_nodes(),
-            edges: demo_edges(),
-            publish: true,
-            stage: false,
-            ephemeral: false,
-            rhai: Some("agent(\"pwn\")".into()),
-            prompts: None,
-        };
+    fn ignores_client_supplied_rhai_json_field() {
+        let json = serde_json::json!({
+            "id": "demo-linear",
+            "name": "示例",
+            "description": "说明",
+            "version": "1",
+            "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "nodes": demo_nodes(),
+            "edges": demo_edges(),
+            "publish": true,
+            "rhai": "agent(\"pwn\")",
+        });
+        let req: SaveFlowRequest = serde_json::from_value(json).unwrap();
         let rhai = compile_save_request(&req).unwrap();
         assert!(rhai.contains("let meta = #{"));
         assert!(!rhai.contains("agent(\"pwn\")"));
