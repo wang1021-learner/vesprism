@@ -1,11 +1,13 @@
 import {
   beatsNode,
   chapterHasStack,
+  chapterWorkJump,
+  chapterWorkLabel,
+  chapterWorkState,
   draftNode,
   parseNode,
   personNode,
   placeNode,
-  reviewNode,
   ruleNode,
   type WorkMode,
 } from '../model/nodes'
@@ -128,13 +130,12 @@ export function BookTree({
       <nav className="wd-tree" aria-label="稿纸目录">
         <p className="wd-tree-book">试笔和正史</p>
         {book.chapters.map((c) => {
-          const stack = chapterHasStack(book, c.id)
-          if (!stack.draft && !stack.beats) return null
+          const st = chapterWorkState(book, c.id)
           return (
             <Leaf
               key={c.id}
-              id={draftNode(c.id)}
-              label={`第${c.no}章 ${c.title || '未拟题'}${stack.draft ? '' : ' · 还没写'}`}
+              id={st === 'empty' ? c.id : draftNode(c.id)}
+              label={`第${c.no}章 ${c.title || '未拟题'} · ${chapterWorkLabel(st)}`}
               selected={selected}
               onSelect={onSelect}
               locked={c.locked}
@@ -150,13 +151,12 @@ export function BookTree({
       <nav className="wd-tree" aria-label="检查目录">
         <p className="wd-tree-book">对照单</p>
         {book.chapters.map((c) => {
-          const stack = chapterHasStack(book, c.id)
-          if (!stack.review && !stack.draft) return null
+          const st = chapterWorkState(book, c.id)
           return (
             <Leaf
               key={c.id}
-              id={reviewNode(c.id)}
-              label={`第${c.no}章 ${c.title || '未拟题'}`}
+              id={chapterWorkJump(book, c.id)}
+              label={`第${c.no}章 ${c.title || '未拟题'} · ${chapterWorkLabel(st)}`}
               selected={selected}
               onSelect={onSelect}
               locked={c.locked}
@@ -204,7 +204,7 @@ export function BookTree({
                       <div key={c.id}>
                         <Leaf
                           id={c.id}
-                          label={`第${c.no}章 ${c.title || '未拟题'}`}
+                          label={`第${c.no}章 ${c.title || '未拟题'} · ${chapterWorkLabel(chapterWorkState(book, c.id))}`}
                           selected={selected}
                           onSelect={onSelect}
                           indent={2}

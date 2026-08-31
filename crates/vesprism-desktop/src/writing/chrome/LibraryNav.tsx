@@ -8,7 +8,6 @@ import {
   $writingLoaded,
   $writingOpenId,
   $writingShelf,
-  WRITING_CHAPTER_AIM,
   bootWritingLibrary,
   createWritingBook,
   deleteWritingBook,
@@ -138,7 +137,9 @@ export function WritingLibraryNav() {
                 <span className="wd-lib-meta">
                   <span className="wd-lib-title">{b.title}</span>
                   <span className="wd-lib-sub">
-                    {b.land_line || '开卷'} · {st} · {b.accepted}/{WRITING_CHAPTER_AIM}
+                    {b.land_line || '开卷'}
+                    {b.volume_line ? ` · ${b.volume_line}` : ''} · {st} · {b.accepted}章 ·{' '}
+                    {b.accepted_chars.toLocaleString('zh-CN')}字
                   </span>
                 </span>
               </button>

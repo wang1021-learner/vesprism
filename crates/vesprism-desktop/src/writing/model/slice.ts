@@ -88,7 +88,7 @@ export function writeSlice(book: BookDemo, chapterId: string): WriteSlice | null
         voiceSample: p.voiceSample,
       })),
     places: book.places
-      .filter((p) => ch.cast.includes(p.id))
+      .filter((p) => ch.cast.includes(p.id) || (ch.where ?? []).includes(p.id))
       .map((p) => ({ id: p.id, name: p.name, job: p.job })),
     rules: book.rules
       .filter((r) => ch.cast.includes(r.id))

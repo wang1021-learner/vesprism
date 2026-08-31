@@ -151,6 +151,7 @@ export function addChapter(book: BookDemo, unitId?: string): { book: BookDemo; i
     infoGive: '',
     infoForbid: '',
     cast: [],
+    where: [],
     plant: '',
     press: '',
     close: '',
@@ -244,6 +245,46 @@ export function splitList(text: string): string[] {
 }
 
 /** 出场栏：名字或 id 都解析成设定集 id，解析不到则原样保留。 */
+export function resolvePlaceIds(book: BookDemo, tokens: unknown): string[] {
+  return resolveCastIds(book, tokens).filter((id) => book.places.some((p) => p.id === id))
+}
+
+/** 开下一章时给拆卡看：本单元还剩几章、本卷还欠哪些兑现。 */
+export function nextChapterDebts(book: BookDemo, fromChapterId?: string): string {
+  const ch =
+    (fromChapterId ? book.chapters.find((c) => c.id === fromChapterId) : undefined) ??
+    [...book.chapters].sort((a, b) => b.no - a.no)[0]
+  const unit = ch ? book.units.find((u) => u.id === ch.unitId) : book.units.at(-1)
+  const vol = unit ? book.volumes.find((v) => v.id === unit.volumeId) : book.volumes.at(-1)
+  const bits: string[] = []
+  if (unit) {
+    const have = book.chapters.filter((c) => c.unitId === unit.id).length
+    const m = /(\d+)\s*[–\-至到]\s*(\d+)/.exec(unit.chapters)
+    const planned = m ? Number(m[2]) - Number(m[1]) + 1 : Number((unit.chapters.match(/\d+/) || [])[0]) || 0
+    if (planned > 0) {
+      const left = Math.max(0, planned - have)
+      bits.push(`本单元「${unit.name}」规划 ${planned} 章，已有 ${have} 章，还剩 ${left} 章。`)
+    } else {
+      bits.push(`本单元「${unit.name}」已有 ${have} 章。`)
+    }
+  }
+  if (vol) {
+    const unpaid = vol.mustPay.filter((pay) => {
+      const t = pay.trim()
+      if (!t) return false
+      return !book.outline.foreshadows.some(
+        (f) => f.state === 'closed' && (f.line.includes(t) || t.includes(f.line.slice(0, 4))),
+      )
+    })
+    bits.push(
+      unpaid.length
+        ? `本卷还要兑现：${unpaid.join('、')}。`
+        : `本卷「${vol.title}」必须兑现项已勾完或未填。`,
+    )
+  }
+  return bits.join('\n')
+}
+
 export function resolveCastIds(book: BookDemo, tokens: unknown): string[] {
   const raw = Array.isArray(tokens)
     ? tokens.map((x) => String(x))

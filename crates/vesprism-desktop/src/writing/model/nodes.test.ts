@@ -3,6 +3,7 @@ import { YANPIN_EYE } from './demo-yanpin'
 import {
   beatsNode,
   chapterHasStack,
+  chapterWorkState,
   jumpMode,
   jumpNode,
   layerOf,
@@ -60,5 +61,8 @@ describe('写台节点路由', () => {
       draft: false,
       review: false,
     })
+    expect(chapterWorkState(YANPIN_EYE, 'ch-1')).toBe('adopted')
+    expect(chapterWorkState(YANPIN_EYE, 'ch-4')).toBe('reviewed')
+    expect(chapterWorkState(YANPIN_EYE, 'ch-5')).toBe('empty')
   })
 })

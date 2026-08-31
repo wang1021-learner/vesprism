@@ -1,5 +1,6 @@
 /** 入卷硬门：代码卡破设定，不评文笔。模型 JSON 只当摘句来源。 */
 
+import { countHanzi, parseChapterWords } from '../framework/scale'
 import { DEFAULT_SENTENCE_BAN, effectiveSentenceBan } from './sentence-ban'
 import type { BookDemo, ChapterCard } from './types'
 
@@ -41,6 +42,16 @@ export function draftText(book: BookDemo, chapterId: string): string {
   const draft = book.drafts.find((d) => d.chapterId === chapterId)
   if (!draft) return ''
   return draft.beats.map((b) => b.body).join('\n')
+}
+
+export function wordCountNotes(book: BookDemo, chapterId: string): string[] {
+  const draft = book.drafts.find((d) => d.chapterId === chapterId)
+  if (!draft) return []
+  const n = countHanzi(draftText(book, chapterId))
+  const { min, max, aim } = parseChapterWords(book.canon.chapterWords)
+  if (n < min) return [`已写 ${n} 字，不够目标 ${min}～${max}（约 ${aim}）。`]
+  if (n > max) return [`已写 ${n} 字，超过目标 ${min}～${max}（约 ${aim}）。`]
+  return []
 }
 
 const OPEN_HOOK_NEG = /未落地|没有落地|未在前\s*300|前\s*300\s*字没有|开场钩空/
@@ -92,24 +103,45 @@ export function reviewBlocksAdopt(
   return { ok: hints.length === 0, hints }
 }
 
-export function exportChapterPlain(book: BookDemo, chapterId: string): string {
-  const ch = book.chapters.find((c) => c.id === chapterId)
-  const body = draftText(book, chapterId).trim()
-  if (!body) return ''
-  const heading = ch ? `第${ch.no}章${ch.title ? ` ${ch.title}` : ''}` : chapterId
-  return `${heading}\n\n${body}\n`
+function acceptedBody(book: BookDemo, chapterId: string): string {
+  const draft = book.drafts.find((d) => d.chapterId === chapterId)
+  if (!draft?.accepted) return ''
+  return draftText(book, chapterId).trim()
 }
 
-export function exportBookPlain(book: BookDemo): string {
+function headingOf(ch: { no: number; title: string }): string {
+  return `第${ch.no}章${ch.title ? ` ${ch.title}` : ''}`
+}
+
+export function exportChapterPlain(book: BookDemo, chapterId: string): string {
+  const ch = book.chapters.find((c) => c.id === chapterId)
+  const body = acceptedBody(book, chapterId)
+  if (!body || !ch) return ''
+  return `${headingOf(ch)}\n\n${body}\n`
+}
+
+function joinChapters(book: BookDemo, chapters: ChapterCard[]): string {
   const parts = [book.title || '未命名']
-  const chapters = [...book.chapters].sort((a, b) => a.no - b.no)
-  for (const ch of chapters) {
-    const body = draftText(book, ch.id).trim()
+  const sorted = [...chapters].sort((a, b) => a.no - b.no)
+  for (const ch of sorted) {
+    const body = acceptedBody(book, ch.id)
     if (!body) continue
-    parts.push(`第${ch.no}章${ch.title ? ` ${ch.title}` : ''}\n\n${body}`)
+    parts.push(`${headingOf(ch)}\n\n${body}`)
   }
   if (parts.length < 2) return ''
   return `${parts.join('\n\n')}\n`
+}
+
+export function exportBookPlain(book: BookDemo): string {
+  return joinChapters(book, book.chapters)
+}
+
+export function exportVolumePlain(book: BookDemo, volumeId: string): string {
+  const unitIds = new Set(book.units.filter((u) => u.volumeId === volumeId).map((u) => u.id))
+  return joinChapters(
+    book,
+    book.chapters.filter((c) => unitIds.has(c.unitId)),
+  )
 }
 
 /** 句式套话命中，只提示去洗，不挡入卷。 */

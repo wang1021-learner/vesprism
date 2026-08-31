@@ -85,4 +85,15 @@ describe('写本章切片', () => {
     const s = writeSlice(book, 'ch-4')
     expect(s?.due.some((f) => f.id === 'F099')).toBe(true)
   })
+
+  it('地点切片吃「这一章在哪」，不靠人物 cast', () => {
+    const book = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) =>
+        c.id === 'ch-4' ? { ...c, cast: ['shen', 'gu'], where: ['vault'] } : c,
+      ),
+    }
+    const s = writeSlice(book, 'ch-4')
+    expect(s?.places.map((p) => p.id)).toEqual(['vault'])
+  })
 })

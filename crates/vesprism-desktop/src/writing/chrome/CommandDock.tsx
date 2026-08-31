@@ -10,6 +10,7 @@ export function CommandDock({
   onClearAsk,
   onDispatch,
   busy,
+  stat,
 }: {
   verbs: StationVerb[]
   fallback: StationVerb
@@ -19,6 +20,7 @@ export function CommandDock({
   onDispatch: (verb: StationVerb, extra: string) => void
   /** 引擎生成中：禁用所有动作 */
   busy?: boolean
+  stat?: string
 }) {
   const [line, setLine] = useState(extraSeed ?? '')
   const others = verbs.filter((v) => v.id !== fallback.id && v.id !== 'ask')
@@ -37,7 +39,7 @@ export function CommandDock({
         fire(fallback)
       }}
     >
-      <p className="wd-kicker">这一步能做的事{busy ? ' · 生成中…' : ''}</p>
+      <p className="wd-kicker">这一步能做的事{busy ? ' · 生成中…' : ''}{stat ? ` · ${stat}` : ''}</p>
       <button
         type="submit"
         className="wd-btn wd-btn-primary"

@@ -11,6 +11,11 @@ export type WritingBookMeta = {
   title: string
   updated_at: string
   accepted?: number
+  accepted_chars?: number
+  target_chars?: number
+  remain_chars?: number
+  volume_line?: string
+  aim?: number
   has_candidate?: boolean
   land_line?: string
 }
@@ -23,8 +28,15 @@ export const writingDeleteBook = (id: string) =>
   invoke<void>('writing_delete_book', { id })
 export const writingSessionCwd = (id: string) =>
   invoke<string>('writing_session_cwd', { id })
-export const writingExportBook = (id: string, chapterNo?: number | null) =>
-  invoke<string>('writing_export_book', { id, chapter_no: chapterNo ?? null })
+export const writingExportBook = (
+  id: string,
+  opts?: { chapterNo?: number | null; volumeId?: string | null },
+) =>
+  invoke<string>('writing_export_book', {
+    id,
+    chapter_no: opts?.chapterNo ?? null,
+    volume_id: opts?.volumeId ?? null,
+  })
 
 /** 坏文件不能进书库：缺 pitch 会在渲染时把写台打崩。 */
 export function isLoadableBook(raw: unknown): raw is BookDemo {

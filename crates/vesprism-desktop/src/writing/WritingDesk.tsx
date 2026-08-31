@@ -17,6 +17,7 @@ import { cancelActiveTurn } from '../lib/cancelActiveTurn'
 import { sendSessionPrompt } from '../lib/sendSessionPrompt'
 import { BeatStrip } from './chrome/BeatStrip'
 import { BookTree } from './chrome/BookTree'
+import { ChapterIndex } from './chrome/ChapterIndex'
 import { CandidatePanel } from './chrome/CandidatePanel'
 import { CommandDock } from './chrome/CommandDock'
 import { DossierRail } from './chrome/DossierRail'
@@ -68,7 +69,7 @@ import {
   type FillCardTarget,
   type FillScope,
 } from './model/apply'
-import { reviewBlocksAdopt, styleHits } from './model/review-gate'
+import { reviewBlocksAdopt, styleHits, wordCountNotes } from './model/review-gate'
 import {
   WRITING_SESSION_MODE,
   needsFreshSession,
@@ -108,7 +109,7 @@ import {
 } from './model/nodes'
 import { writeSlice } from './model/slice'
 import type { BookDemo, DeskNodeId } from './model/types'
-import { chapterCountFor } from './framework/scale'
+import { acceptedChars, chapterCountFor, countHanzi, parseChapterWords, remainToTarget, volumeLandLine } from './framework/scale'
 import { persistBook, writingExportBook, writingSessionCwd } from './storage'
 
 /** 写台任务：发给引擎的一个动词（回合并按 TASK 标记归属） */
@@ -116,6 +117,7 @@ type DeskTask = {
   bookId: string
 } & (
   | { kind: 'write-chapter'; chapterId: string }
+  | { kind: 'finish-chapter'; chapterId: string }
   | { kind: 'fill-review'; chapterId: string }
   | { kind: 'rewrite'; chapterId: string; beatId: string }
   | { kind: 'wash'; chapterId: string; beatId: string }
@@ -163,7 +165,7 @@ function MainCard({
       parsed,
       book.chapters.filter((c) => !c.locked).at(-1)?.id || book.chapters.at(-1)?.id || '',
     )
-    return <EngineView book={book} chapterId={chapterId} />
+    return <EngineView book={book} chapterId={chapterId} onOpen={onOpen} />
   }
   if (parsed.kind === 'pitch') return <PitchView card={book.pitch} />
   if (parsed.kind === 'canon') return <CanonView card={book.canon} />
@@ -192,7 +194,14 @@ function MainCard({
     const p = book.places.find((x) => x.id === parsed.id)
     return p ? <PlaceView card={p} /> : null
   }
-  if (parsed.kind === 'outline') return <OutlineView card={book.outline} onAddForeshadow={onAddForeshadow} />
+  if (parsed.kind === 'outline') {
+    return (
+      <>
+        <OutlineView card={book.outline} onAddForeshadow={onAddForeshadow} />
+        <ChapterIndex book={book} onOpen={onOpen} />
+      </>
+    )
+  }
   if (parsed.kind === 'volume') {
     const v = book.volumes.find((x) => x.id === parsed.id)
     return v ? <VolumeView card={v} /> : null
@@ -224,6 +233,7 @@ function MainCard({
         chapterNo={ch.no}
         title={ch.title}
         wordsBudget={ch.words}
+        chapterWords={book.canon.chapterWords}
         mood={ch.mood}
         draft={book.drafts.find((d) => d.chapterId === ch.id)}
         beats={book.beatsByChapter[ch.id] || []}
@@ -242,6 +252,7 @@ function MainCard({
         card={book.reviews.find((r) => r.chapterId === ch.id)}
         blocks={reviewBlocks}
         styleNotes={styleNotes}
+        wordNotes={wordCountNotes(book, ch.id)}
         onRegisterUnnumbered={onRegisterUnnumbered}
       />
     )
@@ -257,7 +268,10 @@ function MainCard({
       return id
     })
     .join(' / ')
-  return <ChapterView card={ch} castLabels={castLabels} />
+  const whereLabels = (ch.where || [])
+    .map((id) => book.places.find((x) => x.id === id)?.name || id)
+    .join(' / ')
+  return <ChapterView card={ch} castLabels={castLabels} whereLabels={whereLabels} />
 }
 
 export function WritingDesk() {
@@ -433,11 +447,34 @@ export function WritingDesk() {
       return
     }
     if (!book || book.id !== task.bookId) return
-    if (task.kind === 'write-chapter') {
+    if (task.kind === 'write-chapter' || task.kind === 'finish-chapter') {
       patch((b) => {
         const slice = writeSlice(b, task.chapterId)
-        return upsertDraft(b, parseDraftFromText(text, task.chapterId, slice))
+        let next = upsertDraft(b, parseDraftFromText(text, task.chapterId, slice))
+        if (task.kind === 'finish-chapter') {
+          next = {
+            ...next,
+            drafts: next.drafts.map((d) =>
+              d.chapterId === task.chapterId ? { ...d, accepted: true } : d,
+            ),
+          }
+        }
+        return next
       })
+      if (task.kind === 'finish-chapter') {
+        setNode(`${task.chapterId}:review`)
+        pushToast('试笔已进正史，正在检查。入卷仍要你确认。', 'success')
+        const latest = latestByBookRef.current.get(task.bookId)
+        const user = latest ? reviewerUser(latest, task.chapterId) : null
+        if (user) {
+          void runTask(
+            { kind: 'fill-review', chapterId: task.chapterId, bookId: task.bookId },
+            reviewerSystem(),
+            `${user}\n\n${reviewerJsonHint()}`,
+          )
+        }
+        return
+      }
       setNode(`${task.chapterId}:draft`)
       pushToast('试笔完成。可在稿纸上改，或点「采纳进正史」。', 'success')
       return
@@ -520,9 +557,17 @@ export function WritingDesk() {
     const found = lastTaskUser(now)
     if (!found) return
     if (!taskBelongsToBook(found, book.id)) return
-    if (found.kind !== 'write-chapter' && found.kind !== 'fill-review') return
+    if (
+      found.kind !== 'write-chapter' &&
+      found.kind !== 'finish-chapter' &&
+      found.kind !== 'fill-review'
+    )
+      return
     if (!book.chapters.some((c) => c.id === found.ref)) return
-    if (found.kind === 'write-chapter' && book.drafts.some((d) => d.chapterId === found.ref)) {
+    if (
+      (found.kind === 'write-chapter' || found.kind === 'finish-chapter') &&
+      book.drafts.some((d) => d.chapterId === found.ref)
+    ) {
       return
     }
     if (found.kind === 'fill-review' && book.reviews.some((r) => r.chapterId === found.ref)) {
@@ -534,7 +579,9 @@ export function WritingDesk() {
     applyTaskText(
       found.kind === 'write-chapter'
         ? { kind: 'write-chapter', chapterId: found.ref, bookId: book.id }
-        : { kind: 'fill-review', chapterId: found.ref, bookId: book.id },
+        : found.kind === 'finish-chapter'
+          ? { kind: 'finish-chapter', chapterId: found.ref, bookId: book.id }
+          : { kind: 'fill-review', chapterId: found.ref, bookId: book.id },
       text,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -697,9 +744,19 @@ function OpenDesk({
   )
   const styleNotes = useMemo(() => (chapterId ? styleHits(book, chapterId) : []), [book, chapterId])
   const written = book.drafts.filter((d) => d.accepted).length
-  const aim = chapterCountFor()
+  const wordsAim = parseChapterWords(book.canon.chapterWords)
+  const aim = chapterCountFor(undefined, wordsAim.aim)
+  const chars = acceptedChars(book)
+  const remain = remainToTarget(book)
+  const volLine = volumeLandLine(book)
   const beats = chapterId ? book.beatsByChapter[chapterId] || [] : []
-  const pct = aim > 0 ? Math.min(100, Math.round((written / aim) * 1000) / 10) : 0
+  const pct = Math.min(100, Math.round((chars / 1_000_000) * 1000) / 10)
+  const draftChars = chapterId
+    ? countHanzi(
+        (book.drafts.find((d) => d.chapterId === chapterId)?.beats ?? []).map((b) => b.body).join(''),
+      )
+    : 0
+  const wordStat = chapterId ? `已写 ${draftChars} / 目标 ${wordsAim.aim}` : undefined
   const candidates = book.drafts
     .filter((d) => !d.accepted)
     .map((d) => {
@@ -753,6 +810,15 @@ function OpenDesk({
           return
         }
         void runTask({ kind: 'write-chapter', chapterId, bookId: book.id }, wire.system, wire.user)
+        return
+      }
+      case 'finish-chapter': {
+        const wire = assembleWriteChapter(book, chapterId, extra)
+        if (!wire) {
+          pushToast('这一章还不能写（门槛未过）。', 'info')
+          return
+        }
+        void runTask({ kind: 'finish-chapter', chapterId, bookId: book.id }, wire.system, wire.user)
         return
       }
       case 'fill-review': {
@@ -832,7 +898,18 @@ function OpenDesk({
           pushToast('导出只在桌面端可用。', 'info')
           return
         }
-        void writingExportBook(book.id, ch?.no)
+        void writingExportBook(book.id, { chapterNo: ch?.no })
+          .then((path) => pushToast(`已导出 ${path}`, 'success'))
+          .catch((err) => pushToast(String(err), 'error'))
+        return
+      }
+      case 'export-volume': {
+        if (parsed.kind !== 'volume') return
+        if (!isTauriRuntime()) {
+          pushToast('导出只在桌面端可用。', 'info')
+          return
+        }
+        void writingExportBook(book.id, { volumeId: parsed.id })
           .then((path) => pushToast(`已导出 ${path}`, 'success'))
           .catch((err) => pushToast(String(err), 'error'))
         return
@@ -901,7 +978,11 @@ function OpenDesk({
                 {written}
                 <em> / {aim}</em>
               </span>
-              <span className="wd-dk">已进正史 · 章</span>
+              <span className="wd-dk">已入卷 · 章</span>
+            </div>
+            <div className="wd-ditem">
+              <span className="wd-dn">{chars.toLocaleString('zh-CN')}</span>
+              <span className="wd-dk">字 · 还差 {remain.toLocaleString('zh-CN')}{volLine ? ` · ${volLine}` : ''}</span>
             </div>
             <div className="wd-dbar" aria-label={`进度 ${pct}%`}>
               <div className="wd-dbar-in" style={{ width: `${pct}%` }} />
@@ -987,6 +1068,7 @@ function OpenDesk({
                 onClearAsk={() => setAskReply(null)}
                 onDispatch={onDispatch}
                 busy={busy}
+                stat={wordStat}
               />
             </div>
           </div>

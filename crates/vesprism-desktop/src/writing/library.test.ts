@@ -37,6 +37,7 @@ describe('写完书库', () => {
     const item = shelfFromBook(book)
     expect(item.title).toBe('试')
     expect(item.accepted).toBe(0)
+    expect(item.accepted_chars).toBe(0)
     expect(item.land_line).toBe('开卷')
     expect(JSON.stringify(item)).not.toMatch(/beatsByChapter/)
   })

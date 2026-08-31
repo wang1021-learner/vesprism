@@ -8,6 +8,7 @@ describe('写台会话与数据隔离', () => {
 
   it('写正文 / 检查 / 重写 / 补卡都要新开一轮会话，避免上一张卡漏进写手', () => {
     expect(needsFreshSession('write-chapter')).toBe(true)
+    expect(needsFreshSession('finish-chapter')).toBe(true)
     expect(needsFreshSession('fill-review')).toBe(true)
     expect(needsFreshSession('rewrite')).toBe(true)
     expect(needsFreshSession('fill-card')).toBe(true)

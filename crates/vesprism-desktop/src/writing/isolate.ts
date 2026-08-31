@@ -6,6 +6,7 @@ export const WRITING_SESSION_MODE = 'ask'
 export function needsFreshSession(kind: string): boolean {
   return (
     kind === 'write-chapter' ||
+    kind === 'finish-chapter' ||
     kind === 'fill-review' ||
     kind === 'rewrite' ||
     kind === 'wash' ||

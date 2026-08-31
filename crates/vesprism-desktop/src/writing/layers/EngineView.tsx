@@ -2,14 +2,36 @@ import { Field, FieldRow, Section } from '../fields/Field'
 import { WRITE_JOBS } from '../framework/jobs'
 import { assembleWriteChapter } from '../framework/prompt'
 import { WRITER_ROLES } from '../framework/roles'
-import { chapterCountFor, contextBudget, NOVEL_SCALE, volumeChapterAim } from '../framework/scale'
-import type { BookDemo } from '../model/types'
+import {
+  acceptedChars,
+  chapterCountFor,
+  contextBudget,
+  NOVEL_SCALE,
+  parseChapterWords,
+  remainToTarget,
+  volumeChapterAim,
+  volumeLandLine,
+} from '../framework/scale'
+import { ChapterIndex } from '../chrome/ChapterIndex'
+import type { BookDemo, DeskNodeId } from '../model/types'
 
-export function EngineView({ book, chapterId }: { book: BookDemo; chapterId: string }) {
+export function EngineView({
+  book,
+  chapterId,
+  onOpen,
+}: {
+  book: BookDemo
+  chapterId: string
+  onOpen?: (id: DeskNodeId) => void
+}) {
   const budget = contextBudget()
   const wire = assembleWriteChapter(book, chapterId)
   const ch = book.chapters.find((c) => c.id === chapterId)
   const written = book.drafts.filter((d) => d.accepted).length
+  const words = parseChapterWords(book.canon.chapterWords)
+  const chars = acceptedChars(book)
+  const remain = remainToTarget(book)
+  const volLine = volumeLandLine(book)
   return (
     <Section
       lot="拆法"
@@ -33,13 +55,21 @@ export function EngineView({ book, chapterId }: { book: BookDemo; chapterId: str
       </ol>
       <FieldRow>
         <Field label="目标">{NOVEL_SCALE.targetChars.toLocaleString('zh-CN')} 字</Field>
-        <Field label="章字数">
-          {NOVEL_SCALE.chapterMin}～{NOVEL_SCALE.chapterMax}
+        <Field label="这本书章字数">
+          {words.min === words.max ? String(words.aim) : `${words.min}～${words.max}`}
         </Field>
-        <Field label="约章数">{chapterCountFor()} 章</Field>
-        <Field label="约每卷">{volumeChapterAim()} 章 · {NOVEL_SCALE.volumeAim} 卷</Field>
+        <Field label="约章数">
+          {chapterCountFor(NOVEL_SCALE.targetChars, words.aim)} 章
+        </Field>
+        <Field label="约每卷">
+          {volumeChapterAim(NOVEL_SCALE.targetChars, NOVEL_SCALE.volumeAim, words.aim)} 章 · {NOVEL_SCALE.volumeAim} 卷
+        </Field>
       </FieldRow>
-      <Field label="这本书已进正史">{written} 章</Field>
+      <FieldRow>
+        <Field label="已入卷">{written} 章 · {chars.toLocaleString('zh-CN')} 字</Field>
+        <Field label="还差">{remain.toLocaleString('zh-CN')} 字</Field>
+        <Field label="本卷">{volLine || '还没入卷'}</Field>
+      </FieldRow>
       <Field label="写手吃">{budget.writerEats}</Field>
       <Field label="写手不吃" warn>
         {budget.writerNever}
@@ -70,6 +100,7 @@ export function EngineView({ book, chapterId }: { book: BookDemo; chapterId: str
         ))}
       </ol>
 
+      {onOpen ? <ChapterIndex book={book} onOpen={onOpen} /> : null}
       <Field label="当前写手章">{ch ? `第${ch.no}章 ${ch.title || '未拟题'}` : '—'}</Field>
       {wire ? (
         <div className="wd-prompt" role="region" aria-label="写手将吃到的提示">

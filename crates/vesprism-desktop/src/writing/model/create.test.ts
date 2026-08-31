@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { addBeat, addChapter, addForeshadow, addPerson, addPlace, addRule, addVolume, splitList, splitSlash } from './create'
+import {
+  addBeat,
+  addChapter,
+  addForeshadow,
+  addPerson,
+  addPlace,
+  addRule,
+  addVolume,
+  nextChapterDebts,
+  splitList,
+  splitSlash,
+} from './create'
 import { emptyBook } from './empty-book'
+import { YANPIN_EYE } from './demo-yanpin'
 
 describe('写台当场新建', () => {
   it('空书可以新建主角卡和章', () => {
@@ -38,5 +50,13 @@ describe('写台当场新建', () => {
     expect(rule.book.rules[0]?.quotaAsOfChapter).toBe(0)
     expect(addPlace(book).book.places).toHaveLength(1)
     expect(addForeshadow(book).id).toBe('F001')
+  })
+})
+
+describe('开下一章欠账', () => {
+  it('带出本单元还剩几章、本卷还要兑现', () => {
+    const line = nextChapterDebts(YANPIN_EYE, 'ch-4')
+    expect(line).toMatch(/单元|章/)
+    expect(line).toMatch(/兑现/)
   })
 })

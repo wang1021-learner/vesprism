@@ -68,6 +68,17 @@ describe('案头', () => {
     expect(verbsForStation(accepted, 'ch-4:review').find((v) => v.id === 'adopt-ledger')?.ok).toBe(true)
   })
 
+  it('写完这一章在可写时亮着，停在入卷', () => {
+    const v = verbsForStation(YANPIN_EYE, 'ch-4')
+    expect(v.find((x) => x.id === 'finish-chapter')?.ok).toBe(true)
+    expect(v.find((x) => x.id === 'finish-chapter')?.hint).toMatch(/入卷/)
+  })
+
+  it('卷节点能导出这一卷', () => {
+    const v = verbsForStation(YANPIN_EYE, 'vol-1')
+    expect(v.find((x) => x.id === 'export-volume')?.ok).toBe(true)
+  })
+
   it('已入卷但摘要空，不准开下一章', () => {
     const adopted = {
       ...YANPIN_EYE,

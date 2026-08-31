@@ -5,7 +5,14 @@ import { atom } from 'nanostores'
 import { isTauriRuntime } from '../bridge'
 import { emptyBook } from './model/empty-book'
 import { gapLabel } from './framework/station'
-import { chapterCountFor } from './framework/scale'
+import {
+  acceptedChars,
+  chapterCountFor,
+  NOVEL_SCALE,
+  parseChapterWords,
+  remainToTarget,
+  volumeLandLine,
+} from './framework/scale'
 import type { BookDemo } from './model/types'
 import {
   isLoadableBook,
@@ -24,6 +31,11 @@ export type WritingShelfItem = {
   title: string
   updated_at: string
   accepted: number
+  accepted_chars: number
+  target_chars: number
+  remain_chars: number
+  volume_line: string
+  aim: number
   has_candidate: boolean
   land_line: string
 }
@@ -36,22 +48,35 @@ export const $writingLoaded = atom(false)
 
 export function shelfFromBook(book: BookDemo): WritingShelfItem {
   const prog = bookProgress(book)
+  const chars = acceptedChars(book)
   return {
     id: book.id,
     title: book.title,
     updated_at: book.updatedAt ?? '',
     accepted: prog.done,
+    accepted_chars: chars,
+    target_chars: NOVEL_SCALE.targetChars,
+    remain_chars: remainToTarget(book),
+    volume_line: volumeLandLine(book),
+    aim: prog.aim,
     has_candidate: bookStatus(book).tone === 'is-cand',
     land_line: bookLandLine(book),
   }
 }
 
 export function shelfFromMeta(m: WritingBookMeta): WritingShelfItem {
+  const accepted_chars = m.accepted_chars ?? 0
+  const target_chars = m.target_chars ?? NOVEL_SCALE.targetChars
   return {
     id: m.id,
     title: m.title,
     updated_at: m.updated_at,
     accepted: m.accepted ?? 0,
+    accepted_chars,
+    target_chars,
+    remain_chars: m.remain_chars ?? Math.max(0, target_chars - accepted_chars),
+    volume_line: m.volume_line || '',
+    aim: m.aim ?? WRITING_CHAPTER_AIM,
     has_candidate: m.has_candidate ?? false,
     land_line: m.land_line || '开卷',
   }
@@ -84,8 +109,12 @@ export function mapWritingBooks(fn: (list: BookDemo[]) => BookDemo[]) {
 
 export function bookProgress(book: BookDemo): { done: number; aim: number; pct: number } {
   const done = book.drafts.filter((d) => d.accepted).length
-  const aim = WRITING_CHAPTER_AIM
-  const pct = aim > 0 ? Math.min(100, Math.round((done / aim) * 1000) / 10) : 0
+  const aim = chapterCountFor(NOVEL_SCALE.targetChars, parseChapterWords(book.canon.chapterWords).aim)
+  const chars = acceptedChars(book)
+  const pct =
+    NOVEL_SCALE.targetChars > 0
+      ? Math.min(100, Math.round((chars / NOVEL_SCALE.targetChars) * 1000) / 10)
+      : 0
   return { done, aim, pct }
 }
 

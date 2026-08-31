@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { YANPIN_EYE } from './demo-yanpin'
 import { applyReviewFromJson, registerForeshadowsFromReview } from './apply'
-import { exportBookPlain, exportChapterPlain, reviewBlocksAdopt, styleHits } from './review-gate'
+import {
+  exportBookPlain,
+  exportChapterPlain,
+  exportVolumePlain,
+  reviewBlocksAdopt,
+  styleHits,
+  wordCountNotes,
+} from './review-gate'
 import { verbsForStation } from '../framework/station'
 
 function acceptedWithReview(json: Record<string, unknown>) {
@@ -77,12 +84,22 @@ describe('入卷硬门', () => {
     expect(blocked.hints.join('')).toMatch(/摘要/)
   })
 
-  it('按章导出正文；全书只拼有正文的章', () => {
-    expect(exportChapterPlain(YANPIN_EYE, 'ch-4')).toContain('旧门只开一条缝')
-    expect(exportChapterPlain(YANPIN_EYE, 'ch-4')).toMatch(/第4章/)
+  it('导出只出正史，试笔不进 txt', () => {
+    expect(exportChapterPlain(YANPIN_EYE, 'ch-4')).toBe('')
+    expect(exportChapterPlain(YANPIN_EYE, 'ch-1')).toContain('夜场灯把他按在拍品前')
     const all = exportBookPlain(YANPIN_EYE)
     expect(all).toContain('赝品眼')
-    expect(all).toContain('第4章')
-    expect(all).toContain('旧门只开一条缝')
+    expect(all).toContain('第1章')
+    expect(all).not.toContain('铁架上的编号贴纸')
+    const vol = exportVolumePlain(YANPIN_EYE, 'vol-1')
+    expect(vol).toContain('第1章')
+    expect(vol).not.toContain('铁架上的编号贴纸')
+  })
+
+  it('字数不够或超了只警告，不挡入卷', () => {
+    const short = acceptedWithReview({ unnumbered: '无' })
+    const notes = wordCountNotes(short, 'ch-4')
+    expect(notes.join('')).toMatch(/字/)
+    expect(reviewBlocksAdopt(short, 'ch-4').ok).toBe(true)
   })
 })

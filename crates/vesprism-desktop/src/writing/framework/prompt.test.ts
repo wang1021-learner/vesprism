@@ -51,6 +51,14 @@ describe('写手提示词', () => {
     expect(sys).toMatch(/发明新规则/)
     expect(sys).toMatch(/【/)
     expect(sys).toMatch(/禁止调用任何工具/)
+    expect(sys).not.toMatch(/800～1200/)
+  })
+
+  it('写手用户词按尺规拆每块字数，不写死 800～1200', () => {
+    const user = writerUser(YANPIN_EYE, 'ch-4')
+    expect(user).toBeTruthy()
+    expect(user).toContain('每块大约')
+    expect(user).not.toMatch(/一块 800/)
   })
 
   it('写手用户词带上这一次的一句约束', () => {

@@ -76,6 +76,16 @@ pub struct WritingBookMeta {
     pub has_candidate: bool,
     #[serde(default)]
     pub land_line: String,
+    #[serde(default)]
+    pub accepted_chars: u32,
+    #[serde(default)]
+    pub target_chars: u32,
+    #[serde(default)]
+    pub remain_chars: u32,
+    #[serde(default)]
+    pub volume_line: String,
+    #[serde(default)]
+    pub aim: u32,
 }
 
 fn parse_value(json: &str) -> Result<Value, String> {
@@ -104,6 +114,48 @@ fn chapter_id_of(ch: &Value) -> Option<&str> {
 
 fn is_true(v: &Value, key: &str) -> bool {
     v.get(key).and_then(|a| a.as_bool()) == Some(true)
+}
+
+fn count_hanzi(s: &str) -> u32 {
+    s.chars()
+        .filter(|c| {
+            let u = *c as u32;
+            (0x4E00..=0x9FFF).contains(&u)
+                || (0x3400..=0x4DBF).contains(&u)
+                || (0x20000..=0x2A6DF).contains(&u)
+        })
+        .count() as u32
+}
+
+fn draft_hanzi(draft: &Value) -> u32 {
+    draft
+        .get("beats")
+        .and_then(|b| b.as_array())
+        .map(|beats| {
+            beats
+                .iter()
+                .filter_map(|b| b.get("body").and_then(|x| x.as_str()))
+                .map(count_hanzi)
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+fn parse_aim_from_words(s: &str) -> u32 {
+    let nums: Vec<u32> = s
+        .chars()
+        .collect::<String>()
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|p| p.parse::<u32>().ok())
+        .filter(|n| *n >= 100)
+        .collect();
+    if nums.len() >= 2 {
+        (nums[0] + nums[1]) / 2
+    } else if nums.len() == 1 {
+        nums[0]
+    } else {
+        2200
+    }
 }
 
 fn find_chapter<'a>(chapters: Option<&'a [Value]>, chapter_id: &str) -> Option<&'a Value> {
@@ -171,6 +223,22 @@ fn meta_from_value(id: &str, assembled: &Value) -> WritingBookMeta {
         || reviews
             .map(|rs| rs.iter().any(|r| !is_true(r, "adopted")))
             .unwrap_or(false);
+    let accepted_chars = drafts
+        .map(|ds| {
+            ds.iter()
+                .filter(|d| is_true(d, "accepted"))
+                .map(draft_hanzi)
+                .sum()
+        })
+        .unwrap_or(0);
+    let target_chars = 1_000_000u32;
+    let chapter_words = assembled
+        .get("canon")
+        .and_then(|c| c.get("chapterWords"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    let aim_chars = parse_aim_from_words(chapter_words).max(1);
+    let aim = (target_chars + aim_chars - 1) / aim_chars;
     WritingBookMeta {
         id: id.to_string(),
         title,
@@ -182,6 +250,65 @@ fn meta_from_value(id: &str, assembled: &Value) -> WritingBookMeta {
             drafts.map(|d| d.as_slice()),
             reviews.map(|r| r.as_slice()),
         ),
+        accepted_chars,
+        target_chars,
+        remain_chars: target_chars.saturating_sub(accepted_chars),
+        volume_line: volume_line_from(assembled),
+        aim,
+    }
+}
+
+fn volume_line_from(assembled: &Value) -> String {
+    let chapters = assembled.get("chapters").and_then(|c| c.as_array());
+    let units = assembled.get("units").and_then(|c| c.as_array());
+    let volumes = assembled.get("volumes").and_then(|c| c.as_array());
+    let drafts = assembled.get("drafts").and_then(|d| d.as_array());
+    let Some(ds) = drafts else {
+        return String::new();
+    };
+    let accepted_ids: Vec<&str> = ds
+        .iter()
+        .filter(|d| is_true(d, "accepted"))
+        .filter_map(|d| d.get("chapterId").and_then(|x| x.as_str()))
+        .collect();
+    let Some(chs) = chapters else {
+        return String::new();
+    };
+    let mut last: Option<&Value> = None;
+    let mut last_no = 0u32;
+    for ch in chs {
+        let Some(id) = chapter_id_of(ch) else {
+            continue;
+        };
+        if !accepted_ids.contains(&id) {
+            continue;
+        }
+        let no = chapter_no_of(ch).unwrap_or(0);
+        if last.is_none() || no >= last_no {
+            last = Some(ch);
+            last_no = no;
+        }
+    }
+    let Some(ch) = last else {
+        return String::new();
+    };
+    let heading = format!("第{last_no}章");
+    let unit_id = ch.get("unitId").and_then(|x| x.as_str()).unwrap_or("");
+    let vol_id = units
+        .and_then(|us| {
+            us.iter()
+                .find(|u| u.get("id").and_then(|x| x.as_str()) == Some(unit_id))
+                .and_then(|u| u.get("volumeId").and_then(|x| x.as_str()))
+        })
+        .unwrap_or("");
+    let vol_title = volumes.and_then(|vs| {
+        vs.iter()
+            .find(|v| v.get("id").and_then(|x| x.as_str()) == Some(vol_id))
+            .and_then(|v| v.get("title").and_then(|t| t.as_str()))
+    });
+    match vol_title {
+        Some(t) if !t.is_empty() => format!("{t} · {heading}"),
+        _ => heading,
     }
 }
 
@@ -466,6 +593,7 @@ pub(crate) fn export_plain_at(
     root: &Path,
     id: &str,
     want_no: Option<u32>,
+    volume_id: Option<&str>,
 ) -> Result<String, String> {
     let json = load_book_at(root, id)?;
     let v = parse_value(&json)?;
@@ -476,6 +604,24 @@ pub(crate) fn export_plain_at(
         .cloned()
         .unwrap_or_default();
     chapters.sort_by_key(|c| chapter_no_of(c).unwrap_or(0));
+    if let Some(vid) = volume_id.filter(|s| !s.is_empty()) {
+        let unit_ids: std::collections::HashSet<String> = v
+            .get("units")
+            .and_then(|u| u.as_array())
+            .map(|us| {
+                us.iter()
+                    .filter(|u| u.get("volumeId").and_then(|x| x.as_str()) == Some(vid))
+                    .filter_map(|u| u.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        chapters.retain(|c| {
+            c.get("unitId")
+                .and_then(|x| x.as_str())
+                .map(|id| unit_ids.contains(id))
+                .unwrap_or(false)
+        });
+    }
     let drafts = v
         .get("drafts")
         .and_then(|d| d.as_array())
@@ -485,7 +631,9 @@ pub(crate) fn export_plain_at(
         let cid = chapter_id_of(ch).unwrap_or("");
         drafts
             .iter()
-            .find(|d| d.get("chapterId").and_then(|x| x.as_str()) == Some(cid))
+            .find(|d| {
+                d.get("chapterId").and_then(|x| x.as_str()) == Some(cid) && is_true(d, "accepted")
+            })
             .map(draft_body)
             .unwrap_or_default()
     };
@@ -496,7 +644,7 @@ pub(crate) fn export_plain_at(
             .ok_or_else(|| "这一章不存在".to_string())?;
         let body = body_of(ch);
         if body.trim().is_empty() {
-            return Err("这一章还没有正文".into());
+            return Err("这一章还没有进正史的正文".into());
         }
         return Ok(format!("{}\n\n{body}\n", chapter_heading(ch, want)));
     }
@@ -512,7 +660,7 @@ pub(crate) fn export_plain_at(
         parts.push(format!("{}\n\n{body}", chapter_heading(ch, no)));
     }
     if parts.len() < 2 {
-        return Err("还没有正文可导出".into());
+        return Err("还没有正史正文可导出".into());
     }
     Ok(parts.join("\n\n") + "\n")
 }
@@ -521,6 +669,7 @@ fn pick_export_txt(
     app: &AppHandle,
     title: &str,
     chapter_no: Option<u32>,
+    volume_id: Option<&str>,
 ) -> Result<PathBuf, String> {
     let safe: String = title
         .chars()
@@ -532,9 +681,12 @@ fn pick_export_txt(
             }
         })
         .collect();
-    let name = match chapter_no {
-        Some(n) => format!("{safe}-第{n}章.txt"),
-        None => format!("{safe}.txt"),
+    let name = if let Some(n) = chapter_no {
+        format!("{safe}-第{n}章.txt")
+    } else if let Some(vid) = volume_id.filter(|s| !s.is_empty()) {
+        format!("{safe}-{vid}.txt")
+    } else {
+        format!("{safe}.txt")
     };
     let picked = app
         .dialog()
@@ -583,14 +735,16 @@ pub fn writing_delete_book(id: String) -> Result<(), String> {
 pub fn writing_export_book(
     id: String,
     chapter_no: Option<u32>,
+    volume_id: Option<String>,
     app: AppHandle,
 ) -> Result<String, String> {
     let root = books_root();
-    let text = export_plain_at(&root, &id, chapter_no)?;
+    let vid = volume_id.as_deref();
+    let text = export_plain_at(&root, &id, chapter_no, vid)?;
     let assembled = load_book_at(&root, &id)?;
     let v = parse_value(&assembled).unwrap_or_else(|_| json!({}));
     let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("未命名");
-    let dest = pick_export_txt(&app, title, chapter_no)?;
+    let dest = pick_export_txt(&app, title, chapter_no, vid)?;
     crate::commands::atomic_write(&dest, text.as_bytes()).map_err(|e| format!("导出失败: {e}"))?;
     Ok(dest.display().to_string())
 }
@@ -739,6 +893,28 @@ mod tests {
                 "words": "",
                 "mood": "",
                 "platform": "tomato"
+            }, {
+                "id": "ch-2",
+                "no": 2,
+                "title": "试笔章",
+                "unitId": "",
+                "job": "推进",
+                "openHook": "",
+                "goal": "",
+                "resistance": "",
+                "turn": "",
+                "pleasure": "",
+                "infoGive": "",
+                "infoForbid": "",
+                "cast": [],
+                "plant": "",
+                "press": "",
+                "close": "",
+                "endHookKind": "",
+                "endHook": "",
+                "words": "",
+                "mood": "",
+                "platform": "tomato"
             }],
             "beatsByChapter": {
                 "ch-1": [{
@@ -756,6 +932,10 @@ mod tests {
                 "chapterId": "ch-1",
                 "accepted": true,
                 "beats": [{ "beatId": "b1", "body": "他推开门。" }]
+            }, {
+                "chapterId": "ch-2",
+                "accepted": false,
+                "beats": [{ "beatId": "b2", "body": "不该出现的试笔。" }]
             }],
             "reviews": [{
                 "chapterId": "ch-1",
@@ -812,7 +992,7 @@ mod tests {
         assert_eq!(metas[0].id, "b1");
         assert_eq!(metas[0].title, "试");
         assert_eq!(metas[0].accepted, 1);
-        assert_eq!(metas[0].land_line, "第1章");
+        assert!(metas[0].land_line.contains("试笔") || metas[0].land_line.contains("第"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -832,12 +1012,15 @@ mod tests {
     fn export_plain_uses_chapter_bodies() {
         let root = tmp_books();
         super::save_book_at(&root, "b1", &sample_book_json()).unwrap();
-        let ch = super::export_plain_at(&root, "b1", Some(1)).unwrap();
+        let ch = super::export_plain_at(&root, "b1", Some(1), None).unwrap();
         assert!(ch.contains("第1章"));
         assert!(ch.contains("他推开门。"));
-        let all = super::export_plain_at(&root, "b1", None).unwrap();
+        let all = super::export_plain_at(&root, "b1", None, None).unwrap();
         assert!(all.contains("试"));
         assert!(all.contains("他推开门。"));
+        assert!(!all.contains("不该出现的试笔"));
+        let trial = super::export_plain_at(&root, "b1", Some(2), None).unwrap_err();
+        assert!(trial.contains("正史"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

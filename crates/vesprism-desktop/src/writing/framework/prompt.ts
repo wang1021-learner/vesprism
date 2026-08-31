@@ -4,8 +4,10 @@ import type { BeatCard, BookDemo, ChapterCard, DraftPage } from '../model/types'
 import type { ChatMessage } from '../../types'
 import type { WriteSlice } from '../model/slice'
 import { writeSlice } from '../model/slice'
+import { beatAimChars } from './scale'
 import { effectiveSentenceBan } from '../model/sentence-ban'
 import type { FillCardTarget } from '../model/apply'
+import { nextChapterDebts } from '../model/create'
 import { draftBodyForBeat, FILL_TARGET_LABEL } from '../model/apply'
 
 // ── 任务标记：写台发给引擎的 user 消息前缀，回合归属 + 挂载恢复都靠它 ──
@@ -16,6 +18,8 @@ export function taskLabel(kind: string): string {
   switch (kind) {
     case 'write-chapter':
       return '写这一章'
+    case 'finish-chapter':
+      return '写完这一章'
     case 'fill-review':
       return '检查这一章'
     case 'rewrite':
@@ -157,7 +161,7 @@ export function writerSystem(): string {
     '你只吃用户给出的切片：尺规切片、出场人物当前态、到期伏笔、节拍、上章摘要。',
     '禁止调用任何工具：不要写文件、不要跑命令。只把正文打在回复里。',
     '禁止：总纲全文、未出场人物档案、发明新规则、让人说出不能知道的、系统弹窗、章末总结句、解释你的写法。',
-    '按节拍一块一块写。一块 800～1200 字。章目标字数以切片为准。',
+    '按节拍一块一块写。每块字数看用户切片里的章目标和每块大约字数，不要按固定块长写。',
     '输出格式：每一块必须以【节拍标题】起头，标题与切片里的节拍标题一字不差。不要标题党，不要写作说明。',
   ].join('\n')
 }
@@ -214,6 +218,8 @@ export function fillCardUser(
         '平台番茄：openHook 必须是开场 300 字内落地的物理事件（有人、有动作、有现场），禁止心理独白或氛围空镜当钩。',
       )
     }
+    const debts = nextChapterDebts(book, String(card.id ?? ''))
+    if (debts) lines.push(debts)
   }
   if (target === 'beats') {
     const cid = String(card.chapterId ?? '')
@@ -270,6 +276,7 @@ function sliceLines(slice: WriteSlice, book: BookDemo): string[] {
     `本章：第${slice.no}章 ${slice.title || '未拟题'}`,
     `视角：${slice.canon.pov}`,
     `章目标字数：${slice.canon.chapterWords}`,
+    `每块大约 ${beatAimChars(slice.canon.chapterWords, slice.beats.length || 3)} 字`,
     `力量上限：${slice.canon.powerCap}`,
     `叙事禁：${slice.canon.narrativeBan}`,
     `句式禁：${effectiveSentenceBan(slice.canon.sentenceBan)}`,

@@ -196,7 +196,23 @@ export function verbsForStation(
     return [verb('split-volume', '拆这一卷', book.volumes.length > 0 || filled(book.outline.causality), '长线在，拆这一卷。'), ask]
   }
   if (parsed.kind === 'volume') {
-    return [verb('split-unit', '拆这几章', true, '卷纲在，拆战役。'), ask]
+    const volChapters = book.chapters.filter((c) => {
+      const u = book.units.find((x) => x.id === c.unitId)
+      return u?.volumeId === parsed.id
+    })
+    const hasCanon = volChapters.some((c) => book.drafts.some((d) => d.chapterId === c.id && d.accepted))
+    return [
+      verb('split-unit', '拆这几章', true, '卷纲在，拆战役。'),
+      verb(
+        'export-volume',
+        '导出这一卷',
+        hasCanon,
+        hasCanon ? '只出已进正史的正文。' : '这一卷还没有正史正文。',
+        'read',
+        'ask',
+      ),
+      ask,
+    ]
   }
   if (parsed.kind === 'unit') {
     return [verb('split-chapter', '写章纲', true, '单元在，写这一章纲。'), ask]
@@ -225,6 +241,12 @@ export function verbsForStation(
             : '按章纲切成可写的块。',
       ),
       verb('write-chapter', '写这一章', write.ok, write.hint),
+      verb(
+        'finish-chapter',
+        '写完这一章',
+        write.ok,
+        write.ok ? '写、进正史、检查，停在入卷。人确认才改案卷。' : write.hint,
+      ),
       verb('rewrite-span', '重写这一块', Boolean(draft), draft ? '先在稿纸上点一块。' : '还没有试笔稿纸。'),
       verb(
         'wash-span',

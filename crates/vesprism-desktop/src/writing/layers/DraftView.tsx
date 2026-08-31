@@ -1,10 +1,7 @@
 import { Section, Stamp } from '../fields/Field'
+import { countHanzi, parseChapterWords } from '../framework/scale'
 import { useOptionalPatch } from '../fields/edit-ctx'
 import type { BeatCard, DraftPage } from '../model/types'
-
-function charCount(draft: DraftPage): number {
-  return draft.beats.reduce((n, b) => n + b.body.replace(/\s/g, '').length, 0)
-}
 
 export function DraftView({
   draft,
@@ -12,6 +9,7 @@ export function DraftView({
   chapterNo,
   title,
   wordsBudget,
+  chapterWords,
   mood,
   selectedBeatId,
   onSelectBeat,
@@ -24,6 +22,7 @@ export function DraftView({
   chapterNo: number
   title?: string
   wordsBudget?: string
+  chapterWords?: string
   mood?: string
   selectedBeatId?: string
   onSelectBeat?: (id: string) => void
@@ -42,13 +41,15 @@ export function DraftView({
     )
   }
   const candidate = !draft.accepted
-  const chars = charCount(draft)
+  const chars = countHanzi(draft.beats.map((b) => b.body).join(''))
+  const { min, max, aim } = parseChapterWords(chapterWords || wordsBudget)
   return (
     <Section lot="稿纸" title={`第${chapterNo}章 ${title || ''}`.trim()}>
       <div className="wd-mast">
         <Stamp tone={candidate ? 'due' : 'ok'}>{candidate ? '试笔 · 还不是正史' : '已进正史'}</Stamp>
         <span className="wd-mast-stat">
-          {chars} 字{wordsBudget ? ` · 预算 ${wordsBudget}` : ''}
+          已写 {chars} / 目标 {aim}
+          {min !== max ? `（${min}～${max}）` : ''}
         </span>
         {mood ? <span className="wd-mast-mood">{mood}</span> : null}
         {candidate ? (

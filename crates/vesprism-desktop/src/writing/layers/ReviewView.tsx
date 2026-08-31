@@ -7,12 +7,14 @@ export function ReviewView({
   chapterNo,
   blocks,
   styleNotes,
+  wordNotes,
   onRegisterUnnumbered,
 }: {
   card: ReviewCard | undefined
   chapterNo: number
   blocks?: string[]
   styleNotes?: string[]
+  wordNotes?: string[]
   onRegisterUnnumbered?: () => void
 }) {
   const patch = usePatch()
@@ -50,6 +52,11 @@ export function ReviewView({
       {blocks && blocks.length > 0 ? (
         <p className="wd-lead" role="status">
           {blocks.join('；')}
+        </p>
+      ) : null}
+      {wordNotes && wordNotes.length > 0 ? (
+        <p className="wd-lead" role="status">
+          {wordNotes.join('；')} 先警告，不挡入卷。
         </p>
       ) : null}
       {styleNotes && styleNotes.length > 0 ? (

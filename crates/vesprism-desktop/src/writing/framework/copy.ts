@@ -90,7 +90,7 @@ export function stepJob(kind: ParsedNode['kind']): StepJob {
     case 'beats':
       return {
         title: '把这一章切成可写的块',
-        does: '一块只干一件事，大约 800 到 1200 字。写正文时模型只吃这些块。',
+        does: '一块只干一件事。字数按尺规均分到各块。写正文时模型只吃这些块。',
         you: '至少三块才能写本章。没有块就点「把这章切开」或自己加一块。',
       }
     case 'draft':
@@ -118,6 +118,8 @@ export const VERB_DOES: Record<string, string> = {
   'split-chapter': '按单元写出这一章的钩子和目标。',
   'split-beats': '把章纲切成至少三块可写的场面。',
   'write-chapter': '按切块写这一章。先试笔，不进正史。',
+  'finish-chapter': '写完进正史并检查，停在入卷。',
+  'export-volume': '把这一卷已进正史的正文存成 txt。',
   'rewrite-span': '只重写你点中的那一块，其余不动。',
   'wash-span': '只改这一块的套话。情节、对白要点、落点不动。',
   'fill-review': '对照章纲和设定检查这一章。先出检查单。',

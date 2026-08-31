@@ -150,6 +150,8 @@ export interface ChapterCard {
   infoGive: string
   infoForbid: string
   cast: string[]
+  /** 这一章在哪：地点 id。切片吃这里，不靠人物 cast。 */
+  where?: string[]
   plant: string
   press: string
   close: string

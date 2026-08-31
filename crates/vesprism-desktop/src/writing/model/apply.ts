@@ -2,7 +2,7 @@
  * 写台「真实回写」纯函数：AI 产出 → 试笔草稿 / 检查单 / 补卡 / 入卷。
  * 不碰 store、不落盘，全部可单测。
  */
-import { addChapter, addForeshadow, addPerson, addUnit, addVolume, resolveCastIds, splitSlash } from './create'
+import { addChapter, addForeshadow, addPerson, addUnit, addVolume, resolveCastIds, resolvePlaceIds, splitSlash } from './create'
 import { unnumberedIsEmpty } from './review-gate'
 import type {
   BeatCard,
@@ -545,7 +545,8 @@ export function applyFillResult(
       chapters: book.chapters.map((c) => {
         if (c.id !== id) return c
         const cast = 'cast' in card ? resolveCastIds(book, card.cast) : c.cast
-        return { ...c, ...card, id, cast } as ChapterCard
+        const where = 'where' in card ? resolvePlaceIds(book, card.where) : c.where
+        return { ...c, ...card, id, cast, where } as ChapterCard
       }),
     }
   }

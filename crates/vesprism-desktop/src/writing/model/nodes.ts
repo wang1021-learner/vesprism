@@ -172,3 +172,29 @@ export function chapterHasStack(
     review: book.reviews.some((r) => r.chapterId === chapterId),
   }
 }
+
+export type ChapterWorkState = 'empty' | 'draft' | 'reviewed' | 'adopted'
+
+export function chapterWorkState(book: BookDemo, chapterId: string): ChapterWorkState {
+  const review = book.reviews.find((r) => r.chapterId === chapterId)
+  if (review?.adopted) return 'adopted'
+  if (review) return 'reviewed'
+  const draft = book.drafts.find((d) => d.chapterId === chapterId)
+  if (draft?.accepted) return 'reviewed'
+  if (draft) return 'draft'
+  return 'empty'
+}
+
+export function chapterWorkLabel(state: ChapterWorkState): string {
+  if (state === 'adopted') return '已入卷'
+  if (state === 'reviewed') return '已检'
+  if (state === 'draft') return '试笔'
+  return '空'
+}
+
+export function chapterWorkJump(book: BookDemo, chapterId: string): DeskNodeId {
+  const st = chapterWorkState(book, chapterId)
+  if (st === 'adopted' || st === 'reviewed') return reviewNode(chapterId)
+  if (st === 'draft') return draftNode(chapterId)
+  return chapterId
+}

@@ -1,6 +1,6 @@
 import { Field, FieldRow, Section, Zone } from '../fields/Field'
 import { usePatch } from '../fields/edit-ctx'
-import { resolveCastIds, splitSlash } from '../model/create'
+import { resolveCastIds, resolvePlaceIds, splitSlash } from '../model/create'
 import type { BookDemo, ChapterCard } from '../model/types'
 
 const JOBS = ['推进', '兑现', '缓冲', '翻盘'] as const
@@ -10,7 +10,15 @@ function parseCast(book: BookDemo, text: string): string[] {
   return resolveCastIds(book, splitSlash(text))
 }
 
-export function ChapterView({ card, castLabels }: { card: ChapterCard; castLabels?: string }) {
+export function ChapterView({
+  card,
+  castLabels,
+  whereLabels,
+}: {
+  card: ChapterCard
+  castLabels?: string
+  whereLabels?: string
+}) {
   const patch = usePatch()
   const set = (partial: Partial<ChapterCard>) =>
     patch((b) => ({
@@ -109,6 +117,17 @@ export function ChapterView({ card, castLabels }: { card: ChapterCard; castLabel
             ...b,
             chapters: b.chapters.map((c) =>
               c.id === card.id ? { ...c, cast: parseCast(b, v) } : c,
+            ),
+          }))}
+        />
+        <Field
+          label="这一章在哪"
+          value={whereLabels || (card.where || []).join(' / ')}
+          disabled={locked}
+          onChange={(v) => patch((b) => ({
+            ...b,
+            chapters: b.chapters.map((c) =>
+              c.id === card.id ? { ...c, where: resolvePlaceIds(b, splitSlash(v)) } : c,
             ),
           }))}
         />

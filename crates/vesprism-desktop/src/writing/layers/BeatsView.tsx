@@ -30,7 +30,7 @@ export function BeatsView({
         lot="切块"
         kicker={`第${chapter.no}章`}
         title="还没有切块"
-        lead="一块只干一件事，800 到 1200 字。没有至少三块，不能写正文。"
+        lead="一块只干一件事。字数按尺规均分到各块。没有至少三块，不能写正文。"
       >
         {chapter.locked ? <p className="wd-lock-banner">{chapter.lockReason}</p> : null}
         <button
