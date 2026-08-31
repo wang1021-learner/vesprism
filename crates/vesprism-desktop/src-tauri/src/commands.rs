@@ -560,6 +560,74 @@ pub async fn edit_queued_prompt(
 }
 
 #[tauri::command]
+pub async fn reorder_queued_prompts(
+    tab_id: String,
+    ordered_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| {
+        ActorCommand::ReorderQueuedPrompts { ordered_ids, reply }
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_queued_prompts(
+    tab_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::ClearQueuedPrompts {
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn interject_queued_prompt(
+    tab_id: String,
+    id: String,
+    expected_version: Option<u64>,
+    new_text: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| {
+        ActorCommand::InterjectQueuedPrompt {
+            id,
+            expected_version: expected_version.unwrap_or(0),
+            new_text,
+            reply,
+        }
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn hold_queued_edit(
+    tab_id: String,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::HoldQueuedEdit {
+        id,
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn release_queued_edit(
+    tab_id: String,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    send_cmd(&state, &tab_id, |reply| ActorCommand::ReleaseQueuedEdit {
+        id,
+        reply,
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn session_caps(
     tab_id: String,
     state: State<'_, AppState>,
@@ -1519,9 +1587,7 @@ fn replace_without_unlinking_dest(tmp: &Path, dest: &Path) -> Result<(), String>
     if dest.exists() {
         let bak_name = format!(
             "{}.bak",
-            dest.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("file")
+            dest.file_name().and_then(|s| s.to_str()).unwrap_or("file")
         );
         let bak = dest.with_file_name(bak_name);
         std::fs::copy(dest, &bak).map_err(|e| format!("备份失败: {e}"))?;
@@ -2033,7 +2099,8 @@ fn json_tri_mode(v: Option<&serde_json::Value>) -> String {
 
 /// 引擎内置官方 Grok 目录（`default_models.json`）。登录后并进设置列表。
 fn official_xai_model_dtos() -> Vec<ModelEntryDto> {
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(xai_grok_shell::models::DEFAULT_MODELS_JSON)
+    let Ok(root) =
+        serde_json::from_str::<serde_json::Value>(xai_grok_shell::models::DEFAULT_MODELS_JSON)
     else {
         return Vec::new();
     };
@@ -4166,10 +4233,7 @@ mod official_xai_catalog_tests {
         assert!(g.supports_reasoning_effort);
         assert_eq!(g.env_key, "");
         assert_eq!(g.source, "official");
-        assert_eq!(
-            g.reasoning_efforts,
-            vec!["xhigh", "high", "medium", "low"]
-        );
+        assert_eq!(g.reasoning_efforts, vec!["xhigh", "high", "medium", "low"]);
         let g45 = models.iter().find(|m| m.id == "grok-4.5").unwrap();
         assert_eq!(g45.reasoning_efforts, vec!["high", "medium", "low"]);
     }

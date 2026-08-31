@@ -193,6 +193,40 @@ describe('turn_ended status', () => {
   })
 })
 
+describe('queue_changed', () => {
+  it('合并开跑后按原文拆成多条用户气泡', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'queue_changed',
+      entries: [],
+      running_prompt_id: 'p-run',
+      running_text: '改登录\n\n再补测试',
+      running_combined_texts: ['改登录', '再补测试'],
+    })
+    const users = (getTabState('tab-1')?.messages ?? []).filter(
+      (m) => m.role === 'user' && m.promptId === 'p-run',
+    )
+    expect(users.map((m) => m.text)).toEqual(['改登录', '再补测试'])
+    expect(getTabState('tab-1')?.status).toBe('generating')
+  })
+
+  it('本地乐观项尚未进 entries 时先留着', () => {
+    patchTab('tab-1', {
+      queuedPrompts: [
+        { id: 'p2', version: 0, text: 'next', position: 0 },
+        { id: 'p3', version: 0, text: 'later', position: 1 },
+      ],
+    })
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'queue_changed',
+      entries: [{ id: 'p2', version: 1, text: 'next', position: 0 }],
+      running_prompt_id: 'p1',
+    })
+    expect(getTabState('tab-1')?.queuedPrompts.map((q) => q.id)).toEqual(['p2', 'p3'])
+  })
+})
+
 describe('崩溃恢复与错误提示', () => {
   it('切工作区 restarting 时忽略 reconnecting，不当成恢复旧对话', async () => {
     const { startSession } = await import('../bridge')

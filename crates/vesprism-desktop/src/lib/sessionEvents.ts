@@ -43,7 +43,7 @@ import {
   isAttachingRuntime,
   pushTranscriptEvent,
 } from './sessionOpen'
-import { applyTranscriptEvent } from './sessionTranscript'
+
 import { refreshSubagentTabMessages } from './openSubagentTab'
 import { markToolSession } from '../workbench/bindings'
 import { spawnReasoningEffort } from './reasoning'
@@ -64,6 +64,11 @@ import { keepTail } from './terminalCards'
 import { notifyChatsChanged, upsertLiveChat } from './recordSessionInSidebar'
 import { cleanSessionTitle } from './sessionTitle'
 import { applyScheduledTask } from './scheduleLoop'
+import {
+  mergeQueueEntries,
+  paintRunningUserBubbles,
+  type QueueRow,
+} from './queueChanged'
 
 export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) {
   // 事件路由：先按 ev.tab_id 写对应 tab 的 map（非活跃 tab 也照常更新——
@@ -90,40 +95,38 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       break
     }
     case 'queue_changed': {
-      const server: QueuedPrompt[] = (ev.entries ?? [])
-        .filter((e): e is { id: string; version?: number; text?: string; position?: number } =>
+      const server: QueueRow[] = (ev.entries ?? [])
+        .filter((e): e is { id: string; version?: number; text?: string; position?: number; combinedTexts?: string[]; combined_texts?: string[] } =>
           Boolean(e.id),
         )
-        .map((e) => ({
-          id: e.id,
-          version: e.version ?? 0,
-          text: e.text ?? '',
-          position: e.position ?? 0,
-        }))
-        .sort((a, b) => a.position - b.position)
+        .map((e) => {
+          const combined = e.combinedTexts ?? e.combined_texts
+          return {
+            id: e.id,
+            version: e.version ?? 0,
+            text: e.text ?? '',
+            position: e.position ?? 0,
+            ...(combined && combined.length >= 2 ? { combinedTexts: combined } : {}),
+          }
+        })
       const running = ev.running_prompt_id || undefined
-      const serverIds = new Set(server.map((e) => e.id))
-      // 官方广播可能晚于本地乐观插入：尚未出现在 entries 里的本地项先留着
-      const extras = (getTabState(tabId)?.queuedPrompts ?? []).filter(
-        (q) => !serverIds.has(q.id) && q.id !== running,
+      const entries: QueuedPrompt[] = mergeQueueEntries(
+        server,
+        getTabState(tabId)?.queuedPrompts ?? [],
+        running,
       )
-      const entries = extras.length
-        ? [...server, ...extras.map((q, i) => ({ ...q, position: server.length + i }))]
-        : server
       const stillBusy = Boolean(running) || entries.length > 0
       const patch: Parameters<typeof patchTab>[1] = { queuedPrompts: entries }
       if (stillBusy) patch.status = 'generating'
-      if (running && ev.running_text) {
-        const msgs = getTabState(tabId)?.messages ?? []
-        const already = msgs.some((m) => m.role === 'user' && m.promptId === running)
-        if (!already) {
-          const bgs = new Set(Object.keys(getTabState(tabId)?.backgroundTasks || {}))
-          patch.messages = applyTranscriptEvent(msgs, {
-            type: 'user_text_chunk',
-            text: ev.running_text,
-            prompt_id: running,
-          }, bgs, tabId)
-        }
+      if (running) {
+        const combined =
+          ev.running_combined_texts ?? ev.runningCombinedTexts ?? undefined
+        patch.messages = paintRunningUserBubbles(
+          getTabState(tabId)?.messages ?? [],
+          running,
+          ev.running_text || undefined,
+          combined ?? undefined,
+        )
       }
       patchTab(tabId, patch)
       break

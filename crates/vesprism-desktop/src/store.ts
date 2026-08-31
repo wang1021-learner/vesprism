@@ -170,6 +170,7 @@ export type QueuedPrompt = {
   version: number
   text: string
   position: number
+  combinedTexts?: string[]
 }
 
 export type SessionAlertKind = 'overflow' | 'rate' | 'auth'

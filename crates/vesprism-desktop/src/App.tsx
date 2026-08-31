@@ -67,12 +67,13 @@ const WritingDesk = lazy(() => import('./writing'))
 import {
   addProject,
   getModelSettings, isTauriRuntime, listSessions,
-  listenSessionEvents, openTab, removeQueuedPrompt, editQueuedPrompt, setCurrentModel,
+  listenSessionEvents, openTab, setCurrentModel,
   getEnginePrefs, setEnginePrefs,
   startSession, workspaceCwd, scratchCwd, getSecurityPolicy,
   type PromptAttach,
 } from './bridge'
 import { sendSessionPrompt } from './lib/sendSessionPrompt'
+import { useQueuedPromptActions } from './lib/useQueuedPromptActions'
 import { reasoningEffortLabel, spawnReasoningEffort } from './lib/reasoning'
 import { cancelActiveTurn } from './lib/cancelActiveTurn'
 import { handleSessionEvent } from './lib/sessionEvents'
@@ -488,27 +489,7 @@ function AppComposer({ empty = false }: { empty?: boolean }) {
       .catch(() => {})
   }, [])
 
-  const onRemoveQueued = useCallback(async (id: string, version: number) => {
-    const targetTabId = $activeTabId.get()
-    if (!targetTabId) return
-    const prev = getTabState(targetTabId)?.queuedPrompts ?? []
-    patchTab(targetTabId, { queuedPrompts: prev.filter((q) => q.id !== id) })
-    try {
-      await removeQueuedPrompt(targetTabId, id, version)
-    } catch (e) {
-      patchTab(targetTabId, { queuedPrompts: prev, error: String(e) })
-    }
-  }, [])
-
-  const onEditQueued = useCallback(async (id: string, text: string) => {
-    const targetTabId = $activeTabId.get()
-    if (!targetTabId) return
-    try {
-      await editQueuedPrompt(targetTabId, id, text)
-    } catch (e) {
-      pushToast(String(e), 'error')
-    }
-  }, [])
+  const queueActs = useQueuedPromptActions()
 
   const onToggleCombineQueued = useCallback(async (enabled: boolean) => {
     setCombineQueued(enabled)
@@ -609,8 +590,13 @@ function AppComposer({ empty = false }: { empty?: boolean }) {
       onSelectWorkspace={(c) => void onSelectWorkspace(c)}
       queuedPrompts={queued}
       onSend={(t, a, mode) => void onSend(t, a, mode)}
-      onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
-      onEditQueued={caps.queueEdit ? (id, text) => void onEditQueued(id, text) : undefined}
+      onRemoveQueued={(id, ver) => void queueActs.onRemoveQueued(id, ver)}
+      onEditQueued={caps.queueEdit ? (id, text) => void queueActs.onEditQueued(id, text) : undefined}
+      onReorderQueued={(id, delta) => void queueActs.onReorderQueued(id, delta)}
+      onClearQueued={() => void queueActs.onClearQueued()}
+      onSendQueuedNow={(id, ver) => void queueActs.onSendQueuedNow(id, ver)}
+      onHoldQueued={queueActs.onHoldQueued}
+      onReleaseQueued={queueActs.onReleaseQueued}
       combineQueued={combineQueued}
       onToggleCombineQueued={(v) => void onToggleCombineQueued(v)}
       onCancel={() => void onCancel()}

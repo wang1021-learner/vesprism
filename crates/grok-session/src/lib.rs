@@ -75,6 +75,8 @@ pub struct QueuedPromptInfo {
     pub text: String,
     #[serde(default)]
     pub position: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combined_texts: Option<Vec<String>>,
 }
 
 /// 工具调用中的结构化 diff（来自 ACP `ToolCallContent::Diff`），供桌面侧栏高亮。
@@ -292,6 +294,7 @@ pub enum SessionEvent {
         entries: Vec<QueuedPromptInfo>,
         running_prompt_id: Option<String>,
         running_text: Option<String>,
+        running_combined_texts: Option<Vec<String>>,
     },
     /// 本轮对话结束。
     TurnEnded {
@@ -1076,14 +1079,17 @@ impl Client for GuiClient {
                     entries: Option<Vec<QueuedPromptInfo>>,
                     running_prompt_id: Option<String>,
                     running_text: Option<String>,
+                    running_combined_texts: Option<Vec<String>>,
                 }
                 if let Ok(p) = serde_json::from_str::<QueueChangedParams>(args.params.get()) {
+                    let combined = p.running_combined_texts.filter(|v| v.len() >= 2);
                     let _ = self
                         .event_tx
                         .send(SessionEvent::QueueChanged {
                             entries: p.entries.unwrap_or_default(),
                             running_prompt_id: p.running_prompt_id,
                             running_text: p.running_text,
+                            running_combined_texts: combined,
                         })
                         .await;
                 }
@@ -2821,40 +2827,113 @@ impl GrokSession {
         self.interject_blocks(blocks, prompt_id).await
     }
 
+    async fn queue_notify(
+        &self,
+        method: &'static str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let raw = serde_json::value::to_raw_value(&params)
+            .map_err(|e| anyhow::anyhow!("序列化 {method} 失败: {e}"))?;
+        self.connection
+            .ext_notification(ExtNotification::new(method, raw.into()))
+            .await
+            .map_err(|e| anyhow::anyhow!("{method} 失败: {e:?}"))?;
+        Ok(())
+    }
+
     /// 从官方队列去掉一条（`x.ai/queue/remove` 通知）。
     pub async fn remove_queued_prompt(
         &self,
         id: &str,
         expected_version: u64,
     ) -> anyhow::Result<()> {
-        let params = serde_json::json!({
-            "sessionId": self.session_id.to_string(),
-            "id": id,
-            "expectedVersion": expected_version,
-        });
-        let raw = serde_json::value::to_raw_value(&params)
-            .map_err(|e| anyhow::anyhow!("序列化 queue/remove 失败: {e}"))?;
-        self.connection
-            .ext_notification(ExtNotification::new("x.ai/queue/remove", raw.into()))
-            .await
-            .map_err(|e| anyhow::anyhow!("取消排队失败: {e:?}"))?;
-        Ok(())
+        self.queue_notify(
+            "x.ai/queue/remove",
+            serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+                "id": id,
+                "expectedVersion": expected_version,
+            }),
+        )
+        .await
     }
 
     /// 改一条尚未开跑的排队稿（官方 `x.ai/queue/edit`）。
     pub async fn edit_queued_prompt(&self, id: &str, new_text: &str) -> anyhow::Result<()> {
-        let params = serde_json::json!({
+        self.queue_notify(
+            "x.ai/queue/edit",
+            serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+                "id": id,
+                "newText": new_text,
+            }),
+        )
+        .await
+    }
+
+    /// 重排尚未开跑的排队项（官方 `x.ai/queue/reorder`）。
+    pub async fn reorder_queued_prompts(&self, ordered_ids: Vec<String>) -> anyhow::Result<()> {
+        self.queue_notify(
+            "x.ai/queue/reorder",
+            serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+                "orderedIds": ordered_ids,
+            }),
+        )
+        .await
+    }
+
+    /// 清空尚未开跑的排队项（官方 `x.ai/queue/clear`）。正在跑的那轮不动。
+    pub async fn clear_queued_prompts(&self) -> anyhow::Result<()> {
+        self.queue_notify(
+            "x.ai/queue/clear",
+            serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+            }),
+        )
+        .await
+    }
+
+    /// 把一条排队立刻插进当前轮 / 提到队头（官方 `x.ai/queue/interject`）。
+    pub async fn interject_queued_prompt(
+        &self,
+        id: &str,
+        expected_version: u64,
+        new_text: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut params = serde_json::json!({
             "sessionId": self.session_id.to_string(),
             "id": id,
-            "newText": new_text,
+            "expectedVersion": expected_version,
         });
-        let raw = serde_json::value::to_raw_value(&params)
-            .map_err(|e| anyhow::anyhow!("序列化 queue/edit 失败: {e}"))?;
-        self.connection
-            .ext_notification(ExtNotification::new("x.ai/queue/edit", raw.into()))
-            .await
-            .map_err(|e| anyhow::anyhow!("改排队稿失败: {e:?}"))?;
-        Ok(())
+        if let Some(text) = new_text.map(str::trim).filter(|s| !s.is_empty()) {
+            params["newText"] = serde_json::Value::String(text.to_string());
+        }
+        self.queue_notify("x.ai/queue/interject", params).await
+    }
+
+    /// 改稿期间锁定这一条，避免被 promote / 合并吃掉（`x.ai/queue/hold_edit`）。
+    pub async fn hold_queued_edit(&self, id: &str) -> anyhow::Result<()> {
+        self.queue_notify(
+            "x.ai/queue/hold_edit",
+            serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+                "id": id,
+            }),
+        )
+        .await
+    }
+
+    /// 结束改稿锁定（`x.ai/queue/release_edit`）。
+    pub async fn release_queued_edit(&self, id: &str) -> anyhow::Result<()> {
+        self.queue_notify(
+            "x.ai/queue/release_edit",
+            serde_json::json!({
+                "sessionId": self.session_id.to_string(),
+                "id": id,
+            }),
+        )
+        .await
     }
 
     /// 写回顾（官方 `x.ai/recap`）。桌面走具名命令，不要再喊方法名。
@@ -4119,6 +4198,26 @@ impl SessionBackend for GrokSession {
     }
     async fn edit_queued_prompt(&self, id: &str, new_text: &str) -> anyhow::Result<()> {
         GrokSession::edit_queued_prompt(self, id, new_text).await
+    }
+    async fn reorder_queued_prompts(&self, ordered_ids: Vec<String>) -> anyhow::Result<()> {
+        GrokSession::reorder_queued_prompts(self, ordered_ids).await
+    }
+    async fn clear_queued_prompts(&self) -> anyhow::Result<()> {
+        GrokSession::clear_queued_prompts(self).await
+    }
+    async fn interject_queued_prompt(
+        &self,
+        id: &str,
+        expected_version: u64,
+        new_text: Option<&str>,
+    ) -> anyhow::Result<()> {
+        GrokSession::interject_queued_prompt(self, id, expected_version, new_text).await
+    }
+    async fn hold_queued_edit(&self, id: &str) -> anyhow::Result<()> {
+        GrokSession::hold_queued_edit(self, id).await
+    }
+    async fn release_queued_edit(&self, id: &str) -> anyhow::Result<()> {
+        GrokSession::release_queued_edit(self, id).await
     }
     async fn plugins_list(&self) -> anyhow::Result<serde_json::Value> {
         GrokSession::plugins_list(self).await

@@ -33,13 +33,12 @@ import {
   tabWorkspaceCwd,
 } from '../../store'
 import {
-  editQueuedPrompt,
   getEnginePrefs,
-  removeQueuedPrompt,
   setCurrentModel,
   setEnginePrefs,
   type PromptAttach,
 } from '../../bridge'
+import { useQueuedPromptActions } from '../../lib/useQueuedPromptActions'
 import { cancelActiveTurn } from '../../lib/cancelActiveTurn'
 import { reasoningEffortLabel, spawnReasoningEffort } from '../../lib/reasoning'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
@@ -131,33 +130,7 @@ export const CanvasComposer = memo(function CanvasComposer({
     [flowName, flowId, tabId, nodeIds],
   )
 
-  const onRemoveQueued = useCallback(
-    async (id: string, version: number) => {
-      const targetTabId = tabId || $activeTabId.get()
-      if (!targetTabId) return
-      const prev = getTabState(targetTabId)?.queuedPrompts ?? []
-      patchTab(targetTabId, { queuedPrompts: prev.filter((q) => q.id !== id) })
-      try {
-        await removeQueuedPrompt(targetTabId, id, version)
-      } catch (e) {
-        patchTab(targetTabId, { queuedPrompts: prev, error: String(e) })
-      }
-    },
-    [tabId],
-  )
-
-  const onEditQueued = useCallback(
-    async (id: string, text: string) => {
-      const targetTabId = tabId || $activeTabId.get()
-      if (!targetTabId) return
-      try {
-        await editQueuedPrompt(targetTabId, id, text)
-      } catch (e) {
-        pushToast(String(e), 'error')
-      }
-    },
-    [tabId],
-  )
+  const queueActs = useQueuedPromptActions(tabId)
 
   const onCancel = useCallback(async () => {
     await cancelActiveTurn()
@@ -264,8 +237,13 @@ export const CanvasComposer = memo(function CanvasComposer({
         onSelectWorkspace={() => {}}
         queuedPrompts={queued}
         onSend={(t, a, mode) => void onSend(t, a, mode)}
-        onRemoveQueued={(id, ver) => void onRemoveQueued(id, ver)}
-        onEditQueued={caps.queueEdit ? (id, text) => void onEditQueued(id, text) : undefined}
+        onRemoveQueued={(id, ver) => void queueActs.onRemoveQueued(id, ver)}
+        onEditQueued={caps.queueEdit ? (id, text) => void queueActs.onEditQueued(id, text) : undefined}
+        onReorderQueued={(id, delta) => void queueActs.onReorderQueued(id, delta)}
+        onClearQueued={() => void queueActs.onClearQueued()}
+        onSendQueuedNow={(id, ver) => void queueActs.onSendQueuedNow(id, ver)}
+        onHoldQueued={queueActs.onHoldQueued}
+        onReleaseQueued={queueActs.onReleaseQueued}
         combineQueued={combineQueued}
         onToggleCombineQueued={(v) => void onToggleCombineQueued(v)}
         onCancel={() => void onCancel()}

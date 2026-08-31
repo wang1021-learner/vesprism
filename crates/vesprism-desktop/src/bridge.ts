@@ -136,6 +136,26 @@ export const removeQueuedPrompt = (tabId: string, id: string, expectedVersion?: 
   })
 export const editQueuedPrompt = (tabId: string, id: string, newText: string) =>
   invoke('edit_queued_prompt', { tabId, id, newText })
+export const reorderQueuedPrompts = (tabId: string, orderedIds: string[]) =>
+  invoke('reorder_queued_prompts', { tabId, orderedIds })
+export const clearQueuedPrompts = (tabId: string) =>
+  invoke('clear_queued_prompts', { tabId })
+export const interjectQueuedPrompt = (
+  tabId: string,
+  id: string,
+  expectedVersion?: number,
+  newText?: string,
+) =>
+  invoke('interject_queued_prompt', {
+    tabId,
+    id,
+    expectedVersion: expectedVersion ?? 0,
+    newText: newText ?? null,
+  })
+export const holdQueuedEdit = (tabId: string, id: string) =>
+  invoke('hold_queued_edit', { tabId, id })
+export const releaseQueuedEdit = (tabId: string, id: string) =>
+  invoke('release_queued_edit', { tabId, id })
 
 export type SessionCapsDto = {
   recap: boolean
@@ -853,9 +873,18 @@ export interface SessionEventPayload {
   /** 会话标题更新（引擎 LLM 生成 / 手动改名） */
   title?: string
   /** x.ai/queue/changed */
-  entries?: Array<{ id?: string; version?: number; text?: string; position?: number }>
+  entries?: Array<{
+    id?: string
+    version?: number
+    text?: string
+    position?: number
+    combinedTexts?: string[]
+    combined_texts?: string[]
+  }>
   running_prompt_id?: string | null
   running_text?: string | null
+  running_combined_texts?: string[] | null
+  runningCombinedTexts?: string[] | null
   /** TabActor 重建次数（tab_recovering） / 连续 panic 次数（tab_failed） */
   attempt?: number
   attempts?: number

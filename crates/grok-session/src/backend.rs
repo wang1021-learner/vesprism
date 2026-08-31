@@ -80,6 +80,16 @@ pub trait SessionBackend {
     ) -> anyhow::Result<serde_json::Value>;
 
     async fn edit_queued_prompt(&self, id: &str, new_text: &str) -> anyhow::Result<()>;
+    async fn reorder_queued_prompts(&self, ordered_ids: Vec<String>) -> anyhow::Result<()>;
+    async fn clear_queued_prompts(&self) -> anyhow::Result<()>;
+    async fn interject_queued_prompt(
+        &self,
+        id: &str,
+        expected_version: u64,
+        new_text: Option<&str>,
+    ) -> anyhow::Result<()>;
+    async fn hold_queued_edit(&self, id: &str) -> anyhow::Result<()>;
+    async fn release_queued_edit(&self, id: &str) -> anyhow::Result<()>;
 
     async fn plugins_list(&self) -> anyhow::Result<serde_json::Value>;
     async fn plugins_action(&self, action: serde_json::Value) -> anyhow::Result<serde_json::Value>;
@@ -162,6 +172,26 @@ mod tests {
             Ok(serde_json::json!({ "files": [] }))
         }
         async fn edit_queued_prompt(&self, _id: &str, _new_text: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn reorder_queued_prompts(&self, _ordered_ids: Vec<String>) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn clear_queued_prompts(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn interject_queued_prompt(
+            &self,
+            _id: &str,
+            _expected_version: u64,
+            _new_text: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn hold_queued_edit(&self, _id: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn release_queued_edit(&self, _id: &str) -> anyhow::Result<()> {
             Ok(())
         }
         async fn plugins_list(&self) -> anyhow::Result<serde_json::Value> {

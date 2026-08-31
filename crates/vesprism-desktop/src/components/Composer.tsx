@@ -92,6 +92,11 @@ interface ComposerProps {
   onSend: (text?: string, attachments?: PromptAttach[], mode?: 'queue' | 'interject') => void
   onRemoveQueued?: (id: string, version: number) => void
   onEditQueued?: (id: string, text: string) => void
+  onReorderQueued?: (id: string, delta: -1 | 1) => void
+  onClearQueued?: () => void
+  onSendQueuedNow?: (id: string, version: number) => void
+  onHoldQueued?: (id: string) => void
+  onReleaseQueued?: (id: string) => void
   combineQueued?: boolean
   onToggleCombineQueued?: (enabled: boolean) => void
   onCancel: () => void
@@ -208,6 +213,38 @@ function StopIcon() {
   )
 }
 
+function QueueIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 7h16M4 12h16M4 17h10"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+function InterjectIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 12h9M10 6l6 6-6 6"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent)
+}
+
 function CheckIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -270,6 +307,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     onSend,
     onRemoveQueued,
     onEditQueued,
+    onReorderQueued,
+    onClearQueued,
+    onSendQueuedNow,
+    onHoldQueued,
+    onReleaseQueued,
     combineQueued = false,
     onToggleCombineQueued,
     onCancel,
@@ -363,7 +405,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       for (const a of prev) revokePreviewUrl(a.previewUrl)
       return []
     })
+    const editing = editQueuedId
+    if (editing) onReleaseQueued?.(editing)
     setEditQueuedId(null)
+    // 只在切 Tab 时释放改稿锁；不要把 editQueuedId 放进 deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId])
   const attachMenuRef = useRef<HTMLDivElement>(null)
   const securityPolicy = useStore($securityPolicy)
@@ -663,6 +709,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       ? Math.min(100, Math.round((totalTokens / selectedModel.context_window) * 100))
       : null
   const casual = isScratchCwd(workspaceCwd)
+  const mac = useMemo(() => isMacPlatform(), [])
   const wsLabel = formatWorkspaceLabel(workspaceCwd)
   const currentWsKey = normalizeWorkspacePath(workspaceCwd)
   const projectOptions = dedupeWorkspacePaths(
@@ -687,6 +734,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               合并连续提问
             </label>
           ) : null}
+          {onClearQueued ? (
+            <button
+              type="button"
+              className="composer-queue-clear"
+              title="取消全部排队，正在生成的这一轮不动"
+              onClick={() => onClearQueued()}
+            >
+              清空
+            </button>
+          ) : null}
           <ul className="composer-queue-list">
             {queuedPrompts.map((q, i) => (
               <li key={q.id} className="composer-queue-item">
@@ -702,13 +759,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                         e.preventDefault()
                         const text = editQueuedText
                         setEditQueuedId(null)
+                        onReleaseQueued?.(q.id)
                         onEditQueued?.(q.id, text)
                       }
-                      if (e.key === 'Escape') setEditQueuedId(null)
+                      if (e.key === 'Escape') {
+                        setEditQueuedId(null)
+                        onReleaseQueued?.(q.id)
+                      }
                     }}
                     onBlur={() => {
                       const text = editQueuedText
                       setEditQueuedId(null)
+                      onReleaseQueued?.(q.id)
                       if (text !== q.text) onEditQueued?.(q.id, text)
                     }}
                   />
@@ -719,13 +781,52 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     title="点击改稿"
                     onClick={() => {
                       if (!onEditQueued) return
+                      if (editQueuedId && editQueuedId !== q.id) onReleaseQueued?.(editQueuedId)
+                      onHoldQueued?.(q.id)
                       setEditQueuedId(q.id)
                       setEditQueuedText(q.text)
                     }}
                   >
                     {q.text.trim() || '（附件）'}
+                    {q.combinedTexts && q.combinedTexts.length >= 2 ? (
+                      <span className="composer-queue-merged"> · {q.combinedTexts.length} 条</span>
+                    ) : null}
                   </button>
                 )}
+                {onReorderQueued ? (
+                  <span className="composer-queue-move">
+                    <button
+                      type="button"
+                      className="composer-queue-iconbtn"
+                      title="上移"
+                      aria-label="上移"
+                      disabled={i === 0}
+                      onClick={() => onReorderQueued(q.id, -1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-queue-iconbtn"
+                      title="下移"
+                      aria-label="下移"
+                      disabled={i === queuedPrompts.length - 1}
+                      onClick={() => onReorderQueued(q.id, 1)}
+                    >
+                      ↓
+                    </button>
+                  </span>
+                ) : null}
+                {onSendQueuedNow ? (
+                  <button
+                    type="button"
+                    className="composer-queue-now"
+                    title="立刻插进当前轮"
+                    onClick={() => onSendQueuedNow(q.id, q.version)}
+                  >
+                    立刻
+                  </button>
+                ) : null}
                 {onRemoveQueued ? (
                   <button
                     type="button"
@@ -1366,24 +1467,28 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
             {extraActions}
             {isGenerating && canSubmit ? (
-              <>
+              <div className="composer-live-actions" role="group" aria-label="生成中发送">
                 <button
                   type="button"
-                  className="composer-live-action"
+                  className="composer-live-action is-queue"
                   title="本轮结束后发送 (Enter)"
                   onClick={handleSend}
                 >
-                  排队
+                  <QueueIcon />
+                  <span>排队</span>
+                  <kbd>⏎</kbd>
                 </button>
                 <button
                   type="button"
-                  className="composer-live-action"
-                  title="立刻插进当前轮 (Ctrl+Enter)"
+                  className="composer-live-action is-interject"
+                  title={`立刻插进当前轮 (${mac ? '⌘' : 'Ctrl'}+Enter)`}
                   onClick={handleInterject}
                 >
-                  插话
+                  <InterjectIcon />
+                  <span>插话</span>
+                  <kbd>{mac ? '⌘⏎' : 'Ctrl⏎'}</kbd>
                 </button>
-              </>
+              </div>
             ) : null}
             {isGenerating ? (
               <button

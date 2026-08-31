@@ -70,6 +70,27 @@ pub enum ActorCommand {
         new_text: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    ReorderQueuedPrompts {
+        ordered_ids: Vec<String>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    ClearQueuedPrompts {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    InterjectQueuedPrompt {
+        id: String,
+        expected_version: u64,
+        new_text: Option<String>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    HoldQueuedEdit {
+        id: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    ReleaseQueuedEdit {
+        id: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// 本后端能力表（桌面藏按钮用）。
     SessionCaps {
         reply: oneshot::Sender<Result<grok_session::SessionCaps, String>>,
@@ -364,6 +385,7 @@ pub enum FrontendEvent {
         entries: Vec<grok_session::QueuedPromptInfo>,
         running_prompt_id: Option<String>,
         running_text: Option<String>,
+        running_combined_texts: Option<Vec<String>>,
     },
     /// 本轮结束。
     TurnEnded {
@@ -897,6 +919,84 @@ async fn handle_command(
                 return;
             };
             match s.edit_queued_prompt(&id, &new_text).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::ReorderQueuedPrompts { ordered_ids, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.reorder_queued_prompts(ordered_ids).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::ClearQueuedPrompts { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.clear_queued_prompts().await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::InterjectQueuedPrompt {
+            id,
+            expected_version,
+            new_text,
+            reply,
+        } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s
+                .interject_queued_prompt(&id, expected_version, new_text.as_deref())
+                .await
+            {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::HoldQueuedEdit { id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.hold_queued_edit(&id).await {
+                Ok(()) => {
+                    let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::ReleaseQueuedEdit { id, reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.release_queued_edit(&id).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
                 }
@@ -2070,6 +2170,7 @@ fn forward_event(
             entries,
             running_prompt_id,
             running_text,
+            running_combined_texts,
         } => {
             emit(
                 app,
@@ -2078,6 +2179,7 @@ fn forward_event(
                     entries,
                     running_prompt_id,
                     running_text,
+                    running_combined_texts,
                 },
             );
         }
