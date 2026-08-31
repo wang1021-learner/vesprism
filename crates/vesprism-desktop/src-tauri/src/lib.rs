@@ -4,8 +4,10 @@ mod commands;
 mod computer;
 mod computer_mcp;
 mod engine_prefs;
+mod perm_always;
 mod pty;
 mod sandbox;
+mod security;
 mod session_index;
 mod state;
 mod workbench;
@@ -157,7 +159,12 @@ pub fn run() {
         if let Err(e) = dotenvy::from_path_override(&secrets_env) {
             eprintln!("[vesprism] 加载 {} 失败: {e}", secrets_env.display());
         }
-        commands::harden_env_file_permissions(&secrets_env);
+        if let Err(e) = commands::harden_env_file_permissions(&secrets_env) {
+            eprintln!(
+                "[vesprism] 收紧 {} 权限失败: {e}",
+                secrets_env.display()
+            );
+        }
     }
 
     tauri::Builder::default()
@@ -189,6 +196,8 @@ pub fn run() {
                     std::collections::HashMap::new(),
                 )),
                 pty: std::sync::Arc::new(crate::pty::PtyManager::new()),
+                tab_cwds: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                pending_flow_import: std::sync::Arc::new(std::sync::Mutex::new(None)),
             });
 
             // 索引启动兜底：一次性全量重建，之后由 TurnEnded 增量 upsert 维护，list_sessions 不再反应式重建。
@@ -272,7 +281,6 @@ pub fn run() {
             commands::add_skill,
             commands::remove_skill,
             commands::toggle_skill,
-            commands::session_ext,
             commands::restart_session,
             commands::get_env_status,
             commands::save_env_key,

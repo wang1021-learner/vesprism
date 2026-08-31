@@ -123,9 +123,16 @@ pub fn writing_load_book(id: String) -> Result<String, String> {
 #[tauri::command]
 pub fn writing_save_book(id: String, json: String) -> Result<(), String> {
     let clean = sanitize_id(&id).ok_or_else(|| "书 id 不合法".to_string())?;
+    if json.len() > crate::security::MAX_BOOK_JSON_BYTES {
+        return Err("书稿超过 16MB，拒绝写入".into());
+    }
     let root = books_root();
     std::fs::create_dir_all(&root).map_err(|e| format!("创建书库目录失败: {e}"))?;
     let path = root.join(format!("{clean}.json"));
+    if path.is_file() {
+        let bak = root.join(format!("{clean}.json.bak"));
+        let _ = std::fs::copy(&path, &bak);
+    }
     crate::commands::atomic_write(&path, json.as_bytes())
         .map_err(|e| format!("保存书失败: {e}"))
 }
@@ -184,6 +191,13 @@ mod tests {
         assert!(super::is_writing_cwd("/home/u/.vesprism/writing/book-1"));
         assert!(!super::is_writing_cwd("/home/u/code/app"));
         assert!(!super::is_writing_cwd(""));
+    }
+
+    #[test]
+    fn save_rejects_huge_json() {
+        let huge = "x".repeat(crate::security::MAX_BOOK_JSON_BYTES + 1);
+        let err = super::writing_save_book("book-size".into(), huge).unwrap_err();
+        assert!(err.contains("16MB"));
     }
 
     #[test]

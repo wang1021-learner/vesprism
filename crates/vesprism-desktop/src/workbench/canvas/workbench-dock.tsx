@@ -22,11 +22,11 @@ function stopWheel(e: React.WheelEvent) {
 }
 
 function focusUserQuestion(toolCallId: string) {
-  window.dispatchEvent(new CustomEvent('jike:focus-user-question', { detail: { toolCallId } }))
+  window.dispatchEvent(new CustomEvent('vesprism:focus-user-question', { detail: { toolCallId } }))
 }
 
 function focusPlan(toolCallId: string) {
-  window.dispatchEvent(new CustomEvent('jike:focus-plan', { detail: { toolCallId } }))
+  window.dispatchEvent(new CustomEvent('vesprism:focus-plan', { detail: { toolCallId } }))
 }
 
 export function CanvasTalkLog({

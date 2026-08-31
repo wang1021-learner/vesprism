@@ -337,12 +337,6 @@ pub enum ActorCommand {
         cwd: String,
         reply: oneshot::Sender<Result<serde_json::Value, String>>,
     },
-    /// 通用官方 x.ai/* 扩展（自动带 sessionId）。
-    SessionExt {
-        method: String,
-        params: serde_json::Value,
-        reply: oneshot::Sender<Result<serde_json::Value, String>>,
-    },
 }
 
 /// 由 Tauri 托管的应用状态；命令侧可廉价克隆。
@@ -362,6 +356,38 @@ pub struct AppState {
     >,
     /// 每 Tab 交互式 PTY（关 Tab 杀；关应用 Job/drop 回收）
     pub pty: std::sync::Arc<crate::pty::PtyManager>,
+    /// tab → 会话 origin cwd（PTY / 写台锁模式用）
+    pub tab_cwds: std::sync::Arc<std::sync::Mutex<HashMap<TabId, std::path::PathBuf>>>,
+    /// 流程导入：只接受本进程 file dialog 刚选中的路径。
+    pub pending_flow_import: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+}
+
+impl AppState {
+    pub fn remember_tab_cwd(&self, tab_id: &str, cwd: impl Into<std::path::PathBuf>) {
+        if let Ok(mut m) = self.tab_cwds.lock() {
+            m.insert(tab_id.to_string(), cwd.into());
+        }
+    }
+
+    pub fn forget_tab_cwd(&self, tab_id: &str) {
+        if let Ok(mut m) = self.tab_cwds.lock() {
+            m.remove(tab_id);
+        }
+    }
+
+    pub fn tab_cwd(&self, tab_id: &str) -> Option<std::path::PathBuf> {
+        self.tab_cwds.lock().ok()?.get(tab_id).cloned()
+    }
+
+    pub fn set_pending_flow_import(&self, path: std::path::PathBuf) {
+        if let Ok(mut g) = self.pending_flow_import.lock() {
+            *g = Some(path);
+        }
+    }
+
+    pub fn pending_flow_import(&self) -> Option<std::path::PathBuf> {
+        self.pending_flow_import.lock().ok()?.clone()
+    }
 }
 
 /// 推给前端 `session-event` 监听器的 JSON 载荷。
@@ -466,6 +492,8 @@ pub enum FrontendEvent {
         options: Vec<PermissionOptionDto>,
         /// 安全预检发现（官方分类器/评估 token，如 opaque_shell / dangerous_command）
         security_findings: Vec<String>,
+        /// ACP ToolKind 短名：read / search / execute …
+        tool_kind: String,
     },
     /// 子 agent 已创建。
     SubagentSpawned {
@@ -632,6 +660,20 @@ pub struct PermissionOptionDto {
     pub kind: String,
 }
 
+struct AlwaysGrantMeta {
+    description: String,
+    allow_always_ids: Vec<String>,
+}
+
+struct PendingReply {
+    tx: oneshot::Sender<String>,
+    always: Option<AlwaysGrantMeta>,
+}
+
+fn pending_plain(tx: oneshot::Sender<String>) -> PendingReply {
+    PendingReply { tx, always: None }
+}
+
 fn permission_option_kind(id: &str, name: &str) -> &'static str {
     let i = id.to_ascii_lowercase();
     let n = name.to_ascii_lowercase();
@@ -690,7 +732,7 @@ pub async fn run_tab_actor(
     let mut session: Option<GrokSession> = None;
     let mut status_rx: Option<tokio::sync::watch::Receiver<SessionStatus>> = None;
     // 待处理的权限 oneshot，key 为 request_id。
-    let mut pending_permissions: HashMap<u64, oneshot::Sender<String>> = HashMap::new();
+    let mut pending_permissions: HashMap<u64, PendingReply> = HashMap::new();
     let mut next_perm_id: u64 = 1;
     let mut disconnect_tries: u32 = 0;
 
@@ -797,6 +839,7 @@ fn command_holds_actor(cmd: &ActorCommand) -> bool {
             | ActorCommand::DeleteSession { .. }
             | ActorCommand::RespondPermission { .. }
             | ActorCommand::RespondUserQuestion { .. }
+            | ActorCommand::SetSessionMode { .. }
     )
 }
 
@@ -807,7 +850,7 @@ async fn handle_command(
     tab_id: &TabId,
     session: &mut Option<GrokSession>,
     status_rx: &mut Option<tokio::sync::watch::Receiver<SessionStatus>>,
-    pending_permissions: &mut HashMap<u64, oneshot::Sender<String>>,
+    pending_permissions: &mut HashMap<u64, PendingReply>,
     next_perm_id: &mut u64,
 ) {
     match cmd {
@@ -1672,24 +1715,6 @@ async fn handle_command(
                 }
             }
         }
-        ActorCommand::SessionExt {
-            method,
-            params,
-            reply,
-        } => {
-            let Some(s) = session.as_ref() else {
-                let _ = reply.send(Err("会话未启动".into()));
-                return;
-            };
-            match s.ext_json(&method, params).await {
-                Ok(v) => {
-                    let _ = reply.send(Ok(v));
-                }
-                Err(e) => {
-                    let _ = reply.send(Err(e.to_string()));
-                }
-            }
-        }
         ActorCommand::ToggleSkill {
             name,
             enabled,
@@ -1714,8 +1739,17 @@ async fn handle_command(
             option_id,
             reply,
         } => match pending_permissions.remove(&request_id) {
-            Some(tx) => {
-                if tx.send(option_id).is_err() {
+            Some(pending) => {
+                if let Some(meta) = pending.always.as_ref() {
+                    if meta.allow_always_ids.iter().any(|id| id == &option_id) {
+                        if let Some(sig) = crate::security::always_signature(&meta.description) {
+                            if let Err(e) = crate::perm_always::remember_always(&sig) {
+                                eprintln!("[vesprism] 写入总是允许失败: {e}");
+                            }
+                        }
+                    }
+                }
+                if pending.tx.send(option_id).is_err() {
                     let _ = reply.send(Err("权限请求已失效".into()));
                 } else {
                     let _ = reply.send(Ok(()));
@@ -1730,8 +1764,8 @@ async fn handle_command(
             response_json,
             reply,
         } => match pending_permissions.remove(&request_id) {
-            Some(tx) => {
-                if tx.send(response_json).is_err() {
+            Some(pending) => {
+                if pending.tx.send(response_json).is_err() {
                     let _ = reply.send(Err("问卷请求已失效".into()));
                 } else {
                     let _ = reply.send(Ok(()));
@@ -1746,6 +1780,12 @@ async fn handle_command(
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
             };
+            if crate::writing_store::is_writing_cwd(s.cwd()) && mode_id != "ask" {
+                let _ = reply.send(Err(
+                    "写台会话锁定为只答模式（ask），不能切到可改文件的模式".into(),
+                ));
+                return;
+            }
             match s.set_session_mode(mode_id).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
@@ -1828,6 +1868,11 @@ async fn handle_command(
                     )
                     .await;
                     replay_composition_on_session(&s, &sid, &load_cwd).await;
+                    if crate::writing_store::is_writing_cwd(&load_cwd) {
+                        if let Err(e) = s.set_session_mode("ask").await {
+                            eprintln!("[vesprism] 写台未能锁定 ask 模式: {e}");
+                        }
+                    }
                     *session = Some(s);
                     emit(
                         app,
@@ -1940,7 +1985,7 @@ async fn begin_fresh_session(
     tab_id: &TabId,
     session: &mut Option<GrokSession>,
     status_rx: &mut Option<tokio::sync::watch::Receiver<SessionStatus>>,
-    pending_permissions: &mut HashMap<u64, oneshot::Sender<String>>,
+    pending_permissions: &mut HashMap<u64, PendingReply>,
     cwd: String,
     sandbox_origin: Option<String>,
     model_id: Option<String>,
@@ -2026,6 +2071,13 @@ async fn begin_fresh_session(
             } else {
                 emit(app, tab_id, FrontendEvent::SandboxDeactivated);
             }
+            if crate::writing_store::is_writing_cwd(&persist_cwd) {
+                if let Some(s) = session.as_ref() {
+                    if let Err(e) = s.set_session_mode("ask").await {
+                        eprintln!("[vesprism] 写台未能锁定 ask 模式: {e}");
+                    }
+                }
+            }
             let _ = reply.send(Ok(()));
         }
         Err(e) => {
@@ -2079,7 +2131,7 @@ async fn drain_session_events_until_quiet(
     session: &GrokSession,
     app: &AppHandle,
     tab_id: &TabId,
-    pending: &mut HashMap<u64, oneshot::Sender<String>>,
+    pending: &mut HashMap<u64, PendingReply>,
     next_id: &mut u64,
     skip_transcript: bool,
 ) {
@@ -2143,7 +2195,7 @@ fn forward_event(
     app: &AppHandle,
     tab_id: &TabId,
     event: SessionEvent,
-    pending: &mut HashMap<u64, oneshot::Sender<String>>,
+    pending: &mut HashMap<u64, PendingReply>,
     next_id: &mut u64,
     current_session_id: Option<String>,
 ) {
@@ -2282,33 +2334,62 @@ fn forward_event(
             description,
             options,
             security_findings,
+            tool_kind,
             respond,
         } => {
+            let mapped: Vec<PermissionOptionDto> = options
+                .into_iter()
+                .map(|o| {
+                    let kind = if o.kind.is_empty() {
+                        permission_option_kind(&o.id, &o.name).to_string()
+                    } else {
+                        o.kind
+                    };
+                    PermissionOptionDto {
+                        id: o.id,
+                        name: o.name,
+                        kind,
+                    }
+                })
+                .collect();
+            if let Some(sig) = crate::security::always_signature(&description) {
+                if crate::perm_always::is_always_granted(&sig) {
+                    if let Some(id) = mapped
+                        .iter()
+                        .find(|o| o.kind == "allow_once" || o.kind == "allow")
+                        .map(|o| o.id.clone())
+                    {
+                        let _ = respond.send(id);
+                        return;
+                    }
+                }
+            }
             let request_id = *next_id;
             *next_id += 1;
-            pending.insert(request_id, respond);
+            let allow_always_ids: Vec<String> = mapped
+                .iter()
+                .filter(|o| o.kind == "allow_always")
+                .map(|o| o.id.clone())
+                .collect();
+            pending.insert(
+                request_id,
+                PendingReply {
+                    tx: respond,
+                    always: Some(AlwaysGrantMeta {
+                        description: description.clone(),
+                        allow_always_ids,
+                    }),
+                },
+            );
             emit(
                 app,
                 tab_id,
                 FrontendEvent::PermissionRequest {
                     request_id,
                     description,
-                    options: options
-                        .into_iter()
-                        .map(|o| {
-                            let kind = if o.kind.is_empty() {
-                                permission_option_kind(&o.id, &o.name).to_string()
-                            } else {
-                                o.kind
-                            };
-                            PermissionOptionDto {
-                                id: o.id,
-                                name: o.name,
-                                kind,
-                            }
-                        })
-                        .collect(),
+                    options: mapped,
                     security_findings,
+                    tool_kind,
                 },
             );
         }
@@ -2399,7 +2480,7 @@ fn forward_event(
             // 与权限共用 pending map；回传的是 JSON 字符串而非 option_id。
             let request_id = *next_id;
             *next_id += 1;
-            pending.insert(request_id, respond);
+            pending.insert(request_id, pending_plain(respond));
             emit(
                 app,
                 tab_id,
@@ -2423,7 +2504,7 @@ fn forward_event(
         } => {
             let request_id = *next_id;
             *next_id += 1;
-            pending.insert(request_id, respond);
+            pending.insert(request_id, pending_plain(respond));
             emit(
                 app,
                 tab_id,
@@ -2462,7 +2543,7 @@ fn forward_event(
         } => {
             let request_id = *next_id;
             *next_id += 1;
-            pending.insert(request_id, respond);
+            pending.insert(request_id, pending_plain(respond));
             emit(
                 app,
                 tab_id,

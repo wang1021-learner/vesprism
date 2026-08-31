@@ -1049,11 +1049,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         void onSelectChat(detail.id, detail.cwd)
       }
     }
-    window.addEventListener('jike:new-chat', onNew)
-    window.addEventListener('jike:open-chat', onOpen)
+    window.addEventListener('vesprism:new-chat', onNew)
+    window.addEventListener('vesprism:open-chat', onOpen)
     return () => {
-      window.removeEventListener('jike:new-chat', onNew)
-      window.removeEventListener('jike:open-chat', onOpen)
+      window.removeEventListener('vesprism:new-chat', onNew)
+      window.removeEventListener('vesprism:open-chat', onOpen)
     }
   }, [onNewChat, onSelectChat])
 

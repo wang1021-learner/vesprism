@@ -109,6 +109,8 @@ export interface PermissionRequest {
   summary?: string
   /** 安全预检发现（官方 token：opaque_shell / dangerous_command 等） */
   securityFindings?: string[]
+  /** ACP ToolKind 短名：read / search / execute … */
+  toolKind?: string
 }
 
 /** AI 问卷选项（与后端 UserQuestionOption camelCase 对齐） */

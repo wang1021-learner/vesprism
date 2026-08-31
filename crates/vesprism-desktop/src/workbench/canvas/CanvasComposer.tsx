@@ -93,8 +93,8 @@ export const CanvasComposer = memo(function CanvasComposer({
 
   useEffect(() => {
     const onFocus = () => setQuestionFocusKey((k) => k + 1)
-    window.addEventListener('jike:focus-user-question', onFocus)
-    return () => window.removeEventListener('jike:focus-user-question', onFocus)
+    window.addEventListener('vesprism:focus-user-question', onFocus)
+    return () => window.removeEventListener('vesprism:focus-user-question', onFocus)
   }, [])
 
   const onSend = useCallback(

@@ -51,7 +51,6 @@ import { formatEngineError, isSessionDeadError } from './errorMessage'
 import { parsePermissionDescription } from '../types'
 import type { SessionStatus } from '../types'
 import {
-  isAlwaysAllowed,
   isSessionAllowed,
   permissionSignature,
   pickAllowStrict,
@@ -250,6 +249,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           command: parsed.command,
           summary: parsed.summary,
           securityFindings: ev.security_findings ?? [],
+          toolKind: ev.tool_kind,
         }
         const sig = permissionSignature(req)
         const base = $securityPolicy.get()
@@ -300,10 +300,9 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
             break
           }
         }
-        // 记忆命中（这场对话/总是允许）→ 自动放行，不弹审批条。
+        // 记忆命中（这场对话）→ 自动放行，不弹审批条。总是允许只信引擎 / Rust 侧名单。
         const sessionHit = isSessionAllowed(tabId, sig)
-        const alwaysHit = isAlwaysAllowed(sig)
-        if (sessionHit || alwaysHit) {
+        if (sessionHit) {
           const allow = pickAllowStrict(req.options)
           if (allow) {
             void (async () => {
@@ -673,7 +672,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         patchTab(tabId, {
           workflows: { ...prev, [ev.workflow.runId]: ev.workflow },
         })
-        // jike: 试跑详情面板（共用，显示最近一次）的全局数据源。
+        // vesprism: 试跑详情面板（共用，显示最近一次）的全局数据源。
         upsertRecentWorkflow(ev.workflow)
       }
       break

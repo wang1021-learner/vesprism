@@ -1,8 +1,7 @@
 /**
- * 权限记忆（once/session/always 语义）：
+ * 权限记忆：
  * - session：这场对话内同命令自动放行（内存，按 tab 分）
- * - always：同命令永久放行（这台电脑 localStorage）
- * 命中记忆时由 App 直接 respond，不弹审批条。
+ * - always：只信引擎 grant + Rust `~/.vesprism/perm-always.json`，前端不做持久化
  */
 import type { PermissionOption, PermissionRequest } from '../types'
 
@@ -68,8 +67,12 @@ export function pickAllow(options: PermissionOption[]): PermissionOption | undef
   return pickAllowOnce(options) || options[0]
 }
 
-/** 官方只读工具分类：读/搜/思考/拉取，无工作区副作用。 */
-export function isReadOnlyPermission(p: Pick<PermissionRequest, 'kindLabel'>): boolean {
+/** 官方只读工具分类：优先 ACP kind，中文标签只作旧数据兜底。 */
+export function isReadOnlyPermission(
+  p: Pick<PermissionRequest, 'kindLabel' | 'toolKind'>,
+): boolean {
+  const kind = (p.toolKind || '').trim().toLowerCase()
+  if (kind) return kind === 'read' || kind === 'search' || kind === 'think'
   const k = (p.kindLabel || '').trim()
   return k === '读取文件' || k === '搜索'
 }
@@ -108,30 +111,7 @@ export function clearSessionAllowed(tabId: string): void {
   sessionAllowed.delete(tabId)
 }
 
-/** 总是允许：localStorage 持久化 */
-const ALWAYS_KEY = 'jike-perm-always'
-
-function loadAlways(): Set<string> {
-  try {
-    const raw = localStorage.getItem(ALWAYS_KEY)
-    if (!raw) return new Set()
-    const arr: unknown = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [])
-  } catch {
-    return new Set()
-  }
-}
-
-export function isAlwaysAllowed(sig: string): boolean {
-  return loadAlways().has(sig)
-}
-
-export function addAlwaysAllowed(sig: string): void {
-  const set = loadAlways()
-  set.add(sig)
-  try {
-    localStorage.setItem(ALWAYS_KEY, JSON.stringify([...set]))
-  } catch (e) {
-    console.warn('[perm] localStorage 不可用，总是允许记忆不生效:', e)
-  }
+/** @deprecated 总是允许只信引擎 grant + ~/.vesprism/perm-always.json，不再写 localStorage。 */
+export function isAlwaysAllowed(_sig: string): boolean {
+  return false
 }

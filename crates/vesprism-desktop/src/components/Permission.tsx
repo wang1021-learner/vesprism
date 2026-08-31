@@ -14,7 +14,6 @@ import { respondPermission } from '../bridge'
 import { formatEngineError } from '../lib/errorMessage'
 import { permissionDetailLabel, permissionLead } from '../lib/permissionCopy'
 import {
-  addAlwaysAllowed,
   addSessionAllowed,
   permissionSignature,
   pickAllow,
@@ -186,7 +185,7 @@ function ApprovalBar({
       }
       // 响应已送达即收摊；若引擎仍在等待（罕见），新请求会重新弹
       patchActiveTab({ permission: null })
-      window.dispatchEvent(new CustomEvent('jike:focus-composer'))
+      window.dispatchEvent(new CustomEvent('vesprism:focus-composer'))
     } catch (e) {
       // 请求已失效（如 turn 已结束、tab 已重建）：收起弹窗而不是无声卡住
       setBusy(null)
@@ -250,7 +249,6 @@ function ApprovalBar({
     setConfirmAlways(false)
     const opt = allowAlways || allow
     if (!opt) return
-    addAlwaysAllowed(sig)
     runOnce(opt.id)
   }
 

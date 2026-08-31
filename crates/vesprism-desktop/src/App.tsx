@@ -118,7 +118,7 @@ function DesktopApp() {
       const mod = e.metaKey || e.ctrlKey
       if (!mod || (e.key !== 'n' && e.key !== 'N')) return
       e.preventDefault()
-      window.dispatchEvent(new CustomEvent('jike:new-chat'))
+      window.dispatchEvent(new CustomEvent('vesprism:new-chat'))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -440,12 +440,12 @@ function AppMessages() {
   const perm = useStore($permission)
   const onFocusUserQuestion = useCallback((toolCallId: string) => {
     window.dispatchEvent(
-      new CustomEvent('jike:focus-user-question', { detail: { toolCallId } }),
+      new CustomEvent('vesprism:focus-user-question', { detail: { toolCallId } }),
     )
   }, [])
   const onFocusPlan = useCallback((toolCallId: string) => {
     window.dispatchEvent(
-      new CustomEvent('jike:focus-plan', { detail: { toolCallId } }),
+      new CustomEvent('vesprism:focus-plan', { detail: { toolCallId } }),
     )
   }, [])
   return (
@@ -615,8 +615,8 @@ function AppUserQuestion() {
   const [focusKey, setFocusKey] = useState(0)
   useEffect(() => {
     const onFocus = () => setFocusKey((k) => k + 1)
-    window.addEventListener('jike:focus-user-question', onFocus)
-    return () => window.removeEventListener('jike:focus-user-question', onFocus)
+    window.addEventListener('vesprism:focus-user-question', onFocus)
+    return () => window.removeEventListener('vesprism:focus-user-question', onFocus)
   }, [])
   return <UserQuestionPanel request={req} focusKey={focusKey} />
 }

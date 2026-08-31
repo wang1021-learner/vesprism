@@ -65,7 +65,7 @@ export async function recallUserTurn(userId: string): Promise<void> {
     })
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
-        new CustomEvent('jike:set-composer-input', { detail: { text } }),
+        new CustomEvent('vesprism:set-composer-input', { detail: { text } }),
       )
     }
     pushToast('已撤回，原文已填回输入框', 'success')

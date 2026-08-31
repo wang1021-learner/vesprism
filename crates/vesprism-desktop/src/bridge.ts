@@ -618,17 +618,6 @@ export const listWorkflows = (tabId: string) =>
     tabId,
   })
 
-/** 未收编官方扩展的逃生口。面板新功能走具名命令，不要再喊 x.ai/*。 */
-export const sessionExt = (
-  tabId: string,
-  method: string,
-  params?: Record<string, unknown> | null,
-) =>
-  invoke<Record<string, unknown>>('session_ext', {
-    tabId,
-    method,
-    params: params ?? null,
-  })
 
 export type McpSetupFieldDto = {
   id: string
@@ -895,6 +884,7 @@ export interface SessionEventPayload {
   branch?: string | null
   // ── 权限请求安全预检发现（x.ai/security_findings token 列表）──
   security_findings?: string[]
+  tool_kind?: string
   // ── task_backgrounded：bash 命令转入后台 ──
   task_id?: string
   command?: string

@@ -374,11 +374,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         }
       })
     }
-    window.addEventListener('jike:focus-composer', onFocus)
-    window.addEventListener('jike:set-composer-input', onSetInput)
+    window.addEventListener('vesprism:focus-composer', onFocus)
+    window.addEventListener('vesprism:set-composer-input', onSetInput)
     return () => {
-      window.removeEventListener('jike:focus-composer', onFocus)
-      window.removeEventListener('jike:set-composer-input', onSetInput)
+      window.removeEventListener('vesprism:focus-composer', onFocus)
+      window.removeEventListener('vesprism:set-composer-input', onSetInput)
     }
   }, [commitDraft])
 

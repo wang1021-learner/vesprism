@@ -20,7 +20,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useStore } from '@nanostores/react'
-import { open, save } from '@tauri-apps/plugin-dialog'
+
 import {
   IconChevronDown,
   IconChevronUp,
@@ -196,7 +196,6 @@ function FlowCanvasInner() {
   const [promoteDesc, setPromoteDesc] = useState('')
   const [promoteBusy, setPromoteBusy] = useState(false)
   const [importConflict, setImportConflict] = useState<{
-    path: string
     id: string
     existing: string
     incoming: string
@@ -1087,53 +1086,16 @@ function FlowCanvasInner() {
       } else {
         await persist(current)
       }
-      let defaultPath = `${current.id}.zip`
-      let filters = [{ name: '流程包 (*.zip)', extensions: ['zip'] }]
-
-      if (format === 'yaml') {
-        defaultPath = `${current.id}.flow.yaml`
-        filters = [{ name: 'DSL 契约文件 (*.flow.yaml)', extensions: ['yaml', 'yml'] }]
-      } else if (format === 'json') {
-        defaultPath = `${current.id}.flow.json`
-        filters = [{ name: '流程图谱数据 (*.json)', extensions: ['json'] }]
-      } else if (format === 'rhai') {
-        defaultPath = `${current.id}.rhai`
-        filters = [{ name: '执行脚本 (*.rhai)', extensions: ['rhai'] }]
-      }
-
-      const dest = await save({
-        defaultPath,
-        filters,
-      })
-      if (!dest) return
-      const path = await exportFlow(current.id, dest)
+      const path = await exportFlow(current.id, format)
       pushToast(`已导出 ${path}`, 'success')
     } catch (e) {
       pushToast(`导出失败：${String(e)}`, 'error')
     }
   }
 
-  const doImport = async (conflictMode?: string | null, path?: string) => {
+  const doImport = async (conflictMode?: string | null) => {
     try {
-      let selectedPath = (path || '').trim()
-      if (!selectedPath) {
-        if (conflictMode) {
-          pushToast('导入冲突重试缺少文件路径，请重新选择文件', 'error')
-          return
-        }
-        const selected = await open({
-          filters: [
-            {
-              name: '流程文件 (*.zip, *.yaml, *.json)',
-              extensions: ['zip', 'yaml', 'yml', 'json'],
-            },
-          ],
-          multiple: false,
-        })
-        if (!selected || typeof selected !== 'string') return
-        selectedPath = selected
-      }
-      const res = await importFlow(selectedPath, conflictMode)
+      const res = await importFlow(conflictMode)
       if (res.status === 'ok') {
         setImportConflict(null)
         pushToast(`导入成功：${res.id} v${res.version}`, 'success')
@@ -1146,7 +1108,6 @@ function FlowCanvasInner() {
         }
       } else if (res.status === 'conflict') {
         setImportConflict({
-          path: selectedPath,
           id: res.id,
           existing: res.existing_version,
           incoming: res.incoming_version,
@@ -1805,14 +1766,14 @@ ${buildDialoguePrompt('强制纯 JSON 重试', { name: draft.name, id: draft.id 
               <button
                 type="button"
                 className="flow-btn"
-                onClick={() => void doImport('keep-both', importConflict.path)}
+                onClick={() => void doImport('keep-both')}
               >
                 两边都留
               </button>
               <button
                 type="button"
                 className="flow-btn primary"
-                onClick={() => void doImport('overwrite', importConflict.path)}
+                onClick={() => void doImport('overwrite')}
               >
                 覆盖
               </button>

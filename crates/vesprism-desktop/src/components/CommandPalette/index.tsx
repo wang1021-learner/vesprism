@@ -197,7 +197,7 @@ export function CommandPalette() {
       title: '新建会话',
       subtitle: '创建一个新的对话 Tab (Ctrl+N)',
       action: () => {
-        window.dispatchEvent(new CustomEvent('jike:new-chat'))
+        window.dispatchEvent(new CustomEvent('vesprism:new-chat'))
       },
     },
     {
@@ -363,7 +363,7 @@ export function CommandPalette() {
 
   const handlePickChat = (chat: ChatSummary) => {
     $commandPaletteOpen.set(false)
-    window.dispatchEvent(new CustomEvent('jike:open-chat', { detail: { id: chat.id, cwd: chat.cwd } }))
+    window.dispatchEvent(new CustomEvent('vesprism:open-chat', { detail: { id: chat.id, cwd: chat.cwd } }))
   }
 
   const handleRunCommand = (cmd: QuickCommand) => {

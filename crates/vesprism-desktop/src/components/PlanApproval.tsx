@@ -428,8 +428,8 @@ export function AppPlanApproval() {
   const open = useStore($planPreviewOpen)
   useEffect(() => {
     const onFocus = () => openPlanPreview()
-    window.addEventListener('jike:focus-plan', onFocus)
-    return () => window.removeEventListener('jike:focus-plan', onFocus)
+    window.addEventListener('vesprism:focus-plan', onFocus)
+    return () => window.removeEventListener('vesprism:focus-plan', onFocus)
   }, [])
   if (!open) return null
   return <PlanApprovalPanel />

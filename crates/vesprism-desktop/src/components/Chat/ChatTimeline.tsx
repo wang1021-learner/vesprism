@@ -195,7 +195,7 @@ export const ChatTimeline = memo(function ChatTimeline({
         if (toolCallId) {
           window.setTimeout(() => {
             window.dispatchEvent(
-              new CustomEvent('jike:focus-user-question', {
+              new CustomEvent('vesprism:focus-user-question', {
                 detail: { toolCallId },
               }),
             )
@@ -208,7 +208,7 @@ export const ChatTimeline = memo(function ChatTimeline({
         if (toolCallId) {
           window.setTimeout(() => {
             window.dispatchEvent(
-              new CustomEvent('jike:focus-plan', {
+              new CustomEvent('vesprism:focus-plan', {
                 detail: { toolCallId },
               }),
             )

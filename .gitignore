@@ -4,6 +4,7 @@
 
 crates/grok-gui-poc/.env
 crates/jike-grok-desktop/.env
+crates/vesprism-desktop/.env
 crates/grok-gui-poc/test-grok-home/logs/
 crates/grok-gui-poc/test-grok-home/sessions/
 crates/grok-gui-poc/test-grok-home/managed_config.lock

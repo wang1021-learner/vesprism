@@ -59,6 +59,7 @@ pub async fn open_tab(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 pub async fn close_tab(tab_id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.pty.stop(&tab_id);
+    state.forget_tab_cwd(&tab_id);
     teardown_tab_sandbox(&tab_id, &state);
     let (reply_tx, reply_rx) = oneshot::channel();
     state
@@ -90,6 +91,24 @@ pub async fn restart_tab(tab_id: String, state: State<'_, AppState>) -> Result<(
         .map_err(|_| "Supervisor 无响应".to_string())?
 }
 
+fn pty_allowed_roots(state: &AppState, tab_id: &str) -> Vec<PathBuf> {
+    let mut roots = vec![scratch_dir()];
+    if let Some(cwd) = state.tab_cwd(tab_id) {
+        let writing = crate::writing_store::is_writing_cwd(&cwd.to_string_lossy());
+        roots.push(cwd);
+        if writing {
+            roots.push(crate::writing_store::writing_root());
+        }
+    }
+    if let Ok(bind) = state.sandbox_binds.lock() {
+        if let Some(b) = bind.get(tab_id) {
+            roots.push(b.dest.clone());
+            roots.push(b.origin.clone());
+        }
+    }
+    roots
+}
+
 #[tauri::command]
 pub fn start_pty(
     tab_id: String,
@@ -99,6 +118,11 @@ pub fn start_pty(
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    let requested = PathBuf::from(&cwd);
+    let roots = pty_allowed_roots(&state, &tab_id);
+    if !crate::security::pty_cwd_is_allowed(&requested, &roots) {
+        return Err("终端只能开在当前对话目录、闲聊工作区或写台".into());
+    }
     state.pty.start(&tab_id, &cwd, cols, rows, app)
 }
 
@@ -472,6 +496,7 @@ pub async fn start_session(
     reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    state.remember_tab_cwd(&tab_id, PathBuf::from(&cwd));
     let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
     send_cmd(&state, &tab_id, |reply| ActorCommand::Start {
         cwd: agent_cwd,
@@ -847,6 +872,7 @@ pub async fn restart_session(
     reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    state.remember_tab_cwd(&tab_id, PathBuf::from(&cwd));
     let (agent_cwd, sandbox_origin) = plan_session_cwd(&tab_id, &cwd, &state)?;
     send_cmd(&state, &tab_id, |reply| ActorCommand::Restart {
         cwd: agent_cwd,
@@ -1215,32 +1241,6 @@ pub async fn list_session_commands(
     reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
 }
 
-/// 通用官方扩展方法（自动带 sessionId）。
-#[tauri::command]
-pub async fn session_ext(
-    tab_id: String,
-    method: String,
-    params: Option<serde_json::Value>,
-    state: State<'_, AppState>,
-) -> Result<serde_json::Value, String> {
-    let cmd_tx = {
-        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
-        guard
-            .get(&tab_id)
-            .cloned()
-            .ok_or_else(|| format!("tab 不存在或已关闭: {tab_id}"))?
-    };
-    let (reply_tx, reply_rx) = oneshot::channel();
-    cmd_tx
-        .send(ActorCommand::SessionExt {
-            method,
-            params: params.unwrap_or(serde_json::Value::Null),
-            reply: reply_tx,
-        })
-        .map_err(|_| "会话线程已退出".to_string())?;
-    reply_rx.await.map_err(|_| "会话线程无响应".to_string())?
-}
-
 /// 列出自动化工作流（官方 x.ai/workflows/list）。
 #[tauri::command]
 pub async fn list_workflows(
@@ -1383,37 +1383,43 @@ pub(crate) fn env_file_path() -> PathBuf {
     desktop_home_dir().join(".env")
 }
 
-/// 收紧 `.env` 文件的 Windows ACL：移除继承权限，仅授权当前登录用户完全控制。
-/// 这是尽力而为的安全加固——失败时只记录警告，不阻断密钥保存流程。
-pub(crate) fn harden_env_file_permissions(path: &std::path::Path) {
-    let username = match std::env::var("USERNAME") {
-        Ok(u) if !u.trim().is_empty() => u,
-        _ => {
-            eprintln!("[security] 无法获取当前用户名，跳过 .env 权限收紧");
-            return;
+/// 收紧密钥/权限记忆文件：Windows 用 icacls，POSIX 用 chmod 600。失败返回 Err。
+pub(crate) fn harden_env_file_permissions(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let username = std::env::var("USERNAME").unwrap_or_default();
+        if username.trim().is_empty() {
+            return Err("无法获取当前用户名，拒绝写入未收紧权限的密钥文件".into());
         }
-    };
-    let path_str = path.display().to_string();
-    let output = std::process::Command::new("icacls")
-        .arg(&path_str)
-        .arg("/inheritance:r")
-        .arg("/grant:r")
-        .arg(format!("{username}:F"))
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            eprintln!("[security] .env 权限已收紧至当前用户: {path_str}");
+        let path_str = path.display().to_string();
+        let output = std::process::Command::new("icacls")
+            .arg(&path_str)
+            .arg("/inheritance:r")
+            .arg("/grant:r")
+            .arg(format!("{username}:F"))
+            .output()
+            .map_err(|e| format!("无法执行 icacls: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "icacls 收紧权限失败: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
-        Ok(o) => {
-            eprintln!(
-                "[security] icacls 收紧 .env 权限失败（非阻断）: {}",
-                String::from_utf8_lossy(&o.stderr)
-            );
-        }
-        Err(e) => {
-            eprintln!("[security] 无法执行 icacls（非阻断）: {e}");
-        }
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let meta = std::fs::metadata(path).map_err(|e| format!("读取权限失败: {e}"))?;
+        let mut perms = meta.permissions();
+        perms.set_mode(0o600);
+        std::fs::set_permissions(path, perms).map_err(|e| format!("chmod 600 失败: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = path;
+        Ok(())
     }
 }
 
@@ -1470,6 +1476,7 @@ pub fn get_env_status(key_name: String) -> Result<EnvKeyStatus, String> {
 pub fn save_env_key(key_name: String, value: String) -> Result<(), String> {
     validate_env_key_name(&key_name)?;
     let name = key_name.trim().to_string();
+    let line = crate::security::format_env_line(&name, &value)?;
     let prefix = format!("{name}=");
     let path = env_file_path();
     if let Some(parent) = path.parent() {
@@ -1479,24 +1486,22 @@ pub fn save_env_key(key_name: String, value: String) -> Result<(), String> {
     let mut found = false;
     let mut new_lines: Vec<String> = existing
         .lines()
-        .map(|line| {
-            if line.starts_with(&prefix) {
+        .map(|old| {
+            if old.starts_with(&prefix) {
                 found = true;
-                format!("{name}={value}")
+                line.clone()
             } else {
-                line.to_string()
+                old.to_string()
             }
         })
         .collect();
     if !found {
-        new_lines.push(format!("{name}={value}"));
+        new_lines.push(line);
     }
     let content = new_lines.join("\n") + "\n";
-    // UTF-8 写入，避免 Windows 默认编码坑
     std::fs::write(&path, content.as_bytes()).map_err(|e| format!("写入密钥文件失败: {e}"))?;
-    harden_env_file_permissions(&path);
+    harden_env_file_permissions(&path)?;
 
-    // 立即覆盖加载到当前进程环境变量，使后续 restart_session 使用新值。
     dotenvy::from_path_override(&path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -2915,6 +2920,7 @@ pub async fn load_session(
     reasoning_effort: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    state.remember_tab_cwd(&tab_id, PathBuf::from(&cwd));
     send_value(&state, &tab_id, |reply| ActorCommand::LoadSession {
         session_id,
         cwd,
@@ -3660,13 +3666,9 @@ pub fn save_paste_image(base64: String, mime: String) -> Result<String, String> 
     if bytes.len() > MAX_PASTE_IMAGE_BYTES {
         return Err("图片超过 10MB".into());
     }
-    let ext = match mime.to_ascii_lowercase().as_str() {
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/bmp" => "bmp",
-        _ => "png",
-    };
+    let ext = crate::security::sniff_image_ext(&bytes).ok_or_else(|| {
+        format!("不是可识别的图片（声明 mime={mime}，但文件头对不上）")
+    })?;
     let dir = std::env::temp_dir().join("vesprism-paste");
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录: {e}"))?;
     sweep_old_paste_images(&dir);

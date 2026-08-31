@@ -3,7 +3,6 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  addAlwaysAllowed,
   addSessionAllowed,
   clearSessionAllowed,
   isAllowOption,
@@ -18,17 +17,6 @@ import {
 } from './permissionMemory'
 import { parsePermissionDescription } from '../types'
 import type { PermissionRequest } from '../types'
-
-/** node 测试环境没有 localStorage：提供最小 stub（每次测试前清空） */
-const mem = new Map<string, string>()
-;(globalThis as Record<string, unknown>).localStorage = {
-  getItem: (k: string) => mem.get(k) ?? null,
-  setItem: (k: string, v: string) => void mem.set(k, String(v)),
-  removeItem: (k: string) => void mem.delete(k),
-  clear: () => mem.clear(),
-  key: () => null,
-  length: 0,
-}
 
 /** 用真实引擎 description 格式构造权限请求 */
 function makeReq(desc: string, kind = 'allow'): PermissionRequest {
@@ -104,22 +92,9 @@ describe('session 记忆（本次会话允许）', () => {
   })
 })
 
-describe('always 记忆（总是允许）', () => {
-  beforeEach(() => {
-    localStorage.clear()
-  })
-
-  it('写入后可读（持久化 round-trip）', () => {
-    const sig = permissionSignature(makeReq(DESC_TERMINAL))
-    addAlwaysAllowed(sig)
-    expect(isAlwaysAllowed(sig)).toBe(true)
-    // 重新从 localStorage 加载
-    expect(JSON.parse(localStorage.getItem('jike-perm-always') || '[]')).toContain(sig)
-  })
-
-  it('不同命令不命中', () => {
-    addAlwaysAllowed(permissionSignature(makeReq(DESC_TERMINAL)))
-    expect(isAlwaysAllowed(permissionSignature(makeReq(DESC_READ)))).toBe(false)
+describe('always 记忆不再走 localStorage', () => {
+  it('前端 isAlwaysAllowed 恒为 false（总是允许只信引擎 / Rust）', () => {
+    expect(isAlwaysAllowed(permissionSignature(makeReq(DESC_TERMINAL)))).toBe(false)
   })
 })
 
@@ -160,7 +135,11 @@ describe('官方 ACP kind', () => {
 })
 
 describe('只读权限', () => {
-  it('读取/搜索视为只读；网络请求要审批', () => {
+  it('ACP kind 优先于中文标签', () => {
+    expect(isReadOnlyPermission({ toolKind: 'read', kindLabel: '编辑文件' })).toBe(true)
+    expect(isReadOnlyPermission({ toolKind: 'search' })).toBe(true)
+    expect(isReadOnlyPermission({ toolKind: 'think' })).toBe(true)
+    expect(isReadOnlyPermission({ toolKind: 'execute', kindLabel: '读取文件' })).toBe(false)
     expect(isReadOnlyPermission({ kindLabel: '读取文件' })).toBe(true)
     expect(isReadOnlyPermission({ kindLabel: '搜索' })).toBe(true)
     expect(isReadOnlyPermission({ kindLabel: '网络请求' })).toBe(false)

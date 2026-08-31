@@ -31,11 +31,10 @@ export const saveFlow = (payload: FlowSavePayload) =>
 export const listFlows = () => invoke<FlowListItem[]>('list_flows')
 export const getFlow = (id: string) => invoke<FlowRecord>('get_flow', { id })
 export const deleteFlow = (id: string) => invoke('delete_flow', { id })
-export const exportFlow = (id: string, destPath: string) =>
-  invoke<string>('export_flow', { id, destPath })
-export const importFlow = (zipPath: string, conflictMode?: string | null) =>
+export const exportFlow = (id: string, format?: string | null) =>
+  invoke<string>('export_flow', { id, format: format ?? null })
+export const importFlow = (conflictMode?: string | null) =>
   invoke<ImportFlowResult>('import_flow', {
-    zipPath,
     conflictMode: conflictMode ?? null,
   })
 

@@ -837,8 +837,8 @@ export function SettingsModal() {
                 <section className="settings-card">
                   <h3 className="settings-card-title">电脑操作</h3>
                   <p className="settings-card-desc">
-                    默认关闭。打开后，模型可以通过内置 MCP 截取你的屏幕、移动鼠标、点击和打字。
-                    这不是官方引擎自带的通道，是 Vesprism 在本机接的。每次调用仍会走工具审批（除非你开了信任模式）。
+                    默认关闭。打开后，模型可以通过内置 MCP 截取你的屏幕、移动鼠标、点击和打字（工具里含 Alt+F4 这类系统快捷键）。
+                    这不是官方引擎自带的通道，是 Vesprism 在本机接的。每次调用仍会走工具审批（除非你开了信任模式）：你点「允许」等于真的在这台电脑上点下去，不是预览。
                     Windows 可用。会写入当前工作区的 <code>.mcp.json</code>。
                   </p>
                   <label className="settings-hint" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>

@@ -356,6 +356,8 @@ pub enum SessionEvent {
         options: Vec<PermissionOptionInfo>,
         /// 安全预检发现（官方分类器/评估经请求 meta `x.ai/security_findings` 下发）
         security_findings: Vec<String>,
+        /// ACP ToolKind 短名（read / search / execute / …），前端只读快路径用它而不是中文标签。
+        tool_kind: String,
         respond: oneshot::Sender<String>,
     },
     /// 子 agent 已创建（父会话 `x.ai/session_notification`）。
@@ -743,7 +745,7 @@ struct GuiClient {
     session_id: std::sync::Arc<std::sync::Mutex<Option<SessionId>>>,
     /// 组装单权限策略（apply_composition 时设置；None = 无规则，全部走审批条）。
     policy: std::sync::Arc<std::sync::RwLock<Option<crate::policy::PolicyEngine>>>,
-    /// jike: per-agent deny 规则（child_session_id → 仅含 deny 的 PolicyEngine）。
+    /// vesprism: per-agent deny 规则（child_session_id → 仅含 deny 的 PolicyEngine）。
     /// 优先由 SubagentSpawned 在子会话第一下工具前写入；WorkflowUpdated 再对齐。
     per_agent_deny: std::sync::Arc<
         std::sync::RwLock<std::collections::HashMap<String, crate::policy::PolicyEngine>>,
@@ -913,6 +915,7 @@ impl Client for GuiClient {
                 description,
                 options: options.clone(),
                 security_findings,
+                tool_kind: category,
                 respond: respond_tx,
             })
             .await;

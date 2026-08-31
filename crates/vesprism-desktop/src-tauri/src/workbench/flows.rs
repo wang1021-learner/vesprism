@@ -7,11 +7,14 @@
 //! 旧目录 `~/.vesprism/flows/<id>/` 只作读取回退，新发布不再写入。
 
 use crate::commands::desktop_home_dir;
+use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlowYaml {
@@ -457,6 +460,8 @@ fn read_to_string(path: &Path) -> Result<String, String> {
 }
 
 fn write_sidecar(id: &str, yaml: &str, rhai: &str) -> Result<(), String> {
+    crate::security::accept_sidecar_rhai(rhai)?;
+    reject_abs("flow.rhai", rhai)?;
     mkdir(&workflows_dir())?;
     write_file(&sidecar_yaml(id), yaml.as_bytes())?;
     write_file(&sidecar_rhai(id), rhai.as_bytes())
@@ -891,8 +896,8 @@ fn add_zip_file(
     name: &str,
     bytes: &[u8],
 ) -> Result<(), String> {
-    if text_has_absolute_path(name) {
-        return Err("zip 条目名不能含绝对路径".into());
+    if !crate::security::zip_entry_name_ok(name) {
+        return Err("zip 条目名不能含绝对路径或 ..".into());
     }
     if name.contains("position") {
         return Err("zip 条目异常".into());
@@ -906,14 +911,43 @@ fn add_zip_file(
     Ok(())
 }
 
+fn pick_export_path(app: &AppHandle, id: &str, fmt: &str) -> Result<PathBuf, String> {
+    let (name, label, exts): (String, &str, &[&str]) = match fmt {
+        "yaml" | "yml" => (format!("{id}.flow.yaml"), "DSL", &["yaml", "yml"]),
+        "json" => (format!("{id}.flow.json"), "JSON", &["json"]),
+        "rhai" => (format!("{id}.rhai"), "Rhai", &["rhai"]),
+        _ => (format!("{id}.zip"), "流程包", &["zip"]),
+    };
+    let picked = app
+        .dialog()
+        .file()
+        .set_file_name(&name)
+        .add_filter(label, exts)
+        .blocking_save_file()
+        .ok_or_else(|| "已取消导出".to_string())?;
+    picked
+        .into_path()
+        .map_err(|e| format!("导出路径无效: {e}"))
+}
+
 #[tauri::command]
-pub fn export_flow(id: String, dest_path: String) -> Result<String, String> {
+pub fn export_flow(
+    id: String,
+    format: Option<String>,
+    app: AppHandle,
+) -> Result<String, String> {
+    let fmt = format.unwrap_or_else(|| "zip".into());
+    let dest = pick_export_path(&app, &id, &fmt)?;
+    export_flow_to_path(id, dest)
+}
+
+fn export_flow_to_path(id: String, dest: PathBuf) -> Result<String, String> {
     let rec = get_flow(id)?;
     if rec.description.trim().is_empty() {
         return Err("导出需要「给 agent 看的说明」，请先发布或补全说明".into());
     }
 
-    let dest = PathBuf::from(&dest_path);
+    let dest_path = dest.display().to_string();
     if let Some(parent) = dest.parent() {
         mkdir(parent)?;
     }
@@ -994,6 +1028,9 @@ fn read_zip_entry(
 ) -> Result<Option<String>, String> {
     match archive.by_name(name) {
         Ok(mut f) => {
+            if f.size() > crate::security::MAX_IMPORT_BYTES {
+                return Err(format!("zip 内 {name} 超过 8MB"));
+            }
             let mut buf = String::new();
             f.read_to_string(&mut buf)
                 .map_err(|e| format!("读取 zip 内 {name} 失败: {e}"))?;
@@ -1003,11 +1040,64 @@ fn read_zip_entry(
     }
 }
 
+fn cap_import_file(path: &Path) -> Result<(), String> {
+    let meta = fs::metadata(path).map_err(|e| format!("无法读取导入文件: {e}"))?;
+    if meta.len() > crate::security::MAX_IMPORT_BYTES {
+        return Err("导入文件超过 8MB".into());
+    }
+    Ok(())
+}
+
+fn reject_bad_zip_entries(archive: &mut zip::ZipArchive<fs::File>) -> Result<(), String> {
+    for i in 0..archive.len() {
+        let name = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 zip 条目失败: {e}"))?
+            .name()
+            .to_string();
+        if !crate::security::zip_entry_name_ok(&name) {
+            return Err(format!("zip 条目名不合法: {name}"));
+        }
+    }
+    Ok(())
+}
+
+fn pick_import_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("流程文件", &["zip", "yaml", "yml", "json"])
+        .blocking_pick_file()
+        .ok_or_else(|| "已取消导入".to_string())?;
+    picked
+        .into_path()
+        .map_err(|e| format!("导入路径无效: {e}"))
+}
+
 #[tauri::command]
 pub fn import_flow(
+    conflict_mode: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ImportFlowResult, String> {
+    let mode = conflict_mode.unwrap_or_default();
+    let path = if mode.is_empty() {
+        let p = pick_import_path(&app)?;
+        state.set_pending_flow_import(p.clone());
+        p
+    } else {
+        state
+            .pending_flow_import()
+            .ok_or_else(|| "没有待处理的导入文件，请重新选择".to_string())?
+    };
+    import_flow_from_path(path.to_string_lossy().into_owned(), if mode.is_empty() { None } else { Some(mode) })
+}
+
+fn import_flow_from_path(
     zip_path: String,
     conflict_mode: Option<String>,
 ) -> Result<ImportFlowResult, String> {
+    cap_import_file(Path::new(&zip_path))?;
     let path_lower = zip_path.to_lowercase();
     if path_lower.ends_with(".json") {
         let text = fs::read_to_string(&zip_path).map_err(|e| format!("读取 JSON 失败: {e}"))?;
@@ -1022,7 +1112,7 @@ pub fn import_flow(
             output_schema: rec.output_schema,
             nodes: rec.nodes,
             edges: rec.edges,
-            publish: rec.published,
+            publish: false,
             stage: false,
             ephemeral: false,
             rhai: rec.rhai,
@@ -1068,6 +1158,7 @@ pub fn import_flow(
     // 默认 .zip 压缩包
     let file = fs::File::open(&zip_path).map_err(|e| format!("打开 zip 失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("不是有效 zip: {e}"))?;
+    reject_bad_zip_entries(&mut archive)?;
     if let Some(g) = read_zip_entry(&mut archive, "graph.json")? {
         if g.contains("\"position\"") {
             return Err("拒绝导入：zip 内 graph 含画布坐标".into());
@@ -1075,6 +1166,7 @@ pub fn import_flow(
     }
     let (yaml, rhai) = read_zip_sidecar_pair(&mut archive)?;
     reject_abs("flow.yaml", &yaml)?;
+    crate::security::accept_sidecar_rhai(&rhai)?;
     reject_abs("flow.rhai", &rhai)?;
     let mut meta = parse_yaml(&yaml)?;
     let id = ensure_id(&meta.id)?;
@@ -1208,6 +1300,14 @@ mod tests {
         let text = stripped.to_string();
         assert!(!text.contains("position"));
         assert!(text.contains("\"s\""));
+    }
+
+    #[test]
+    fn zip_entry_and_sidecar_gates() {
+        assert!(crate::security::zip_entry_name_ok("demo.rhai"));
+        assert!(!crate::security::zip_entry_name_ok("../x.rhai"));
+        assert!(crate::security::accept_sidecar_rhai("let meta = #{ name: \"a\" };").is_ok());
+        assert!(crate::security::accept_sidecar_rhai("print(1)").is_err());
     }
 
     #[test]
