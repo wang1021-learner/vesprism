@@ -212,7 +212,7 @@ pub fn is_valid_flow_id(id: &str) -> bool {
     started && !prev_hyphen
 }
 
-fn ensure_id(id: &str) -> Result<String, String> {
+pub(crate) fn ensure_id(id: &str) -> Result<String, String> {
     let id = id.trim();
     if !is_valid_flow_id(id) {
         return Err(format!(
@@ -532,7 +532,7 @@ pub fn register_flows(ids: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn load_draft(id: &str) -> Option<Value> {
+pub(crate) fn load_draft(id: &str) -> Option<Value> {
     let p = draft_path(id);
     if !p.is_file() {
         return None;
@@ -559,16 +559,10 @@ fn load_published_rhai(id: &str) -> Option<String> {
         .or_else(|| fs::read_to_string(package_dir(id).join("flow.rhai")).ok())
 }
 
-fn write_package(req: &SaveFlowRequest, deps: &[String]) -> Result<(), String> {
+fn write_package(req: &SaveFlowRequest, deps: &[String], rhai: &str) -> Result<(), String> {
     if req.description.trim().is_empty() {
         return Err("发布需要填写「给 agent 看的说明」".into());
     }
-    let rhai = req
-        .rhai
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "发布缺少 flow.rhai".to_string())?;
     reject_abs("flow.rhai", rhai)?;
     let graph = serde_json::json!({
         "nodes": strip_positions(&req.nodes),
@@ -616,7 +610,6 @@ fn write_draft(req: &SaveFlowRequest) -> Result<(), String> {
         "output_schema": req.output_schema,
         "nodes": req.nodes,
         "edges": req.edges,
-        "rhai": req.rhai,
         "prompts": req.prompts,
     });
     let text = serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?;
@@ -640,15 +633,20 @@ pub fn save_flow(payload: SaveFlowRequest) -> Result<FlowRecord, String> {
         // 写新临时 sidecar 前清掉其它 *-rerun，避免 workflows/ 累积。
         let _ = purge_rerun_files(Some(&id));
     }
+    let compiled = if req.publish || req.stage {
+        Some(crate::workbench::flow_compile::compile_save_request(&req)?)
+    } else {
+        None
+    };
     if req.publish {
-        write_package(&req, &deps)?;
-    } else if req.stage {
-        let rhai = req
-            .rhai
+        let rhai = compiled
             .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "热挂载 / 试跑需要已编译的 rhai".to_string())?;
+            .ok_or_else(|| "发布需要能编译的流程图".to_string())?;
+        write_package(&req, &deps, rhai)?;
+    } else if req.stage {
+        let rhai = compiled
+            .as_deref()
+            .ok_or_else(|| "热挂载 / 试跑需要能编译的流程图".to_string())?;
         let meta = FlowYaml {
             id: id.clone(),
             name: req.name.clone(),
@@ -673,7 +671,7 @@ pub fn save_flow(payload: SaveFlowRequest) -> Result<FlowRecord, String> {
             output_schema: req.output_schema.clone(),
             nodes: req.nodes.clone(),
             edges: req.edges.clone(),
-            rhai: req.rhai.clone(),
+            rhai: compiled,
             prompts: req.prompts.clone(),
         });
     }

@@ -279,7 +279,7 @@ fn clear_persisted_workspace_cwd() -> Result<(), String> {
 /// 1. AppState 内存覆盖路径（设置页保存后立即写入）
 /// 2. `config.toml` → `[desktop] workspace_cwd`（用户选过的项目）
 /// 3. `~/.vesprism/scratch`（闲聊，官方 session/new 仍要绝对 cwd）
-fn resolve_workspace_cwd(state: &AppState) -> PathBuf {
+pub(crate) fn resolve_workspace_cwd(state: &AppState) -> PathBuf {
     if let Some(p) = state.workspace_cwd_override.lock().unwrap().clone() {
         if p.is_dir() {
             return p;
@@ -306,7 +306,7 @@ fn path_is_within(child: &Path, root: &Path) -> bool {
     c == r || c.starts_with(&format!("{r}/"))
 }
 
-fn ensure_within_workspace(
+pub(crate) fn ensure_within_workspace(
     requested: &str,
     workspace_root: &std::path::Path,
 ) -> Result<PathBuf, String> {
@@ -1126,6 +1126,8 @@ pub async fn upsert_mcp_server(
     config: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
+    let server_name = crate::security::sanitize_mcp_server_name(&server_name)?;
+    let config = crate::security::sanitize_mcp_config(&config)?;
     let cmd_tx = {
         let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
         guard
@@ -1325,9 +1327,16 @@ pub async fn add_skill(
     cwd: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
+    let path = crate::security::sanitize_skill_add_path(&path)?;
+    let workspace = resolve_workspace_cwd(&state);
+    let cwd = if cwd.trim().is_empty() {
+        workspace.clone()
+    } else {
+        ensure_within_workspace(&cwd, &workspace)?
+    };
     session_cmd_json(&tab_id, &state, |reply| ActorCommand::AddSkill {
-        path,
-        cwd,
+        path: path.to_string_lossy().into_owned(),
+        cwd: cwd.to_string_lossy().into_owned(),
         reply,
     })
     .await
