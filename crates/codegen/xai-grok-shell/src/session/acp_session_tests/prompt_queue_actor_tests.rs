@@ -684,7 +684,9 @@ async fn exact_initial_child_prompt_promotion_acknowledges_readiness() {
                 respond_to,
             );
             request.initial_child_prompt_ready = Some(ready_tx);
+            let _ = prompt_queue::take_queued_commit_count();
             let _ = actor.queue_input(request).await;
+            assert_eq!(prompt_queue::take_queued_commit_count(), 1);
             let (completion_tx, _completion_rx) = tokio::sync::mpsc::unbounded_channel();
             actor.clone().maybe_start_running_task(completion_tx).await;
             assert_eq!(
@@ -2082,6 +2084,49 @@ async fn interject_queued_prompt_with_new_text_stale_version_full_noop() {
         .await;
 }
 
+#[tokio::test]
+async fn ordinary_human_queue_uses_common_commit_and_preserves_fields() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (actor, _rx) = build_actor().await;
+            let (respond_to, response_rx) = oneshot::channel();
+            let (parsed_prompt_tx, _parsed_prompt_rx) = oneshot::channel();
+            let image = test_image_content();
+            let mut request = queue_input_request(
+                vec![
+                    acp::ContentBlock::Text(acp::TextContent::new("hello")),
+                    acp::ContentBlock::Image(image.clone()),
+                ],
+                "human-queued",
+                respond_to,
+            );
+            request.client_identifier = Some("client".to_owned());
+            request.parsed_prompt_tx = Some(parsed_prompt_tx);
+
+            let _ = prompt_queue::take_queued_commit_count();
+            assert!(!actor.queue_input(request).await);
+            assert_eq!(prompt_queue::take_queued_commit_count(), 1);
+            let state = actor.state.lock().await;
+            let item = state.pending_inputs.back().expect("queued human input");
+            assert!(matches!(&item.prompt_blocks[1], acp::ContentBlock::Image(actual) if actual == &image));
+            assert!(item.parsed_prompt_tx.is_some());
+            drop(state);
+
+            actor
+                .handle_remove_queued_prompt("human-queued", 0, Some("client"))
+                .await;
+            assert!(matches!(
+                response_rx.await,
+                Ok(Ok(PromptTurnOk {
+                    completion_kind: PromptCompletionKind::RemovedFromQueue,
+                    ..
+                }))
+            ));
+        })
+        .await;
+}
+
 /// Send-now `queue_input`: prompt lands behind the running front and cancels the turn.
 #[tokio::test]
 async fn queue_input_send_now_inserts_behind_running_front_and_requests_cancel() {
@@ -2101,6 +2146,7 @@ async fn queue_input_send_now_inserts_behind_running_front_and_requests_cancel()
                 .lock()
                 .expect("current_prompt_id mutex poisoned") = Some("running".into());
 
+            let _ = prompt_queue::take_queued_commit_count();
             let (respond_to, _prx) = oneshot::channel();
             let cancel = actor
                 .queue_input(QueueInputRequest {
@@ -2113,6 +2159,7 @@ async fn queue_input_send_now_inserts_behind_running_front_and_requests_cancel()
                 })
                 .await;
             assert!(cancel, "send-now behind a running turn must cancel it");
+            assert_eq!(prompt_queue::take_queued_commit_count(), 0);
 
             let state = actor.state.lock().await;
             let order: Vec<&str> = state
@@ -2154,6 +2201,7 @@ async fn queue_input_send_now_during_goal_turn_merges_as_interjections_fifo() {
                 None,
             );
 
+            let _ = prompt_queue::take_queued_commit_count();
             for id in ["sn-1", "sn-2"] {
                 let (respond_to, _prx) = oneshot::channel();
                 let cancel = actor
@@ -2168,6 +2216,7 @@ async fn queue_input_send_now_during_goal_turn_merges_as_interjections_fifo() {
                     .await;
                 assert!(!cancel, "goal turns never cancel-and-send");
             }
+            assert_eq!(prompt_queue::take_queued_commit_count(), 0);
 
             assert_eq!(
                 actor
@@ -2264,6 +2313,7 @@ async fn queue_input_auto_send_now_when_wait_and_held_queue_empty() {
                 .expect("current_prompt_id mutex poisoned") = Some("running".into());
             actor.tool_context.blocking_wait_depth.set_depth_for_test(1);
 
+            let _ = prompt_queue::take_queued_commit_count();
             let (respond_to, _p) = oneshot::channel();
             let cancel = actor
                 .queue_input(queue_input_request(
@@ -2273,6 +2323,7 @@ async fn queue_input_auto_send_now_when_wait_and_held_queue_empty() {
                 ))
                 .await;
             assert!(cancel, "first prompt during empty-held wait must cancel");
+            assert_eq!(prompt_queue::take_queued_commit_count(), 0);
 
             let state = actor.state.lock().await;
             let order: Vec<&str> = state
