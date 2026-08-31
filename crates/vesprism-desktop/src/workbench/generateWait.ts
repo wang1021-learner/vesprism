@@ -44,7 +44,6 @@ type TabGraphWait = {
 }
 
 /** 空 key = 单测 / 未标明 Tab。生产路径必须传入 tabId，避免两个画布互相覆盖。 */
-const DEFAULT_TAB = ''
 const HEAL_BUDGET = 2
 const canvasWaits = new Map<string, TabGraphWait>()
 
