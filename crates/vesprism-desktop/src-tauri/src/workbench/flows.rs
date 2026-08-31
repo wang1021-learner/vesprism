@@ -2,7 +2,8 @@
 //!
 //! - 草稿：`~/.vesprism/flow-drafts/<id>.json`（含坐标，不发布）
 //! - 发布：`$GROK_HOME/workflows/<id>.rhai` + `<id>.flow.yaml`（引擎发现/挂载）
-//! - zip：根目录就这两文件；坐标永不进包
+//! - zip：根目录 `<id>.flow.yaml` + `<id>.rhai` + `graph.json`（无坐标）+ `requirements.yaml`
+//! - 导入：只用 graph 在 Rust 里重编译 sidecar，包里的 rhai 一律丢掉
 //!
 //! 旧目录 `~/.vesprism/flows/<id>/` 只作读取回退，新发布不再写入。
 
@@ -1010,8 +1011,18 @@ fn export_flow_to_path(id: String, dest: PathBuf) -> Result<String, String> {
 
     let file = fs::File::create(&dest).map_err(|e| format!("创建 zip 失败: {e}"))?;
     let mut zip = zip::ZipWriter::new(file);
+    let graph = serde_json::json!({
+        "nodes": strip_positions(&rec.nodes),
+        "edges": rec.edges,
+    });
+    let graph_text = serde_json::to_string_pretty(&graph).map_err(|e| e.to_string())?;
+    if graph_text.contains("position") {
+        return Err("内部错误：导出 graph 仍含坐标".into());
+    }
+    reject_abs("graph.json", &graph_text)?;
     add_zip_file(&mut zip, &format!("{}.flow.yaml", rec.id), yaml.as_bytes())?;
     add_zip_file(&mut zip, &format!("{}.rhai", rec.id), rhai.as_bytes())?;
+    add_zip_file(&mut zip, "graph.json", graph_text.as_bytes())?;
     let reqs = collect_requirements(&rec.nodes);
     let reqs_yaml =
         serde_yaml::to_string(&reqs).map_err(|e| format!("序列化 requirements.yaml 失败: {e}"))?;
@@ -1157,19 +1168,11 @@ fn import_flow_from_path(
     let file = fs::File::open(&zip_path).map_err(|e| format!("打开 zip 失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("不是有效 zip: {e}"))?;
     reject_bad_zip_entries(&mut archive)?;
-    if let Some(g) = read_zip_entry(&mut archive, "graph.json")? {
-        if g.contains("\"position\"") {
-            return Err("拒绝导入：zip 内 graph 含画布坐标".into());
-        }
-    }
-    let (yaml, rhai) = read_zip_sidecar_pair(&mut archive)?;
-    reject_abs("flow.yaml", &yaml)?;
-    crate::security::accept_sidecar_rhai(&rhai)?;
-    reject_abs("flow.rhai", &rhai)?;
-    let mut meta = parse_yaml(&yaml)?;
-    let id = ensure_id(&meta.id)?;
-    meta.id = id.clone();
-    meta.dependencies.clear();
+    let yaml = read_zip_yaml(&mut archive)?;
+    let graph = read_zip_entry(&mut archive, "graph.json")?.unwrap_or_default();
+    let zip_rhai = read_zip_rhai(&mut archive);
+    let (mut meta, rhai) = imported_rhai(&yaml, &graph, zip_rhai.as_deref())?;
+    let id = meta.id.clone();
 
     let reqs = read_zip_entry(&mut archive, "requirements.yaml")?
         .and_then(|s| serde_yaml::from_str::<Requirements>(&s).ok())
@@ -1192,9 +1195,13 @@ fn import_flow_from_path(
             "keep-both" => {
                 let new_id = format!("{}-v{}", id, meta.version.replace('.', "-"));
                 let new_id = ensure_id(&slug_keep_both(&new_id))?;
-                let rhai = rhai.replace(&format!("name: \"{id}\""), &format!("name: \"{new_id}\""));
                 meta.id = new_id.clone();
-                write_imported(&meta, &rhai)?;
+                let (_, rhai) = imported_rhai(
+                    &write_yaml(&meta)?,
+                    &graph,
+                    zip_rhai.as_deref(),
+                )?;
+                write_imported_with_draft(&meta, &rhai, &graph)?;
                 return Ok(ImportFlowResult::Ok {
                     id: new_id,
                     version: meta.version,
@@ -1206,7 +1213,7 @@ fn import_flow_from_path(
         }
     }
 
-    write_imported(&meta, &rhai)?;
+    write_imported_with_draft(&meta, &rhai, &graph)?;
     Ok(ImportFlowResult::Ok {
         id: meta.id,
         version: meta.version,
@@ -1238,10 +1245,85 @@ fn write_imported(meta: &FlowYaml, rhai: &str) -> Result<(), String> {
     write_sidecar(&meta.id, &write_yaml(&published)?, rhai)
 }
 
-fn read_zip_sidecar_pair(
-    archive: &mut zip::ZipArchive<fs::File>,
-) -> Result<(String, String), String> {
-    let names: Vec<String> = (0..archive.len())
+fn write_imported_with_draft(meta: &FlowYaml, rhai: &str, graph: &str) -> Result<(), String> {
+    write_imported(meta, rhai)?;
+    let (nodes, edges) = parse_import_graph(graph)?;
+    write_draft(&SaveFlowRequest {
+        id: meta.id.clone(),
+        name: meta.name.clone(),
+        description: meta.description.clone(),
+        version: meta.version.clone(),
+        input_schema: meta.input_schema.clone(),
+        output_schema: meta.output_schema.clone(),
+        nodes,
+        edges,
+        publish: false,
+        stage: false,
+        ephemeral: false,
+        rhai: None,
+        prompts: None,
+    })
+}
+
+/// 导入 graph：必须有 nodes，禁止坐标。
+fn parse_import_graph(text: &str) -> Result<(Value, Value), String> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Err("拒绝导入：流程包没有 graph.json，不能执行别人的 sidecar".into());
+    }
+    if t.contains("\"position\"") {
+        return Err("拒绝导入：zip 内 graph 含画布坐标".into());
+    }
+    reject_abs("graph.json", t)?;
+    let v: Value = serde_json::from_str(t).map_err(|e| format!("graph.json 不是合法 JSON: {e}"))?;
+    let nodes = v
+        .get("nodes")
+        .cloned()
+        .ok_or_else(|| "graph.json 缺少 nodes".to_string())?;
+    if !nodes.is_array() {
+        return Err("graph.json 的 nodes 必须是数组".into());
+    }
+    let edges = v.get("edges").cloned().unwrap_or_else(|| Value::Array(vec![]));
+    Ok((nodes, edges))
+}
+
+/// 用 graph 编译 sidecar。`discarded_rhai` 只为标明包里的脚本绝不采用。
+fn imported_rhai(
+    yaml: &str,
+    graph: &str,
+    _discarded_rhai: Option<&str>,
+) -> Result<(FlowYaml, String), String> {
+    reject_abs("flow.yaml", yaml)?;
+    let mut meta = parse_yaml(yaml)?;
+    let id = ensure_id(&meta.id)?;
+    meta.id = id.clone();
+    meta.dependencies.clear();
+    let (nodes, edges) = parse_import_graph(graph)?;
+    let req = SaveFlowRequest {
+        id: id.clone(),
+        name: if meta.name.trim().is_empty() {
+            id.clone()
+        } else {
+            meta.name.clone()
+        },
+        description: meta.description.clone(),
+        version: meta.version.clone(),
+        input_schema: meta.input_schema.clone(),
+        output_schema: meta.output_schema.clone(),
+        nodes,
+        edges,
+        publish: true,
+        stage: false,
+        ephemeral: false,
+        rhai: None,
+        prompts: None,
+    };
+    let rhai = crate::workbench::flow_compile::compile_save_request(&req)?;
+    Ok((meta, rhai))
+}
+
+fn zip_root_names(archive: &mut zip::ZipArchive<fs::File>) -> Vec<String> {
+    (0..archive.len())
         .filter_map(|i| {
             archive.by_index(i).ok().and_then(|f| {
                 let n = f.name().replace('\\', "/");
@@ -1252,25 +1334,36 @@ fn read_zip_sidecar_pair(
                 }
             })
         })
-        .collect();
+        .collect()
+}
+
+fn read_zip_yaml(archive: &mut zip::ZipArchive<fs::File>) -> Result<String, String> {
+    let names = zip_root_names(archive);
     if let Some(yaml_name) = names
         .iter()
         .find(|n| !n.contains('/') && n.ends_with(".flow.yaml"))
         .cloned()
     {
+        return read_zip_entry(archive, &yaml_name)?
+            .ok_or_else(|| format!("zip 内缺少 {yaml_name}"));
+    }
+    read_zip_entry(archive, "flow.yaml")?
+        .ok_or_else(|| "zip 内缺少 <id>.flow.yaml（或旧版 flow.yaml）".to_string())
+}
+
+fn read_zip_rhai(archive: &mut zip::ZipArchive<fs::File>) -> Option<String> {
+    let names = zip_root_names(archive);
+    if let Some(yaml_name) = names
+        .iter()
+        .find(|n| !n.contains('/') && n.ends_with(".flow.yaml"))
+    {
         let id = yaml_name.trim_end_matches(".flow.yaml");
         let rhai_name = format!("{id}.rhai");
-        let yaml = read_zip_entry(archive, &yaml_name)?
-            .ok_or_else(|| format!("zip 内缺少 {yaml_name}"))?;
-        let rhai = read_zip_entry(archive, &rhai_name)?
-            .ok_or_else(|| format!("zip 内缺少 {rhai_name}"))?;
-        return Ok((yaml, rhai));
+        if let Ok(Some(s)) = read_zip_entry(archive, &rhai_name) {
+            return Some(s);
+        }
     }
-    let yaml = read_zip_entry(archive, "flow.yaml")?
-        .ok_or_else(|| "zip 内缺少 <id>.flow.yaml（或旧版 flow.yaml）".to_string())?;
-    let rhai = read_zip_entry(archive, "flow.rhai")?
-        .ok_or_else(|| "zip 内缺少 <id>.rhai（或旧版 flow.rhai）".to_string())?;
-    Ok((yaml, rhai))
+    read_zip_entry(archive, "flow.rhai").ok().flatten()
 }
 
 #[cfg(test)]
@@ -1353,5 +1446,51 @@ mod tests {
             collect_preset_ids_from_nodes(&nodes),
             vec!["audit".to_string(), "pr-reviewer".to_string()]
         );
+    }
+
+    fn demo_import_yaml() -> &'static str {
+        "id: demo-linear\nname: 示例\ndescription: 说明\nversion: \"1\"\ninput_schema:\n  type: object\noutput_schema:\n  type: object\n"
+    }
+    fn demo_import_graph() -> String {
+        serde_json::json!({
+            "nodes": [
+                {"id":"start-1","type":"start","params":{"label":"起点"}},
+                {"id":"agent-1","type":"agent","params":{"label":"摘要","role":"需求与代码分析专家","prompt":"请分析输入"}},
+                {"id":"end-1","type":"end","params":{"label":"终点"}}
+            ],
+            "edges": [
+                {"from":"start-1","to":"agent-1"},
+                {"from":"agent-1","to":"end-1"}
+            ]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn import_rejects_graph_with_positions() {
+        let g = r#"{"nodes":[{"id":"s","type":"start","params":{},"position":{"x":1,"y":2}}],"edges":[]}"#;
+        let err = parse_import_graph(g).unwrap_err();
+        assert!(err.contains("坐标"));
+    }
+
+    #[test]
+    fn import_compiles_from_graph_and_ignores_sidecar_rhai() {
+        let (meta, rhai) = imported_rhai(
+            demo_import_yaml(),
+            &demo_import_graph(),
+            Some("agent(\"pwn\")\nlet meta = #{ name: \"evil\" };"),
+        )
+        .unwrap();
+        assert_eq!(meta.id, "demo-linear");
+        assert!(rhai.contains("let meta = #{"));
+        assert!(rhai.contains("name: \"demo-linear\""));
+        assert!(!rhai.contains("agent(\"pwn\")"));
+        assert!(!rhai.contains("evil"));
+    }
+
+    #[test]
+    fn import_requires_graph_json() {
+        let err = imported_rhai(demo_import_yaml(), "", Some("let meta = #{};")).unwrap_err();
+        assert!(err.contains("graph.json"));
     }
 }

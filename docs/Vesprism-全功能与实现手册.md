@@ -206,8 +206,8 @@ Markdown：`AssistantMarkdown.tsx` 增量解析；工具卡里的 diff 不在会
 - 主路径：挂在「发起审批的工具行」下方
 - 兜底：`PendingApprovalFallback` 浮在输入框上（`force` 时画布工作栏没有工具行也弹）
 - 按钮：运行 once / 本次会话允许 / 总是允许（确认）/ 拒绝
-- 记忆：`permissionMemory.ts`（session 按 tab，always 在 localStorage）
-- 子 agent：`grok-session` 里 `session_id ≠ 父会话` 的权限请求自动 AllowOnce，不弹父窗口
+- 记忆：session 按 tab 只在内存（`permissionMemory.ts`）；「总是允许」只由 Rust 写 `~/.vesprism/perm-always.json`，前端不持久化
+- 子 agent：只读工具可自动放行；**写操作跟主会话一样走审批条**，不再因 `session_id ≠ 父会话` 自动 AllowOnce
 
 ### 5.4 AI 问卷
 
@@ -425,12 +425,13 @@ resetCanvasGraphWait()        // 卸载画布、开始试跑
 
 ### 9.7 编译发布
 
-`flow/rhai.ts`：草稿 → 官方 Rhai（`agent()` / `parallel()` 等）。Agent 节点 `presetId` 解析成 `AgentOpts`（capability、isolation_worktree、disabled_tools、permission_rules、skills、output_schema）。缺 preset 直接抛错，不静默空跑。
+`workbench/flow_compile.rs`：草稿 JSON → 官方 Rhai。`save_flow` 发布/热挂载时在 Rust 里编译，**忽略**前端送来的 `rhai`。Agent 节点 `presetId` 解析成岗位配置；缺 preset 直接报错，不静默空跑。
 
-发布：`PublishFlowModal` → `save_flow({ publish: true, rhai, ... })`。  
+发布：`PublishFlowModal` → `save_flow({ publish: true, ... })`。  
 挂载到当前会话：`update_session_flows`（官方 `x.ai/session/update_flows`），之后 `/{flowId}` 才能被引擎当 workflow 跑。
 
-导出 zip：根目录只有 `.rhai` + `.flow.yaml`。
+导出 zip：`<id>.flow.yaml` + `<id>.rhai` + `graph.json`（无坐标）+ `requirements.yaml`。  
+导入 zip：**只用 graph 在 Rust 里重编译 sidecar**，包里的 rhai 丢掉。没有 `graph.json` 的包拒绝导入（不能执行别人的编译产物）。
 
 ### 9.8 工作栏
 

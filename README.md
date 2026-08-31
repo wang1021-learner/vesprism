@@ -66,7 +66,7 @@ Vesprism 面向「一个人 + 一个仓库 + 一台电脑」：把编码 Agent �
 | 流式对话 | Markdown、代码块、公式（按需加载）、Mermaid；工具行单独订阅，避免整表刷新 |
 | 附件与 `@` | 文件 / 文件夹 / 粘贴图；路径限制在当前工作区或系统临时目录的 `vesprism-paste` |
 | 斜杠命令 | 以引擎 `commands/list` 为唯一源（`/plan` `/review` `/commit` `/sandbox` …），桌面只补自己的入口 |
-| 工具审批 | 允许这次 / 本会话允许 / 总是允许 / 拒绝；只读工具可自动放行；子 Agent 写操作同样走审批条 |
+| 工具审批 | 允许这次 / 本会话允许 / 总是允许 / 拒绝；只读工具可自动放行；子 Agent 写操作同样走审批条（总是允许落在 `~/.vesprism/perm-always.json`，不写前端 localStorage） |
 | 计划 / 只问 | `/plan` 先出计划再动手；`/ask` 只读不改文件 |
 | 排队与插话 | 生成中 Enter 进官方队列；Ctrl+Enter 立刻插话（不排队） |
 | 子 Agent | 父会话里看到脚手架行，可开子 Tab 跟进 |
