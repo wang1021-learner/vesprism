@@ -68,6 +68,19 @@ describe('案头', () => {
     expect(verbsForStation(accepted, 'ch-4:review').find((v) => v.id === 'adopt-ledger')?.ok).toBe(true)
   })
 
+  it('已入卷但摘要空，不准开下一章', () => {
+    const adopted = {
+      ...YANPIN_EYE,
+      drafts: YANPIN_EYE.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
+      reviews: YANPIN_EYE.reviews.map((r) =>
+        r.chapterId === 'ch-4' ? { ...r, adopted: true, summary80: '' } : r,
+      ),
+    }
+    const v = verbsForStation(adopted, 'ch-4:review')
+    expect(v.find((x) => x.id === 'split-next')?.ok).toBe(false)
+    expect(v.find((x) => x.id === 'split-next')?.hint).toMatch(/摘要/)
+  })
+
   it('稿纸默认仍是检查；洗这块是芯片；没点块 / 已正史不可洗', () => {
     const verbs = verbsForStation(YANPIN_EYE, 'ch-4:draft')
     expect(defaultVerb(YANPIN_EYE, 'ch-4:draft').id).toBe('fill-review')

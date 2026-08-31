@@ -95,8 +95,8 @@ export function gatesForBook(book: BookDemo): Gate[] {
       id: 'review-next',
       from: '入卷',
       to: '下一章',
-      ok: Boolean(review?.adopted),
-      need: '没入卷（未采纳）不准开下一章。',
+      ok: Boolean(review?.adopted && filled(review.summary80)),
+      need: '没入卷或缺少 80 字摘要，不准开下一章。',
     },
   ]
 }
@@ -171,7 +171,13 @@ export function gatesForNode(book: BookDemo, nodeId: DeskNodeId): Gate[] {
   if (parsed.kind === 'review') {
     return [
       gate('draft-review', '正文', '入卷', Boolean(review), '正文写完才能入卷。'),
-      gate('review-next', '入卷', '下一章', adopted, '未采纳不准开下一章。'),
+      gate(
+        'review-next',
+        '入卷',
+        '下一章',
+        adopted && filled(review?.summary80),
+        '未采纳或缺少摘要，不准开下一章。',
+      ),
     ]
   }
   return all.slice(0, 2)

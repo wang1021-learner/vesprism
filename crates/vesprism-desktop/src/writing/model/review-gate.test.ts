@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { YANPIN_EYE } from './demo-yanpin'
 import { applyReviewFromJson, registerForeshadowsFromReview } from './apply'
-import { reviewBlocksAdopt, styleHits } from './review-gate'
+import { exportBookPlain, exportChapterPlain, reviewBlocksAdopt, styleHits } from './review-gate'
 import { verbsForStation } from '../framework/station'
 
 function acceptedWithReview(json: Record<string, unknown>) {
-  const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', json)
+  const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', {
+    summary80: '库房旧门有人逼开第三眼。',
+    ...json,
+  })
   return {
     ...withReview,
     drafts: withReview.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
@@ -65,5 +68,21 @@ describe('入卷硬门', () => {
     const v = verbsForStation(book, 'ch-4:review')
     expect(v.find((x) => x.id === 'adopt-ledger')?.ok).toBe(false)
     expect(v.find((x) => x.id === 'adopt-ledger')?.hint).not.toMatch(/建议采纳/)
+  })
+
+  it('摘要空则挡入卷', () => {
+    const book = acceptedWithReview({ unnumbered: '无', summary80: '   ' })
+    const blocked = reviewBlocksAdopt(book, 'ch-4')
+    expect(blocked.ok).toBe(false)
+    expect(blocked.hints.join('')).toMatch(/摘要/)
+  })
+
+  it('按章导出正文；全书只拼有正文的章', () => {
+    expect(exportChapterPlain(YANPIN_EYE, 'ch-4')).toContain('旧门只开一条缝')
+    expect(exportChapterPlain(YANPIN_EYE, 'ch-4')).toMatch(/第4章/)
+    const all = exportBookPlain(YANPIN_EYE)
+    expect(all).toContain('赝品眼')
+    expect(all).toContain('第4章')
+    expect(all).toContain('旧门只开一条缝')
   })
 })

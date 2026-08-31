@@ -16,24 +16,53 @@ export type WriteSlice = {
   places: Pick<PlaceCard, 'id' | 'name' | 'job'>[]
   rules: Pick<RuleCard, 'id' | 'name' | 'quota' | 'cannot' | 'quotaLeft'>[]
   due: ForeshadowRow[]
+  /** 相关未收伏笔（3～5 条），给写手看着，不当到期。 */
+  watch: ForeshadowRow[]
   beats: BeatCard[]
+}
+
+export function chapterNosIn(text: string): number[] {
+  const nos: number[] = []
+  for (const m of String(text || '').matchAll(/第(\d+)章/g)) {
+    nos.push(Number(m[1]))
+  }
+  return nos
+}
+
+export function dueForeshadows(book: BookDemo, chapterNo: number): ForeshadowRow[] {
+  return book.outline.foreshadows.filter((f) => {
+    if (f.state === 'closed') return false
+    const nos = chapterNosIn(f.thisVolume)
+    if (!nos.includes(chapterNo)) return false
+    if (f.state === 'due') return true
+    return /到期|必须|兑现/.test(f.thisVolume)
+  })
+}
+
+export function watchForeshadows(
+  book: BookDemo,
+  chapterNo: number,
+  dueIds: Set<string>,
+): ForeshadowRow[] {
+  const scored = book.outline.foreshadows
+    .filter((f) => f.state === 'open' && !dueIds.has(f.id))
+    .map((f) => {
+      let score = 0
+      if (chapterNosIn(f.thisVolume).some((n) => Math.abs(n - chapterNo) <= 3)) score += 3
+      if (chapterNosIn(f.plantVolume).some((n) => Math.abs(n - chapterNo) <= 3)) score += 2
+      if (f.plantVolume.includes('卷') || f.thisVolume.includes('卷')) score += 1
+      return { f, score }
+    })
+    .filter((x) => x.score > 0)
+  scored.sort((a, b) => b.score - a.score || a.f.id.localeCompare(b.f.id))
+  return scored.slice(0, 5).map((x) => x.f)
 }
 
 export function writeSlice(book: BookDemo, chapterId: string): WriteSlice | null {
   const ch = book.chapters.find((c) => c.id === chapterId)
   if (!ch) return null
-  const blob = `${ch.plant} ${ch.press} ${ch.close} 第${ch.no}章`
-  const chapterMark = `第${ch.no}章`
-  const due = book.outline.foreshadows.filter((f) => {
-    if (f.state === 'closed') return false
-    const scheduled =
-      blob.includes(f.id) ||
-      f.thisVolume.includes(chapterMark) ||
-      (f.state === 'due' && f.thisVolume.includes(chapterMark))
-    if (f.state === 'due') return blob.includes(f.id) || f.thisVolume.includes(chapterMark)
-    // open 但本卷写明本章到期 → 当到期伏笔给写手
-    return scheduled && /到期|必须|兑现/.test(f.thisVolume)
-  })
+  const due = dueForeshadows(book, ch.no)
+  const watch = watchForeshadows(book, ch.no, new Set(due.map((f) => f.id)))
   return {
     chapterId: ch.id,
     no: ch.no,
@@ -71,6 +100,7 @@ export function writeSlice(book: BookDemo, chapterId: string): WriteSlice | null
         cannot: r.cannot,
       })),
     due,
+    watch,
     beats: book.beatsByChapter[ch.id] || [],
   }
 }

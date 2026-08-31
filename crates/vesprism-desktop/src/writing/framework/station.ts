@@ -258,8 +258,30 @@ export function verbsForStation(
       ),
     ]
     if (parsed.kind === 'review' && review?.adopted) {
-      list.push(verb('split-next', '开下一章', true, '已经入卷，可以开下一章。'))
+      const hasSummary = filled(review.summary80)
+      list.push(
+        verb(
+          'split-next',
+          '开下一章',
+          hasSummary,
+          hasSummary ? '已经入卷，可以开下一章。' : '入卷需要 80 字摘要。',
+        ),
+      )
     }
+    const body = chapterId ? (book.drafts.find((d) => d.chapterId === chapterId)?.beats ?? [])
+      .map((b) => b.body)
+      .join('\n')
+      .trim() : ''
+    list.push(
+      verb(
+        'export-chapter',
+        '导出这一章',
+        Boolean(body),
+        body ? '导出本章正文为 txt。' : '这一章还没有正文。',
+        'read',
+        'ask',
+      ),
+    )
     list.push(ask)
     return list
   }

@@ -123,5 +123,7 @@ export const VERB_DOES: Record<string, string> = {
   'fill-review': '对照章纲和设定检查这一章。先出检查单。',
   'adopt-ledger': '把检查结果写入人物当前态和伏线。入卷后不可撤销（演示标记）。',
   'split-next': '上一章已入卷，拆下一章纲。',
+  'export-chapter': '把这一章正文存成 txt。',
+  'export-book': '把已有正文按章拼成一份 txt。',
   ask: '只问设定和案卷。不写回人物卡，不改伏线。',
 }

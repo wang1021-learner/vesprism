@@ -1,5 +1,6 @@
 /**
- * 写台书持久化：走 Rust `writing_store`（~/.vesprism/books/<id>.json 原子写）。
+ * 写台书持久化：走 Rust `writing_store`
+ * （~/.vesprism/books/<id>/meta.json + book.json + chapters/NNNN.json）。
  * 书库从用户新建开始；无种子、无演示数据。
  */
 import { invoke } from '@tauri-apps/api/core'
@@ -9,6 +10,9 @@ export type WritingBookMeta = {
   id: string
   title: string
   updated_at: string
+  accepted?: number
+  has_candidate?: boolean
+  land_line?: string
 }
 
 export const writingListBooks = () => invoke<WritingBookMeta[]>('writing_list_books')
@@ -19,6 +23,8 @@ export const writingDeleteBook = (id: string) =>
   invoke<void>('writing_delete_book', { id })
 export const writingSessionCwd = (id: string) =>
   invoke<string>('writing_session_cwd', { id })
+export const writingExportBook = (id: string, chapterNo?: number | null) =>
+  invoke<string>('writing_export_book', { id, chapter_no: chapterNo ?? null })
 
 /** 坏文件不能进书库：缺 pitch 会在渲染时把写台打崩。 */
 export function isLoadableBook(raw: unknown): raw is BookDemo {

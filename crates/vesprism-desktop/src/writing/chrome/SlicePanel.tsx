@@ -55,6 +55,11 @@ export function SlicePanel({ slice }: { slice: WriteSlice }) {
           </Field>
         ))
       )}
+      {slice.watch.map((f) => (
+        <Field key={`w-${f.id}`} label={`旁观 · ${f.id}`}>
+          <ForeshadowStamp state={f.state} /> {f.line} · {f.thisVolume}
+        </Field>
+      ))}
       {slice.beats.length === 0 ? (
         <Field label="切块">还没有切块</Field>
       ) : (

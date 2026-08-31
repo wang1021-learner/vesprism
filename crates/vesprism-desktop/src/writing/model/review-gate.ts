@@ -85,7 +85,31 @@ export function reviewBlocksAdopt(
     }
   }
 
+  if (!(review.summary80 || '').trim()) {
+    hints.push('入卷需要 80 字摘要。')
+  }
+
   return { ok: hints.length === 0, hints }
+}
+
+export function exportChapterPlain(book: BookDemo, chapterId: string): string {
+  const ch = book.chapters.find((c) => c.id === chapterId)
+  const body = draftText(book, chapterId).trim()
+  if (!body) return ''
+  const heading = ch ? `第${ch.no}章${ch.title ? ` ${ch.title}` : ''}` : chapterId
+  return `${heading}\n\n${body}\n`
+}
+
+export function exportBookPlain(book: BookDemo): string {
+  const parts = [book.title || '未命名']
+  const chapters = [...book.chapters].sort((a, b) => a.no - b.no)
+  for (const ch of chapters) {
+    const body = draftText(book, ch.id).trim()
+    if (!body) continue
+    parts.push(`第${ch.no}章${ch.title ? ` ${ch.title}` : ''}\n\n${body}`)
+  }
+  if (parts.length < 2) return ''
+  return `${parts.join('\n\n')}\n`
 }
 
 /** 句式套话命中，只提示去洗，不挡入卷。 */

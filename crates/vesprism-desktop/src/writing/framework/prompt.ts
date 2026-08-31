@@ -298,6 +298,7 @@ function sliceLines(slice: WriteSlice, book: BookDemo): string[] {
   else {
     for (const f of slice.due) lines.push(`到期 ${f.id}：${f.line}（${f.thisVolume}）`)
   }
+  for (const f of slice.watch) lines.push(`旁观 ${f.id}：${f.line}（${f.thisVolume}）`)
   for (const [i, b] of slice.beats.entries()) {
     lines.push(`节拍${i + 1} ${b.title} 场面：${b.scene}`)
     lines.push(`节拍${i + 1} 任务：${b.job}`)

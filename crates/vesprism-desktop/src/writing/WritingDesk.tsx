@@ -12,7 +12,7 @@ import {
   patchTab,
   pushToast,
 } from '../store'
-import { restartSession, setSessionMode, startSession } from '../bridge'
+import { isTauriRuntime, restartSession, setSessionMode, startSession } from '../bridge'
 import { cancelActiveTurn } from '../lib/cancelActiveTurn'
 import { sendSessionPrompt } from '../lib/sendSessionPrompt'
 import { BeatStrip } from './chrome/BeatStrip'
@@ -109,7 +109,7 @@ import {
 import { writeSlice } from './model/slice'
 import type { BookDemo, DeskNodeId } from './model/types'
 import { chapterCountFor } from './framework/scale'
-import { persistBook, writingSessionCwd } from './storage'
+import { persistBook, writingExportBook, writingSessionCwd } from './storage'
 
 /** 写台任务：发给引擎的一个动词（回合并按 TASK 标记归属） */
 type DeskTask = {
@@ -605,6 +605,13 @@ export function WritingDesk() {
     )
   }
   if (!book) {
+    if (openId) {
+      return (
+        <div className="wd-desk wd-desk--loading" role="status">
+          打开这本书…
+        </div>
+      )
+    }
     return (
       <div className="wd-desk wd-desk--empty" role="status">
         <p className="wd-kicker">写完</p>
@@ -808,10 +815,26 @@ function OpenDesk({
         return
       }
       case 'split-next': {
+        const review = book.reviews.find((r) => r.chapterId === chapterId)
+        if (!(review?.summary80 || '').trim()) {
+          pushToast('入卷需要 80 字摘要。', 'info')
+          return
+        }
         const no = Math.max(0, ...book.chapters.map((c) => c.no)) + 1
         patch((b) => addChapter(b).book)
         setNode(`ch-${no}`)
         pushToast(`第${no}章纲已建。可点「写章纲」让 AI 拆。`, 'success')
+        return
+      }
+      case 'export-chapter': {
+        const ch = book.chapters.find((c) => c.id === chapterId)
+        if (!isTauriRuntime()) {
+          pushToast('导出只在桌面端可用。', 'info')
+          return
+        }
+        void writingExportBook(book.id, ch?.no)
+          .then((path) => pushToast(`已导出 ${path}`, 'success'))
+          .catch((err) => pushToast(String(err), 'error'))
         return
       }
       case 'fill-pitch':

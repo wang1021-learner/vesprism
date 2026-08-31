@@ -35,6 +35,33 @@ describe('写本章切片', () => {
     const ch4 = writeSlice(YANPIN_EYE, 'ch-4')
     expect(ch4?.due.some((f) => f.id === 'F002')).toBe(false)
     expect(ch4?.due.some((f) => f.id === 'F004')).toBe(false)
+    expect(ch4?.watch.map((f) => f.id).sort()).toEqual(['F002', 'F004'])
+  })
+
+  it('到期伏笔按本卷章号，不靠章纲 blob 撞 id', () => {
+    const book = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) =>
+        c.id === 'ch-4' ? { ...c, plant: 'F099 被写进章纲', press: '', close: '' } : c,
+      ),
+      outline: {
+        ...YANPIN_EYE.outline,
+        foreshadows: [
+          ...YANPIN_EYE.outline.foreshadows,
+          {
+            id: 'F099',
+            line: 'blob 撞上也不该到期',
+            plantVolume: '卷1',
+            thisVolume: '后续卷',
+            closeWhen: '',
+            state: 'due' as const,
+          },
+        ],
+      },
+    }
+    const s = writeSlice(book, 'ch-4')
+    expect(s?.due.some((f) => f.id === 'F099')).toBe(false)
+    expect(s?.due.map((f) => f.id).sort()).toEqual(['F001', 'F003'])
   })
 
   it('本卷写明本章到期的未收伏笔，即便态还是 open 也进切片', () => {

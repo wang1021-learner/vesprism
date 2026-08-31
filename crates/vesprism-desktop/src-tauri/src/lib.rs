@@ -353,6 +353,7 @@ pub fn run() {
             writing_store::writing_load_book,
             writing_store::writing_save_book,
             writing_store::writing_delete_book,
+            writing_store::writing_export_book,
             writing_store::writing_session_cwd,
         ])
         .run(tauri::generate_context!())

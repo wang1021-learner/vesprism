@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '@nanostores/react'
+import { isTauriRuntime } from '../../bridge'
 import { openChatTab } from '../../lib/openChatTab'
 import { pushToast } from '../../store'
+import { writingExportBook } from '../storage'
 import {
-  $writingBooks,
   $writingLoaded,
   $writingOpenId,
-  bookLandLine,
-  bookProgress,
-  bookStatus,
+  $writingShelf,
+  WRITING_CHAPTER_AIM,
   bootWritingLibrary,
   createWritingBook,
   deleteWritingBook,
@@ -20,7 +20,7 @@ async function ensureDesk() {
 }
 
 export function WritingLibraryNav() {
-  const books = useStore($writingBooks)
+  const books = useStore($writingShelf)
   const loaded = useStore($writingLoaded)
   const openId = useStore($writingOpenId)
   const [creating, setCreating] = useState(false)
@@ -120,8 +120,7 @@ export function WritingLibraryNav() {
           <p className="sidebar-group-empty">还没有书。点右上角 + 新建一本。</p>
         ) : null}
         {books.map((b) => {
-          const st = bookStatus(b)
-          const prog = bookProgress(b)
+          const st = b.has_candidate ? '试笔' : '连载中'
           const on = b.id === openId
           return (
             <div key={b.id} className={`wd-lib-row${on ? ' is-on' : ''}`}>
@@ -129,7 +128,7 @@ export function WritingLibraryNav() {
                 type="button"
                 className="wd-lib-open"
                 onClick={() => {
-                  selectWritingBook(b.id)
+                  void selectWritingBook(b.id)
                   void ensureDesk()
                 }}
               >
@@ -139,9 +138,27 @@ export function WritingLibraryNav() {
                 <span className="wd-lib-meta">
                   <span className="wd-lib-title">{b.title}</span>
                   <span className="wd-lib-sub">
-                    {bookLandLine(b)} · {st.label} · {prog.done}/{prog.aim}
+                    {b.land_line || '开卷'} · {st} · {b.accepted}/{WRITING_CHAPTER_AIM}
                   </span>
                 </span>
+              </button>
+              <button
+                type="button"
+                className="wd-lib-del"
+                title="导出正文"
+                aria-label={`导出《${b.title}》正文`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!isTauriRuntime()) {
+                    pushToast('导出只在桌面端可用。', 'info')
+                    return
+                  }
+                  void writingExportBook(b.id)
+                    .then((path) => pushToast(`已导出 ${path}`, 'success'))
+                    .catch((err) => pushToast(String(err), 'error'))
+                }}
+              >
+                导
               </button>
               <button
                 type="button"

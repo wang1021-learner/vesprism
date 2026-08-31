@@ -82,6 +82,7 @@ describe('写台真实回写', () => {
     const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', {
       states: ['沈见真：配额用尽，瞳孔见血。', '顾晚宁：没拦住第三次。'],
       foreshadow: ['F001：已收。'],
+      summary80: '库房旧门有人逼开第三眼。',
     })
     expect(adoptIntoDossier(withReview, 'ch-4').reviews.find((r) => r.chapterId === 'ch-4')?.adopted).toBe(
       false,
@@ -186,6 +187,7 @@ describe('写台真实回写', () => {
     }
     const withReview = applyReviewFromJson(twins, 'ch-4', {
       states: ['shen：配额用尽'],
+      summary80: '库房旧门有人逼开第三眼。',
     })
     const accepted = {
       ...withReview,
@@ -200,6 +202,7 @@ describe('写台真实回写', () => {
     const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', {
       states: ['沈见真：看见死局。', 'eye：剩余 0 次', 'vault：只有夜场员工'],
       foreshadow: ['F001：已收。'],
+      summary80: '库房旧门有人逼开第三眼。',
     })
     const accepted = {
       ...withReview,
@@ -225,5 +228,25 @@ describe('写台真实回写', () => {
     expect(next.outline.foreshadows.find((f) => f.id === 'F001')?.line).toBe(
       YANPIN_EYE.outline.foreshadows.find((f) => f.id === 'F001')?.line,
     )
+  })
+
+  it('摘要空则入卷不写回、不解锁下一章', () => {
+    const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', {
+      states: ['沈见真：不该被写回'],
+      summary80: '  ',
+    })
+    const accepted = {
+      ...withReview,
+      drafts: withReview.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
+      chapters: withReview.chapters.map((c) =>
+        c.id === 'ch-5' ? { ...c, locked: true, lockReason: '没入卷' } : c,
+      ),
+    }
+    const next = adoptIntoDossier(accepted, 'ch-4')
+    expect(next.reviews.find((r) => r.chapterId === 'ch-4')?.adopted).toBe(false)
+    expect(next.people.find((p) => p.id === 'shen')?.state).toBe(
+      YANPIN_EYE.people.find((p) => p.id === 'shen')?.state,
+    )
+    expect(next.chapters.find((c) => c.id === 'ch-5')?.locked).toBe(true)
   })
 })

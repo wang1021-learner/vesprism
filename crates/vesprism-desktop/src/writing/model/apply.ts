@@ -194,6 +194,7 @@ export function adoptIntoDossier(book: BookDemo, chapterId: string): BookDemo {
   const review = book.reviews.find((r) => r.chapterId === chapterId)
   const draft = book.drafts.find((d) => d.chapterId === chapterId)
   if (!review || !draft?.accepted) return book
+  if (!(review.summary80 || '').trim()) return book
 
   let next: BookDemo = {
     ...book,

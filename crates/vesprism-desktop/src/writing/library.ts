@@ -7,15 +7,62 @@ import { emptyBook } from './model/empty-book'
 import { gapLabel } from './framework/station'
 import { chapterCountFor } from './framework/scale'
 import type { BookDemo } from './model/types'
-import { loadAllBooks, persistBook, writingDeleteBook } from './storage'
+import {
+  isLoadableBook,
+  persistBook,
+  writingDeleteBook,
+  writingListBooks,
+  writingLoadBook,
+  type WritingBookMeta,
+} from './storage'
 
 export const LAST_BOOK_KEY = 'vesprism.writing.lastBook'
 export const WRITING_CHAPTER_AIM = chapterCountFor()
 
+export type WritingShelfItem = {
+  id: string
+  title: string
+  updated_at: string
+  accepted: number
+  has_candidate: boolean
+  land_line: string
+}
+
+export const $writingShelf = atom<WritingShelfItem[]>([])
 export const $writingBooks = atom<BookDemo[]>([])
 export const $writingOpenId = atom<string | null>(null)
 export const $writingLastId = atom<string | null>(null)
 export const $writingLoaded = atom(false)
+
+export function shelfFromBook(book: BookDemo): WritingShelfItem {
+  const prog = bookProgress(book)
+  return {
+    id: book.id,
+    title: book.title,
+    updated_at: book.updatedAt ?? '',
+    accepted: prog.done,
+    has_candidate: bookStatus(book).tone === 'is-cand',
+    land_line: bookLandLine(book),
+  }
+}
+
+export function shelfFromMeta(m: WritingBookMeta): WritingShelfItem {
+  return {
+    id: m.id,
+    title: m.title,
+    updated_at: m.updated_at,
+    accepted: m.accepted ?? 0,
+    has_candidate: m.has_candidate ?? false,
+    land_line: m.land_line || '开卷',
+  }
+}
+
+function upsertShelf(item: WritingShelfItem) {
+  const prev = $writingShelf.get()
+  const i = prev.findIndex((x) => x.id === item.id)
+  if (i < 0) $writingShelf.set([...prev, item])
+  else $writingShelf.set(prev.map((x, idx) => (idx === i ? item : x)))
+}
 
 let bootOnce: Promise<void> | null = null
 
@@ -29,7 +76,10 @@ export function rememberLastBook(id: string | null) {
 }
 
 export function mapWritingBooks(fn: (list: BookDemo[]) => BookDemo[]) {
-  $writingBooks.set(fn($writingBooks.get()))
+  const next = fn($writingBooks.get())
+  $writingBooks.set(next)
+  const byId = new Map(next.map((b) => [b.id, shelfFromBook(b)]))
+  $writingShelf.set($writingShelf.get().map((item) => byId.get(item.id) ?? item))
 }
 
 export function bookProgress(book: BookDemo): { done: number; aim: number; pct: number } {
@@ -66,13 +116,14 @@ export function bookSubline(book: BookDemo): string {
 export async function bootWritingLibrary(): Promise<void> {
   if (bootOnce) return bootOnce
   bootOnce = (async () => {
-    let list: BookDemo[] = []
+    let shelf: WritingShelfItem[] = []
     try {
-      list = await loadAllBooks()
+      const metas = await writingListBooks()
+      shelf = metas.map(shelfFromMeta)
     } catch (e) {
       console.warn('[writing] 书库加载失败:', e)
     }
-    $writingBooks.set(list)
+    $writingShelf.set(shelf)
     $writingLoaded.set(true)
     let last: string | null = null
     try {
@@ -80,8 +131,8 @@ export async function bootWritingLibrary(): Promise<void> {
     } catch {
       last = null
     }
-    const remembered = last ? list.find((b) => b.id === last) : undefined
-    const target = remembered ?? list[0]
+    const remembered = last ? shelf.find((b) => b.id === last) : undefined
+    const target = remembered ?? shelf[0]
     // 记住上一本，但不自动摊开。切写完 / ← 书 都停在书库，人从左边点开。
     if (target) $writingLastId.set(target.id)
   })()
@@ -90,7 +141,8 @@ export async function bootWritingLibrary(): Promise<void> {
 
 export function createWritingBook(init: { title: string; platform: string; logline: string }): BookDemo {
   const next = emptyBook(init)
-  mapWritingBooks((prev) => [...prev, next])
+  upsertShelf(shelfFromBook(next))
+  mapWritingBooks((prev) => [...prev.filter((b) => b.id !== next.id), next])
   $writingOpenId.set(next.id)
   $writingLastId.set(next.id)
   rememberLastBook(next.id)
@@ -101,6 +153,7 @@ export function createWritingBook(init: { title: string; platform: string; logli
 }
 
 export function deleteWritingBook(id: string): void {
+  $writingShelf.set($writingShelf.get().filter((b) => b.id !== id))
   mapWritingBooks((prev) => prev.filter((b) => b.id !== id))
   if ($writingOpenId.get() === id) $writingOpenId.set(null)
   if ($writingLastId.get() === id) $writingLastId.set(null)
@@ -110,17 +163,32 @@ export function deleteWritingBook(id: string): void {
   }
 }
 
-export function selectWritingBook(id: string): void {
-  const hit = $writingBooks.get().find((b) => b.id === id)
-  if (!hit) return
+export async function selectWritingBook(id: string): Promise<void> {
   $writingOpenId.set(id)
   $writingLastId.set(id)
   rememberLastBook(id)
+  if ($writingBooks.get().some((b) => b.id === id)) return
+  if (!isTauriRuntime()) return
+  try {
+    const raw = await writingLoadBook(id)
+    const book = JSON.parse(raw) as unknown
+    if (!isLoadableBook(book) || book.id !== id) {
+      console.warn('[writing] 这本书结构不完整:', id)
+      if ($writingOpenId.get() === id) $writingOpenId.set(null)
+      return
+    }
+    mapWritingBooks((prev) => [...prev.filter((b) => b.id !== id), book])
+    upsertShelf(shelfFromBook(book))
+  } catch (e) {
+    console.warn('[writing] 打开书失败:', id, e)
+    if ($writingOpenId.get() === id) $writingOpenId.set(null)
+  }
 }
 
 /** 测试用 */
 export function resetWritingLibraryForTests() {
   bootOnce = null
+  $writingShelf.set([])
   $writingBooks.set([])
   $writingOpenId.set(null)
   $writingLastId.set(null)
