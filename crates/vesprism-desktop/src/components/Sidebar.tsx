@@ -19,7 +19,6 @@ import {
   $engineStatus,
   $models,
   $reasoningEffort,
-  $runningByParent,
   $settingsOpen,
   $sidebarAutoCollapsed,
   $sidebarCollapsed,
@@ -82,17 +81,38 @@ import {
   invalidateSessionMessages,
   nextLoadGen,
 } from '../lib/sessionOpen'
-import type { ChatMessage, ToolCallData } from '../types'
+import { hydrateDisplayMessage } from '../lib/hydrateDisplayMessage'
+import {
+  formatSearchTimeLabel,
+  normalizeCwdKey,
+  workspaceDisplayName,
+} from '../lib/sidebarFormat'
 import { openChatTab } from '../lib/openChatTab'
 import { WritingLibraryNav } from '../writing/chrome/LibraryNav'
+import { OfficeTaskNav } from '../office/chrome/TaskNav'
 import { spawnReasoningEffort } from '../lib/reasoning'
 import { openSessionSchedule } from '../lib/engineSlash'
-import { normalizeWorkspacePath, workspaceFolderName } from '../lib/workspacePath'
 import {
   refreshRegisteredProjects,
   registerAndSwitchWorkspace,
 } from '../lib/workspaceSwitch'
 import { ShellSwitch } from './ShellSwitch'
+import {
+  AgentsIcon,
+  ChatBubbleIcon,
+  CollapseIcon,
+  FlowCanvasIcon,
+  FolderIcon,
+  GenericNavIcon,
+  OfficeDeskIcon,
+  PlusIcon,
+  ScheduleIcon,
+  SearchIcon,
+  SettingsIcon,
+  WorkflowIcon,
+  WritingDeskIcon,
+} from './sidebarIcons'
+import { ChatRow } from './sidebarChatRow'
 import { openWorkbenchHistory } from '../lib/openWorkbenchSession'
 import {
   CHATS_CHANGED_EVENT,
@@ -106,8 +126,6 @@ import {
   listWorkbenchSessions,
   type WorkbenchBinding,
 } from '../workbench/bindings'
-
-
 
 /** FTS 搜索结果行（可带 snippet） */
 type SearchHit = ChatSummary & { snippet?: string }
@@ -126,241 +144,6 @@ async function openBoundWorkbenchWithBinding(
   })
 }
 
-/** 磁盘投影 → ChatMessage（工具字段与实时 ToolCallInfo 对齐，不再靠标题猜 kind） */
-function hydrateDisplayMessage(m: {
-  id: string
-  role: string
-  text: string
-  tool?: string | null
-  tool_call_id?: string | null
-  prompt_id?: string | null
-  kind?: string | null
-  status?: string | null
-  detail?: string | null
-  preview?: string | null
-  start_ms?: number | null
-  end_ms?: number | null
-}): ChatMessage {
-  const role = (
-    ['user', 'assistant', 'system', 'thought', 'tool'].includes(m.role)
-      ? m.role
-      : 'assistant'
-  ) as ChatMessage['role']
-
-  if (role === 'tool') {
-    const title = m.tool || 'tool'
-    const preview = m.preview || m.text || ''
-    const detail = m.detail || title
-    const toolCall: ToolCallData = {
-      toolCallId: m.tool_call_id || m.id,
-      kind: (m.kind || 'other').toLowerCase(),
-      status: (m.status || 'completed').toLowerCase(),
-      title,
-      detail,
-      preview,
-      // 历史耗时：磁盘 updates.jsonl 的 timestamp 解析（毫秒）
-      timing:
-        m.start_ms != null
-          ? { start: m.start_ms, ...(m.end_ms != null ? { end: m.end_ms } : {}) }
-          : undefined,
-    }
-    return {
-      id: m.id,
-      role: 'tool',
-      text: preview || detail,
-      tool: title,
-      toolCallId: toolCall.toolCallId,
-      toolCall,
-    }
-  }
-
-  return {
-    id: m.id,
-    role,
-    text: m.text || '',
-    ...(m.tool ? { tool: m.tool } : {}),
-    ...(m.tool_call_id ? { toolCallId: m.tool_call_id } : {}),
-    ...(m.prompt_id ? { promptId: m.prompt_id } : {}),
-  }
-}
-
-/** 简洁文件夹线框（不用 emoji / 系统桌面图标） */
-function FolderIcon({ open = false }: { open?: boolean }) {
-  return (
-    <svg
-      className={`sidebar-folder-icon${open ? ' open' : ''}`}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden
-    >
-      <path
-        d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l1.8 1.8c.2.2.5.3.8.3H19.5A1.5 1.5 0 0 1 21 9.6v8.9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5v-11Z"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinejoin="round"
-      />
-      {open ? (
-        <path
-          d="M3 11h18"
-          stroke="currentColor"
-          strokeWidth="1.75"
-          strokeLinecap="round"
-          opacity="0.55"
-        />
-      ) : null}
-    </svg>
-  )
-}
-
-/** 侧栏图标统一 16×16，避免收纳/展开光学校准不一致 */
-function SearchIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3.5-3.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-const iconProps = {
-  width: 15,
-  height: 15,
-  viewBox: '0 0 24 24',
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.7,
-  strokeLinecap: 'round' as const,
-  strokeLinejoin: 'round' as const,
-  'aria-hidden': true as const,
-}
-
-function WorkflowIcon() {
-  return (
-    <svg {...iconProps}>
-      <circle cx="7" cy="8" r="2" />
-      <circle cx="17" cy="12" r="2" />
-      <circle cx="7" cy="16" r="2" />
-      <path d="M9 8h4.5a3.5 3.5 0 0 1 3.5 3.5M9 16h4.5A3.5 3.5 0 0 0 17 12.5" />
-    </svg>
-  )
-}
-
-function ScheduleIcon() {
-  return (
-    <svg {...iconProps}>
-      <circle cx="12" cy="12" r="7.5" />
-      <path d="M12 8.5v4l2.5 1.5" />
-    </svg>
-  )
-}
-
-function FlowCanvasIcon() {
-  return (
-    <svg {...iconProps}>
-      <rect x="4.5" y="5.5" width="6" height="5" rx="1" />
-      <rect x="13.5" y="13.5" width="6" height="5" rx="1" />
-      <path d="M10.5 8h3.2a2 2 0 0 1 2 2v3.5" />
-    </svg>
-  )
-}
-
-function AgentsIcon() {
-  return (
-    <svg {...iconProps}>
-      <circle cx="12" cy="8" r="2.4" />
-      <path d="M6.5 18c.6-3 2.8-4.6 5.5-4.6S16.9 15 17.5 18" />
-    </svg>
-  )
-}
-
-function WritingDeskIcon() {
-  return (
-    <svg {...iconProps}>
-      <path d="M7 4h8l3 3v13H7z" />
-      <path d="M15 4v3h3" />
-      <path d="M10 11h6M10 15h4" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function SettingsIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <circle cx="12" cy="12" r="3" />
-      <path
-        d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-function CollapseIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <rect x="3" y="3" width="18" height="18" rx="2.5" />
-      <path d="M9 3v18" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function PlusIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" aria-hidden>
-      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function GenericNavIcon() {
-  return (
-    <svg {...iconProps}>
-      <rect x="5" y="5" width="14" height="14" rx="2" />
-    </svg>
-  )
-}
-
-function iconForNavKind(kind: ProductNavKind) {
-  if (kind === 'schedule') return ScheduleIcon
-  if (kind === 'workflows') return WorkflowIcon
-  if (kind === 'flow-canvas') return FlowCanvasIcon
-  if (kind === 'agents') return AgentsIcon
-  if (kind === 'writing-desk') return WritingDeskIcon
-  return GenericNavIcon
-}
-
-function ChatBubbleIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
-/** 搜索结果右侧相对时间 */
-function formatSearchTimeLabel(iso: string): string {
-  if (!iso) return ''
-  const t = new Date(iso).getTime()
-  if (Number.isNaN(t)) return ''
-  const diff = Date.now() - t
-  const min = Math.floor(diff / 60000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  const day = Math.floor(hr / 24)
-  if (day < 7) return `${day} 天前`
-  const d = new Date(t)
-  return `${d.getMonth() + 1}/${d.getDate()}`
-}
-
 function CollapsibleWorkspaceBody({
   open,
   children,
@@ -372,8 +155,14 @@ function CollapsibleWorkspaceBody({
   return <div className="sidebar-workspace-body">{children}</div>
 }
 
-function normalizeCwdKey(cwd: string | undefined): string {
-  return normalizeWorkspacePath(cwd || '') || '(未知工作空间)'
+function iconForNavKind(kind: ProductNavKind) {
+  if (kind === 'schedule') return ScheduleIcon
+  if (kind === 'workflows') return WorkflowIcon
+  if (kind === 'flow-canvas') return FlowCanvasIcon
+  if (kind === 'agents') return AgentsIcon
+  if (kind === 'writing-desk') return WritingDeskIcon
+  if (kind === 'office-desk') return OfficeDeskIcon
+  return GenericNavIcon
 }
 
 /** 工作台分组 key 来自产品表，不参与 cwd 分组。 */
@@ -381,13 +170,6 @@ const WORKBENCH_GROUP_KEY = getProduct('workbench').sessionGroupKey ?? '__workbe
 const WRITING_GROUP_KEY = getProduct('writing').sessionGroupKey ?? '__writing__'
 /** 闲聊分组（scratch cwd，未绑定项目）专用 key。 */
 const CASUAL_GROUP_KEY = '__casual__'
-
-function workspaceDisplayName(cwd: string): string {
-  const key = normalizeCwdKey(cwd)
-  if (key === '(未知工作空间)') return key
-  if (isScratchCwd(cwd)) return '闲聊'
-  return workspaceFolderName(cwd)
-}
 
 type WorkspaceGroup = {
   cwdKey: string
@@ -1375,7 +1157,11 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
       ) : null}
 
       {!usesEngineSessionList(product) ? (
-        <WritingLibraryNav />
+        product.id === 'office' ? (
+          <OfficeTaskNav />
+        ) : (
+          <WritingLibraryNav />
+        )
       ) : (
         <>
       <div className="sidebar-section-label">
@@ -1692,94 +1478,5 @@ export function Sidebar({ collapsed, activeChatId }: Props) {
         </div>
       )}
     </>
-  )
-}
-
-function ChatRow({
-  chat,
-  binding,
-  isActive,
-  menuOpen,
-  onSelect,
-  onOpenMenu,
-  onRename,
-  onRestoreCode,
-  onDelete,
-}: {
-  chat: ChatSummary
-  binding?: WorkbenchBinding
-  isActive: boolean
-  menuOpen: boolean
-  onSelect: () => void
-  onOpenMenu: () => void
-  onRename: () => void
-  onRestoreCode: () => void
-  onDelete: () => void
-}) {
-  const runningByParent = useStore($runningByParent)
-  const runningCount = runningByParent[chat.id] ?? 0
-  const artifacts = binding?.artifacts ?? []
-  const flowCount = artifacts.filter((item) => item.kind === 'flow').length
-  const agentCount = artifacts.filter((item) => item.kind === 'agent').length
-  const hasWorkbenchArtifacts = flowCount > 0 || agentCount > 0
-  const [confirmRestore, setConfirmRestore] = useState(false)
-  useEffect(() => {
-    if (!menuOpen) setConfirmRestore(false)
-  }, [menuOpen])
-  return (
-    <div className={`recent-item-container${isActive ? ' active' : ''}`}>
-      <button type="button" className="recent-item" onClick={onSelect}>
-        <span className="recent-title" title={chat.title}>
-          {chat.title}
-        </span>
-        {hasWorkbenchArtifacts && (
-          <span className="recent-artifacts" aria-label="工作台产物">
-            {flowCount > 0 && <span className="recent-artifact-pill" title={`${flowCount} 个流程`}>⑂ {flowCount}</span>}
-            {agentCount > 0 && <span className="recent-artifact-pill" title={`${agentCount} 个员工`}>✦ {agentCount}</span>}
-          </span>
-        )}
-        {runningCount > 0 && (
-          <span className="recent-running-badge" title={`${runningCount} 个子代理运行中`}>
-            ● {runningCount}
-          </span>
-        )}
-      </button>
-      <button
-        type="button"
-        className={`recent-more-btn${menuOpen ? ' open' : ''}`}
-        title="更多操作"
-        onClick={(e) => {
-          e.stopPropagation()
-          onOpenMenu()
-        }}
-      >
-        ⋮
-      </button>
-      {menuOpen && (
-        <div className="recent-menu place-bottom" onClick={(e) => e.stopPropagation()}>
-          <button type="button" className="recent-menu-item" onClick={onRename}>
-            ✎ 重命名
-          </button>
-          <button
-            type="button"
-            className="recent-menu-item"
-            title="打开这场对话，并把工作区文件恢复成当时的快照。未提交改动可能被盖掉。"
-            onClick={() => {
-              if (!confirmRestore) {
-                setConfirmRestore(true)
-                return
-              }
-              setConfirmRestore(false)
-              onRestoreCode()
-            }}
-          >
-            {confirmRestore ? '再点确认：会改工作区文件' : '还原代码快照'}
-          </button>
-          <button type="button" className="recent-menu-item danger" onClick={onDelete}>
-            🗑 删除对话
-          </button>
-        </div>
-      )}
-    </div>
   )
 }

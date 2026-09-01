@@ -19,7 +19,7 @@
 |----|--------|--------|
 | 官方引擎 | `crates/codegen/xai-grok-shell` 等 `xai-grok-*` | 能改，但先查有没有现成 ACP / `x.ai/*` 扩展；原则见 `docs/官方代码修改原则.md` |
 | 会话桥 | `crates/grok-session` | 自建。把官方 agent 包进进程内 ACP 双工，给桌面用 |
-| 桌面壳 | `crates/vesprism-desktop` | 自建。三套产品：编码 / 工作台（画布+编制）/ 写完；UI、Tab、侧栏、设置 |
+| 桌面壳 | `crates/vesprism-desktop` | 自建。四套产品：编码 / 工作台（画布+编制）/ 写完 / 办公（demo）；UI、Tab、侧栏、设置 |
 
 **不要**再写一套 agent 循环、工具执行器、工作流引擎。对话、斜杠、Rhai workflow、MCP、子 agent、排队、插话、Rewind、Fork 都走官方。桌面只做：IPC、状态投影、UI、以及工作台资产（画布 JSON → 官方 sidecar）。
 
@@ -598,6 +598,7 @@ CanvasComposer.onSend
 | 流程编译 | `src-tauri/src/workbench/flow_compile.rs` |
 | 写完写台 | `src/writing/WritingDesk.tsx`、`src-tauri/src/writing_store.rs` |
 | 写完书库 | `src/writing/library.ts` |
+| 办公桌 demo | `src/office/OfficeDesk.tsx`、`src/office/model.ts` |
 | Agent 磁盘 | `src-tauri/src/workbench/agents.rs` |
 | 绑定/工具会话 | `workbench/bindings.rs`、`bindings.ts` |
 | ACP 包装 | `crates/grok-session/src/lib.rs` |
@@ -615,3 +616,4 @@ CanvasComposer.onSend
 - 官方 TUI（`grok` CLI）与 Vesprism 数据目录隔离，互不影响。
 - 写完打开一本仍把该书各章拼进前端；书库列表不灌正文。
 - 旧流程 zip（无 `graph.json`）不能导入，需在本机重新导出。
+- 办公桌是 demo：预置计划与产物，不 startSession、不接引擎、不操作电脑。

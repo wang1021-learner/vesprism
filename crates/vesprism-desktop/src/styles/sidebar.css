@@ -423,23 +423,23 @@
 .shell-switch {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 2px;
   flex: 1;
   min-width: 0;
-  padding: 0 6px;
+  padding: 0 2px;
 }
 
 .shell-switch-btn {
   position: relative;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-tertiary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
   cursor: pointer;
   transition: color 0.16s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -450,15 +450,14 @@
 
 .shell-switch-btn.is-active {
   color: var(--text-primary);
-  font-weight: 650;
 }
 
 .shell-switch-btn.is-active::after {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 6px;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
   height: 1.5px;
   border-radius: 1px;
   background: var(--text-primary);

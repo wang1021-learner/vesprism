@@ -20,6 +20,7 @@ export type ProductNavKind =
   | 'memory'
   | 'plugins'
   | 'writing-desk'
+  | 'office-desk'
 
 export type ProductSidebarEntry = {
   kind: ProductNavKind
@@ -63,6 +64,11 @@ export type ProductDef = {
   sidebarNavLabel: string
   sidebarListLabel: string
   emptyHint: string
+  /** 切到该产品且还没有专用 Tab 时的空桌标题 / 说明 */
+  emptyTitle?: string
+  emptyLead?: string
+  /** panel 产品切过来时直接开专用 Tab，不经过 ProductLand 空桌 */
+  autoOpenPanel?: boolean
   home?: ProductHomeCopy
   sidebarEntries: readonly ProductSidebarEntry[]
   /** 默认 true；false 登记但不出现在顶栏切换。 */
@@ -151,7 +157,26 @@ export const PRODUCTS: readonly ProductDef[] = [
     sidebarNavLabel: '写作入口',
     sidebarListLabel: '书',
     emptyHint: '还没有书。点 + 新建一本。',
+    emptyTitle: '从左边打开一本书',
+    emptyLead: '入口是书库。点 + 可新开一枚写台。关掉最后一枚不会再自动补回来。',
     sidebarEntries: [{ kind: 'writing-desk', label: '写台' }],
+  },
+  {
+    id: 'office',
+    label: '办公',
+    utilityKinds: ['office-desk'],
+    emptyView: 'panel',
+    showRightPanel: false,
+    showNewChat: false,
+    showTabPlus: false,
+    showAddProject: false,
+    sessionList: 'none',
+    sessionGroupKey: '__office__',
+    sidebarNavLabel: '办公入口',
+    sidebarListLabel: '任务',
+    emptyHint: '还没有办公任务。',
+    autoOpenPanel: true,
+    sidebarEntries: [{ kind: 'office-desk', label: '办公桌' }],
   },
 ]
 

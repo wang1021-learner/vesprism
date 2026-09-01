@@ -87,7 +87,12 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       ...(opts.flowId ? { flowId: opts.flowId } : {}),
     })
     switchTab(tabId)
-    if (!opts.skipSession && utilityKind !== 'flow-run' && utilityKind !== 'writing-desk') {
+    if (
+      !opts.skipSession &&
+      utilityKind !== 'flow-run' &&
+      utilityKind !== 'writing-desk' &&
+      utilityKind !== 'office-desk'
+    ) {
       await startSession(tabId, cwd, {
         modelId: model.modelId,
         reasoningEffort: model.reasoningEffort,

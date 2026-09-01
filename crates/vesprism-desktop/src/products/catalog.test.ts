@@ -61,6 +61,12 @@ describe('产品表', () => {
     expect(landsOnOwnPanel(getProduct('workbench'))).toBe(false)
     expect(getProduct('writing').home).toBeUndefined()
     expect(productIdForUtility('writing-desk')).toBe('writing')
+    expect(productIdForUtility('office-desk')).toBe('office')
+    expect(getProduct('office').label).toBe('办公')
+    expect(getProduct('office').sessionList).toBe('none')
+    expect(landsOnOwnPanel(getProduct('office'))).toBe(true)
+    expect(getProduct('office').autoOpenPanel).toBe(true)
+    expect(getProduct('writing').autoOpenPanel).toBeUndefined()
     expect(productIdForUtility('flow-canvas')).toBe('workbench')
   })
 
@@ -68,14 +74,15 @@ describe('产品表', () => {
     expect(isRegisteredProduct('coding')).toBe(true)
     expect(isRegisteredProduct('nope')).toBe(false)
     expect(getProduct('nope').id).toBe('coding')
-    expect(listedProducts().map((p) => p.id)).toEqual(['coding', 'workbench', 'writing'])
+    expect(listedProducts().map((p) => p.id)).toEqual(['coding', 'workbench', 'writing', 'office'])
   })
 
   it('干活会话分组 key 来自表，不写死壳名', () => {
-    expect(productSessionGroupKeys()).toEqual(['__workbench__', '__writing__'])
+    expect(productSessionGroupKeys()).toEqual(['__workbench__', '__writing__', '__office__'])
     expect(navLabelForKind('flow-canvas')).toBe('流程画布')
     expect(navLabelForKind('schedule')).toBe('定时任务')
     expect(navLabelForKind('writing-desk')).toBe('写台')
+    expect(navLabelForKind('office-desk')).toBe('办公桌')
   })
 
   it('往表里加第三条即可被索引，不必改联合类型', () => {
@@ -98,6 +105,6 @@ describe('产品表', () => {
     expect(idx.utilityToProduct.get('flow-canvas')).toBe('workbench')
     expect(idx.byId.has('draft')).toBe(true)
     const visible = [...idx.byId.values()].filter((p) => p.listed !== false).map((p) => p.id)
-    expect(visible).toEqual(['coding', 'workbench', 'writing', 'design'])
+    expect(visible).toEqual(['coding', 'workbench', 'writing', 'office', 'design'])
   })
 })

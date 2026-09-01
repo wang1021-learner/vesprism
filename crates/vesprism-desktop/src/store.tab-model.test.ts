@@ -305,6 +305,13 @@ describe('Tab 活动灯', () => {
     expect(isWorkbenchUtility('writing-desk')).toBe(true)
   })
 
+  it('findTabByUtilityKind 可复用 office-desk 专用 Tab', () => {
+    createTab('tab-office', { utilityKind: 'office-desk', chatTitle: '办公桌' })
+    expect(findTabByUtilityKind('office-desk')).toBe('tab-office')
+    expect(findTabByUtilityKind('writing-desk')).toBeUndefined()
+    expect(isWorkbenchUtility('office-desk')).toBe(true)
+  })
+
   it('collectAllTabSubagents 从画布 Tab 收集，不跟当前试跑详情投影走', () => {
     createTab('tab-flow', {
       utilityKind: 'flow-canvas',

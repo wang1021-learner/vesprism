@@ -57,13 +57,14 @@ import { McpPanel } from './components/McpPanel'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SkillsPanel } from './components/SkillsPanel'
 import { WorkflowsPanel } from './components/WorkflowsPanel'
-import { ProductHome, ProductLand } from './products/ProductHome'
+import { ProductAutoOpen, ProductHome, ProductLand } from './products/ProductHome'
 import { getProduct, landsOnOwnPanel, productOwnsUtility } from './products/catalog'
 
 const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 const WritingDesk = lazy(() => import('./writing'))
+const OfficeDesk = lazy(() => import('./office'))
 import {
   addProject,
   getModelSettings, isTauriRuntime, listSessions,
@@ -327,6 +328,7 @@ function AppMainBody() {
     return <ProductHome product={product} />
   }
   if (landsOnOwnPanel(product) && !productOwnsUtility(shell, kind)) {
+    if (product.autoOpenPanel) return <ProductAutoOpen product={product} />
     return <ProductLand product={product} />
   }
   if (kind === 'mcp') {
@@ -390,6 +392,20 @@ function AppMainBody() {
         <AppUserQuestion />
         <AppMcpElicit />
         <AppPermission />
+      </ErrorBoundary>
+    )
+  }
+  if (kind === 'office-desk') {
+    return (
+      <ErrorBoundary
+        name="办公桌"
+        fallback={(error, reset) => (
+          <MainViewportErrorFallback error={error} onReset={reset} />
+        )}
+      >
+        <Suspense fallback={<div className="od-desk">加载办公桌…</div>}>
+          <OfficeDesk />
+        </Suspense>
       </ErrorBoundary>
     )
   }

@@ -29,6 +29,7 @@
 @import './workbench/agents.css';
 @import './workbench/run-detail/run-detail.css';
 @import './writing/writing.css';
+@import './office/office.css';
 @import './styles/settings.css';
 @import './styles/composer-extras.css';
 @import './styles/settings-fields.css';

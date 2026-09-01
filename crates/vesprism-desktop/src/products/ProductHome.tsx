@@ -1,18 +1,47 @@
+import { useEffect } from 'react'
 import { openChatTab } from '../lib/openChatTab'
 import type { UtilityKind } from '../store'
-import { type ProductDef, type ProductNavKind } from './catalog'
+import { navLabelForKind, type ProductDef, type ProductNavKind } from './catalog'
 
 function isUtilityKind(kind: ProductNavKind): kind is UtilityKind {
   return kind !== 'schedule'
 }
 
-/** 写完当前没有写台 Tab：空桌，不自动再建一枚。点书或点 + 再开。 */
+/** 面板型产品还没有专用 Tab：空桌。文案来自产品表。 */
 export function ProductLand({ product }: { product: ProductDef }) {
+  const kind = product.utilityKinds.find((k) => k !== 'schedule')
+  const title = product.emptyTitle || product.label
+  const lead = product.emptyLead || product.emptyHint
   return (
     <div className="wd-desk wd-desk--empty" role="status">
       <p className="wd-kicker">{product.label}</p>
-      <h1>从左边打开一本书</h1>
-      <p>入口是书库。点 + 可新开一枚写台。关掉最后一枚不会再自动补回来。</p>
+      <h1>{title}</h1>
+      <p>{lead}</p>
+      {kind && isUtilityKind(kind) ? (
+        <button
+          type="button"
+          className="product-land-go"
+          onClick={() => {
+            void openChatTab({ title: navLabelForKind(kind), utilityKind: kind })
+          }}
+        >
+          {navLabelForKind(kind)}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+/** 没有专用 Tab 时直接打开面板，不停留在空桌文案。 */
+export function ProductAutoOpen({ product }: { product: ProductDef }) {
+  const kind = product.utilityKinds.find((k) => k !== 'schedule')
+  useEffect(() => {
+    if (!kind || !isUtilityKind(kind)) return
+    void openChatTab({ title: navLabelForKind(kind), utilityKind: kind })
+  }, [kind])
+  return (
+    <div className="od-desk" role="status">
+      打开{product.label}…
     </div>
   )
 }
