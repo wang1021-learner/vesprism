@@ -90,7 +90,9 @@ export function OfficeDesk() {
   if (panel !== 'home') {
     return (
       <div className="od-desk is-list" role="main" aria-label="办公目录">
-        <CatalogPage panel={panel} onRun={(id, text, format) => begin(id, text, format)} />
+        <div className="od-list-stage">
+          <CatalogPage panel={panel} onRun={(id, text, format) => begin(id, text, format)} />
+        </div>
       </div>
     )
   }

@@ -165,15 +165,13 @@ export function CatalogPage({
                 </div>
                 <span className="od-knowledge-date">更新于 {k.updatedAt}</span>
               </div>
-              <div className="od-knowledge-excerpt">
-                <p>“{k.excerpt}”</p>
-              </div>
+              <p className="od-knowledge-excerpt">{k.excerpt}</p>
               <div className="od-knowledge-footer">
                 <span className="od-knowledge-source">来源: {k.source}</span>
                 <div className="od-knowledge-tags">
                   {k.tags.map((t) => (
                     <span key={t} className="od-ktag">
-                      #{t}
+                      {t}
                     </span>
                   ))}
                 </div>
@@ -191,7 +189,7 @@ export function CatalogPage({
         <header className="od-subpage-header">
           <div>
             <h1>定时排程</h1>
-            <p>到点抓材料、出周报、推预警。</p>
+            <p>到点出稿。演示不会发送。</p>
           </div>
         </header>
 
@@ -251,7 +249,7 @@ export function CatalogPage({
               <div className="od-conn-features">
                 {c.features.map((f) => (
                   <span key={f} className="od-conn-pill">
-                    ✓ {f}
+                    {f}
                   </span>
                 ))}
               </div>
@@ -282,8 +280,8 @@ function HistoryList() {
       <div className="od-empty-state">
         <h3>还没有任务</h3>
         <p>回新任务里写一句，或点一个场景。</p>
-        <button type="button" className="od-modal-btn is-primary" onClick={openOfficeHome}>
-          创建新任务
+        <button type="button" className="od-hc-btn" onClick={openOfficeHome}>
+          回新任务
         </button>
       </div>
     )
