@@ -155,11 +155,21 @@ export function TabBar() {
 
 export function RightPanelToggle() {
   const panelOpen = useStore($rightPanelOpen)
+  const shell = useStore($appShell)
+  const office = getProduct(shell).id === 'office'
   return (
     <button
       type="button"
       className={`tabbar-panel-btn${panelOpen ? ' is-active' : ''}`}
-      title={panelOpen ? '关闭改动面板' : '打开改动面板'}
+      title={
+        office
+          ? panelOpen
+            ? '关闭材料夹'
+            : '打开材料夹'
+          : panelOpen
+            ? '关闭改动面板'
+            : '打开改动面板'
+      }
       aria-pressed={panelOpen}
       onClick={() => $rightPanelOpen.set(!panelOpen)}
     >

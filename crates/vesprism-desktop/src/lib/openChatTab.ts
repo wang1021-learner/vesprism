@@ -26,7 +26,7 @@ export type OpenChatTabOpts = {
   title?: string
   /** 专用面板：mcp / tools / skills / workflows / flow-canvas / agents；普通对话省略 */
   utilityKind?: UtilityKind | null
-  /** 只开面板、不启引擎会话（试跑详情；写台稍后按书自己 startSession） */
+  /** 只开面板、不启引擎（试跑详情；写台稍后按书自己 `startSession`；办公桌 demo 永不 `startSession`） */
   skipSession?: boolean
   /** 跳过「同类型面板复用」，画布「新建」要并列开新 Tab */
   forceNew?: boolean
@@ -38,6 +38,8 @@ export type OpenChatTabOpts = {
  * 新建或复用 Tab → 启动会话 → 继承模型。
  * 成功返回 tabId；失败返回 null 并尽量把错误写到活跃 tab。
  */
+const openingByKind = new Map<UtilityKind, Promise<string | null>>()
+
 export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | null> {
   const title = (opts.title || '').trim()
   const utilityKind = opts.utilityKind ?? null
@@ -61,6 +63,32 @@ export async function openChatTab(opts: OpenChatTabOpts = {}): Promise<string | 
       ) {
         patchTab(existing, { chatTitle: title })
       }
+      switchTab(existing)
+      return existing
+    }
+    const pending = openingByKind.get(utilityKind)
+    if (pending) return pending
+  }
+
+  const created = openNewChatTab(opts, title, utilityKind, cwd)
+  if (utilityKind && !opts.forceNew) {
+    openingByKind.set(utilityKind, created)
+    return created.finally(() => {
+      openingByKind.delete(utilityKind)
+    })
+  }
+  return created
+}
+
+async function openNewChatTab(
+  opts: OpenChatTabOpts,
+  title: string,
+  utilityKind: UtilityKind | null,
+  cwd: string,
+): Promise<string | null> {
+  if (utilityKind && !opts.forceNew) {
+    const existing = findTabByUtilityKind(utilityKind)
+    if (existing) {
       switchTab(existing)
       return existing
     }

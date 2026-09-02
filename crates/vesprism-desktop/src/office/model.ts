@@ -3,6 +3,8 @@
  * 支持交付级 AI 办公 Agent：材料夹关联 → 多步规划推理 → 工具调用追踪 → 多模态富产物交付与交互改稿。
  */
 
+import type { OfficeFormat } from './catalog'
+
 export type OfficeKind = 'doc' | 'pptx' | 'xlsx' | 'pdf' | 'report'
 
 export type OfficeStarter = {
@@ -138,43 +140,43 @@ const PLANS: Record<string, PlanStep[]> = {
     { id: 'read', label: '读取材料夹里的销售底稿、会议纪要与考核指标', toolName: 'fs_read_material', detail: '已读取 3 份上下文文件，定位 4 处关键进展与 2 处风险' },
     { id: 'outline', label: '结构化梳理：本周进展、风险归因、下周规划', toolName: 'reasoning_outline', detail: '按「结论先行-数据支撑-行动跟进」原则提炼大纲' },
     { id: 'draft', label: '撰写周报正文并补充数据指标支持', toolName: 'doc_synthesis', detail: '撰写完成，整合华东 3 家客户续约进展与价格波动预警' },
-    { id: 'file', label: '封装为标准化 Word 文档与交付摘要', toolName: 'office_doc_export', detail: '已生成可直接呈阅的 Word 标准公文格式' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_doc_export', detail: '已生成可阅读的预览文本' },
   ],
   deck: [
     { id: 'read', label: '解析周报底稿与竞品价格矩阵', toolName: 'fs_read_material', detail: '提取华东业务数据、客户名单与价格变动指标' },
     { id: 'outline', label: '规划 8 页管理层汇报提纲与演讲脉络', toolName: 'deck_structurer', detail: '封面 → 结论 → 数据洞察 → 客户复盘 → 风险 → 对策 → 下一步 → 附录' },
     { id: 'slides', label: '生成逐页幻灯片内容、核心图表卡片与演讲备注', toolName: 'deck_builder', detail: '已完成 8 页幻灯片布局与关键指标提炼' },
-    { id: 'file', label: '封装为可导出的 PPTX 幻灯片包', toolName: 'office_pptx_export', detail: '已就绪，支持在线翻页卡片与本地导出' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_pptx_export', detail: '已就绪，可在画板翻页预览' },
   ],
   contract: [
     { id: 'read', label: '扫描续约采购合同草案及往来纪要', toolName: 'contract_parser', detail: '解析 14 章节条款，定位权责、付款、保密及违约部分' },
     { id: 'extract', label: '抽取履约义务、关键日期、结算金额与排他条款', toolName: 'entity_extractor', detail: '抽取关键节点 4 项、支付条款 2 项、交付要求 3 项' },
     { id: 'risk_audit', label: '对照法务合规库执行风险评估与分级标定', toolName: 'legal_risk_auditor', detail: '识别出 1 处高风险（毛利下限未锁）、2 处中风险（交付期限过紧）' },
-    { id: 'file', label: '生成合同法务审查意见书与修改建议清单', toolName: 'office_doc_export', detail: '已生成合同法务审查意见书 (Word)' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_doc_export', detail: '已生成审查意见预览' },
   ],
   excel_analysis: [
     { id: 'read', label: '加载竞品价格表与我方基准价格矩阵', toolName: 'xlsx_loader', detail: '读取 5 个品类、32 项规格的基准价与竞品调价数据' },
     { id: 'diff', label: '多维交叉比对计算价差与毛利率冲击', toolName: 'data_cruncher', detail: '竞品入口价下调 12.5%，测算综合毛利承压约 3.8 个百分点' },
     { id: 'kpi', label: '生成核心指标看板与品类异动归因', toolName: 'metrics_aggregator', detail: '完成品类价格弹性分析与推荐对策测算' },
-    { id: 'file', label: '输出分析报表与结构化对账工作簿 (xlsx)', toolName: 'office_xlsx_export', detail: '已生成含汇总看板与明细对照的 Excel 报表' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_xlsx_export', detail: '已生成对账表格预览' },
   ],
   meeting_minutes: [
     { id: 'read', label: '解析会议录音文字稿与与会人发言', toolName: 'audio_transcript_parser', detail: '识别 4 位与会人员、45 分钟讨论内容与 6 项核心议题' },
     { id: 'summary', label: '提炼会议核心决议与重要共识', toolName: 'meeting_summarizer', detail: '整理出商务策略、产品迭代、交付排期 3 项核心决议' },
     { id: 'actions', label: '抽取 Action Items 待办清单（负责人/DDL/产出物）', toolName: 'action_item_extractor', detail: '提取 4 项具体待办事项并标定跟踪责任人与截止时间' },
-    { id: 'file', label: '生成标准化会议纪要文件与待办卡片', toolName: 'office_doc_export', detail: '已生成标准会议纪要 (Word)' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_doc_export', detail: '已生成纪要与待办预览' },
   ],
   market_research: [
     { id: 'read', label: '汇总市场调研文档、竞品动态与用户反馈', toolName: 'research_crawler', detail: '整合 3 家主要竞品产品矩阵、定价策略与用户口碑' },
     { id: 'matrix', label: '构建功能对比横评矩阵与 SWOT 分析', toolName: 'matrix_synthesizer', detail: '梳理 18 项关键特性对比，标定核心壁垒与补齐方向' },
     { id: 'strategy', label: '产出产品定位建议与商业化落地策略', toolName: 'strategy_advisor', detail: '提炼 3 条关键产品差异化建议' },
-    { id: 'file', label: '封装为行业调研对照表与分析报告', toolName: 'office_xlsx_export', detail: '已生成竞品对照工作簿与报告' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_xlsx_export', detail: '已生成对照表预览' },
   ],
   doc_polish: [
     { id: 'read', label: '读取公文底稿与公文规范规则集', toolName: 'doc_reader', detail: '解析文档层级、段落标题、编号与行文格式' },
     { id: 'audit', label: '审校错别字、语病、称谓及格式规范', toolName: 'grammar_and_style_checker', detail: '发现并纠正 5 处标点用词规范、3 处层级编号错误' },
     { id: 'polish', label: '优化公文严谨性，统一用语与排版格式', toolName: 'style_polisher', detail: '已按党政机关公文格式规范调整标题、正文与签发结构' },
-    { id: 'file', label: '生成审校修订版与无格式缺陷终稿', toolName: 'office_doc_export', detail: '已生成公文修订终稿 (Word)' },
+    { id: 'file', label: '封装为预览文本', toolName: 'office_doc_export', detail: '已生成审校预览' },
   ],
 }
 
@@ -182,7 +184,7 @@ const CUSTOM_PLAN: PlanStep[] = [
   { id: 'read', label: '读取材料夹关联文件与知识库规范', toolName: 'fs_read_material', detail: '解析相关上下文材料' },
   { id: 'plan', label: '拆解任务目标并制定交付大纲', toolName: 'reasoning_planner', detail: '确定交付结构与论证逻辑' },
   { id: 'draft', label: '调用 Agent 技能起草正文与结构化内容', toolName: 'agent_executor', detail: '多轮生成与数据填充' },
-  { id: 'file', label: '封装为标准交付文件与即时预览', toolName: 'artifact_packer', detail: '产物已就绪' },
+  { id: 'file', label: '封装为预览文本', toolName: 'artifact_packer', detail: '预览已就绪' },
 ]
 
 export type SlideCard = {
@@ -227,7 +229,7 @@ export type DemoFile = {
 
 const FILES: Record<string, DemoFile> = {
   weekly: {
-    name: '第12周工作周报-华东区域.docx',
+    name: '第12周工作周报-华东区域.md',
     title: '华东区域销售与业务复盘周报（第 12 周）',
     kind: 'doc',
     summary: '总结华东 3 家重点客户复盘进展，识别竞品价格战风险并制定周一响应对策。',
@@ -277,7 +279,7 @@ const FILES: Record<string, DemoFile> = {
     ],
   },
   deck: {
-    name: '华东区域业务汇报与策略对策.pptx',
+    name: '华东区域业务汇报与策略对策.md',
     title: '华东区域业务进展与策略汇报',
     kind: 'pptx',
     summary: '8 页结构化幻灯片，包含经营复盘、竞品动态、客户画像与落地排期。',
@@ -372,7 +374,7 @@ const FILES: Record<string, DemoFile> = {
     ],
   },
   contract: {
-    name: '续约服务合同法务审查意见书.docx',
+    name: '续约服务合同法务审查意见书.md',
     title: '续约框架协议法务审查与风险评估意见',
     kind: 'doc',
     summary: '抽取关键义务与履约节点，识别 1 处高风险与 2 处中风险，给出修改条款建议。',
@@ -432,7 +434,7 @@ const FILES: Record<string, DemoFile> = {
     ],
   },
   excel_analysis: {
-    name: '竞品价格对比与毛利测算分析.xlsx',
+    name: '竞品价格对比与毛利测算分析.md',
     title: '华东区域竞品价格对比与毛利敏感性测算表',
     kind: 'xlsx',
     summary: '多维交叉分析 5 个主流版本价格差异、降幅及对我方毛利率的影响测算。',
@@ -455,7 +457,7 @@ const FILES: Record<string, DemoFile> = {
     ],
   },
   meeting_minutes: {
-    name: '周四华东业务复盘会纪要与待办.docx',
+    name: '周四华东业务复盘会纪要与待办.md',
     title: '华东区域 Q1 业务复盘与竞品应对会议纪要',
     kind: 'doc',
     summary: '4 位核心参会人 45 分钟讨论纪要，提炼 3 项决议并生成 4 项待办。',
@@ -486,7 +488,7 @@ const FILES: Record<string, DemoFile> = {
     ],
   },
   market_research: {
-    name: '国内AI办公Agent竞品对照矩阵.xlsx',
+    name: '国内AI办公Agent竞品对照矩阵.md',
     title: '国内主流 AI 办公智能体平台横评与产品策略分析',
     kind: 'xlsx',
     summary: '横向对比飞书、钉钉、WPS AI 与 Vesprism 办公桌在协同、文档、数据与执行层面的差异。',
@@ -507,7 +509,7 @@ const FILES: Record<string, DemoFile> = {
     ],
   },
   doc_polish: {
-    name: '华东区域战略推进报告-审校修订终稿.docx',
+    name: '华东区域战略推进报告-审校修订终稿.md',
     title: '华东区域战略合作推进报告（公文审校版）',
     kind: 'doc',
     summary: '纠正 5 处用词与标点、3 处层级编号错误，全面符合企事业单位公文规范标准。',
@@ -534,10 +536,10 @@ const FILES: Record<string, DemoFile> = {
 }
 
 const CUSTOM_FILE: DemoFile = {
-  name: '交付文件.docx',
+  name: '交付预览.md',
   title: '办公任务交付文档',
   kind: 'doc',
-  summary: '根据您的需求与材料夹内容自主规划并生成的交付物。',
+  summary: '根据您的需求与材料夹内容生成的预览文本（演示）。',
   wordCount: 880,
   preview: `# 办公任务执行成果
 
@@ -552,6 +554,28 @@ const CUSTOM_FILE: DemoFile = {
 - 您可以在下方输入框中提出修改意见（例如：“增加数据对比”、“提炼为3条核心结论”）。`,
 }
 
+const CUSTOM_PPTX: DemoFile = {
+  name: '交付预览.md',
+  title: '幻灯片预览',
+  kind: 'pptx',
+  summary: '空幻灯片骨架，在改稿里写要点。',
+  preview: '一页空幻灯片。',
+  slides: [{ index: 1, title: '（空）', points: ['在下方改稿里写要点'] }],
+}
+
+const CUSTOM_XLSX: DemoFile = {
+  name: '交付预览.md',
+  title: '表格预览',
+  kind: 'xlsx',
+  summary: '空表骨架。',
+  preview: '占位表格。',
+  tableColumns: [
+    { key: 'item', label: '项目' },
+    { key: 'note', label: '说明' },
+  ],
+  tableRows: [{ item: '（空）', note: '在下方改稿里补充' }],
+}
+
 export function starterById(id: string): OfficeStarter | undefined {
   return OFFICE_STARTERS.find((s) => s.id === id)
 }
@@ -561,9 +585,27 @@ export function planForTask(starterId: string | 'custom'): PlanStep[] {
   return (PLANS[starterId] ?? CUSTOM_PLAN).map((s) => ({ ...s }))
 }
 
-export function deliverableForTask(starterId: string | 'custom'): DemoFile {
-  if (starterId === 'custom') return { ...CUSTOM_FILE }
-  return { ...(FILES[starterId] ?? CUSTOM_FILE) }
+function cloneFile(file: DemoFile): DemoFile {
+  return {
+    ...file,
+    slides: file.slides?.map((s) => ({ ...s, points: [...s.points] })),
+    tableColumns: file.tableColumns?.map((c) => ({ ...c })),
+    tableRows: file.tableRows?.map((r) => ({ ...r })),
+    riskItems: file.riskItems?.map((r) => ({ ...r })),
+    actionItems: file.actionItems?.map((a) => ({ ...a })),
+  }
+}
+
+export function deliverableForTask(
+  starterId: string | 'custom',
+  format: OfficeFormat = 'doc',
+): DemoFile {
+  if (starterId !== 'custom') {
+    return cloneFile(FILES[starterId] ?? CUSTOM_FILE)
+  }
+  if (format === 'pptx') return cloneFile(CUSTOM_PPTX)
+  if (format === 'xlsx') return cloneFile(CUSTOM_XLSX)
+  return cloneFile(CUSTOM_FILE)
 }
 
 export function titleForCustom(text: string): string {
@@ -586,6 +628,7 @@ export type OfficeTask = {
   createdAt: string
   folderId?: string
   toolLog?: string[]
+  format: OfficeFormat
 }
 
 export function createOfficeTask(
@@ -593,10 +636,9 @@ export function createOfficeTask(
   prompt: string,
   id: string,
   folderId: string = 'week',
+  format: OfficeFormat = 'doc',
 ): OfficeTask {
   const starter = starterId === 'custom' ? null : starterById(starterId)
-  const now = new Date()
-  const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
   return {
     id,
     title: starter?.title ?? titleForCustom(prompt),
@@ -606,9 +648,10 @@ export function createOfficeTask(
     plan: planForTask(starterId),
     file: null,
     prompt: prompt.trim() || starter?.defaultPrompt || starter?.hint || '',
-    createdAt: timeStr,
+    createdAt: new Date().toISOString(),
     folderId,
     toolLog: [],
+    format: starterId === 'custom' ? format : starter?.kind === 'pptx' ? 'pptx' : starter?.kind === 'xlsx' ? 'xlsx' : 'doc',
   }
 }
 
@@ -617,7 +660,7 @@ export function advanceOfficeTask(task: OfficeTask): OfficeTask {
   if (task.status === 'done') return task
   const nextIndex = task.stepIndex + 1
   if (nextIndex >= task.plan.length) {
-    const file = task.file ?? deliverableForTask(task.starterId)
+    const file = task.file ?? deliverableForTask(task.starterId, task.format)
     const logs = [...(task.toolLog ?? [])]
     logs.push(`[完成] 产物《${file.name}》已封装就绪，可供预览与导出`)
     return {
@@ -651,7 +694,8 @@ export function applyRefinement(task: OfficeTask, action: string): OfficeTask {
     newFile.summary = `【精简版】${newFile.summary}`
     newFile.preview = `> 📌 **精简摘要版**\n\n${newFile.preview.slice(0, 500)}...\n\n*(已按要求精简至核心结论)*`
   } else if (action.includes('英文') || action.includes('English')) {
-    newFile.name = newFile.name.replace(/\.(docx|pptx|xlsx)$/, '_EN.$1')
+    const stem = newFile.name.replace(/\.(md|docx|pptx|xlsx)$/i, '')
+    newFile.name = `${stem}_EN.md`
     newFile.summary = `[English Version] ${newFile.summary}`
     newFile.preview = `## Executive Summary (English Translation)\n\n**Topic**: ${newFile.title}\n\n- Key Progress: 2 out of 3 key clients confirmed renewal intention.\n- Critical Risk: Competitor reduced entry price by 12.5%.\n- Next Actions: Submit action one-pager by Monday morning.`
   } else if (action.includes('待办') || action.includes('Action')) {

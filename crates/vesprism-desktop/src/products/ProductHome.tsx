@@ -13,21 +13,23 @@ export function ProductLand({ product }: { product: ProductDef }) {
   const title = product.emptyTitle || product.label
   const lead = product.emptyLead || product.emptyHint
   return (
-    <div className="wd-desk wd-desk--empty" role="status">
-      <p className="wd-kicker">{product.label}</p>
-      <h1>{title}</h1>
-      <p>{lead}</p>
-      {kind && isUtilityKind(kind) ? (
-        <button
-          type="button"
-          className="product-land-go"
-          onClick={() => {
-            void openChatTab({ title: navLabelForKind(kind), utilityKind: kind })
-          }}
-        >
-          {navLabelForKind(kind)}
-        </button>
-      ) : null}
+    <div className="wd-desk wd-desk--empty" role="status" aria-label={product.label}>
+      <article className="wd-empty-sheet">
+        <p className="wd-kicker">{product.label}</p>
+        <h1>{title}</h1>
+        <p className="wd-empty-lead">{lead}</p>
+        {kind && isUtilityKind(kind) ? (
+          <button
+            type="button"
+            className="wd-empty-go"
+            onClick={() => {
+              void openChatTab({ title: navLabelForKind(kind), utilityKind: kind })
+            }}
+          >
+            {navLabelForKind(kind)}
+          </button>
+        ) : null}
+      </article>
     </div>
   )
 }

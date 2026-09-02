@@ -60,22 +60,65 @@
   background: var(--wd-hall);
 }
 .wd-desk--empty {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 1.15rem;
+  gap: 0;
+}
+.wd-empty-sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   align-items: flex-start;
-  justify-content: center;
-  padding: 4rem 2.5rem;
-  gap: 0.45rem;
+  padding: 5.25rem 4.5rem 3rem;
+  background: var(--wd-paper);
+  border: 1px solid var(--wd-line);
+  border-radius: var(--wd-radius);
+  box-shadow: var(--wd-shadow-soft);
+}
+.wd-desk--empty .wd-kicker {
+  margin: 0 0 0.9rem;
 }
 .wd-desk--empty h1 {
   margin: 0;
   font-family: var(--wd-serif);
-  font-size: 28px;
+  font-size: 2.15rem;
   font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.22;
+  max-width: 12em;
 }
-.wd-desk--empty p {
-  margin: 0;
-  max-width: 28rem;
+.wd-empty-lead {
+  margin: 0.9rem 0 0;
+  max-width: 22rem;
   color: var(--wd-iron);
+  font-size: 14px;
   line-height: 1.65;
+}
+.wd-empty-go {
+  appearance: none;
+  margin-top: 1.75rem;
+  min-height: 36px;
+  padding: 0.55rem 1.15rem;
+  border: 1px solid var(--wd-accent);
+  border-radius: var(--wd-radius-sm);
+  background: var(--wd-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.wd-empty-go:hover {
+  background: var(--wd-accent-deep);
+  border-color: var(--wd-accent-deep);
+}
+.wd-empty-go:focus-visible {
+  outline: 2px solid var(--wd-ink);
+  outline-offset: 3px;
 }
 
 /* ── 顶栏：书名 + 仪表盘 ─────────────────────────────── */

@@ -158,7 +158,7 @@ export const PRODUCTS: readonly ProductDef[] = [
     sidebarListLabel: '书',
     emptyHint: '还没有书。点 + 新建一本。',
     emptyTitle: '从左边打开一本书',
-    emptyLead: '入口是书库。点 + 可新开一枚写台。关掉最后一枚不会再自动补回来。',
+    emptyLead: '书在左侧。没有就点 +。',
     sidebarEntries: [{ kind: 'writing-desk', label: '写台' }],
   },
   {
@@ -166,7 +166,7 @@ export const PRODUCTS: readonly ProductDef[] = [
     label: '办公',
     utilityKinds: ['office-desk'],
     emptyView: 'panel',
-    showRightPanel: false,
+    showRightPanel: true,
     showNewChat: false,
     showTabPlus: false,
     showAddProject: false,

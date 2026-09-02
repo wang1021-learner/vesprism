@@ -66,6 +66,7 @@ describe('产品表', () => {
     expect(getProduct('office').sessionList).toBe('none')
     expect(landsOnOwnPanel(getProduct('office'))).toBe(true)
     expect(getProduct('office').autoOpenPanel).toBe(true)
+    expect(getProduct('office').showRightPanel).toBe(true)
     expect(getProduct('writing').autoOpenPanel).toBeUndefined()
     expect(productIdForUtility('flow-canvas')).toBe('workbench')
   })

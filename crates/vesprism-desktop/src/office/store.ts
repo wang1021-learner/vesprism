@@ -22,9 +22,11 @@ export function startOfficeTask(
   starterId: string | 'custom',
   prompt: string,
   folderId?: string,
+  format?: OfficeFormat,
 ): OfficeTask {
   const fId = folderId ?? $officeFolderId.get()
-  const task = createOfficeTask(starterId, prompt, nextId(), fId)
+  const fmt = format ?? $officeFormat.get()
+  const task = createOfficeTask(starterId, prompt, nextId(), fId, fmt)
   $officeTasks.set([task, ...$officeTasks.get()])
   $officeActiveId.set(task.id)
   $officePanel.set('home')

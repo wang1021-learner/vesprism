@@ -1,0 +1,24 @@
+# Vendored agent skills (not plugins)
+
+frontend-design
+  repo: https://github.com/anthropics/skills
+  path: skills/frontend-design
+  commit: 3b3fad96af16a10759d930941b4520ba0c40edae
+  license: Apache-2.0 (LICENSE.txt in that directory)
+
+web-design-guidelines
+  repo: https://github.com/vercel-labs/agent-skills
+  path: skills/web-design-guidelines
+  commit: 063bee94c3f4df8453406c830b0a7df0f2860278
+  license: MIT (repo README)
+
+vercel-react-best-practices
+  repo: https://github.com/vercel-labs/agent-skills
+  path: skills/react-best-practices  (directory name; skill name is vercel-react-best-practices)
+  commit: 063bee94c3f4df8453406c830b0a7df0f2860278
+  license: MIT (repo README)
+  included: SKILL.md, AGENTS.md, metadata.json, rules/
+  omitted: zip bundles, skill README/build tooling
+
+Do not git clone these upstream repos into the grok-build root.
+Refresh by sparse-clone + copy; then update this file.

@@ -43,6 +43,19 @@
   font-family: inherit;
 }
 
+/* 案头：不要动效。可点的东西用形状说明，不靠 hover 才出现。 */
+.od-desk *,
+.od-nav * {
+  animation: none !important;
+  transition: none !important;
+}
+
+.od-desk button:focus-visible,
+.od-nav button:focus-visible {
+  outline: 2px solid var(--od-text);
+  outline-offset: 2px;
+}
+
 :root[data-theme='dark'] .od-desk,
 :root[data-theme='dark'] .od-nav {
   --od-on-cta: var(--bg-canvas, #111113);
@@ -61,370 +74,446 @@
   overflow: hidden;
 }
 
-.od-desk.is-home,
+.od-desk.is-home {
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.od-home-stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 10px;
+}
+
+.od-home-stage.is-blank {
+  justify-content: center;
+  align-items: center;
+}
+
+.od-desk .od-home-composer.composer-container.is-empty {
+  width: min(92%, 800px);
+  max-width: 800px;
+  margin: 0 auto 12vh;
+  padding: 0;
+  gap: 16px;
+  align-items: stretch;
+  background: transparent;
+}
+
+.od-desk .od-home-composer.is-empty .composer-card {
+  width: 100%;
+  overflow: visible;
+}
+
+.od-desk .composer-attach {
+  overflow: visible;
+}
+
+.od-plus-root.composer-menu,
+.od-plus-flyout.composer-menu {
+  overflow: visible;
+  max-height: none;
+  animation: none;
+}
+
+.od-plus-root.composer-menu {
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: 0;
+  transform-origin: top left;
+}
+
+.od-plus-item {
+  position: relative;
+}
+
+.od-plus-item .menu-item-more {
+  margin-left: auto;
+  color: var(--od-text-muted);
+  font-size: 14px;
+}
+
+.od-plus-flyout.composer-menu {
+  display: none;
+  left: calc(100% - 2px);
+  right: auto;
+  top: -6px;
+  bottom: auto;
+  z-index: 3;
+  min-width: 168px;
+  max-width: 240px;
+  transform-origin: top left;
+}
+
+.od-plus-item:hover > .od-plus-flyout,
+.od-plus-item:focus-within > .od-plus-flyout {
+  display: block;
+}
+
+.od-skill-hit {
+  position: relative;
+}
+
+.od-plus-tip {
+  display: none;
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 0;
+  z-index: 4;
+  padding: 8px 12px;
+  background: var(--surface-elevated, #fff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  color: var(--od-text-sub);
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.od-skill-hit:hover > .od-plus-tip,
+.od-skill-hit:focus-visible > .od-plus-tip {
+  display: block;
+}
+
+.od-rail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--od-text);
+}
+
+.od-rail-folder {
+  margin-left: auto;
+  min-width: 0;
+}
+
+.od-rail-folder select {
+  appearance: none;
+  max-width: 11rem;
+  border: 0;
+  background: transparent;
+  color: var(--od-text-sub);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  outline: none;
+}
+
+.od-rail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 0 10px;
+}
+
+.od-rail-scroll .od-file-row {
+  width: auto;
+  margin: 2px 8px;
+}
+
 .od-desk.is-list {
   flex-direction: column;
   overflow-y: auto;
 }
 
 /* ==========================================================================
-   首页态 (Home Stage & Composer)
+   首页态（材料夹主舞台 + 输入沉底 + 起手芯片）
    ========================================================================== */
 
-.od-home {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding: 1.5rem 1.5rem 3rem;
-}
-
-.od-stage {
-  width: min(48rem, 100%);
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.od-hello {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  margin-top: 0.25rem;
-}
-
-.od-hello-tag {
-  display: none;
-}
-
-.od-hello h1 {
-  margin: 0 0 0.35rem;
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  color: var(--od-text);
-  line-height: 1.3;
-}
-
-.od-hello-sub {
-  margin: 0;
-  font-size: 13px;
-  color: var(--od-text-sub);
-  max-width: 36rem;
-  line-height: 1.5;
-}
-
-/* 核心输入框容器 */
-.od-compose {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.od-box {
-  background: var(--od-surface);
-  border: 1px solid var(--od-border-strong);
-  border-radius: var(--od-radius-md);
-  box-shadow: none;
-  display: flex;
-  flex-direction: column;
-}
-
-.od-box:focus-within {
-  border-color: var(--od-text);
-  box-shadow: none;
-}
-
-.od-box textarea {
-  width: 100%;
-  resize: none;
-  padding: 1.15rem 1.25rem 0.5rem;
-  border: 0;
-  background: transparent;
-  color: var(--od-text);
-  font: inherit;
-  font-size: 14.5px;
-  line-height: 1.6;
-  outline: none;
-}
-
-.od-box textarea::placeholder {
-  color: var(--od-text-muted);
-}
-
-/* 材料夹上下文提示条 */
-.od-context-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 1.25rem 0.6rem;
-  font-size: 12.5px;
-  border-bottom: 1px solid var(--od-border-subtle);
-}
-
-.od-context-label {
-  color: var(--od-text-muted);
-}
-
-.od-context-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0.6rem;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-full);
-  background: var(--od-bg-sub);
-  color: var(--od-text);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.od-context-badge:hover {
-  background: var(--od-surface-active);
-}
-
-.od-context-hint {
-  color: var(--od-text-muted);
-  font-size: 11.5px;
-}
-
-/* 输入框底部工具与操作栏 */
-.od-box-bar {
+/* 顶条：材料夹名 + 份数 + 演示声明 */
+.od-home-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.65rem 1rem 0.85rem;
+  gap: 1rem;
+  padding: 0.8rem 1.25rem;
+  background: var(--od-surface);
+  border-bottom: 1px solid var(--od-border);
+  flex-shrink: 0;
 }
 
-.od-box-tools {
+.od-home-bar-info {
   display: flex;
-  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.od-home-folder-name {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--od-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.od-home-folder-count {
+  font-size: 12px;
+  color: var(--od-text-muted);
+  flex-shrink: 0;
+}
+
+.od-home-demo-tag {
+  font-size: 11.5px;
+  color: var(--od-text-muted);
+  flex-shrink: 0;
+}
+
+/* 主区两栏：左夹内文件，右上一份稿 */
+.od-home-cols {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.od-home-col-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--od-text-muted);
+  margin-bottom: 0.6rem;
+}
+
+.od-home-files {
+  width: 40%;
+  min-width: 16rem;
+  overflow-y: auto;
+  padding: 1rem 0.9rem 1.25rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--od-border);
+  background: var(--od-bg-sub);
+}
+
+.od-home-files-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--od-text-muted);
+  line-height: 1.5;
+}
+
+.od-home-last {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.od-home-running {
+  margin: 0 0 0.6rem;
+  font-size: 12.5px;
+  color: var(--od-amber);
+}
+
+.od-last-sheet {
+  appearance: none;
+  align-self: stretch;
+  width: 100%;
+  max-width: 36rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 12px 14px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-solid);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+
+.od-last-sheet:hover {
+  background: var(--surface-hover);
+}
+
+.od-last-go {
+  margin-top: 0.15rem;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--od-text-sub);
+  border-bottom: 0;
+}
+
+.od-last-head {
+  display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.od-last-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--od-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.od-last-kind {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--od-text-sub);
+  background: var(--od-bg);
+  border: 1px solid var(--od-border);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.od-last-summary {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--od-text-sub);
+}
+
+.od-last-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--od-text-muted);
+}
+
+/* 输入沉底：编码 composer-card 的办公副本，不靠全局样式碰巧生效 */
+.od-home-composer {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 10px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background: var(--od-bg);
+}
+
+.od-desk .od-home-composer .composer-card,
+.od-desk .od-task-composer .composer-card {
+  width: min(92%, 800px);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px;
+  background: var(--surface-elevated, #fff);
+  border: 1px solid var(--border-solid, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+
+.od-desk .od-home-composer textarea,
+.od-desk .od-task-composer textarea,
+.od-desk .od-home-composer textarea:focus,
+.od-desk .od-task-composer textarea:focus,
+.od-desk .od-home-composer textarea:focus-visible,
+.od-desk .od-task-composer textarea:focus-visible {
+  width: 100%;
+  min-height: 36px;
+  max-height: 160px;
+  margin: 0;
+  padding: 2px 0 6px;
+  border: 0 !important;
+  background: transparent !important;
+  resize: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--od-text);
+}
+
+.od-desk .btn-send.ready:hover,
+.od-desk .btn-send.ready:active {
+  transform: none;
+  box-shadow: none;
+}
+
+.od-composer-select {
+  max-width: 220px;
+}
+
+.od-composer-select select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  max-width: 9.5rem;
+  min-width: 0;
 }
 
 .od-select-wrap {
   display: inline-flex;
   align-items: center;
   position: relative;
-  background: var(--od-bg);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-full);
-  padding: 0 0.75rem 0 0.7rem;
-  height: 32px;
-}
-
-.od-select-icon {
-  font-size: 13px;
-  margin-right: 0.25rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  height: auto;
 }
 
 .od-select-wrap select {
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--od-text);
+  color: var(--od-text-sub);
   font: inherit;
   font-size: 12.5px;
   font-weight: 500;
   outline: none;
   cursor: pointer;
-  padding-right: 0.8rem;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path fill='none' stroke='%238e8e93' stroke-width='1.5' d='M2 3.5 5 6.5 8 3.5'/></svg>") no-repeat right center;
 }
 
-.od-go {
-  height: 34px;
-  padding: 0 1.25rem;
-  border: 0;
-  border-radius: var(--od-radius-sm);
-  background: var(--od-cta);
-  color: var(--od-on-cta);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.od-go:hover:not(:disabled) {
-  background: var(--cta-hover, #000000);
-}
-
-.od-go:disabled {
-  background: var(--od-bg-sub);
-  color: var(--od-text-muted);
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-/* 场景分类 Tabs */
-.od-category-tabs {
+.od-chip-row {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 6px;
   overflow-x: auto;
-  padding-bottom: 0.2rem;
+  width: min(92%, 800px);
+  padding: 0;
+  background: transparent;
 }
 
-.od-cat-tab {
-  padding: 0.35rem 0.85rem;
-  border: 1px solid transparent;
-  border-radius: var(--od-radius-full);
-  background: transparent;
+.od-chip {
+  flex-shrink: 0;
+  height: auto;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--od-surface);
   color: var(--od-text-sub);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
 }
 
-.od-cat-tab:hover {
-  color: var(--od-text);
-  background: var(--od-surface-active);
-}
-
-.od-cat-tab.is-active {
-  color: var(--od-text);
-  background: var(--od-surface);
-  border-color: var(--od-border);
-  font-weight: 600;
-  box-shadow: var(--od-shadow-sm);
-}
-
-/* 场景卡片网格 */
-.od-capsules-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr));
-  gap: 0.75rem;
-}
-
-.od-capsule-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.3rem;
-  padding: 0.95rem 1.05rem;
-  text-align: left;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-md);
-  background: var(--od-surface);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.od-capsule-card:hover {
-  border-color: var(--od-border-strong);
-  background: var(--od-surface-hover);
-}
-
-.od-capsule-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-bottom: 0.2rem;
-}
-
-.od-capsule-cat {
-  font-size: 11.5px;
-  font-weight: 550;
-  color: var(--od-text-muted);
-}
-
-.od-capsule-fmt {
-  font-size: 10.5px;
-  font-weight: 650;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  background: var(--od-bg-sub);
-  color: var(--od-text-sub);
-}
-
-.od-capsule-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--od-text);
-}
-
-.od-capsule-desc {
-  font-size: 12.5px;
-  color: var(--od-text-sub);
-  line-height: 1.45;
-}
-
-/* 推荐指令列表 */
-.od-suggest-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.od-suggest-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--od-text-muted);
-  letter-spacing: 0.04em;
-}
-
-.od-suggest {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  background: var(--od-surface);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-md);
-  box-shadow: var(--od-shadow-sm);
-}
-
-.od-suggest li + li {
-  border-top: 1px solid var(--od-border-subtle);
-}
-
-.od-suggest button {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  width: 100%;
-  padding: 0.75rem 1rem;
-  text-align: left;
-  border: 0;
-  background: none;
-  color: var(--od-text-sub);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.od-suggest button:hover {
+.od-chip:hover {
   background: var(--od-surface-hover);
   color: var(--od-text);
 }
 
-.od-suggest-badge {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 0.15rem 0.45rem;
-  border-radius: var(--od-radius-sm);
-  background: var(--od-bg-sub);
-  color: var(--od-text-sub);
-  flex-shrink: 0;
-}
-
-.od-suggest-text {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.od-task-composer {
+  padding: 8px 10px 10px;
 }
 
 /* ==========================================================================
@@ -647,6 +736,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  counter-reset: odstep;
 }
 
 .od-plan-item {
@@ -655,21 +745,34 @@
   align-items: flex-start;
   font-size: 13px;
   color: var(--od-text-muted);
+  counter-increment: odstep;
 }
 
 .od-step-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-top: 0.35rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.15rem;
   flex-shrink: 0;
-  background: var(--od-border-strong);
-  transition: all 0.2s;
+  border: 0;
+  border-radius: 4px;
+  background: var(--od-bg);
+  color: var(--od-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.od-step-dot::before {
+  content: counter(odstep);
 }
 
 .od-plan-item.is-now .od-step-dot {
-  background: var(--od-amber);
-  box-shadow: 0 0 0 3px var(--od-amber-bg);
+  background: var(--od-cta);
+  border-color: transparent;
+  color: var(--od-on-cta);
 }
 
 .od-plan-item.is-now {
@@ -678,7 +781,9 @@
 }
 
 .od-plan-item.is-done .od-step-dot {
-  background: var(--od-green);
+  background: transparent;
+  border-color: var(--od-text);
+  color: var(--od-text);
 }
 
 .od-plan-item.is-done {
@@ -982,18 +1087,7 @@
 }
 
 .od-spinner {
-  width: 24px;
-  height: 24px;
-  border: 2.5px solid var(--od-border);
-  border-top-color: var(--od-text);
-  border-radius: 50%;
-  animation: od-spin 0.8s linear infinite;
-}
-
-@keyframes od-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  display: none;
 }
 
 .od-raw-preview {
@@ -1444,87 +1538,36 @@
 }
 
 /* ==========================================================================
-   材料夹弹窗 Modal
+   材料夹文件行（首页左栏；点行展开描述，不假装打开二进制）
    ========================================================================== */
-
-.od-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.od-modal-card {
-  width: min(36rem, 90vw);
-  background: var(--od-surface);
-  border-radius: var(--od-radius-lg);
-  box-shadow: var(--od-shadow-lg);
-  border: 1px solid var(--od-border);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.od-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1.15rem 1.35rem 0.85rem;
-  border-bottom: 1px solid var(--od-border);
-}
-
-.od-modal-header h3 {
-  margin: 0 0 0.15rem;
-  font-size: 1.1rem;
-  font-weight: 650;
-  color: var(--od-text);
-}
-
-.od-modal-sub {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--od-text-sub);
-}
-
-.od-modal-close {
-  border: 0;
-  background: none;
-  font-size: 16px;
-  color: var(--od-text-muted);
-  cursor: pointer;
-  padding: 0.3rem 0.5rem;
-  border-radius: 4px;
-}
-
-.od-modal-close:hover {
-  background: var(--od-bg);
-  color: var(--od-text);
-}
-
-.od-modal-body {
-  padding: 1rem 1.35rem;
-  max-height: 22rem;
-  overflow-y: auto;
-}
-
-.od-modal-files {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
 
 .od-file-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 0.85rem;
-  background: var(--od-bg);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-md);
+  gap: 0.35rem 0.6rem;
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 2px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.od-file-row:hover {
+  background: var(--od-surface-hover);
+}
+
+.od-file-row.is-open {
+  background: var(--od-surface-hover);
+}
+
+.od-file-row .od-file-desc {
+  flex-basis: 100%;
 }
 
 .od-file-info {
@@ -1537,15 +1580,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 2.1rem;
-  height: 1.35rem;
-  padding: 0 0.3rem;
-  border: 1px solid var(--od-border-strong);
-  border-radius: 4px;
-  background: var(--od-surface);
+  min-width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   font-size: 10px;
-  font-weight: 650;
-  color: var(--od-text-sub);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--od-text-muted);
 }
 
 .od-file-name {
@@ -1567,14 +1611,6 @@
   align-items: flex-end;
   font-size: 11px;
   color: var(--od-text-muted);
-}
-
-.od-modal-footer {
-  padding: 0.85rem 1.35rem;
-  border-top: 1px solid var(--od-border);
-  display: flex;
-  justify-content: flex-end;
-  background: var(--od-bg);
 }
 
 .od-modal-btn {
@@ -1625,17 +1661,17 @@
 }
 
 .od-subpage-search input {
-  height: 34px;
+  height: 32px;
   width: 16rem;
-  padding: 0 0.85rem;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-full);
+  padding: 0 0.75rem;
+  border: 1px solid var(--od-border-strong);
+  border-radius: 8px;
   background: var(--od-surface);
   color: var(--od-text);
   font: inherit;
   font-size: 12.5px;
   outline: none;
-  box-shadow: var(--od-shadow-sm);
+  box-shadow: none;
 }
 
 .od-subpage-search input:focus {
@@ -1650,9 +1686,9 @@
 }
 
 .od-filter-tab {
-  padding: 0.3rem 0.75rem;
-  border: 1px solid transparent;
-  border-radius: var(--od-radius-full);
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--od-text-sub);
   font: inherit;
@@ -1661,40 +1697,40 @@
 }
 
 .od-filter-tab:hover {
-  background: var(--od-surface-active);
+  background: var(--od-surface-hover);
   color: var(--od-text);
 }
 
 .od-filter-tab.is-active {
-  background: var(--od-surface);
-  border-color: var(--od-border);
+  background: var(--od-surface-hover);
   color: var(--od-text);
-  font-weight: 600;
-  box-shadow: var(--od-shadow-sm);
+  font-weight: 550;
+  box-shadow: none;
 }
 
-/* 技能网格 */
+/* 技能：名单，不是卡片墙 */
 .od-skills-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
-  gap: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 .od-skill-card {
-  background: var(--od-surface);
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-md);
-  padding: 1.15rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--od-border);
+  border-radius: 0;
+  padding: 0.95rem 0;
   box-shadow: none;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto auto auto;
+  column-gap: 1rem;
+  row-gap: 0.25rem;
 }
 
 .od-skill-card:hover {
-  border-color: var(--od-border-strong);
-  background: var(--od-surface-hover);
+  background: var(--od-surface);
 }
 
 .od-skill-card-top {
@@ -1741,18 +1777,32 @@
   margin-left: 0.3rem;
 }
 
+.od-skill-footer {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  align-self: center;
+}
+
+.od-skill-card-top,
+.od-skill-name,
+.od-skill-desc,
+.od-skill-inputs {
+  grid-column: 1;
+}
+
 .od-skill-btn {
-  width: 100%;
-  height: 30px;
-  border: 1px solid var(--od-border);
-  border-radius: var(--od-radius-sm);
-  background: var(--od-bg);
+  width: auto;
+  min-width: 3.5rem;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--od-border-strong);
+  border-radius: 6px;
+  background: var(--od-surface);
   color: var(--od-text);
   font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 550;
   cursor: pointer;
-  transition: all 0.15s;
 }
 
 .od-skill-btn:hover {
@@ -1761,14 +1811,13 @@
   border-color: var(--od-cta);
 }
 
-/* 专家人设网格 */
-.od-experts-grid {
+.od-agent-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
   gap: 0.85rem;
 }
 
-.od-expert-card {
+.od-agent-card {
   background: var(--od-surface);
   border: 1px solid var(--od-border);
   border-radius: var(--od-radius-md);
@@ -1779,52 +1828,62 @@
   gap: 0.75rem;
 }
 
-.od-expert-header {
+.od-agent-header {
   display: flex;
   align-items: center;
   gap: 0.65rem;
 }
 
-.od-expert-avatar {
-  font-size: 1.75rem;
+.od-agent-avatar {
+  width: 1.85rem;
+  height: 1.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--od-surface-hover);
+  color: var(--od-text);
+  font-size: 12px;
+  font-weight: 650;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
-.od-expert-name {
+.od-agent-name {
   margin: 0;
   font-size: 14px;
   font-weight: 650;
   color: var(--od-text);
 }
 
-.od-expert-role {
+.od-agent-role {
   font-size: 11.5px;
   color: var(--od-text-muted);
 }
 
-.od-expert-blurb {
+.od-agent-blurb {
   margin: 0;
   font-size: 12.5px;
   color: var(--od-text-sub);
   line-height: 1.5;
 }
 
-.od-expert-style {
+.od-agent-style {
   font-size: 11.5px;
   color: var(--od-text-muted);
 }
 
-.od-style-val {
+.od-agent-style-val {
   color: var(--od-text-sub);
   margin-left: 0.25rem;
 }
 
-.od-expert-tags {
+.od-agent-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
 }
 
-.od-expert-tag {
+.od-agent-tag {
   font-size: 11px;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
@@ -1832,7 +1891,7 @@
   color: var(--od-text-sub);
 }
 
-.od-expert-btn {
+.od-agent-btn {
   height: 30px;
   border: 1px solid var(--od-border);
   border-radius: var(--od-radius-sm);
@@ -1842,10 +1901,9 @@
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
 }
 
-.od-expert-btn:hover {
+.od-agent-btn:hover {
   background: var(--od-cta);
   color: var(--od-on-cta);
 }
@@ -2221,7 +2279,7 @@
 }
 
 /* ==========================================================================
-   侧栏导航条目样式 (.od-nav)
+   侧栏：跟编码 sidebar-compose / session row 同一套壳
    ========================================================================== */
 
 .od-nav {
@@ -2229,113 +2287,93 @@
   flex-direction: column;
   min-height: 0;
   flex: 1;
-  padding: 0.4rem 0.5rem 0.8rem;
-  gap: 0.85rem;
+  overflow: hidden;
 }
 
-.od-nav-section {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.od-nav .sidebar-compose {
+  padding: 2px 8px 6px;
 }
 
-.od-nav-link {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  height: 32px;
-  padding: 0 0.65rem;
-  border: 0;
-  border-radius: var(--od-radius-sm);
-  background: transparent;
-  color: var(--od-text-sub);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s;
+.od-nav .sidebar-compose-new.is-active {
+  background: var(--surface-hover);
 }
 
-.od-nav-link:hover {
-  background: var(--od-bg-sub);
-  color: var(--od-text);
-}
-
-.od-nav-link.is-active {
-  background: var(--od-surface-active);
-  color: var(--od-text);
-  font-weight: 600;
+.od-nav .sidebar-compose-link .od-nav-badge {
+  margin-left: auto;
 }
 
 .od-nav-badge {
-  font-size: 11px;
+  flex-shrink: 0;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--surface-muted, #f3f4f6);
+  color: var(--text-tertiary, #8e8e93);
+  font-size: 10px;
   font-weight: 600;
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--od-radius-full);
-  background: var(--od-bg);
-  color: var(--od-text-muted);
+  line-height: 1.2;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .od-nav-history-section {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  min-height: 0;
+  flex: 1;
+  padding: 0 8px 8px;
 }
 
-.od-nav-label-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 0.65rem;
-}
-
-.od-nav-label {
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  color: var(--od-text-muted);
-}
-
-.od-nav-count {
-  font-size: 11px;
-  color: var(--od-text-muted);
+.od-nav .sidebar-section-label {
+  padding: 8px 8px 4px;
 }
 
 .od-nav-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-height: 0;
   overflow-y: auto;
 }
 
-.od-nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.15rem;
-  padding: 0.45rem 0.6rem;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  border-radius: var(--od-radius-sm);
-  color: inherit;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.od-nav-item:hover {
-  background: var(--od-bg-sub);
-}
-
-.od-nav-item.is-active {
-  background: var(--od-surface-active);
-}
-
-.od-nav-item-top {
+.od-nav-task {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 8px;
   width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.od-nav-task:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.od-nav-task.is-active {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.od-nav-task-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.od-nav-task.is-active .od-nav-task-title {
+  font-weight: 550;
 }
 
 .od-nav-dot {
@@ -2343,6 +2381,7 @@
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+  background: var(--text-tertiary, #8e8e93);
 }
 
 .od-nav-dot.is-done {
@@ -2351,19 +2390,4 @@
 
 .od-nav-dot.is-running {
   background: var(--od-amber);
-}
-
-.od-nav-item-title {
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--od-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.od-nav-item-meta {
-  font-size: 11px;
-  color: var(--od-text-muted);
-  padding-left: 0.8rem;
 }

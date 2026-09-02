@@ -22,6 +22,7 @@ import { UserQuestionPanel } from './components/UserQuestion'
 import { McpElicitPanel } from './components/McpElicit'
 
 import { RightPanel } from './components/RightPanel'
+import { OfficeRail } from './office/chrome/OfficeRail'
 import { SettingsModal } from './components/Settings'
 import { Sidebar } from './components/Sidebar'
 import { ToastHost } from './components/Toast'
@@ -160,7 +161,9 @@ function DesktopApp() {
 
 function AppRightPanel() {
   const shell = useStore($appShell)
-  if (!getProduct(shell).showRightPanel) return null
+  const product = getProduct(shell)
+  if (!product.showRightPanel) return null
+  if (product.id === 'office') return <OfficeRail />
   return <RightPanel />
 }
 

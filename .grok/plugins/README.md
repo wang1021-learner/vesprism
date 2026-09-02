@@ -14,8 +14,9 @@ All three are MIT-licensed. Each plugin directory keeps `LICENSE` and `UPSTREAM.
 ## Why not the full upstream trees
 
 - Superpowers is small; we vendor it whole.
-- gstack here is product/plan/review/ship plus visual design
-  (`design-consultation`, `design-shotgun`, `design-html`). The Chromium
+- gstack here is product/plan/review/ship plus mockup loops
+  (`design-consultation`, `design-shotgun`, `design-html`). Shipping UI look
+  lives in `.grok/skills/` (`frontend-design`, `web-design-guidelines`). The Chromium
   daemon, bun toolchain, iOS QA, and design CLI binary are omitted; those
   skills fall back to HTML / WebSearch. This replaced the old
   `.agents/skills/` design suite.

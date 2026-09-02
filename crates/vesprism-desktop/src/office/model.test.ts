@@ -9,20 +9,21 @@ import {
 } from './model'
 
 describe('办公任务模型', () => {
-  it('周报有四步，最后一步是落成 Word', () => {
+  it('周报有四步，最后一步是封装预览文本', () => {
     const plan = planForTask('weekly')
     expect(plan).toHaveLength(4)
     expect(plan[0].label).toMatch(/材料/)
-    expect(plan.at(-1)?.label).toMatch(/Word/)
+    expect(plan.at(-1)?.label).toMatch(/预览/)
+    expect(plan.at(-1)?.label).not.toMatch(/Word/)
   })
 
   it('未知起手走通用四步', () => {
     expect(planForTask('nope').map((s) => s.id)).toEqual(['read', 'plan', 'draft', 'file'])
   })
 
-  it('周报产物是 docx，预览里有风险和下周', () => {
+  it('周报产物是 markdown 预览，预览里有风险和下周', () => {
     const file = deliverableForTask('weekly')
-    expect(file.name).toMatch(/\.docx$/)
+    expect(file.name).toMatch(/\.md$/)
     expect(file.kind).toBe('doc')
     expect(file.preview).toContain('风险')
     expect(file.preview).toContain('下周')
@@ -31,7 +32,7 @@ describe('办公任务模型', () => {
 
   it('PPT 产物包含 8 页幻灯片卡片与演讲备注', () => {
     const file = deliverableForTask('deck')
-    expect(file.name).toMatch(/\.pptx$/)
+    expect(file.name).toMatch(/\.md$/)
     expect(file.kind).toBe('pptx')
     expect(file.slides).toHaveLength(8)
     expect(file.slides?.[0].notes).toBeDefined()
@@ -74,5 +75,12 @@ describe('办公任务模型', () => {
     for (let i = 0; i < t.plan.length + 1; i++) t = advanceOfficeTask(t)
     const refined = applyRefinement(t, '精简为一页纸')
     expect(refined.file?.summary).toContain('精简版')
+  })
+
+  it('英文微调把文件名改成 _EN.md', () => {
+    let t = createOfficeTask('weekly', '', 't1')
+    for (let i = 0; i < t.plan.length + 1; i++) t = advanceOfficeTask(t)
+    const refined = applyRefinement(t, '英文')
+    expect(refined.file?.name).toMatch(/_EN\.md$/)
   })
 })

@@ -459,7 +459,7 @@ resetCanvasGraphWait()        // 卸载画布、开始试跑
 ### 10.2 试跑详情 Tab
 
 `openChatTab({ title: '试跑详情', utilityKind: 'flow-run', skipSession: true })`  
-`openChatTab`：**`skipSession` 或 kind===`flow-run` 都不 `startSession`**。这是只读查看页 `RunDetailPanel.tsx`，不能再开一层 agent 去改画布。
+`openChatTab`：跳过 `startSession` 的列表以 `openChatTab.ts` 为准（`skipSession`、`flow-run`、`writing-desk`、`office-desk`）。试跑详情是只读查看页 `RunDetailPanel.tsx`，不能再开一层 agent 去改画布。
 
 历史上详情页自己 startSession + 残留 expect，会把画布图盖掉。已修。
 
@@ -598,7 +598,7 @@ CanvasComposer.onSend
 | 流程编译 | `src-tauri/src/workbench/flow_compile.rs` |
 | 写完写台 | `src/writing/WritingDesk.tsx`、`src-tauri/src/writing_store.rs` |
 | 写完书库 | `src/writing/library.ts` |
-| 办公桌 demo | `src/office/OfficeDesk.tsx`、`src/office/model.ts` |
+| 办公桌 demo | `src/office/OfficeDesk.tsx`、`src/office/persist.ts`、`src/office/model.ts` |
 | Agent 磁盘 | `src-tauri/src/workbench/agents.rs` |
 | 绑定/工具会话 | `workbench/bindings.rs`、`bindings.ts` |
 | ACP 包装 | `crates/grok-session/src/lib.rs` |

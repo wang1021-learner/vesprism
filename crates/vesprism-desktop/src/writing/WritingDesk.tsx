@@ -661,9 +661,11 @@ export function WritingDesk() {
     }
     return (
       <div className="wd-desk wd-desk--empty" role="status">
-        <p className="wd-kicker">写完</p>
-        <h1>从左边打开一本书</h1>
-        <p>入口是书库。点 + 只问书名、平台、一句话。打开一本才进写台。不是聊天框。</p>
+        <article className="wd-empty-sheet">
+          <p className="wd-kicker">写完</p>
+          <h1>从左边打开一本书</h1>
+          <p className="wd-empty-lead">书库点 +。打开一本才进写台。</p>
+        </article>
       </div>
     )
   }

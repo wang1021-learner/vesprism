@@ -8,7 +8,8 @@ the upstream full distributions on top of them.
 | Layer | Plugin | When to use |
 |---|---|---|
 | Process backbone | **superpowers** | Designing, implementing, debugging, TDD, and finishing a branch. Auto-invokes. |
-| Product / ship / visual | **gstack** | Product framing, plan reviews, staff review, CSO, ship, docs, and visual design. Slash only. |
+| Product / ship / visual | **gstack** | Product framing, plan reviews, staff review, CSO, ship, docs. Slash only. Mockup loops: `design-consultation` / `design-shotgun` / `design-html`. |
+| UI look + a11y review | **`.grok/skills/`** | `frontend-design` generates look. `web-design-guidelines` audits. `vercel-react-best-practices` is React perf, not paint. |
 | Security / Rust extras | **ecc** | Security scan/review, Rust patterns, quality gates, language specialist agents. Slash only. |
 
 Do not run all three on the same task. Pick one primary layer, then optionally
@@ -35,13 +36,26 @@ Invoke explicitly, for example `/gstack:office-hours`, `/gstack:plan-eng-review`
 `/gstack:review`, `/gstack:cso`, `/gstack:ship`, `/gstack:design-consultation`,
 `/gstack:design-shotgun`, `/gstack:design-html`.
 
-Visual design in this repo is **only** those three gstack skills (plus
-`/gstack:plan-design-review` for plan-stage scoring). Do not use
-`ui-design`, `frontend-design`, `frontend-design-review`, `ui-ux-pro-max`,
+Visual design for shipping UI:
+
+1. **`/frontend-design`** (repo `.grok/skills/frontend-design`, Anthropic) — new
+   screens and restyles. Purpose, tone, type+palette, one signature. Avoid the
+   three AI default faces (cream+serif+terracotta, black+acid accent, broadsheet
+   hairlines). Prefer this over `~/.claude/skills` copies of the same name.
+2. **`/web-design-guidelines`** (Vercel) — review existing UI. Fetch
+   `web-interface-guidelines` `command.md`, output `file:line`. Not a look
+   generator.
+3. **gstack** `design-consultation` / `design-shotgun` / `design-html` — product
+   plan mockup loops and comparison boards. Still slash-only.
+
+Do **not** use `ui-design`, `frontend-design-review`, `ui-ux-pro-max`,
 `ux-design`, `pixel-perfect-design`, `shadcn-ui`, `tailwind-design-system`,
-`accessibility`, or `react-best-practices-cn` even if they still appear from
-`~/.claude/skills` on a machine that has Claude Code skills installed. The
+`accessibility`, or `react-best-practices-cn` from `~/.claude/skills`. The
 repo-local `.agents/skills/` design suite was removed.
+
+`/vercel-react-best-practices` is performance, not aesthetic. Vesprism desktop
+is Tauri + Vite: apply client / rerender / bundle rules; skip Next.js RSC,
+`next/dynamic`, and server-action rules unless the file is actually Next.
 
 gstack skill files mention `~/.claude/skills/gstack/...`. Those paths are not
 installed. Map them to this repo:
