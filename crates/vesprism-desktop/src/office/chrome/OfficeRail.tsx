@@ -2,19 +2,22 @@ import { useCallback, useLayoutEffect, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import { $rightPanelOpen, $rightPanelWidth, pushToast } from '../../store'
 import { OFFICE_FOLDERS } from '../catalog'
+import { DeliverableRenderer } from '../Deliverable'
+import { kindIcon, kindLabel } from '../labels'
 import { DEMO_FOLDERS, type MaterialFile } from '../model'
 import { formatOfficeClock } from '../persist'
 import {
+  $officeActiveId,
   $officeArchivedIds,
   $officeFolderId,
-  $officePanel,
+  $officeRailTab,
   $officeStarredIds,
   $officeTasks,
   archiveOfficeTask,
-  openOfficePanel,
   seedOfficeDraft,
   selectOfficeTask,
   toggleOfficeStar,
+  type OfficeRailTab,
 } from '../store'
 
 function fileIcon(kind: MaterialFile['kind']): string {
@@ -24,8 +27,8 @@ function fileIcon(kind: MaterialFile['kind']): string {
   return kind.toUpperCase()
 }
 
-const MIN_W = 280
-const MAX_RATIO = 0.42
+const MIN_W = 340
+const MAX_RATIO = 0.65
 
 function ResizeHandle() {
   const onDown = useCallback((e: React.MouseEvent) => {
@@ -84,6 +87,127 @@ function statusLabel(status: string): string {
   if (status === 'done') return '已交付'
   if (status === 'running') return '执行中'
   return '待规划'
+}
+
+/* ── 交付物画板 Tab（核心 Artifacts 侧抽屉） ── */
+function ArtifactTab() {
+  const tasks = useStore($officeTasks)
+  const activeId = useStore($officeActiveId)
+  const task = tasks.find((t) => t.id === activeId) ?? null
+
+  const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted')
+  const [activeSlide, setActiveSlide] = useState(1)
+
+  const file = task?.file ?? null
+  const isRunning = task?.status === 'running'
+  const currentStep = task && task.stepIndex >= 0 ? task.plan[task.stepIndex] : null
+
+  const copyToClipboard = () => {
+    if (!file) return
+    void navigator.clipboard.writeText(file.preview).then(() => {
+      pushToast('已复制交付内容到剪贴板', 'info')
+    })
+  }
+
+  const downloadFile = () => {
+    if (!file) return
+    const blob = new Blob([file.preview], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name
+    a.click()
+    URL.revokeObjectURL(url)
+    pushToast(`已下载文件: ${file.name}`, 'info')
+  }
+
+  if (!task) {
+    return (
+      <div className="od-rail-empty">
+        <p>暂无选定的交付任务。</p>
+        <span>在工作台发起或选择一个任务后，产物会在此处自动展开。</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="od-rail-artifact-workbench">
+      {/* 画板顶部工具条 */}
+      <header className="od-workbench-header">
+        <div className="od-wb-file-meta">
+          <span className="od-wb-icon">{file ? kindIcon(file.kind) : 'DOC'}</span>
+          <div className="od-wb-titles">
+            <strong className="od-wb-name">{file?.name ?? task.title}</strong>
+            {file ? (
+              <span className="od-wb-kind-badge">
+                {kindLabel(file.kind)} {file.wordCount ? `· ${file.wordCount} 字` : ''}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {file ? (
+          <div className="od-wb-actions">
+            <div className="od-view-switcher" role="group" aria-label="视图模式切换">
+              <button
+                type="button"
+                className={viewMode === 'formatted' ? 'is-active' : ''}
+                onClick={() => setViewMode('formatted')}
+                title="格式化排版视图"
+              >
+                排版
+              </button>
+              <button
+                type="button"
+                className={viewMode === 'raw' ? 'is-active' : ''}
+                onClick={() => setViewMode('raw')}
+                title="Markdown 源码"
+              >
+                源码
+              </button>
+            </div>
+            <button type="button" className="od-action-btn" onClick={copyToClipboard} title="复制全文">
+              复制
+            </button>
+            <button
+              type="button"
+              className="od-action-btn is-primary"
+              onClick={downloadFile}
+              title="导出文稿"
+            >
+              导出
+            </button>
+          </div>
+        ) : null}
+      </header>
+
+      {/* 画板正文渲染区 */}
+      <div className="od-workbench-body">
+        {!file && isRunning ? (
+          <div className="od-loading-state">
+            <div className="od-loading-mark" aria-hidden>
+              {Math.max(task.stepIndex + 1, 0)}/{task.plan.length}
+            </div>
+            <p>正在执行规划步骤…</p>
+            <span>{currentStep?.label ?? '初始化'}</span>
+          </div>
+        ) : !file ? (
+          <div className="od-rail-empty">
+            <p>尚未生成交付稿。</p>
+            <span>等待规划执行完成即可在此预览成果。</span>
+          </div>
+        ) : viewMode === 'raw' ? (
+          <pre className="od-raw-preview">{file.preview}</pre>
+        ) : (
+          <DeliverableRenderer
+            file={file}
+            activeSlide={activeSlide}
+            setActiveSlide={setActiveSlide}
+          />
+        )}
+      </div>
+    </div>
+  )
 }
 
 /* ── 材料夹文件 Tab（起草上下文） ── */
@@ -274,21 +398,21 @@ function HistoryTab() {
   )
 }
 
-/* ── Tab 配置：右栏只保留「文件 · 历史」上下文，目录（技能/Agent/…）收敛到左栏 ── */
-const TABS: { id: 'home' | 'history'; label: string }[] = [
-  { id: 'home', label: '文件' },
-  { id: 'history', label: '历史' },
+/* ── 右侧面板 Tab 配置：交付画板 · 材料文件 · 历史记录 ── */
+const TABS: { id: OfficeRailTab; label: string }[] = [
+  { id: 'artifact', label: '交付画板' },
+  { id: 'files', label: '材料文件' },
+  { id: 'history', label: '历史记录' },
 ]
 
-/** 办公右侧上下文栏：材料夹文件 · 历史记录。目录能力入口在左侧栏。 */
+/** 办公右侧面板：Artifact 交付物侧抽屉 · 材料夹文件 · 历史记录 */
 export function OfficeRail() {
   const open = useStore($rightPanelOpen)
   const width = useStore($rightPanelWidth)
-  const panel = useStore($officePanel)
-  // 目录占位（skills/agents/...）不切到右栏，右栏仍展示文件材料
-  const activeTab = panel === 'history' ? 'history' : 'home'
+  const railTab = useStore($officeRailTab)
 
   useLayoutEffect(() => {
+    // 默认开屏时预置开启右侧抽屉，但用户可自由点击 [|] 关闭
     $rightPanelOpen.set(true)
   }, [])
 
@@ -303,10 +427,10 @@ export function OfficeRail() {
       }}
     >
       <ResizeHandle />
-      <aside className="right-panel od-feature-rail" aria-label="上下文面板">
-        <div className="od-fr-tabs" role="tablist" aria-label="上下文分区">
+      <aside className="right-panel od-feature-rail" aria-label="办公交付与材料面板">
+        <div className="od-fr-tabs" role="tablist" aria-label="侧边栏标签切换">
           {TABS.map((t) => {
-            const isActive = activeTab === t.id
+            const isActive = railTab === t.id
             return (
               <button
                 key={t.id}
@@ -314,7 +438,7 @@ export function OfficeRail() {
                 role="tab"
                 aria-selected={isActive}
                 className={`od-fr-tab${isActive ? ' is-active' : ''}`}
-                onClick={() => openOfficePanel(t.id)}
+                onClick={() => $officeRailTab.set(t.id)}
               >
                 {t.label}
               </button>
@@ -323,7 +447,9 @@ export function OfficeRail() {
         </div>
 
         <div className="od-fr-body" role="tabpanel">
-          {activeTab === 'home' ? <FilesTab /> : <HistoryTab />}
+          {railTab === 'artifact' && <ArtifactTab />}
+          {railTab === 'files' && <FilesTab />}
+          {railTab === 'history' && <HistoryTab />}
         </div>
       </aside>
     </div>

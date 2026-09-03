@@ -1,4 +1,5 @@
 import { atom } from 'nanostores'
+import { $rightPanelOpen } from '../store'
 import {
   advanceOfficeTask,
   applyRefinement,
@@ -14,6 +15,10 @@ export const $officePermission = atom<OfficePermission>('default')
 export const $officeFolderId = atom<string>('week')
 export const $officeFormat = atom<OfficeFormat>('doc')
 
+/** 右侧面板当前激活标签页：交付物画板 / 材料文件 / 历史记录 */
+export type OfficeRailTab = 'artifact' | 'files' | 'history'
+export const $officeRailTab = atom<OfficeRailTab>('artifact')
+
 /** 会话内归档集合（不落盘，刷新即复位）。 */
 export const $officeArchivedIds = atom<string[]>([])
 /** 会话内星标集合（不落盘，刷新即复位）。 */
@@ -23,6 +28,11 @@ export const $officeDraftSeed = atom<string | null>(null)
 
 function nextId(): string {
   return `office-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+}
+
+export function openOfficeArtifact(): void {
+  $officeRailTab.set('artifact')
+  $rightPanelOpen.set(true)
 }
 
 export function startOfficeTask(
@@ -37,6 +47,8 @@ export function startOfficeTask(
   $officeTasks.set([task, ...$officeTasks.get()])
   $officeActiveId.set(task.id)
   $officePanel.set('home')
+  $officeRailTab.set('artifact')
+  $rightPanelOpen.set(true)
   return task
 }
 
@@ -44,6 +56,8 @@ export function selectOfficeTask(id: string): void {
   if ($officeTasks.get().some((t) => t.id === id)) {
     $officeActiveId.set(id)
     $officePanel.set('home')
+    $officeRailTab.set('artifact')
+    $rightPanelOpen.set(true)
   }
 }
 
@@ -55,6 +69,7 @@ export function openOfficePanel(panel: OfficePanel): void {
 export function openOfficeHome(): void {
   $officeActiveId.set(null)
   $officePanel.set('home')
+  $officeRailTab.set('files')
 }
 
 export function patchOfficeTask(id: string, next: OfficeTask): void {
@@ -74,6 +89,8 @@ export function refineOfficeTask(id: string, action: string): OfficeTask | null 
   if (!cur) return null
   const next = applyRefinement(cur, action)
   patchOfficeTask(id, next)
+  // 改稿完成后聚焦右侧画板
+  openOfficeArtifact()
   return next
 }
 
@@ -135,4 +152,5 @@ export function resetOfficeTasksForTests(): void {
   $officeArchivedIds.set([])
   $officeStarredIds.set([])
   $officeDraftSeed.set(null)
+  $officeRailTab.set('artifact')
 }
