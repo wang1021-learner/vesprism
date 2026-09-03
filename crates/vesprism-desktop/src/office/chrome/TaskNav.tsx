@@ -1,5 +1,6 @@
 import { useEffect, useState, type ComponentType } from 'react'
 import { useStore } from '@nanostores/react'
+import { pushToast } from '../../store'
 import { AgentsIcon, PlusIcon, ScheduleIcon } from '../../components/sidebarIcons'
 import { openChatTab } from '../../lib/openChatTab'
 import { OFFICE_NAV, type OfficePanel } from '../catalog'
@@ -11,7 +12,6 @@ import {
   $officeStarredIds,
   $officeTasks,
   openOfficeHome,
-  openOfficePanel,
   selectOfficeTask,
   toggleOfficeStar,
 } from '../store'
@@ -65,13 +65,21 @@ export function OfficeTaskNav() {
   const archivedIds = useStore($officeArchivedIds)
   const starredIds = useStore($officeStarredIds)
   const [filter, setFilter] = useState<RecFilter>('all')
+  // 目录项当前为占位：右栏目录 Tab 已删、中央页未做，仅本地高亮提示去向
+  const [catSel, setCatSel] = useState<OfficePanel | null>(null)
 
   useEffect(() => {
     bootOfficePersist()
   }, [])
 
-  const homeOn = !active && panel === 'home'
-  // 左栏目录 = 工具技能能力入口；「历史」由下方记录列表覆盖，不再单列
+  // 目录高亮只是占位：一旦打开某条记录，目录占位收起、高亮交给对应记录
+  useEffect(() => {
+    if (active) setCatSel(null)
+  }, [active])
+
+  // 新任务高亮：回到工作台首页，且没占着某个目录占位
+  const homeOn = !active && panel === 'home' && catSel === null
+  // 左栏目录 = 能力入口（占位高亮）；右栏目录 Tab 已删、中央目录页后续接入
   const catalog = OFFICE_NAV.filter((item) => item.id !== 'home' && item.id !== 'history')
 
   const isArchived = (id: string) => archivedIds.includes(id)
@@ -91,6 +99,7 @@ export function OfficeTaskNav() {
           className={`sidebar-compose-new${homeOn ? ' is-active' : ''}`}
           aria-current={homeOn ? 'page' : undefined}
           onClick={() => {
+            setCatSel(null)
             openOfficeHome()
             void ensureDesk()
           }}
@@ -101,7 +110,7 @@ export function OfficeTaskNav() {
         <nav className="sidebar-compose-nav" aria-label="办公能力">
           {catalog.map((item) => {
             const Icon = NAV_ICON[item.id]
-            const isActive = panel === item.id && !active
+            const isActive = catSel === item.id
             return (
               <button
                 key={item.id}
@@ -109,8 +118,19 @@ export function OfficeTaskNav() {
                 className={`sidebar-compose-link${isActive ? ' is-active' : ''}`}
                 aria-current={isActive ? 'page' : undefined}
                 onClick={() => {
-                  openOfficePanel(item.id)
-                  void ensureDesk()
+                  // 有稿件打开时不占目录高亮，只给去向提示，不打扰当前稿件
+                  if (active) {
+                    pushToast(`「${item.label}」目录页将在中央主区接入`, 'info')
+                    return
+                  }
+                  const next = catSel === item.id ? null : item.id
+                  setCatSel(next)
+                  if (next) {
+                    pushToast(
+                      `「${item.label}」目录页将在中央主区接入，当前先新建任务或从右侧材料夹起草`,
+                      'info',
+                    )
+                  }
                 }}
               >
                 <Icon />
@@ -167,6 +187,7 @@ export function OfficeTaskNav() {
                     type="button"
                     className="od-nav-task"
                     onClick={() => {
+                      setCatSel(null)
                       selectOfficeTask(t.id)
                       void ensureDesk()
                     }}

@@ -1,15 +1,7 @@
 import { useCallback, useLayoutEffect, useState } from 'react'
 import { useStore } from '@nanostores/react'
 import { $rightPanelOpen, $rightPanelWidth, pushToast } from '../../store'
-import {
-  OFFICE_AGENTS,
-  OFFICE_CONNECTORS,
-  OFFICE_FOLDERS,
-  OFFICE_KNOWLEDGE,
-  OFFICE_SCHEDULES,
-  OFFICE_SKILLS,
-  type OfficePanel,
-} from '../catalog'
+import { OFFICE_FOLDERS } from '../catalog'
 import { DEMO_FOLDERS, type MaterialFile } from '../model'
 import { formatOfficeClock } from '../persist'
 import {
@@ -22,7 +14,6 @@ import {
   openOfficePanel,
   seedOfficeDraft,
   selectOfficeTask,
-  startOfficeTask,
   toggleOfficeStar,
 } from '../store'
 
@@ -34,7 +25,7 @@ function fileIcon(kind: MaterialFile['kind']): string {
 }
 
 const MIN_W = 280
-const MAX_RATIO = 0.46
+const MAX_RATIO = 0.42
 
 function ResizeHandle() {
   const onDown = useCallback((e: React.MouseEvent) => {
@@ -95,7 +86,7 @@ function statusLabel(status: string): string {
   return '待规划'
 }
 
-/* ── 文件列表 Tab ── */
+/* ── 材料夹文件 Tab（起草上下文） ── */
 function FilesTab() {
   const folderId = useStore($officeFolderId)
   const [openFileId, setOpenFileId] = useState<string | null>(null)
@@ -179,185 +170,14 @@ function FilesTab() {
             )
           })
         ) : (
-          <p className="od-rt-empty">在右上角选择材料夹</p>
+          <p className="od-rt-empty">在材料夹里选一份文件</p>
         )}
       </div>
     </div>
   )
 }
 
-/* ── 技能 Tab ── */
-function SkillsTab() {
-  const folderId = useStore($officeFolderId)
-  const [search, setSearch] = useState('')
-  const filtered = OFFICE_SKILLS.filter((s) =>
-    !search || s.name.includes(search) || s.description.includes(search)
-  )
-
-  return (
-    <div className="od-rt-section">
-      <div className="od-rt-search">
-        <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-          <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M8.5 8.5L11 11" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-        <input
-          type="search"
-          placeholder="搜索技能…"
-          value={search}
-          aria-label="搜索技能"
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </div>
-      <div className="od-rt-list">
-        {filtered.length === 0 && <p className="od-rt-empty">没有匹配的技能</p>}
-        {filtered.map((s) => (
-          <div key={s.id} className="od-rt-card">
-            <div className="od-rt-card-top">
-              <span className="od-rt-cat-tag">{s.category}</span>
-              <span className="od-rt-out-tag">{s.outputType}</span>
-            </div>
-            <div className="od-rt-card-title">{s.name}</div>
-            <div className="od-rt-card-desc">{s.description}</div>
-            <div className="od-rt-card-foot">
-              <span className="od-rt-card-meta">输入: {s.inputs}</span>
-              <button
-                type="button"
-                className="od-rt-run-btn"
-                onClick={() => startOfficeTask(s.id, s.prompt, folderId, s.format)}
-              >
-                运行
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/* ── Agent Tab ── */
-function AgentsTab() {
-  const folderId = useStore($officeFolderId)
-  const callAgent = (a: (typeof OFFICE_AGENTS)[number]) => {
-    startOfficeTask(
-      'custom',
-      `作为「${a.name}（${a.role}）」，请按你的风格（${a.style}）基于当前材料夹产出一份演示交付预览。背景：${a.blurb}`,
-      folderId,
-      'doc',
-    )
-    pushToast(`已用「${a.name}」发起演示任务`, 'info')
-  }
-
-  return (
-    <div className="od-rt-section">
-      <div className="od-rt-list">
-        {OFFICE_AGENTS.map((a) => (
-          <div key={a.id} className="od-rt-card od-rt-agent-card">
-            <div className="od-rt-agent-head">
-              <div className="od-rt-agent-avatar">{a.avatar}</div>
-              <div className="od-rt-agent-info">
-                <div className="od-rt-card-title">{a.name}</div>
-                <div className="od-rt-cat-tag">{a.role}</div>
-              </div>
-            </div>
-            <div className="od-rt-card-desc">{a.blurb}</div>
-            <div className="od-rt-card-foot">
-              <div className="od-rt-tags">
-                {a.skills.slice(0, 2).map((t) => (
-                  <span key={t} className="od-rt-out-tag">{t}</span>
-                ))}
-              </div>
-              <button type="button" className="od-rt-run-btn" onClick={() => callAgent(a)}>
-                演示调用
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/* ── 知识库 Tab ── */
-function KnowledgeTab() {
-  const [openId, setOpenId] = useState<string | null>(null)
-  const seedFromKnowledge = (k: (typeof OFFICE_KNOWLEDGE)[number]) => {
-    seedOfficeDraft(
-      `依据企业知识库「${k.name}」（${k.category}）的口径${k.excerpt ? `：${k.excerpt}` : ''}，起草/校稿一份符合上述规范的文稿（演示）。`,
-    )
-    pushToast(`已把知识「${k.name}」放入起草框`, 'info')
-  }
-
-  return (
-    <div className="od-rt-section">
-      <div className="od-rt-list">
-        {OFFICE_KNOWLEDGE.map((k) => {
-          const open = openId === k.id
-          return (
-            <div key={k.id} className={`od-rt-card${open ? ' is-open' : ''}`}>
-              <button
-                type="button"
-                className="od-rt-card-hit"
-                aria-expanded={open}
-                onClick={() => setOpenId(open ? null : k.id)}
-              >
-                <span className="od-rt-card-top">
-                  <span className="od-rt-cat-tag">{k.category}</span>
-                  <span className="od-rt-card-date">{k.updatedAt}</span>
-                </span>
-                <span className="od-rt-card-title">{k.name}</span>
-                <span className="od-rt-card-desc">{k.excerpt}</span>
-                <span className="od-rt-card-meta">来源：{k.source}</span>
-              </button>
-              {open && (
-                <div className="od-rt-card-extra">
-                  {k.tags.map((t) => (
-                    <span key={t} className="od-rt-out-tag">{t}</span>
-                  ))}
-                  <button type="button" className="od-rt-mini-btn" onClick={() => seedFromKnowledge(k)}>
-                    以此为准起草/校稿
-                  </button>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-/* ── 连接器 Tab（诚实演示，不假装已授权） ── */
-function ConnectorsTab() {
-  return (
-    <div className="od-rt-section">
-      <div className="od-rt-list">
-        {OFFICE_CONNECTORS.map((c) => (
-          <div key={c.id} className="od-rt-card">
-            <div className="od-rt-card-top">
-              <span className="od-rt-conn-icon">{c.icon}</span>
-              <span className="od-rt-cat-tag">{c.category}</span>
-              <span className="od-rt-conn-pill">未接</span>
-            </div>
-            <div className="od-rt-card-title">{c.name}</div>
-            <div className="od-rt-card-desc">{c.description}</div>
-            <div className="od-rt-card-foot">
-              <div className="od-rt-tags">
-                {c.features.map((f) => (
-                  <span key={f} className="od-rt-out-tag">{f}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-        ))}
-        <p className="od-rt-hint">演示暂不接入真实服务；将来接引擎后按需打开授权。</p>
-      </div>
-    </div>
-  )
-}
-
-/* ── 历史 Tab ── */
+/* ── 历史 Tab（记录管理） ── */
 type HistFilter = 'all' | 'running' | 'done' | 'archived'
 const HIST_FILTERS: { id: HistFilter; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -454,87 +274,25 @@ function HistoryTab() {
   )
 }
 
-/* ── 排程 Tab ── */
-function ScheduleTab() {
-  const folderId = useStore($officeFolderId)
-  const [enabled, setEnabled] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(OFFICE_SCHEDULES.map((s) => [s.id, s.status === 'active']))
-  )
-  const [lastRun, setLastRun] = useState<Record<string, string>>({})
-
-  const runOnce = (id: string, action: string) => {
-    setLastRun((m) => ({ ...m, [id]: '刚刚（演示）' }))
-    startOfficeTask('custom', `${action}（演示跑一次，不会真的发送/写盘）`, folderId, 'doc')
-    pushToast('已触发一次演示运行', 'info')
-  }
-
-  return (
-    <div className="od-rt-section">
-      <div className="od-rt-list">
-        {OFFICE_SCHEDULES.map((s) => {
-          const on = enabled[s.id] ?? true
-          return (
-            <div key={s.id} className="od-rt-card">
-              <div className="od-rt-card-top">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={on}
-                  aria-label={on ? '暂停' : '启用'}
-                  className={`od-switch${on ? ' is-on' : ''}`}
-                  onClick={() => setEnabled((m) => ({ ...m, [s.id]: !on }))}
-                >
-                  <span className="od-switch-knob" aria-hidden="true" />
-                </button>
-                <span className="od-rt-cat-tag">{on ? '运行中' : '已停用'}</span>
-                <span className="od-rt-card-meta">{s.when}</span>
-              </div>
-              <div className="od-rt-card-title">{s.name}</div>
-              <div className="od-rt-card-desc">{s.action}</div>
-              <div className="od-rt-card-foot">
-                <span className="od-rt-card-meta">上次: {lastRun[s.id] ?? s.lastRun}</span>
-                <button
-                  type="button"
-                  className="od-rt-run-btn"
-                  disabled={!on}
-                  onClick={() => runOnce(s.id, s.action)}
-                >
-                  跑一次（演示）
-                </button>
-              </div>
-            </div>
-          )
-        })}
-        <p className="od-rt-hint">排程仅演示，不会真的发送或写盘。</p>
-      </div>
-    </div>
-  )
-}
-
-/* ── Tab 配置 ── */
-const TABS: { id: OfficePanel; label: string }[] = [
+/* ── Tab 配置：右栏只保留「文件 · 历史」上下文，目录（技能/Agent/…）收敛到左栏 ── */
+const TABS: { id: 'home' | 'history'; label: string }[] = [
   { id: 'home', label: '文件' },
-  { id: 'skills', label: '技能' },
-  { id: 'agents', label: 'Agent' },
-  { id: 'knowledge', label: '知识库' },
-  { id: 'schedule', label: '排程' },
-  { id: 'connectors', label: '连接器' },
   { id: 'history', label: '历史' },
 ]
 
-/** 办公右侧功能栏：文件 · 技能 · Agent · 知识库 · 排程 · 连接器 · 历史 */
+/** 办公右侧上下文栏：材料夹文件 · 历史记录。目录能力入口在左侧栏。 */
 export function OfficeRail() {
   const open = useStore($rightPanelOpen)
   const width = useStore($rightPanelWidth)
   const panel = useStore($officePanel)
+  // 目录占位（skills/agents/...）不切到右栏，右栏仍展示文件材料
+  const activeTab = panel === 'history' ? 'history' : 'home'
 
   useLayoutEffect(() => {
     $rightPanelOpen.set(true)
   }, [])
 
   if (!open) return null
-
-  const activeTab: OfficePanel = panel
 
   return (
     <div
@@ -545,11 +303,10 @@ export function OfficeRail() {
       }}
     >
       <ResizeHandle />
-      <aside className="right-panel od-feature-rail" aria-label="功能面板">
-        {/* Tab 导航条 */}
-        <div className="od-fr-tabs" role="tablist" aria-label="功能分区">
+      <aside className="right-panel od-feature-rail" aria-label="上下文面板">
+        <div className="od-fr-tabs" role="tablist" aria-label="上下文分区">
           {TABS.map((t) => {
-            const isActive = t.id === 'home' ? activeTab === 'home' : activeTab === t.id
+            const isActive = activeTab === t.id
             return (
               <button
                 key={t.id}
@@ -557,7 +314,7 @@ export function OfficeRail() {
                 role="tab"
                 aria-selected={isActive}
                 className={`od-fr-tab${isActive ? ' is-active' : ''}`}
-                onClick={() => openOfficePanel(t.id as OfficePanel)}
+                onClick={() => openOfficePanel(t.id)}
               >
                 {t.label}
               </button>
@@ -565,15 +322,8 @@ export function OfficeRail() {
           })}
         </div>
 
-        {/* Tab 内容区 */}
         <div className="od-fr-body" role="tabpanel">
-          {activeTab === 'home' && <FilesTab />}
-          {activeTab === 'skills' && <SkillsTab />}
-          {activeTab === 'agents' && <AgentsTab />}
-          {activeTab === 'knowledge' && <KnowledgeTab />}
-          {activeTab === 'schedule' && <ScheduleTab />}
-          {activeTab === 'connectors' && <ConnectorsTab />}
-          {activeTab === 'history' && <HistoryTab />}
+          {activeTab === 'home' ? <FilesTab /> : <HistoryTab />}
         </div>
       </aside>
     </div>
