@@ -1,16 +1,19 @@
-import { useEffect, type ComponentType } from 'react'
+import { useEffect, useState, type ComponentType } from 'react'
 import { useStore } from '@nanostores/react'
 import { AgentsIcon, PlusIcon, ScheduleIcon } from '../../components/sidebarIcons'
 import { openChatTab } from '../../lib/openChatTab'
 import { OFFICE_NAV, type OfficePanel } from '../catalog'
-import { bootOfficePersist } from '../persist'
+import { bootOfficePersist, formatOfficeClock } from '../persist'
 import {
   $officeActiveId,
+  $officeArchivedIds,
   $officePanel,
+  $officeStarredIds,
   $officeTasks,
   openOfficeHome,
   openOfficePanel,
   selectOfficeTask,
+  toggleOfficeStar,
 } from '../store'
 import { ArchiveIcon, BookIcon, BoltIcon, PlugIcon } from './navIcons'
 
@@ -28,17 +31,57 @@ const NAV_ICON: Record<OfficePanel, ComponentType> = {
   history: ArchiveIcon,
 }
 
+type RecFilter = 'all' | 'running' | 'done' | 'archived'
+const REC_FILTERS: { id: RecFilter; label: string }[] = [
+  { id: 'all', label: '全部' },
+  { id: 'running', label: '进行中' },
+  { id: 'done', label: '已交付' },
+  { id: 'archived', label: '已归档' },
+]
+
+function StarGlyph({ on }: { on: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill={on ? 'currentColor' : 'none'}
+      aria-hidden="true"
+    >
+      <path
+        d="M6 1.4l1.4 2.9 3.2.5-2.3 2.2.5 3.2L6 8.9 3.2 10.2l.5-3.2L1.4 4.8l3.2-.5L6 1.4z"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export function OfficeTaskNav() {
   const panel = useStore($officePanel)
   const tasks = useStore($officeTasks)
   const active = useStore($officeActiveId)
+  const archivedIds = useStore($officeArchivedIds)
+  const starredIds = useStore($officeStarredIds)
+  const [filter, setFilter] = useState<RecFilter>('all')
 
   useEffect(() => {
     bootOfficePersist()
   }, [])
 
   const homeOn = !active && panel === 'home'
-  const catalog = OFFICE_NAV.filter((item) => item.id !== 'home')
+  // 左栏目录 = 工具技能能力入口；「历史」由下方记录列表覆盖，不再单列
+  const catalog = OFFICE_NAV.filter((item) => item.id !== 'home' && item.id !== 'history')
+
+  const isArchived = (id: string) => archivedIds.includes(id)
+  const base = filter === 'archived' ? tasks.filter((t) => isArchived(t.id)) : tasks.filter((t) => !isArchived(t.id))
+  const list = base.filter((t) => {
+    if (filter === 'all' || filter === 'archived') return true
+    if (filter === 'running') return t.status === 'running' || t.status === 'idle'
+    return t.status === 'done'
+  })
+  const shown = list.slice(0, 10)
 
   return (
     <div className="od-nav" aria-label="办公入口">
@@ -55,7 +98,7 @@ export function OfficeTaskNav() {
           <PlusIcon />
           <span>新任务</span>
         </button>
-        <nav className="sidebar-compose-nav" aria-label="办公目录">
+        <nav className="sidebar-compose-nav" aria-label="办公能力">
           {catalog.map((item) => {
             const Icon = NAV_ICON[item.id]
             const isActive = panel === item.id && !active
@@ -79,30 +122,79 @@ export function OfficeTaskNav() {
         </nav>
       </div>
 
-      {tasks.length > 0 ? (
-        <div className="od-nav-history-section">
-          <div className="sidebar-section-label">
-            <span>近期任务</span>
-            <span className="od-nav-badge">{tasks.length}</span>
-          </div>
-          <div className="od-nav-list">
-            {tasks.slice(0, 10).map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`od-nav-task${t.id === active ? ' is-active' : ''}`}
-                onClick={() => {
-                  selectOfficeTask(t.id)
-                  void ensureDesk()
-                }}
-              >
-                <span className={`od-nav-dot is-${t.status}`} />
-                <span className="od-nav-task-title">{t.title}</span>
-              </button>
-            ))}
-          </div>
+      <div className="od-nav-history-section">
+        <div className="sidebar-section-label">
+          <span>记录</span>
+          <span className="od-nav-badge">
+            {filter === 'archived' ? archivedIds.length : tasks.length - archivedIds.length}
+          </span>
         </div>
-      ) : null}
+        <div className="od-rec-filters" role="group" aria-label="按状态过滤任务">
+          {REC_FILTERS.map((seg) => (
+            <button
+              key={seg.id}
+              type="button"
+              className={`od-rec-filter${filter === seg.id ? ' is-active' : ''}`}
+              aria-pressed={filter === seg.id}
+              onClick={() => setFilter(seg.id)}
+            >
+              {seg.label}
+            </button>
+          ))}
+        </div>
+        <div className="od-nav-list">
+          {shown.length === 0 ? (
+            <p className="od-rec-empty">
+              {filter === 'archived'
+                ? '还没有归档。交付后点「归档」会收在这里。'
+                : filter === 'running'
+                  ? '没有进行中的任务。'
+                  : filter === 'done'
+                    ? '还没有交付记录。'
+                    : '还没有记录。发起第一个任务后会显示在这里。'}
+            </p>
+          ) : (
+            shown.map((t) => {
+              const isActive = t.id === active
+              const starred = starredIds.includes(t.id)
+              const arch = isArchived(t.id)
+              return (
+                <div
+                  key={t.id}
+                  className={`od-nav-task-row${isActive ? ' is-active' : ''}${arch ? ' is-archived' : ''}`}
+                >
+                  <button
+                    type="button"
+                    className="od-nav-task"
+                    onClick={() => {
+                      selectOfficeTask(t.id)
+                      void ensureDesk()
+                    }}
+                    title={t.title}
+                  >
+                    <span className={`od-nav-dot is-${t.status}`} />
+                    <span className="od-nav-task-title">{t.title}</span>
+                    <span className="od-nav-task-meta">
+                      {starred ? <StarGlyph on /> : null}
+                      <span className="od-nav-task-time">{formatOfficeClock(t.createdAt)}</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`od-nav-star-btn${starred ? ' is-on' : ''}`}
+                    aria-pressed={starred}
+                    aria-label={starred ? '取消星标' : '星标'}
+                    title={starred ? '取消星标' : '星标'}
+                    onClick={() => toggleOfficeStar(t.id)}
+                  >
+                    <StarGlyph on={starred} />
+                  </button>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
     </div>
   )
 }

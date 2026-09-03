@@ -1,12 +1,13 @@
 import { useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useStore } from '@nanostores/react'
 import { SendIcon } from '../components/composerIcons'
 import { pushToast } from '../store'
-import { QUICK_REFINEMENT_ACTIONS } from './catalog'
+import { OFFICE_FOLDERS, QUICK_REFINEMENT_ACTIONS } from './catalog'
 import { DeliverableRenderer } from './Deliverable'
 import { kindIcon, kindLabel, stepState } from './labels'
 import type { OfficeTask } from './model'
 import { formatOfficeClock } from './persist'
-import { deleteOfficeTask } from './store'
+import { $officeArchivedIds, archiveOfficeTask, deleteOfficeTask, duplicateOfficeTask } from './store'
 
 /** 任务执行态与独立交付物画板 (Artifacts Workbench) */
 export function TaskExecutionView({
@@ -26,13 +27,18 @@ export function TaskExecutionView({
   onRefine: (action: string) => void
   onBackHome: () => void
 }) {
-  const [viewMode, setViewMode] = useState<'formatted' | 'structured' | 'raw'>('formatted')
+  const [viewMode, setViewMode] = useState<'formatted' | 'raw'>('formatted')
   const [activeSlide, setActiveSlide] = useState(1)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const archivedIds = useStore($officeArchivedIds)
 
   const isDone = task.status === 'done'
   const isRunning = task.status === 'running'
+  const archived = archivedIds.includes(task.id)
   const currentStep = task.plan[Math.max(task.stepIndex, 0)]
   const file = task.file
+  const folderLabel =
+    OFFICE_FOLDERS.find((f) => f.id === task.folderId)?.name ?? '演示材料夹'
 
   const copyToClipboard = () => {
     if (!file) return
@@ -60,24 +66,67 @@ export function TaskExecutionView({
       <div className="od-task-header">
         <div className="od-task-header-left">
           <button type="button" className="od-back-btn" onClick={onBackHome} title="返回新任务">
-            ← 返回新任务
+            ← 返回
           </button>
-          <span className="od-divider">/</span>
+          <span className="od-divider" aria-hidden>
+            /
+          </span>
           <h2 className="od-task-title">{task.title}</h2>
           <span className={`od-status-pill is-${task.status}`}>
             {isDone ? '已交付' : isRunning ? '执行中' : '待规划'}
           </span>
         </div>
         <div className="od-task-header-right">
-          <span className="od-meta-time">创建于 {formatOfficeClock(task.createdAt)}</span>
-          <button
-            type="button"
-            className="od-del-btn"
-            onClick={() => deleteOfficeTask(task.id)}
-            title="删除任务"
-          >
-            删除
-          </button>
+          {isDone && (
+            <span className="od-task-done-actions">
+              <button
+                type="button"
+                className="od-hdr-btn"
+                title="按原任务再来一次（演示）"
+                onClick={() => {
+                  duplicateOfficeTask(task.id)
+                  pushToast('已按此任务重开一份（演示）', 'info')
+                }}
+              >
+                再来一份
+              </button>
+              <button
+                type="button"
+                className={`od-hdr-btn${archived ? ' is-active' : ''}`}
+                title={archived ? '取消归档' : '归档到已归档'}
+                onClick={() => archiveOfficeTask(task.id)}
+              >
+                {archived ? '已归档' : '归档'}
+              </button>
+            </span>
+          )}
+          <span className="od-meta-time">{formatOfficeClock(task.createdAt)}</span>
+          {confirmDelete ? (
+            <span className="od-del-confirm">
+              <button type="button" className="od-hdr-btn" onClick={() => setConfirmDelete(false)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="od-del-btn is-danger"
+                onClick={() => {
+                  setConfirmDelete(false)
+                  deleteOfficeTask(task.id)
+                }}
+              >
+                确认删除
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="od-del-btn"
+              onClick={() => setConfirmDelete(true)}
+              title="删除任务"
+            >
+              删除
+            </button>
+          )}
         </div>
       </div>
 
@@ -85,24 +134,27 @@ export function TaskExecutionView({
         {/* 左栏：计划与改稿 */}
         <section className="od-thread" aria-label="演示计划">
           <div className="od-log">
-            {/* 用户意图提示卡 */}
-            <div className="od-user-card">
-              <div className="od-user-header">
-                <span className="od-user-role">用户意图</span>
-                <span className="od-folder-badge">本周工作材料</span>
+            {/* 用户意图 — 对话气泡 */}
+            <div className="od-chat-msg od-chat-user">
+              <div className="od-chat-avatar od-chat-avatar-user" aria-hidden="true">你</div>
+              <div className="od-chat-bubble od-chat-bubble-user">
+                <p className="od-chat-text">{task.prompt || task.title}</p>
+                <div className="od-chat-bubble-meta">
+                  <span className="od-folder-badge">{folderLabel}</span>
+                </div>
               </div>
-              <p className="od-user-text">{task.prompt || task.title}</p>
             </div>
 
-            {/* 演示四步计划 */}
-            <div className="od-plan-panel">
-              <div className="od-plan-panel-header">
-                <span className="od-plan-title">演示计划（四步）</span>
-                <span className="od-plan-step-count">
-                  {isDone ? task.plan.length : Math.max(task.stepIndex + 1, 0)} / {task.plan.length}{' '}
-                  步
-                </span>
-              </div>
+            {/* Agent 执行计划 — 回复气泡 */}
+            <div className="od-chat-msg od-chat-agent">
+              <div className="od-chat-avatar od-chat-avatar-agent" aria-hidden="true">AI</div>
+              <div className="od-plan-panel">
+                <div className="od-plan-panel-header">
+                  <span className="od-plan-title">执行计划</span>
+                  <span className="od-plan-step-count">
+                    {isDone ? task.plan.length : Math.max(task.stepIndex + 1, 0)} / {task.plan.length} 步
+                  </span>
+                </div>
               <ol className="od-plan">
                 {task.plan.map((step, i) => {
                   const state = stepState(task, i)
@@ -124,6 +176,7 @@ export function TaskExecutionView({
                   )
                 })}
               </ol>
+              </div>
             </div>
 
             {/* 工具执行追踪日志 */}
@@ -238,8 +291,11 @@ export function TaskExecutionView({
           <div className="od-workbench-body">
             {!file ? (
               <div className="od-loading-state">
-                <p>演示步进：正在套预置稿…</p>
-                <span>当前步骤: {currentStep?.label ?? '初始化'}</span>
+                <div className="od-loading-mark" aria-hidden>
+                  {Math.max(task.stepIndex + 1, 0)}/{task.plan.length}
+                </div>
+                <p>演示步进中</p>
+                <span>{currentStep?.label ?? '初始化'}</span>
               </div>
             ) : viewMode === 'raw' ? (
               <pre className="od-raw-preview">{file.preview}</pre>

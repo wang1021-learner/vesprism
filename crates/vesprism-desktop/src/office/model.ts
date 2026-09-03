@@ -684,22 +684,63 @@ export function advanceOfficeTask(task: OfficeTask): OfficeTask {
   }
 }
 
-/** 对现有任务产物进行迭代微调 */
+/** 对现有任务产物进行迭代微调（演示：字符串级可见效果，不伪装模型/真转换）。 */
 export function applyRefinement(task: OfficeTask, action: string): OfficeTask {
   if (!task.file) return task
-  const newFile = { ...task.file }
+  const newFile = { ...task.file, preview: task.file.preview }
   const logs = [...(task.toolLog ?? []), `[微调] 用户指令: "${action}"`]
-  
+
+  const appendSection = (heading: string, lines: string[], note: string) => {
+    newFile.preview = `${newFile.preview}\n\n---\n\n### ${heading}\n\n${lines.join('\n')}\n\n*${note}*`
+  }
+
   if (action.includes('精简') || action.includes('一页纸')) {
     newFile.summary = `【精简版】${newFile.summary}`
     newFile.preview = `> 📌 **精简摘要版**\n\n${newFile.preview.slice(0, 500)}...\n\n*(已按要求精简至核心结论)*`
-  } else if (action.includes('英文') || action.includes('English')) {
+  } else if (action.includes('英文') || action.includes('English') || action.includes('EN')) {
     const stem = newFile.name.replace(/\.(md|docx|pptx|xlsx)$/i, '')
     newFile.name = `${stem}_EN.md`
     newFile.summary = `[English Version] ${newFile.summary}`
     newFile.preview = `## Executive Summary (English Translation)\n\n**Topic**: ${newFile.title}\n\n- Key Progress: 2 out of 3 key clients confirmed renewal intention.\n- Critical Risk: Competitor reduced entry price by 12.5%.\n- Next Actions: Submit action one-pager by Monday morning.`
   } else if (action.includes('待办') || action.includes('Action')) {
     logs.push('[微调] 提取并强化 Action Items 待办清单')
+    appendSection(
+      'Action Items（演示待办）',
+      [
+        '- [ ] 复核竞品降价对华东毛利率的影响并输出测算 — 陈工 / 周三 18:00',
+        '- [ ] 周一上午提交价格对应对策一页纸 — 王工 / 周一 09:00',
+        '- [ ] 与华东 3 家客户逐一口径对齐续约条款 — 林秘书 / 周五 12:00',
+      ],
+      '演示生成的待办，非真实派发',
+    )
+  } else if (action.includes('PPT') || action.includes('幻灯片') || action.includes('汇报')) {
+    logs.push('[微调] 追加演示 PPT 提纲要点')
+    appendSection(
+      '转为汇报 PPT 提纲要点（演示）',
+      [
+        '1. 结论先行：华东增长与主要风险',
+        '2. 数据洞察：签约 / 回款 / 毛利同比',
+        '3. 对策：价格与续约策略',
+        '4. 下一步：排期与责任分工',
+      ],
+      '演示占位，真实 PPT 需官方技能导出',
+    )
+  } else if (action.includes('数据') || action.includes('对比') || action.includes('强化')) {
+    logs.push('[微调] 追加演示数据对比')
+    appendSection(
+      '数据对比强化（演示）',
+      [
+        '| 指标 | 本期 | 上期 | 同比 |',
+        '|---|---|---|---|',
+        '| 华东签约 | 12 单 | 9 单 | +33% |',
+        '| 回款率 | 91% | 87% | +4pt |',
+        '| 毛利率 | 41.2% | 38.9% | +2.3pt |',
+      ],
+      '演示数据，非真实测算',
+    )
+  } else {
+    logs.push('[微调] 已按指令更新预览（演示）')
+    appendSection('微调已应用（演示）', [`已根据指令「${action}」更新交付预览。`], '演示占位，真实改写需接引擎')
   }
 
   return {

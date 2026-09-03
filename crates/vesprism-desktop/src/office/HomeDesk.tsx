@@ -1,10 +1,23 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useStore } from '@nanostores/react'
-import { PlusIcon, SendIcon } from '../components/composerIcons'
+import {
+  OFFICE_FOLDERS,
+  OFFICE_FORMATS,
+  OFFICE_PERMISSIONS,
+  type OfficeFormat,
+} from './catalog'
+import { kindLabel } from './labels'
 import { DEMO_FOLDERS } from './model'
-import { OFFICE_SLASH, slashHits } from './slash'
-import { $officeFolderId, $officeFormat, openOfficePanel } from './store'
+import {
+  $officeDraftSeed,
+  $officeFolderId,
+  $officeFormat,
+  $officePermission,
+  $officeTasks,
+  selectOfficeTask,
+} from './store'
 
+/** 极简工作首页：顶条材料夹 · 最近交付 / 空态 · 沉底输入 dock（无场景卡、无问候大标题）。 */
 export function HomeDesk({
   draft,
   setDraft,
@@ -17,218 +30,156 @@ export function HomeDesk({
   onSubmit: (e: FormEvent) => void
 }) {
   const folderId = useStore($officeFolderId)
+  const format = useStore($officeFormat)
+  const permission = useStore($officePermission)
+  const tasks = useStore($officeTasks)
+  const seed = useStore($officeDraftSeed)
+
   const currentFolder =
     folderId === 'none' ? null : (DEMO_FOLDERS.find((f) => f.id === folderId) ?? DEMO_FOLDERS[0])
-  const hits = slashHits(draft)
-  const [slashIx, setSlashIx] = useState(0)
-  const [plusOpen, setPlusOpen] = useState(false)
-  const plusRef = useRef<HTMLDivElement>(null)
+  const lastDone = tasks.find((t) => t.status === 'done') ?? null
+  const running = tasks.find((t) => t.status === 'running') ?? null
+  const folderMeta = OFFICE_FOLDERS.find((f) => f.id === folderId)
+  const fileCount = currentFolder?.files.length ?? folderMeta?.count ?? 0
+  const folderName = currentFolder?.name ?? folderMeta?.name
 
-  const closePlus = () => setPlusOpen(false)
-
+  // 消费右栏「以此起草」种子：预填草稿回沉底 dock，供用户审后再提交
   useEffect(() => {
-    setSlashIx(0)
-  }, [draft])
-
-  useEffect(() => {
-    if (!plusOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (plusRef.current?.contains(e.target as Node)) return
-      closePlus()
+    if (seed) {
+      setDraft(seed)
+      $officeDraftSeed.set(null)
     }
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') closePlus()
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [plusOpen])
-
-  const applySlash = (id: (typeof OFFICE_SLASH)[number]['id']) => {
-    const hit = OFFICE_SLASH.find((s) => s.id === id)
-    if (!hit) return
-    $officeFormat.set(hit.format)
-    setDraft(`/${hit.id} `)
-    closePlus()
-  }
-
-  const onBoxKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (hits.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setSlashIx((i) => (i + 1) % hits.length)
-        return
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setSlashIx((i) => (i - 1 + hits.length) % hits.length)
-        return
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        applySlash(hits[slashIx]?.id ?? hits[0].id)
-        return
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        setDraft('')
-        return
-      }
-    }
-    onKey(e)
-  }
+  }, [seed, setDraft])
 
   return (
-    <div className="od-desk is-home" role="main" aria-label="办公桌">
-      <div className="od-home-stage is-blank">
-        <form className="composer-container is-empty od-home-composer" onSubmit={onSubmit}>
-          <p className="composer-hello">有什么要交的？</p>
-          <div className="composer-card">
-            {hits.length > 0 ? (
-              <div className="composer-assist" role="listbox" aria-label="技能">
-                <div className="composer-assist-group">技能</div>
-                {hits.map((s, i) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    role="option"
-                    aria-selected={i === slashIx}
-                    className={`composer-assist-item${i === slashIx ? ' is-active' : ''}`}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => applySlash(s.id)}
-                  >
-                    <span className="composer-assist-main">
-                      <span className="composer-assist-label">/{s.id}</span>
-                      <span className="composer-assist-kind">{s.hint}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <textarea
-              id="od-home-input"
-              rows={2}
-              value={draft}
-              aria-label="交稿说明"
-              placeholder="输入消息，或 / 选技能…"
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onBoxKey}
-            />
-            <div className="composer-toolbar">
-              <div className="toolbar-left">
-                <div className="composer-attach" ref={plusRef}>
-                  <button
-                    type="button"
-                    className={`composer-attach-btn${plusOpen ? ' open' : ''}`}
-                    aria-label="技能与材料"
-                    aria-expanded={plusOpen}
-                    aria-haspopup="menu"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setPlusOpen((open) => !open)
-                    }}
-                  >
-                    <PlusIcon />
-                  </button>
-                  {plusOpen ? (
-                    <div className="composer-menu attach-menu od-plus-root" role="menu">
-                      <div className="od-plus-item">
-                        <div className="composer-menu-item" role="menuitem" aria-haspopup="menu">
-                          <span className="menu-item-body">
-                            <span className="menu-item-title">材料夹文件</span>
-                          </span>
-                          <span className="menu-item-more" aria-hidden>
-                            ›
-                          </span>
-                        </div>
-                        <div className="composer-menu od-plus-flyout" role="menu">
-                          {currentFolder ? (
-                            currentFolder.files.map((f) => (
-                              <button
-                                key={f.id}
-                                type="button"
-                                className="composer-menu-item"
-                                onClick={() => {
-                                  const pad = draft && !draft.endsWith(' ') ? ' ' : ''
-                                  setDraft(`${draft}${pad}参考「${f.name}」`)
-                                  closePlus()
-                                }}
-                              >
-                                <span className="menu-item-body">
-                                  <span className="menu-item-title">{f.name}</span>
-                                  <span className="menu-item-sub">{f.size}</span>
-                                </span>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="composer-assist-empty">右侧栏选一个材料夹</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="od-plus-item">
-                        <div className="composer-menu-item" role="menuitem" aria-haspopup="menu">
-                          <span className="menu-item-body">
-                            <span className="menu-item-title">技能</span>
-                          </span>
-                          <span className="menu-item-more" aria-hidden>
-                            ›
-                          </span>
-                        </div>
-                        <div className="composer-menu od-plus-flyout" role="menu">
-                          {OFFICE_SLASH.map((s) => (
-                            <button
-                              key={s.id}
-                              type="button"
-                              className="composer-menu-item od-skill-hit"
-                              onClick={() => applySlash(s.id)}
-                            >
-                              <span className="menu-item-body">
-                                <span className="menu-item-title">{s.id}</span>
-                                <span className="menu-item-sub">{s.hint}</span>
-                              </span>
-                              <span className="od-plus-tip">{s.blurb}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="composer-menu-divider" />
-                      <button
-                        type="button"
-                        className="composer-menu-item"
-                        onClick={() => {
-                          closePlus()
-                          openOfficePanel('connectors')
-                        }}
-                      >
-                        <span className="menu-item-body">
-                          <span className="menu-item-title">添加连接器</span>
-                          <span className="menu-item-sub">演示未接</span>
-                        </span>
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-              <div className="toolbar-right">
-                <button
-                  type="submit"
-                  className={`btn-circle btn-send${draft.trim() ? ' ready' : ''}`}
-                  disabled={!draft.trim()}
-                  aria-label="发送"
-                  title="发送"
-                >
-                  <SendIcon />
-                </button>
-              </div>
-            </div>
+    <div className="od-desk is-home" role="main" aria-label="办公工作台">
+      {/* ── 顶条：材料夹 + 演示标注 + 执行中提示 ── */}
+      <header className="od-home-bar">
+        <div className="od-home-bar-left">
+          <label className="od-folder-select">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+              <path
+                d="M1 4.8C1 3.8 1.8 3 2.8 3h2.1l1.1 1.4H11c.6 0 1 .4 1 1V10c0 1-.8 1.8-1.8 1.8H2.8A1.8 1.8 0 0 1 1 10V4.8z"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                fill="none"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span className="sr-only">材料夹</span>
+            <select
+              value={folderId}
+              aria-label="材料夹"
+              onChange={(e) => $officeFolderId.set(e.target.value)}
+            >
+              {OFFICE_FOLDERS.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+          </label>
+          {folderId !== 'none' && folderName && (
+            <span className="od-home-meta">{folderName} · {fileCount} 份</span>
+          )}
+          <span className="od-home-demo-pill">演示</span>
+        </div>
+        {running && (
+          <div className="od-home-bar-right">
+            <span className="od-running-notice">
+              <span className="od-running-dot" aria-hidden="true" />
+              《{running.title}》演示步进中…
+            </span>
           </div>
-          <p className="disclaimer-text">演示预览，还不接引擎</p>
-        </form>
-      </div>
+        )}
+      </header>
+
+      {/* ── 中央：最近交付 / 空态（一卡，无卡片墙） ── */}
+      <main className="od-home-main">
+        {lastDone?.file ? (
+          <section className="od-home-last" aria-label="最近交付">
+            <div className="od-home-section-label">最近交付</div>
+            <button
+              type="button"
+              className="od-recent-card"
+              onClick={() => selectOfficeTask(lastDone.id)}
+            >
+              <div className="od-recent-card-head">
+                <span className="od-recent-kind-badge">{kindLabel(lastDone.file.kind)}</span>
+                <span className="od-status-pill is-done">已交付</span>
+                <span className="od-recent-cta">
+                  打开画板
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path
+                      d="M2 6h8M6.5 2.5L10 6l-3.5 3.5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+              </div>
+              <strong className="od-recent-title">{lastDone.file.title}</strong>
+              <p className="od-recent-summary">{lastDone.file.summary}</p>
+            </button>
+          </section>
+        ) : (
+          <p className="od-home-empty">
+            还没有交付稿。在右侧材料夹挑一份文件点「以此起草」，或直接在下框描述要交付的成果。
+          </p>
+        )}
+      </main>
+
+      {/* ── 沉底 dock：交稿输入 + 权限 / 格式 + 开始 ── */}
+      <form className="od-dock-home" onSubmit={onSubmit}>
+        <textarea
+          rows={2}
+          value={draft}
+          aria-label="交稿说明"
+          placeholder="描述需要的成果，例如：根据本周材料出第 12 周周报，文稿预览，内部阅读权限…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKey}
+        />
+        <div className="od-dock-home-bar">
+          <div className="od-dock-home-controls">
+            <label className="od-select-wrap">
+              <span className="sr-only">权限</span>
+              <select
+                value={permission}
+                aria-label="权限"
+                onChange={(e) => $officePermission.set(e.target.value as typeof permission)}
+              >
+                {OFFICE_PERMISSIONS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="od-select-wrap">
+              <span className="sr-only">格式</span>
+              <select
+                value={format}
+                aria-label="格式"
+                onChange={(e) => $officeFormat.set(e.target.value as OfficeFormat)}
+              >
+                {OFFICE_FORMATS.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button type="submit" className="od-home-submit" disabled={!draft.trim()}>
+            开始规划
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path
+                d="M2.5 7h9M8 3l4 4-4 4"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

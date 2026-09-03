@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { QUICK_REFINEMENT_ACTIONS } from './catalog'
 import {
   advanceOfficeTask,
   applyRefinement,
@@ -7,6 +8,14 @@ import {
   planForTask,
   titleForCustom,
 } from './model'
+
+/** 把一个周报任务跑到 done 并返回带产物的任务。 */
+function doneWeekly(): ReturnType<typeof createOfficeTask> {
+  let t = createOfficeTask('weekly', '', 't1')
+  for (let i = 0; i < t.plan.length + 1; i++) t = advanceOfficeTask(t)
+  expect(t.status).toBe('done')
+  return t
+}
 
 describe('办公任务模型', () => {
   it('周报有四步，最后一步是封装预览文本', () => {
@@ -71,16 +80,36 @@ describe('办公任务模型', () => {
   })
 
   it('产物支持快捷微调迭代', () => {
-    let t = createOfficeTask('weekly', '', 't1')
-    for (let i = 0; i < t.plan.length + 1; i++) t = advanceOfficeTask(t)
-    const refined = applyRefinement(t, '精简为一页纸')
+    const refined = applyRefinement(doneWeekly(), '精简为一页纸')
     expect(refined.file?.summary).toContain('精简版')
+    expect(refined.file?.preview).toMatch(/精简摘要版/)
   })
 
   it('英文微调把文件名改成 _EN.md', () => {
-    let t = createOfficeTask('weekly', '', 't1')
-    for (let i = 0; i < t.plan.length + 1; i++) t = advanceOfficeTask(t)
-    const refined = applyRefinement(t, '英文')
+    const refined = applyRefinement(doneWeekly(), '英文')
     expect(refined.file?.name).toMatch(/_EN\.md$/)
+    expect(refined.file?.preview).toMatch(/Executive Summary/)
+  })
+
+  it('5 枚微调 chip 都在产物上有可见变化，且写入执行日志', () => {
+    // 与 TaskView 渲染的快捷 chip 完全同源，保证无死按钮
+    const expectMarkers: Record<string, RegExp> = {
+      '精简为一页纸': /精简摘要版/,
+      '提炼待办清单': /Action Items（演示待办）/,
+      '生成英文版 (EN)': /Executive Summary/,
+      '转为汇报 PPT': /转为汇报 PPT 提纲要点（演示）/,
+      '强化数据对比': /数据对比强化（演示）/,
+    }
+    expect(QUICK_REFINEMENT_ACTIONS.map((a) => a.label)).toEqual(
+      Object.keys(expectMarkers),
+    )
+    for (const action of QUICK_REFINEMENT_ACTIONS) {
+      const before = doneWeekly()
+      const marker = expectMarkers[action.label]
+      const refined = applyRefinement(before, action.label)
+      expect(refined.file?.preview).toMatch(marker)
+      expect(refined.file?.preview.length).toBeGreaterThan(0)
+      expect(refined.toolLog?.some((l) => l.includes('[微调]'))).toBe(true)
+    }
   })
 })

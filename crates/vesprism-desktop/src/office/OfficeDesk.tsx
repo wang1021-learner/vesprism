@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useStore } from '@nanostores/react'
 import { pushToast } from '../store'
-import { CatalogPage } from './CatalogPages'
 import { HomeDesk } from './HomeDesk'
 import type { OfficeFormat } from './catalog'
 import { bootOfficePersist, saveOfficePersistNow } from './persist'
@@ -9,7 +8,6 @@ import { parseOfficeSlash } from './slash'
 import {
   $officeActiveId,
   $officeFolderId,
-  $officePanel,
   $officeTasks,
   openOfficeHome,
   refineOfficeTask,
@@ -23,7 +21,6 @@ const STEP_MS = 650
 export function OfficeDesk() {
   const tasks = useStore($officeTasks)
   const activeId = useStore($officeActiveId)
-  const panel = useStore($officePanel)
   const folderId = useStore($officeFolderId)
   const task = tasks.find((t) => t.id === activeId) ?? null
 
@@ -37,6 +34,19 @@ export function OfficeDesk() {
       saveOfficePersistNow()
     }
   }, [])
+
+  // 自动启动 timer —— 支持从右侧栏点"运行"触发的新任务
+  useEffect(() => {
+    if (!task || task.status === 'done') return
+    run(task)
+    return () => {
+      if (timer.current) {
+        window.clearTimeout(timer.current)
+        timer.current = null
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id])
 
   const run = (t: { id: string }) => {
     if (timer.current) window.clearTimeout(timer.current)
@@ -87,17 +97,12 @@ export function OfficeDesk() {
     )
   }
 
-  if (panel !== 'home') {
-    return (
-      <div className="od-desk is-list" role="main" aria-label="办公目录">
-        <div className="od-list-stage">
-          <CatalogPage panel={panel} onRun={(id, text, format) => begin(id, text, format)} />
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <HomeDesk draft={draft} setDraft={setDraft} onKey={onKey} onSubmit={onSubmit} />
+    <HomeDesk
+      draft={draft}
+      setDraft={setDraft}
+      onKey={onKey}
+      onSubmit={onSubmit}
+    />
   )
 }
