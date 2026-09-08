@@ -21,6 +21,7 @@ import { ChapterIndex } from './chrome/ChapterIndex'
 import { CandidatePanel } from './chrome/CandidatePanel'
 import { CommandDock } from './chrome/CommandDock'
 import { DossierRail } from './chrome/DossierRail'
+import { FailureBar } from './chrome/FailureBar'
 import { GateStrip } from './chrome/GateStrip'
 import { ModeStrip } from './chrome/ModeStrip'
 import { SlicePanel } from './chrome/SlicePanel'
@@ -69,7 +70,7 @@ import {
   type FillCardTarget,
   type FillScope,
 } from './model/apply'
-import { reviewBlocksAdopt, styleHits, wordCountNotes } from './model/review-gate'
+import { chapterDriftNotes, chapterNumberNotes, foreshadowOrphans, reviewBlocksAdopt, styleHits, wordCountNotes } from './model/review-gate'
 import {
   WRITING_SESSION_MODE,
   needsFreshSession,
@@ -88,6 +89,7 @@ import {
   addVolume,
 } from './model/create'
 import { bookDossier } from './model/dossier'
+import { canSpendTask, recordSpend, WRITE_BUDGET } from './model/budget'
 import {
   $writingBooks,
   $writingLoaded,
@@ -252,7 +254,7 @@ function MainCard({
         card={book.reviews.find((r) => r.chapterId === ch.id)}
         blocks={reviewBlocks}
         styleNotes={styleNotes}
-        wordNotes={wordCountNotes(book, ch.id)}
+        wordNotes={[...wordCountNotes(book, ch.id), ...chapterDriftNotes(book, ch.id)]}
         onRegisterUnnumbered={onRegisterUnnumbered}
       />
     )
@@ -287,10 +289,12 @@ export function WritingDesk() {
   const [selectedBeatId, setSelectedBeatId] = useState<string | undefined>()
   const [askReply, setAskReply] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [failure, setFailure] = useState<{ reason: string } | null>(null)
 
   const saveTimer = useRef<number | undefined>(undefined)
   const latestByBookRef = useRef<Map<string, BookDemo>>(new Map())
   const pendingTaskRef = useRef<DeskTask | null>(null)
+  const lastDispatchRef = useRef<{ task: DeskTask; system: string; user: string } | null>(null)
   const reconciledRef = useRef(false)
   const openIdRef = useRef<string | null>(null)
   openIdRef.current = openId
@@ -482,6 +486,7 @@ export function WritingDesk() {
     if (task.kind === 'fill-review') {
       const json = extractJson(text)
       if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        setFailure({ reason: '这轮检查没解析出 JSON 检查单。' })
         pushToast('这轮检查没解析出 JSON 检查单，请稍后手动填。', 'error')
         return
       }
@@ -505,6 +510,7 @@ export function WritingDesk() {
     if (task.kind === 'fill-card') {
       const json = extractJson(text)
       if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        setFailure({ reason: '补卡输出不是 JSON，未应用。' })
         pushToast('补卡输出不是 JSON，未应用。可手动填。', 'error')
         return
       }
@@ -527,11 +533,13 @@ export function WritingDesk() {
     const now = (tabId ? getTabState(tabId)?.messages : null) ?? $messages.get()
     const found = lastTaskUser(now)
     if (!found || found.kind !== task.kind || !taskBelongsToBook(found, task.bookId)) {
+      setFailure({ reason: '这轮任务没找到属于这本书的产出。' })
       pushToast('这轮任务没找到属于这本书的产出。', 'info')
       return
     }
     const text = assistantTextAfter(now, found.idx)
     if (!text) {
+      setFailure({ reason: '这轮没有产出。' })
       pushToast('这轮没有产出。', 'info')
       return
     }
@@ -588,18 +596,26 @@ export function WritingDesk() {
   }, [loaded, book, generating])
 
   // ── 下令：真实调用引擎 ──
-  const runTask = async (task: DeskTask, system: string, user: string) => {
+  const runTask = async (task: DeskTask, system: string, user: string, forceFresh = false) => {
     if (!tabId) return
     if (generating) {
       pushToast('上一轮还在生成，先等它完。', 'info')
       return
     }
+    setFailure(null)
     const current = books.find((b) => b.id === task.bookId)
     if (!current) {
       pushToast('这本书不在书库里。', 'error')
       return
     }
-    const fresh = needsFreshSession(task.kind)
+    if (!canSpendTask(current, task.chapterId, task.kind)) {
+      pushToast(
+        `这一章引擎调用已到上限（${WRITE_BUDGET.perChapterCalls} 次）。手动改稿，或先入卷开下一章。`,
+        'info',
+      )
+      return
+    }
+    const fresh = forceFresh || needsFreshSession(task.kind)
     const ready = await ensureBookSession(current, fresh)
     if (!ready) return
     const st = getTabState(tabId)
@@ -613,6 +629,7 @@ export function WritingDesk() {
         : task.kind === 'rewrite' || task.kind === 'wash'
           ? task.beatId
           : task.chapterId
+    lastDispatchRef.current = { task, system, user }
     pendingTaskRef.current = task
     try {
       const ok = await sendSessionPrompt({
@@ -621,12 +638,22 @@ export function WritingDesk() {
       })
       if (!ok) {
         pendingTaskRef.current = null
+        setFailure({ reason: '下达失败：会话未就绪。' })
         pushToast('下达失败：会话未就绪。', 'error')
+      } else if (task.kind !== 'fill-card' && task.chapterId) {
+        patch((b) => recordSpend(b, task.chapterId))
       }
     } catch (e) {
       pendingTaskRef.current = null
+      setFailure({ reason: `下达失败：${String(e)}` })
       pushToast(`下达失败：${String(e)}`, 'error')
     }
+  }
+
+  const retryLast = (forceFresh: boolean) => {
+    const d = lastDispatchRef.current
+    if (!d) return
+    void runTask(d.task, d.system, d.user, forceFresh)
   }
 
   const isolateSwitch = () => {
@@ -683,6 +710,10 @@ export function WritingDesk() {
       busy={generating}
       runTask={runTask}
       saveState={saveState}
+      failure={failure}
+      onRetry={() => retryLast(false)}
+      onRetryFresh={() => retryLast(true)}
+      onDismiss={() => setFailure(null)}
       onClose={() => {
         isolateSwitch()
         $writingOpenId.set(null)
@@ -704,6 +735,10 @@ function OpenDesk({
   busy,
   runTask,
   saveState,
+  failure,
+  onRetry,
+  onRetryFresh,
+  onDismiss,
   onClose,
 }: {
   book: BookDemo
@@ -715,8 +750,12 @@ function OpenDesk({
   setAskReply: (s: string | null) => void
   patch: PatchBook
   busy: boolean
-  runTask: (task: DeskTask, system: string, user: string) => Promise<void>
+  runTask: (task: DeskTask, system: string, user: string, forceFresh?: boolean) => Promise<void>
   saveState: 'idle' | 'saving' | 'saved' | 'error'
+  failure: { reason: string } | null
+  onRetry: () => void
+  onRetryFresh: () => void
+  onDismiss: () => void
   onClose: () => void
 }) {
   const parsed = parseNode(node)
@@ -737,6 +776,10 @@ function OpenDesk({
   }
   const gates = useMemo(() => gatesForNode(book, node), [book, node])
   const dossier = useMemo(() => bookDossier(book), [book])
+  const dataNotes = useMemo(
+    () => [...foreshadowOrphans(book), ...chapterNumberNotes(book)],
+    [book],
+  )
   const slice = useMemo(() => writeSlice(book, chapterId), [book, chapterId])
   const showSlice = parsed.kind === 'chapter' || parsed.kind === 'beats' || parsed.kind === 'draft'
   const verbs = useMemo(() => verbsForStation(book, node, selectedBeatId), [book, node, selectedBeatId])
@@ -960,7 +1003,8 @@ function OpenDesk({
         onDispatch(fill, `请重点补全字段：${label}`)
       }}
     >
-      <div className="wd-desk" role="main" aria-label="写台" data-layout="v2">
+      <div className="wd-desk" role="main" aria-label="写台" data-layout="v3">
+        {/* ── 顶栏（精简版） ── */}
         <header className="wd-head">
           <button type="button" className="wd-btn wd-btn-ghost wd-back" onClick={onClose}>
             ← 书
@@ -972,50 +1016,66 @@ function OpenDesk({
           <span className="wd-plat" title={book.pitch.platform}>
             {book.pitch.platform || '还没定平台'}
           </span>
-          <p className="wd-head-note">{gapLabel(book)}</p>
           <div className="wd-spacer" />
-          <div className="wd-dash">
-            <div className="wd-ditem">
-              <span className="wd-dn">
-                {written}
-                <em> / {aim}</em>
-              </span>
-              <span className="wd-dk">已入卷 · 章</span>
-            </div>
-            <div className="wd-ditem">
-              <span className="wd-dn">{chars.toLocaleString('zh-CN')}</span>
-              <span className="wd-dk">字 · 还差 {remain.toLocaleString('zh-CN')}{volLine ? ` · ${volLine}` : ''}</span>
-            </div>
-            <div className="wd-dbar" aria-label={`进度 ${pct}%`}>
-              <div className="wd-dbar-in" style={{ width: `${pct}%` }} />
-            </div>
-            <div className="wd-ditem">
-              <span className="wd-save">
-                {saveState === 'saving' ? '保存中…' : saveState === 'error' ? '保存失败' : '已保存'}
-              </span>
-              <span className="wd-dk">本地 · 每书一档</span>
+          <span className={`wd-save${saveState === 'error' ? ' is-error' : ''}`}>
+            {saveState === 'saving' ? '保存中…' : saveState === 'error' ? '保存失败' : '已保存'}
+          </span>
+        </header>
+
+        {/* ── 三栏 ── */}
+        <div className="wd-body">
+          {/* 左栏：模式条 + 结构树 + 进度 */}
+          <div className="wd-tree-col">
+            <ModeStrip current={mode} onJump={(m) => setNode(jumpMode(m, book, chapterId))} />
+            <BookTree
+              book={book}
+              selected={node}
+              mode={mode}
+              onSelect={setNode}
+              onAddPerson={() => goAdd(addPerson, personNode)}
+              onAddRule={() => goAdd(addRule, ruleNode)}
+              onAddPlace={() => goAdd(addPlace, placeNode)}
+              onAddVolume={() => goAdd(addVolume, (id) => id)}
+              onAddUnit={() => goAdd((b) => addUnit(b), (id) => id)}
+              onAddChapter={() => goAdd((b) => addChapter(b), (id) => id)}
+            />
+            {/* 进度条（从顶栏移入左栏底部） */}
+            <div className="wd-progress">
+              <div className="wd-dbar" aria-label={`进度 ${pct}%`}>
+                <div className="wd-dbar-in" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="wd-progress-stats">
+                <span className="wd-dn">
+                  {written}
+                  <em> / {aim}</em>
+                </span>
+                <span className="wd-dk">章入卷</span>
+                <span className="wd-dn">{chars.toLocaleString('zh-CN')}</span>
+                <span className="wd-dk">
+                  字{volLine ? ` · ${volLine}` : ''}
+                </span>
+              </div>
             </div>
           </div>
-        </header>
-        <ModeStrip current={mode} onJump={(m) => setNode(jumpMode(m, book, chapterId))} />
-        <div className="wd-body">
-          <BookTree
-            book={book}
-            selected={node}
-            mode={mode}
-            onSelect={setNode}
-            onAddPerson={() => goAdd(addPerson, personNode)}
-            onAddRule={() => goAdd(addRule, ruleNode)}
-            onAddPlace={() => goAdd(addPlace, placeNode)}
-            onAddVolume={() => goAdd(addVolume, (id) => id)}
-            onAddUnit={() => goAdd((b) => addUnit(b), (id) => id)}
-            onAddChapter={() => goAdd((b) => addChapter(b), (id) => id)}
-          />
+
+          {/* 中栏：主内容 */}
           <div className="wd-main">
+            {dataNotes.length > 0 ? (
+              <p className="wd-lock-banner wd-orphan-banner" role="status">
+                ⚠ {dataNotes.join('；')}
+              </p>
+            ) : null}
             <StepBanner kind={parsed.kind} />
             <GateStrip gates={gates} />
-            <BeatStrip beats={beats} selectedBeatId={selectedBeatId} onSelect={setSelectedBeatId} />
             <div className="wd-scroll">
+              {/* BeatStrip 移入滚动区，sticky 固定在中栏顶部 */}
+              {beats.length > 0 ? (
+                <BeatStrip
+                  beats={beats}
+                  selectedBeatId={selectedBeatId}
+                  onSelect={setSelectedBeatId}
+                />
+              ) : null}
               {showSlice && slice ? <SlicePanel slice={slice} /> : null}
               <MainCard
                 node={node}
@@ -1062,6 +1122,14 @@ function OpenDesk({
                 }}
               />
             </div>
+            {failure ? (
+              <FailureBar
+                reason={failure.reason}
+                onRetry={onRetry}
+                onRetryFresh={onRetryFresh}
+                onDismiss={onDismiss}
+              />
+            ) : null}
             <div className="wd-dock">
               <CommandDock
                 verbs={verbs}
@@ -1074,6 +1142,8 @@ function OpenDesk({
               />
             </div>
           </div>
+
+          {/* 右栏：试笔（有候选才显示）+ 案卷 */}
           <aside className="wd-rail" aria-label="试笔与案卷">
             <CandidatePanel candidates={candidates} onOpen={setNode} />
             <DossierRail dossier={dossier} onOpen={setNode} />

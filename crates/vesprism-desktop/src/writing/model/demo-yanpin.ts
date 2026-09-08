@@ -44,6 +44,7 @@ export const YANPIN_EYE: BookDemo = {
     narrativeBan: '禁止系统弹窗；禁止大段文物科普；禁止章末「真正的考验才刚刚开始」。',
     settingBan: '禁止无代价连开；禁止鉴定未亲眼看见的器物。',
     sentenceBan: '禁止平台腔总结句、翻译腔长定语。',
+    complianceBan: '',
     doneWhen: '有场面、有别人的脸、有一个可见的代价或钩子；没有说明书段落。',
   },
   people: [

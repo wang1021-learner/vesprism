@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useStore } from '@nanostores/react'
-import { pushToast } from '../store'
+import { $rightPanelOpen, pushToast } from '../store'
 import { HomeDesk } from './HomeDesk'
 import type { OfficeFormat } from './catalog'
 import { bootOfficePersist, saveOfficePersistNow } from './persist'
 import { parseOfficeSlash } from './slash'
 import {
   $officeActiveId,
-  $officeFolderId,
+  $officeDemoError,
   $officeTasks,
+  ensureOfficeRailHome,
   openOfficeHome,
   refineOfficeTask,
   startOfficeTask,
@@ -16,12 +17,12 @@ import {
 } from './store'
 import { TaskExecutionView } from './TaskView'
 
-const STEP_MS = 650
+const STEP_MS = 550
+const STREAM_MS = 25
 
 export function OfficeDesk() {
   const tasks = useStore($officeTasks)
   const activeId = useStore($officeActiveId)
-  const folderId = useStore($officeFolderId)
   const task = tasks.find((t) => t.id === activeId) ?? null
 
   const [draft, setDraft] = useState('')
@@ -29,6 +30,9 @@ export function OfficeDesk() {
 
   useEffect(() => {
     bootOfficePersist()
+    // 进办公：右栏常驻开；无 active task 时默认产物空态
+    $rightPanelOpen.set(true)
+    if (!$officeActiveId.get()) ensureOfficeRailHome()
     return () => {
       if (timer.current) window.clearTimeout(timer.current)
       saveOfficePersistNow()
@@ -51,24 +55,42 @@ export function OfficeDesk() {
   const run = (t: { id: string }) => {
     if (timer.current) window.clearTimeout(timer.current)
     const step = () => {
-      const next = tickOfficeTask(t.id)
-      if (!next || next.status === 'done') return
-      timer.current = window.setTimeout(step, STEP_MS)
+      try {
+        const next = tickOfficeTask(t.id)
+        if (!next || next.status === 'done') return
+        // 如果进入了打字阶段（stepIndex >= plan.length），高频 tick
+        const isStreaming = next.stepIndex >= next.plan.length && next.streamCursor !== undefined
+        timer.current = window.setTimeout(step, isStreaming ? STREAM_MS : STEP_MS)
+      } catch (err) {
+        console.error('[office] stream tick failed', err)
+        $officeDemoError.set('演示中断，可回工作台重试')
+      }
     }
-    timer.current = window.setTimeout(step, 240)
+    timer.current = window.setTimeout(step, 180)
   }
 
   const begin = (starterId: string | 'custom', text: string, format?: OfficeFormat) => {
-    const t = startOfficeTask(starterId, text, folderId, format)
+    // 材料上下文由 startOfficeTask 从 $officeMaterialContext 快照进 task
+    const t = startOfficeTask(starterId, text, undefined, format)
     setDraft('')
     run(t)
   }
 
-  const onSubmit = (e: FormEvent) => {
+  const onHomeSubmit = (e: FormEvent) => {
     e.preventDefault()
     const { prompt, format } = parseOfficeSlash(draft)
     if (!prompt) return
     begin('custom', prompt, format)
+  }
+
+  const onTaskRefineSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!task) return
+    const text = draft.trim()
+    if (!text) return
+    refineOfficeTask(task.id, text)
+    pushToast(`已应用改稿意见：${text.slice(0, 20)}…`, 'info')
+    setDraft('')
   }
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -86,7 +108,7 @@ export function OfficeDesk() {
           draft={draft}
           setDraft={setDraft}
           onKey={onKey}
-          onSubmit={onSubmit}
+          onSubmit={onTaskRefineSubmit}
           onRefine={(action) => {
             refineOfficeTask(task.id, action)
             pushToast(`已应用微调：${action}`, 'info')
@@ -98,11 +120,13 @@ export function OfficeDesk() {
   }
 
   return (
-    <HomeDesk
-      draft={draft}
-      setDraft={setDraft}
-      onKey={onKey}
-      onSubmit={onSubmit}
-    />
+    <div className="od-desk is-home" role="main" aria-label="办公桌">
+      <HomeDesk
+        draft={draft}
+        setDraft={setDraft}
+        onKey={onKey}
+        onSubmit={onHomeSubmit}
+      />
+    </div>
   )
 }

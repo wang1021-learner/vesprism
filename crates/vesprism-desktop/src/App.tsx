@@ -327,6 +327,20 @@ function AppMainBody() {
   const kind = useStore($utilityKind)
   const tabId = useStore($activeTabId)
   const product = getProduct(shell)
+  if (shell === 'office') {
+    return (
+      <ErrorBoundary
+        name="办公桌"
+        fallback={(error, reset) => (
+          <MainViewportErrorFallback error={error} onReset={reset} />
+        )}
+      >
+        <Suspense fallback={<div className="od-desk">加载办公桌…</div>}>
+          <OfficeDesk />
+        </Suspense>
+      </ErrorBoundary>
+    )
+  }
   if (product.emptyView === 'home' && !productOwnsUtility(shell, kind)) {
     return <ProductHome product={product} />
   }

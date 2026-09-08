@@ -4,6 +4,7 @@ import type { BookDemo, CanonCard, PitchCard } from './types'
 const emptyPitch = (): PitchCard => ({
   titles: [],
   platform: '',
+  genre: '',
   logline: '',
   cheat: '',
   cost: '',
@@ -27,6 +28,10 @@ const emptyCanon = (): CanonCard => ({
   narrativeBan: '',
   settingBan: '',
   sentenceBan: DEFAULT_SENTENCE_BAN,
+  complianceBan: '',
+  complianceBanQidian: '',
+  powerNow: '',
+  powerAsOfChapter: 0,
   doneWhen: '',
 })
 
@@ -56,6 +61,7 @@ export function emptyBook(init?: { title?: string; platform?: string; logline?: 
       act1: '',
       act2: '',
       act3: '',
+      endingPlan: '',
       foreshadows: [],
       volumeUpgrade: [],
     },

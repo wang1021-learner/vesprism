@@ -17,8 +17,6 @@ import {
   canRetryAssistant,
   lastAssistantId,
   lastVisibleUserId,
-  stickyUserIndex,
-  stickyUserPreview,
 } from '../../lib/userMessage'
 import { MessageItem } from './MessageItem'
 import { ChatTimeline } from './ChatTimeline'
@@ -378,48 +376,6 @@ export const MessageList = memo(function MessageList({
   const latestAssistantId = useMemo(() => lastAssistantId(messages), [messages])
   const latestUserId = useMemo(() => lastVisibleUserId(messages), [messages])
 
-  const [pinnedUserIdx, setPinnedUserIdx] = useState(-1)
-  useEffect(() => {
-    const el = viewportElRef.current
-    if (!el) {
-      setPinnedUserIdx(-1)
-      return
-    }
-    let raf = 0
-    const compute = () => {
-      raf = 0
-      // range.startIndex 是真实可见首条，不含 overscan（getVirtualItems()[0] 会偏上）
-      const start = virtualizer.range?.startIndex ?? 0
-      const next = stickyUserIndex(messagesRef.current, start)
-      setPinnedUserIdx((prev) => (prev === next ? prev : next))
-    }
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(compute)
-    }
-    compute()
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      el.removeEventListener('scroll', onScroll)
-      if (raf) cancelAnimationFrame(raf)
-    }
-  }, [virtualizer, chatKey, count])
-
-  const pinnedUser =
-    pinnedUserIdx >= 0 && messages[pinnedUserIdx]?.role === 'user'
-      ? messages[pinnedUserIdx]
-      : undefined
-  const pinnedPreview = pinnedUser
-    ? stickyUserPreview(pinnedUser.text || '')
-    : ''
-
-  const jumpToPinnedUser = useCallback(() => {
-    if (pinnedUserIdx < 0) return
-    virtualizer.scrollToIndex(pinnedUserIdx, {
-      align: 'start',
-      behavior: 'smooth',
-    })
-  }, [pinnedUserIdx, virtualizer])
-
   if (loadingHistory && messages.length === 0) {
     return (
       <div className="chat-viewport-wrapper" ref={wrapperRef}>
@@ -467,19 +423,6 @@ export const MessageList = memo(function MessageList({
 
   return (
     <div className="chat-viewport-wrapper" ref={wrapperRef}>
-      {scrollReady && pinnedUser && pinnedPreview ? (
-        <div className="sticky-user-overlay">
-          <button
-            type="button"
-            className="sticky-user-chip"
-            title={pinnedUser.text}
-            onClick={jumpToPinnedUser}
-          >
-            <span className="sticky-user-kicker">提问</span>
-            <span className="sticky-user-text">{pinnedPreview}</span>
-          </button>
-        </div>
-      ) : null}
       <div
         className={
           'chat-viewport chat-viewport-virtual' +

@@ -22,7 +22,7 @@ export function TerminalPane({ tabId, cwd }: { tabId: string; cwd: string }) {
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: "ui-monospace, 'JetBrains Mono', Consolas, monospace",
+      fontFamily: "'JetBrains Mono', ui-monospace, Consolas, monospace",
       theme: {
         background: '#111827',
         foreground: '#e5e7eb',

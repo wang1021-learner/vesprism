@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { YANPIN_EYE } from './demo-yanpin'
 import { applyReviewFromJson, registerForeshadowsFromReview } from './apply'
 import {
+  chapterDriftNotes,
+  chapterNumberNotes,
+  endingNotes,
   exportBookPlain,
   exportChapterPlain,
   exportVolumePlain,
+  foreshadowOrphans,
+  goldenThreeNotes,
   reviewBlocksAdopt,
   styleHits,
   wordCountNotes,
@@ -101,5 +106,96 @@ describe('入卷硬门', () => {
     const notes = wordCountNotes(short, 'ch-4')
     expect(notes.join('')).toMatch(/字/)
     expect(reviewBlocksAdopt(short, 'ch-4').ok).toBe(true)
+  })
+
+  it('黄金三章：1～3 章爽点/章末钩为空则挡，中段不管', () => {
+    expect(goldenThreeNotes(YANPIN_EYE, 'ch-1')).toEqual([])
+    expect(goldenThreeNotes(YANPIN_EYE, 'ch-4')).toEqual([])
+    const empty = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) =>
+        c.id === 'ch-1' ? { ...c, pleasure: '', endHookKind: '' as const } : c,
+      ),
+    }
+    expect(goldenThreeNotes(empty, 'ch-1').join('')).toMatch(/爽点/)
+    expect(goldenThreeNotes(empty, 'ch-1').join('')).toMatch(/章末钩/)
+  })
+
+  it('收尾段缺完本计划只提示，补了就不提示', () => {
+    expect(endingNotes(YANPIN_EYE, 'ch-4').length).toBeGreaterThan(0)
+    const done = {
+      ...YANPIN_EYE,
+      outline: { ...YANPIN_EYE.outline, endingPlan: '大结局：三次配额用完，主角看懂旧门。' },
+    }
+    expect(endingNotes(done, 'ch-4')).toEqual([])
+  })
+
+  it('正文命中平台红线则挡入卷', () => {
+    const base = acceptedWithReview({ unnumbered: '无' })
+    const book = {
+      ...base,
+      canon: { ...base.canon, complianceBan: '违禁词A；违禁词B' },
+      drafts: base.drafts.map((d) =>
+        d.chapterId === 'ch-4'
+          ? { ...d, accepted: true, beats: d.beats.map((b, i) => (i === 0 ? { ...b, body: '这一段出现了违禁词A。' } : b)) }
+          : d,
+      ),
+    }
+    const blocked = reviewBlocksAdopt(book, 'ch-4')
+    expect(blocked.ok).toBe(false)
+    expect(blocked.hints.join('')).toMatch(/红线/)
+  })
+
+  it('章纲偏差：章末钩没落到文末才提示', () => {
+    const base = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) => (c.id === 'ch-4' ? { ...c, endHook: '「别回头」' } : c)),
+    }
+    const missing = {
+      ...base,
+      drafts: base.drafts.map((d) =>
+        d.chapterId === 'ch-4'
+          ? { ...d, beats: d.beats.map((b, i) => (i === d.beats.length - 1 ? { ...b, body: '他转身走了。' } : b)) }
+          : d,
+      ),
+    }
+    expect(chapterDriftNotes(missing, 'ch-4').join('')).toMatch(/偏差/)
+    const landed = {
+      ...base,
+      drafts: base.drafts.map((d) =>
+        d.chapterId === 'ch-4'
+          ? { ...d, beats: d.beats.map((b, i) => (i === d.beats.length - 1 ? { ...b, body: '「别回头」。' } : b)) }
+          : d,
+      ),
+    }
+    expect(chapterDriftNotes(landed, 'ch-4')).toEqual([])
+  })
+
+  it('伏笔孤儿：line 提到不在设定集的名字才提示', () => {
+    const book = {
+      ...YANPIN_EYE,
+      outline: {
+        ...YANPIN_EYE.outline,
+        foreshadows: [
+          ...YANPIN_EYE.outline.foreshadows,
+          { id: 'F099', line: '旧友林远山藏着一把钥匙', plantVolume: '', thisVolume: '', closeWhen: '', state: 'open' as const },
+        ],
+      },
+    }
+    expect(foreshadowOrphans(book).join('')).toMatch(/林远山/)
+  })
+
+  it('章号连续性：重号/缺号才提示', () => {
+    expect(chapterNumberNotes(YANPIN_EYE)).toEqual([])
+    const dup = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.map((c) => (c.id === 'ch-2' ? { ...c, no: 1 } : c)),
+    }
+    expect(chapterNumberNotes(dup).join('')).toMatch(/重复/)
+    const gap = {
+      ...YANPIN_EYE,
+      chapters: YANPIN_EYE.chapters.filter((c) => c.id !== 'ch-3'),
+    }
+    expect(chapterNumberNotes(gap).join('')).toMatch(/缺失/)
   })
 })

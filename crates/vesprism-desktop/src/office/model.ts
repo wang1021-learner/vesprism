@@ -90,6 +90,8 @@ export type MaterialFile = {
   kind: 'md' | 'txt' | 'xlsx' | 'docx' | 'pdf'
   description: string
   updatedAt: string
+  /** 同栏预览文本（demo）；缺失时 UI 回退 description / 空串 */
+  preview?: string
 }
 
 export type DemoFolder = {
@@ -105,11 +107,11 @@ export const DEMO_FOLDERS: readonly DemoFolder[] = [
     name: '本周工作材料',
     description: '包含本周销售底稿、客户拜访纪要与竞品价格',
     files: [
-      { id: 'f1', name: '销售周报底稿.md', size: '14.2 KB', kind: 'md', description: '华东区域 3 家核心客户复盘笔记', updatedAt: '周五 18:20' },
-      { id: 'f2', name: '客户纪要-周四.txt', size: '8.6 KB', kind: 'txt', description: '周四线上复盘会议录音文字整理稿', updatedAt: '周四 16:45' },
-      { id: 'f3', name: '竞品价格表.xlsx', size: '42.1 KB', kind: 'xlsx', description: '竞品最新 Q3 阶梯报价与入口价格矩阵', updatedAt: '周三 11:30' },
-      { id: 'f4', name: '采购合同初稿-续约.docx', size: '28.5 KB', kind: 'docx', description: '华东客户意向续约服务框架协议草案', updatedAt: '周二 14:10' },
-      { id: 'f5', name: '季度经营快报.pdf', size: '86.4 KB', kind: 'pdf', description: '公司 Q2 经营数据与毛利考核指标', updatedAt: '周一 09:00' },
+      { id: 'f1', name: '销售周报底稿.md', size: '14.2 KB', kind: 'md', description: '华东区域 3 家核心客户复盘笔记', updatedAt: '周五 18:20', preview: '【演示摘要】华东区域本周拜访 3 家核心客户：续约意向明确 2 家；竞品降价 12.5% 冲击报价；下周需提交行动一页纸。\n\n要点：\n1. A 客户：意向续约，待法务条款\n2. B 客户：价格敏感，需方案对比\n3. C 客户：推进试点扩容' },
+      { id: 'f2', name: '客户纪要-周四.txt', size: '8.6 KB', kind: 'txt', description: '周四线上复盘会议录音文字整理稿', updatedAt: '周四 16:45', preview: '【演示摘要】周四线上复盘：销售、解决方案、法务三方对齐续约节奏与风险清单。记录人整理待办 6 项，含价格保护条款与交付 SLA。' },
+      { id: 'f3', name: '竞品价格表.xlsx', size: '42.1 KB', kind: 'xlsx', description: '竞品最新 Q3 阶梯报价与入口价格矩阵', updatedAt: '周三 11:30', preview: '【演示摘要】竞品 Q3 入口价下调约 12.5%；我方需准备两档对照表（标准 / 攻坚）供管理层决策。' },
+      { id: 'f4', name: '采购合同初稿-续约.docx', size: '28.5 KB', kind: 'docx', description: '华东客户意向续约服务框架协议草案', updatedAt: '周二 14:10', preview: '【演示摘要】续约框架协议草案：服务范围、SLA、价格保护、退出条款待审。建议法务重点看第 5/7 条。' },
+      { id: 'f5', name: '季度经营快报.pdf', size: '86.4 KB', kind: 'pdf', description: '公司 Q2 经营数据与毛利考核指标', updatedAt: '周一 09:00', preview: '【演示摘要】Q2 毛利与回款节奏概览；华东区域贡献占比上升，但客单价受竞品挤压。' },
     ],
   },
   {
@@ -117,8 +119,8 @@ export const DEMO_FOLDERS: readonly DemoFolder[] = [
     name: 'AI 办公专题调研',
     description: '国内外部署方案、用户画像与功能拆解',
     files: [
-      { id: 'pa1', name: '国内AI办公调研汇总.md', size: '22.8 KB', kind: 'md', description: '飞书、钉钉、WPS AI 特性对比', updatedAt: '前天 15:30' },
-      { id: 'pa2', name: '用户反馈与需求清单.xlsx', size: '36.0 KB', kind: 'xlsx', description: '50 位企业管理员深度访谈记录', updatedAt: '前天 11:00' },
+      { id: 'pa1', name: '国内AI办公调研汇总.md', size: '22.8 KB', kind: 'md', description: '飞书、钉钉、WPS AI 特性对比', updatedAt: '前天 15:30', preview: '【演示摘要】飞书 / 钉钉 / WPS AI：会话助手、文档生成、表格分析能力对比与适用场景。' },
+      { id: 'pa2', name: '用户反馈与需求清单.xlsx', size: '36.0 KB', kind: 'xlsx', description: '50 位企业管理员深度访谈记录', updatedAt: '前天 11:00', preview: '【演示摘要】50 位管理员访谈：高频诉求为材料夹权限、交付物导出、改稿闭环。' },
     ],
   },
 ]
@@ -616,6 +618,18 @@ export function titleForCustom(text: string): string {
 
 export type OfficeTaskStatus = 'idle' | 'running' | 'done'
 
+// ── 对话消息模型（驱动新版 ConversationStream） ──────────────────────────────
+export type OfficeMessageKind = 'user' | 'thinking' | 'tool_call' | 'text' | 'artifact'
+
+export type OfficeMessage = {
+  id: string
+  kind: OfficeMessageKind
+  content: string
+  toolName?: string
+  detail?: string
+  done: boolean
+}
+
 export type OfficeTask = {
   id: string
   title: string
@@ -627,8 +641,14 @@ export type OfficeTask = {
   prompt: string
   createdAt: string
   folderId?: string
+  /** 开跑时快照的材料文件 id（≤3）；与 folderId 一起构成任务材料上下文。 */
+  fileIds?: string[]
   toolLog?: string[]
   format: OfficeFormat
+  /** 对话消息流（ephemeral，不持久化）。 */
+  messages?: OfficeMessage[]
+  /** 产物文本流式光标位置（ephemeral，不持久化）。 */
+  streamCursor?: number
 }
 
 export function createOfficeTask(
@@ -637,6 +657,7 @@ export function createOfficeTask(
   id: string,
   folderId: string = 'week',
   format: OfficeFormat = 'doc',
+  fileIds: string[] = [],
 ): OfficeTask {
   const starter = starterId === 'custom' ? null : starterById(starterId)
   return {
@@ -650,44 +671,112 @@ export function createOfficeTask(
     prompt: prompt.trim() || starter?.defaultPrompt || starter?.hint || '',
     createdAt: new Date().toISOString(),
     folderId,
+    fileIds: fileIds.slice(0, 3),
     toolLog: [],
     format: starterId === 'custom' ? format : starter?.kind === 'pptx' ? 'pptx' : starter?.kind === 'xlsx' ? 'xlsx' : 'doc',
   }
 }
 
-/** 每步推进。跑完最后一步后 status=done 并带上完整富产物。 */
+/** 每步推进，同时构建对话消息流。跑完最后一步后进入流式阶段（stepIndex=plan.length，status 仍为 running）。 */
 export function advanceOfficeTask(task: OfficeTask): OfficeTask {
   if (task.status === 'done') return task
+
+  const prevMsgs: OfficeMessage[] = task.messages ? [...task.messages] : []
+
+  // ── 阶段 0：idle → 开始思考 ────────────────────────────────────────────────
+  if (task.status === 'idle') {
+    const msgs: OfficeMessage[] = [
+      { id: 'user-0', kind: 'user', content: task.prompt, done: true },
+      { id: 'thinking', kind: 'thinking', content: '正在分析任务目标与关联材料…', done: false },
+    ]
+    return { ...task, status: 'running', stepIndex: -1, messages: msgs }
+  }
+
+  // ── 阶段 1：thinking → 第一步工具调用 ──────────────────────────────────────
+  if (task.stepIndex === -1) {
+    const step = task.plan[0]
+    const msgs = prevMsgs.map((m) => (m.kind === 'thinking' ? { ...m, done: true } : m))
+    if (step) {
+      msgs.push({ id: 'tool-0', kind: 'tool_call', content: step.label, toolName: step.toolName, detail: step.detail, done: false })
+    }
+    const logs = [...(task.toolLog ?? []), `[执行] ${step?.label ?? ''} (${step?.toolName ?? 'agent'})`]
+    return { ...task, stepIndex: 0, toolLog: logs, messages: msgs }
+  }
+
   const nextIndex = task.stepIndex + 1
+
+  // ── 阶段 3：所有步骤完成 → 进入流式写入阶段 ────────────────────────────────
   if (nextIndex >= task.plan.length) {
     const file = task.file ?? deliverableForTask(task.starterId, task.format)
-    const logs = [...(task.toolLog ?? [])]
-    logs.push(`[完成] 产物《${file.name}》已封装就绪，可供预览与导出`)
+    const msgs = prevMsgs.map((m) =>
+      m.kind === 'tool_call' && !m.done ? { ...m, done: true } : m,
+    )
+    const previewText = typeof file.preview === 'string' ? file.preview : ''
+    msgs.push({ id: 'text-stream', kind: 'text', content: previewText, done: false })
+    const logs = [...(task.toolLog ?? []), `[完成] 产物《${file.name}》已封装就绪，可供预览与导出`]
     return {
       ...task,
-      status: 'done',
-      stepIndex: task.plan.length,
+      status: 'running',  // 保持 running，进入流式子阶段
+      stepIndex: nextIndex,
       file,
       toolLog: logs,
+      messages: msgs,
+      streamCursor: 0,
     }
   }
-  const currentStep = task.plan[nextIndex]
-  const logs = [...(task.toolLog ?? [])]
-  if (currentStep) {
-    logs.push(`[执行] ${currentStep.label} (${currentStep.toolName ?? 'agent_loop'})`)
+
+  // ── 阶段 2：常规步骤推进 ────────────────────────────────────────────────────
+  const step = task.plan[nextIndex]
+  const msgs = prevMsgs.map((m) =>
+    m.kind === 'tool_call' && !m.done ? { ...m, done: true } : m,
+  )
+  if (step) {
+    msgs.push({ id: `tool-${nextIndex}`, kind: 'tool_call', content: step.label, toolName: step.toolName, detail: step.detail, done: false })
   }
-  return {
-    ...task,
-    status: 'running',
-    stepIndex: nextIndex,
-    toolLog: logs,
-  }
+  const logs = [...(task.toolLog ?? []), `[执行] ${step?.label ?? ''} (${step?.toolName ?? 'agent'})`]
+  return { ...task, stepIndex: nextIndex, toolLog: logs, messages: msgs }
 }
+
+/** 每次 tick 步进流式光标 N 个字符；当光标到达末尾时把 status 切到 done。 */
+export function tickStreamCursor(task: OfficeTask): OfficeTask {
+  if (task.status !== 'running') return task
+  if (task.stepIndex < (task.plan.length)) return task  // 还在步骤阶段
+  if (!task.file || task.streamCursor === undefined) return task
+
+  const CHARS = 7
+  const preview = typeof task.file.preview === 'string' ? task.file.preview : ''
+  const total = preview.length
+  const newCursor = Math.min(task.streamCursor + CHARS, total)
+
+  if (newCursor >= total) {
+    const msgs = (task.messages ?? []).map((m) =>
+      m.kind === 'text' && !m.done ? { ...m, done: true } : m,
+    )
+    msgs.push({
+      id: 'artifact-ready',
+      kind: 'artifact',
+      content: task.file.name,
+      done: true,
+    })
+    // 完成提示文案指向右侧「产物」
+    msgs.push({
+      id: 'done-hint',
+      kind: 'text',
+      content: `任务已完成。可在右侧查看或导出产物《${task.file.name}》。`,
+      done: true,
+    })
+    return { ...task, status: 'done', streamCursor: newCursor, messages: msgs }
+  }
+
+  return { ...task, streamCursor: newCursor }
+}
+
+
 
 /** 对现有任务产物进行迭代微调（演示：字符串级可见效果，不伪装模型/真转换）。 */
 export function applyRefinement(task: OfficeTask, action: string): OfficeTask {
   if (!task.file) return task
-  const newFile = { ...task.file, preview: task.file.preview }
+  const newFile = { ...task.file, preview: typeof task.file.preview === 'string' ? task.file.preview : '' }
   const logs = [...(task.toolLog ?? []), `[微调] 用户指令: "${action}"`]
 
   const appendSection = (heading: string, lines: string[], note: string) => {

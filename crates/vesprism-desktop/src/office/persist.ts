@@ -1,5 +1,6 @@
 import {
   advanceOfficeTask,
+  deliverableForTask,
   type DemoFile,
   type OfficeTask,
   type OfficeTaskStatus,
@@ -111,6 +112,9 @@ export function isLoadableTask(raw: unknown): raw is OfficeTask {
   if (!STATUSES.has(t.status) || !Number.isFinite(t.stepIndex)) return false
   if (!Array.isArray(t.plan) || !t.plan.every(isPlanStep)) return false
   if (t.folderId != null && typeof t.folderId !== 'string') return false
+  if (t.fileIds != null && (!Array.isArray(t.fileIds) || t.fileIds.some((x) => typeof x !== 'string'))) {
+    return false
+  }
   if (t.toolLog != null && (!Array.isArray(t.toolLog) || t.toolLog.some((x) => typeof x !== 'string'))) {
     return false
   }
@@ -125,17 +129,24 @@ function truncateTask(task: OfficeTask): OfficeTask {
   if (file && file.preview.length > OFFICE_PREVIEW_MAX) {
     file = { ...file, preview: file.preview.slice(0, OFFICE_PREVIEW_MAX) }
   }
-  return { ...task, prompt, file }
+  // 排除 ephemeral 字段
+  const { messages: _m, streamCursor: _s, ...rest } = task
+  return { ...rest, prompt, file }
 }
 
 function finishIncomplete(task: OfficeTask): OfficeTask | null {
-  let cur = { ...task, format: normalizeOfficeFormat(task.format), plan: task.plan.map((s) => ({ ...s })) }
-  const cap = cur.plan.length + 2
-  for (let i = 0; i < cap && (cur.status !== 'done' || cur.file == null); i++) {
-    cur = advanceOfficeTask(cur)
+  const format = normalizeOfficeFormat(task.format)
+  const file = task.file ?? deliverableForTask(task.starterId, format)
+  const doneTask: OfficeTask = {
+    ...task,
+    status: 'done',
+    stepIndex: task.plan.length,
+    file,
+    format,
+    messages: undefined,
+    streamCursor: undefined,
   }
-  if (cur.status !== 'done' || cur.file == null) return null
-  return truncateTask(cur)
+  return truncateTask(doneTask)
 }
 
 export function hydrateOfficeTasks(raw: unknown): OfficePersistV1 {
@@ -165,9 +176,14 @@ export function hydrateOfficeTasks(raw: unknown): OfficePersistV1 {
         console.warn('[office] 跳过坏任务')
         continue
       }
+      const rawIds = (item as OfficeTask).fileIds
+      const fileIds = Array.isArray(rawIds)
+        ? rawIds.filter((x): x is string => typeof x === 'string').slice(0, 3)
+        : undefined
       const normalized: OfficeTask = {
         ...item,
         format: normalizeOfficeFormat((item as OfficeTask).format),
+        fileIds,
       }
       if (normalized.file && Array.isArray(normalized.file.riskItems)) {
         const ok = normalized.file.riskItems.every(

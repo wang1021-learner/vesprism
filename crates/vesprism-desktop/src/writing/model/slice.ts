@@ -12,7 +12,7 @@ export type WriteSlice = {
     CanonCard,
     'pov' | 'powerCap' | 'narrativeBan' | 'sentenceBan' | 'chapterWords' | 'doneWhen' | 'samples'
   >
-  people: Pick<PersonCard, 'id' | 'name' | 'state' | 'mustNotKnow' | 'voiceSample'>[]
+  people: Pick<PersonCard, 'id' | 'name' | 'state' | 'mustNotKnow' | 'voiceSample' | 'voice'>[]
   places: Pick<PlaceCard, 'id' | 'name' | 'job'>[]
   rules: Pick<RuleCard, 'id' | 'name' | 'quota' | 'cannot' | 'quotaLeft'>[]
   due: ForeshadowRow[]
@@ -86,6 +86,7 @@ export function writeSlice(book: BookDemo, chapterId: string): WriteSlice | null
         state: p.state,
         mustNotKnow: p.mustNotKnow,
         voiceSample: p.voiceSample,
+        voice: p.voice,
       })),
     places: book.places
       .filter((p) => ch.cast.includes(p.id) || (ch.where ?? []).includes(p.id))
@@ -107,3 +108,31 @@ export function writeSlice(book: BookDemo, chapterId: string): WriteSlice | null
 
 /** 切片禁止夹带的总纲字段（正文不得看见）。 */
 export const SLICE_FORBIDDEN = ['causality', 'act1', 'act2', 'act3', 'volumeUpgrade'] as const
+
+/** 近期章纲结构复用追踪：前 lookback 章的 job / 章末钩类型计数，防止模式重复。 */
+export function recentPatternNotes(
+  book: BookDemo,
+  chapterNo: number,
+  lookback = 10,
+): string[] {
+  const prev = book.chapters
+    .filter((c) => c.no < chapterNo)
+    .sort((a, b) => b.no - a.no)
+    .slice(0, lookback)
+  if (prev.length === 0) return []
+  const countTop = (xs: string[]) =>
+    Object.entries(xs.reduce<Record<string, number>>((m, x) => {
+      m[x] = (m[x] ?? 0) + 1
+      return m
+    }, {}))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2)
+      .map(([k, v]) => `${k}×${v}`)
+      .join('、')
+  const jobTop = countTop(prev.map((c) => c.job))
+  const hookTop = countTop(prev.map((c) => c.endHookKind).filter(Boolean))
+  const lines: string[] = []
+  if (jobTop) lines.push(`前 ${prev.length} 章章纲 job 用过：${jobTop}。本章换个冲突结构，别连续复用。`)
+  if (hookTop) lines.push(`前 ${prev.length} 章章末钩类型：${hookTop}。本章换种悬念/反转。`)
+  return lines
+}

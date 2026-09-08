@@ -214,7 +214,7 @@
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: ui-monospace, 'JetBrains Mono', Consolas, monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Consolas, monospace);
   font-size: 12px;
   line-height: 1.55;
 }

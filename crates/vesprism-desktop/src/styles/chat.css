@@ -37,7 +37,7 @@
 }
 
 .sandbox-banner-path {
-  font-family: ui-monospace, 'JetBrains Mono', Consolas, monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, Consolas, monospace);
   font-size: 11.5px;
   color: var(--text-primary);
   overflow: hidden;
@@ -180,58 +180,6 @@
   flex-direction: column;
 }
 
-/* 提问钉：不进滚动文档流，不改 list 高度 / 不写 scrollTop */
-.sticky-user-overlay {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  z-index: 15;
-  width: var(--chat-column-width, 90%);
-  max-width: var(--chat-column-max-width, 48.75rem);
-  transform: translateX(-50%);
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.sticky-user-chip {
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: min(36rem, 100%);
-  padding: 6px 12px;
-  border: 1px solid var(--border-solid);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 8%, transparent);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  backdrop-filter: blur(10px);
-}
-
-.sticky-user-chip:hover {
-  background: var(--surface-elevated);
-}
-
-.sticky-user-kicker {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  color: var(--text-tertiary);
-}
-
-.sticky-user-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
 
 /* 顶部柔和模糊淡出渐变层（避免内容在顶端生硬切断） */
 .chat-viewport-wrapper::before {
@@ -720,11 +668,11 @@
 /* ──── 会话 scaffold：思考 / 工具（安静灰字，无通高绿轨） ──── */
 .messages-container,
 .messages-container-virtual {
-  --conversation-text-size: 0.8125rem;
-  --conversation-tool-size: 0.75rem;
-  --conversation-line: 1.25rem;
-  --conversation-scaffold-text: color-mix(in srgb, var(--text-primary) 58%, transparent);
-  --conversation-scaffold-meta: color-mix(in srgb, var(--text-primary) 40%, transparent);
+  --conversation-text-size: 13px;
+  --conversation-tool-size: 13px;
+  --conversation-line: 1.375rem;
+  --conversation-scaffold-text: var(--text-secondary);
+  --conversation-scaffold-meta: var(--text-tertiary, color-mix(in srgb, var(--text-primary) 50%, transparent));
 }
 
 .thought-row,
@@ -739,10 +687,10 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  opacity: 0.67;
+  opacity: 0.95;
   transition: opacity 120ms ease-out;
-  font-size: var(--conversation-tool-size);
-  color: var(--conversation-scaffold-text);
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .scaffold-row:is(:hover, :has(:focus-visible)),
@@ -761,54 +709,171 @@
 
 .scaffold-glyph {
   flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 1rem;
-  height: var(--conversation-line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 5px;
   font-size: 11px;
   line-height: 1;
   color: var(--text-tertiary);
-  align-self: flex-start;
-  opacity: 0.9;
+  margin-top: 1px;
+  opacity: 1;
+  box-sizing: border-box;
+  user-select: none;
+  transition:
+    background-color var(--duration-fast, 0.15s) var(--ease-out-smooth, ease-out),
+    color var(--duration-fast, 0.15s) var(--ease-out-smooth, ease-out),
+    opacity var(--duration-fast, 0.15s) var(--ease-out-smooth, ease-out);
 }
 
 .scaffold-glyph svg {
   display: block;
 }
 
-/* 类型色：思考 / 终端 / 网络 / 读写 / 通用工具 */
+/* Linear 现代科技风（高质感冷调）：思考 / 终端 / 网络 / 读 / 写 / 搜索 / 计划 / 子任务 / 通用工具 */
 .scaffold-glyph.icon-thought {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.12);
+  --glyph-bg-hover: rgba(99, 102, 241, 0.18);
 }
 .scaffold-glyph.icon-terminal {
-  color: color-mix(in srgb, #0d9488 75%, var(--text-tertiary));
-}
-.scaffold-glyph.icon-web,
-.scaffold-glyph.icon-search {
-  color: color-mix(in srgb, #2563eb 70%, var(--text-tertiary));
+  color: #0d9488;
+  background: rgba(13, 148, 136, 0.12);
+  --glyph-bg-hover: rgba(13, 148, 136, 0.18);
 }
 .scaffold-glyph.icon-read {
-  color: color-mix(in srgb, #64748b 80%, var(--text-tertiary));
+  color: #0284c7;
+  background: rgba(2, 132, 199, 0.12);
+  --glyph-bg-hover: rgba(2, 132, 199, 0.18);
 }
 .scaffold-glyph.icon-edit {
-  color: color-mix(in srgb, #d97706 75%, var(--text-tertiary));
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+  --glyph-bg-hover: rgba(217, 119, 6, 0.18);
 }
-.scaffold-glyph.icon-tool {
-  color: color-mix(in srgb, #475569 85%, var(--text-tertiary));
+.scaffold-glyph.icon-search {
+  color: #4f46e5;
+  background: rgba(79, 70, 229, 0.12);
+  --glyph-bg-hover: rgba(79, 70, 229, 0.18);
+}
+.scaffold-glyph.icon-web {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  --glyph-bg-hover: rgba(37, 99, 235, 0.18);
+}
+.scaffold-glyph.icon-plan {
+  color: #0284c7;
+  background: rgba(2, 132, 199, 0.12);
+  --glyph-bg-hover: rgba(2, 132, 199, 0.18);
+}
+.scaffold-glyph.icon-agent {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+  --glyph-bg-hover: rgba(139, 92, 246, 0.18);
 }
 .scaffold-glyph.icon-ask {
-  color: color-mix(in srgb, #7c3aed 70%, var(--text-tertiary));
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+  --glyph-bg-hover: rgba(139, 92, 246, 0.18);
+}
+.scaffold-glyph.icon-tool {
+  color: #64748b;
+  background: rgba(100, 116, 139, 0.12);
+  --glyph-bg-hover: rgba(100, 116, 139, 0.18);
+}
+
+/* 黑暗主题调优：提升前景辨识度与柔和通透感 */
+:root[data-theme='dark'] .scaffold-glyph.icon-thought,
+.dark .scaffold-glyph.icon-thought {
+  color: #818cf8;
+  background: rgba(129, 140, 248, 0.16);
+  --glyph-bg-hover: rgba(129, 140, 248, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-terminal,
+.dark .scaffold-glyph.icon-terminal {
+  color: #2dd4bf;
+  background: rgba(45, 212, 191, 0.16);
+  --glyph-bg-hover: rgba(45, 212, 191, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-read,
+.dark .scaffold-glyph.icon-read {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.16);
+  --glyph-bg-hover: rgba(56, 189, 248, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-edit,
+.dark .scaffold-glyph.icon-edit {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.16);
+  --glyph-bg-hover: rgba(251, 191, 36, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-search,
+.dark .scaffold-glyph.icon-search {
+  color: #818cf8;
+  background: rgba(129, 140, 248, 0.16);
+  --glyph-bg-hover: rgba(129, 140, 248, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-web,
+.dark .scaffold-glyph.icon-web {
+  color: #60a5fa;
+  background: rgba(96, 165, 250, 0.16);
+  --glyph-bg-hover: rgba(96, 165, 250, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-plan,
+.dark .scaffold-glyph.icon-plan {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.16);
+  --glyph-bg-hover: rgba(56, 189, 248, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-agent,
+.dark .scaffold-glyph.icon-agent {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.16);
+  --glyph-bg-hover: rgba(167, 139, 250, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-ask,
+.dark .scaffold-glyph.icon-ask {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.16);
+  --glyph-bg-hover: rgba(167, 139, 250, 0.18);
+}
+:root[data-theme='dark'] .scaffold-glyph.icon-tool,
+.dark .scaffold-glyph.icon-tool {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.16);
+  --glyph-bg-hover: rgba(148, 163, 184, 0.18);
 }
 
 .scaffold-glyph.is-live {
-  color: var(--text-secondary);
+  opacity: 1;
+}
+
+/* 鼠标悬停整行时微胶囊背景轻微加深（至约 18%） */
+.scaffold-row:hover .scaffold-glyph:not(.is-error),
+.scaffold-glyph:not(.is-error):hover {
+  background: var(--glyph-bg-hover, var(--glyph-bg));
 }
 
 .scaffold-glyph.is-error {
-  color: var(--danger);
-  font-weight: 700;
-  font-size: 12px;
+  color: var(--danger, #dc2626) !important;
+  background: rgba(220, 38, 38, 0.12) !important;
+}
+:root[data-theme='dark'] .scaffold-glyph.is-error,
+.dark .scaffold-glyph.is-error {
+  color: #f87171 !important;
+  background: rgba(248, 113, 113, 0.16) !important;
+}
+.scaffold-row:hover .scaffold-glyph.is-error,
+.scaffold-glyph.is-error:hover {
+  background: rgba(220, 38, 38, 0.18) !important;
+}
+:root[data-theme='dark'] .scaffold-row:hover .scaffold-glyph.is-error,
+:root[data-theme='dark'] .scaffold-glyph.is-error:hover,
+.dark .scaffold-row:hover .scaffold-glyph.is-error,
+.dark .scaffold-glyph.is-error:hover {
+  background: rgba(248, 113, 113, 0.18) !important;
 }
 
 .scaffold-main {
@@ -836,21 +901,24 @@
   border: none;
   background: transparent;
   font: inherit;
-  font-size: var(--conversation-tool-size);
+  font-size: 13px;
+  font-weight: 500;
   line-height: var(--conversation-line);
-  color: var(--conversation-scaffold-text);
+  color: var(--text-secondary);
   text-align: left;
   cursor: pointer;
   user-select: none;
-  transition: color 0.12s ease;
+  transition: color 0.15s ease;
 }
 
 .scaffold-toggle:disabled {
   cursor: default;
 }
 
-.scaffold-toggle:not(:disabled):hover,
-.scaffold-toggle:not(:disabled):focus-visible {
+/* 鼠标悬停整行时文字平滑过渡至 var(--text-primary) */
+.scaffold-row:hover .scaffold-toggle,
+.scaffold-toggle:hover,
+.scaffold-toggle:focus-visible {
   color: var(--text-primary);
   outline: none;
 }
@@ -868,6 +936,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
   font-weight: 500;
   line-height: var(--conversation-line);
 }
@@ -903,7 +972,7 @@
 
 .scaffold-meta {
   flex-shrink: 0;
-  font-size: 0.625rem;
+  font-size: 11.5px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--conversation-scaffold-meta);
@@ -946,13 +1015,15 @@
 
 .activity-braille-spinner {
   flex-shrink: 0;
-  display: inline-block;
-  min-width: 1em;
-  width: 1em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
   text-align: center;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   line-height: 1;
-  font-weight: 500;
+  font-weight: 600;
   font-family:
     'Segoe UI Symbol',
     'Cascadia Mono',
@@ -1000,11 +1071,11 @@
 .scaffold-pre,
 .tool-output-pre {
   margin: 0;
-  padding: 0.2rem 0;
-  max-height: 12rem;
+  padding: 0.25rem 0;
+  max-height: 14rem;
   overflow: auto;
-  font-size: 0.75rem;
-  line-height: 1.55;
+  font-size: 12px;
+  line-height: 1.58;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1075,15 +1146,11 @@
   line-height: 1.35;
   color: var(--conversation-scaffold-meta, var(--text-tertiary));
 }
-.scaffold-glyph.icon-agent {
-  color: color-mix(in srgb, #6366f1 70%, var(--text-tertiary));
-}
-
 .thought-body-pre {
   margin: 0;
   padding: 0;
-  font-size: 0.75rem;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.5;
   color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1272,7 +1339,7 @@
 .diff-lines {
   margin: 0;
   padding: 2px 0;
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 20px;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   overflow: auto;
@@ -1422,8 +1489,8 @@
   padding: 0 12px 12px;
   max-height: 220px;
   overflow: auto;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-secondary);

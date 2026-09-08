@@ -33,6 +33,8 @@ export function blankPerson(id: string, role: PersonRole): PersonCard {
     relationToLead: role === '主角' ? '本人。' : '',
     stateAsOfChapter: 0,
     state: '',
+    stateHistory: [],
+    lastAppearChapter: 0,
     volumeArc: '',
   }
 }

@@ -352,6 +352,42 @@
   }
 }
 
+@keyframes composer-menu-in-down {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.composer-menu.place-bottom {
+  top: calc(100% + 10px);
+  bottom: auto;
+  transform-origin: top left;
+  animation-name: composer-menu-in-down;
+}
+
+.model-menu.place-bottom,
+.policy-menu.place-bottom {
+  transform-origin: top right;
+}
+
+.composer-menu.place-top {
+  bottom: calc(100% + 10px);
+  top: auto;
+  transform-origin: bottom left;
+  animation-name: composer-menu-in;
+}
+
+.model-menu.place-top,
+.policy-menu.place-top {
+  transform-origin: bottom right;
+}
+
 .composer-menu-label {
   padding: 6px 8px 3px;
   font-size: 11px;
@@ -454,6 +490,7 @@
   height: 1px;
   margin: 4px 6px;
   background: var(--border-solid);
+  flex-shrink: 0;
 }
 
 /* Composer card — clean, no outline or focus ring on click */
@@ -638,7 +675,7 @@
 .composer-live-action kbd {
   font-size: 10px;
   font-weight: 500;
-  font-family: ui-monospace, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace);
   color: var(--text-tertiary);
   background: none;
   border: 0;
@@ -696,11 +733,11 @@
   flex-shrink: 0;
 }
 
-/* 发送 / 停止 — 圆角方块 */
+/* 发送 / 停止 — 圆形按钮 */
 .btn-circle {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: 50%;
   border: none;
   display: grid;
   place-items: center;
@@ -732,6 +769,11 @@
   box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
+:root[data-theme='dark'] .btn-send.ready,
+:root[data-theme='dark'] .btn-send:not(:disabled).ready {
+  color: var(--surface);
+}
+
 .btn-send.ready:hover {
   background: var(--cta-hover);
   border-color: var(--cta-hover);
@@ -755,20 +797,19 @@
   transform: scale(0.94);
 }
 
-/* 中断：白底描边 + 呼吸动画圈 */
+/* 中断 / 停止生成按钮：AI 原生高质感设计（对齐 Codex / Claude / ChatGPT） */
 .btn-stop {
   position: relative;
-  background: var(--surface-elevated);
-  color: var(--text-muted);
-  border: 1px solid var(--border-solid);
+  background: var(--cta);
+  color: #ffffff;
+  border: 1px solid var(--cta);
   box-shadow: var(--shadow-sm);
 }
 
-/* 扩大点击区，盖住呼吸光圈，避免点到上方 textarea */
-.btn-stop::after {
-  content: '';
-  position: absolute;
-  inset: -10px;
+:root[data-theme='dark'] .btn-stop {
+  background: var(--cta);
+  color: var(--surface);
+  border-color: var(--cta);
 }
 
 .btn-stop[aria-disabled='true'] {
@@ -776,36 +817,39 @@
   opacity: 0.55;
 }
 
-/* 生成中：呼吸红色脉冲圈 */
+/* 生成中状态：深色沉稳质感，平滑承接发送按钮，消除粉色晕染与套盒感 */
 .btn-stop.active,
 .btn-stop:not([aria-disabled='true']).active {
-  color: var(--danger);
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.15);
-  animation: stop-btn-pulse 1.4s ease-in-out infinite;
+  background: var(--cta);
+  color: #ffffff;
+  border-color: var(--cta);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   opacity: 1;
 }
 
-@keyframes stop-btn-pulse {
-
-  0%,
-  100% {
-    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
-  }
-
-  50% {
-    box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.05);
-  }
+:root[data-theme='dark'] .btn-stop.active,
+:root[data-theme='dark'] .btn-stop:not([aria-disabled='true']).active {
+  background: var(--cta);
+  color: var(--surface);
+  border-color: var(--cta);
 }
 
+/* 悬停状态：瞬间化身清晰的针尖警示红（Needle Red），明确传达“点击中断” */
 .btn-stop.active:hover,
 .btn-stop:not([aria-disabled='true']):hover {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #ffffff;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-  transform: scale(1.06);
+  background: var(--danger, #d14343);
+  border-color: var(--danger, #d14343);
+  color: #ffffff !important;
+  box-shadow: 0 2px 10px rgba(209, 67, 67, 0.35);
+  transform: scale(1.08);
+}
+
+.btn-stop.active:active,
+.btn-stop:not([aria-disabled='true']):active {
+  background: var(--danger-deep, #a32f2f);
+  border-color: var(--danger-deep, #a32f2f);
+  transform: scale(0.94);
+  box-shadow: 0 0 0 2px rgba(209, 67, 67, 0.2);
 }
 
 /* 底行：免责 + 上下文用量 */

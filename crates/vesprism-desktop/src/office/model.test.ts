@@ -6,15 +6,28 @@ import {
   createOfficeTask,
   deliverableForTask,
   planForTask,
+  tickStreamCursor,
   titleForCustom,
+  type OfficeTask,
 } from './model'
+
+/** 推进步骤 + 抽干假流式，直到 done。 */
+function runToDone(task: OfficeTask): OfficeTask {
+  let t = task
+  for (let i = 0; i < 8000 && t.status !== 'done'; i++) {
+    if (t.status === 'running' && t.stepIndex >= t.plan.length && t.streamCursor !== undefined) {
+      t = tickStreamCursor(t)
+    } else {
+      t = advanceOfficeTask(t)
+    }
+  }
+  expect(t.status).toBe('done')
+  return t
+}
 
 /** 把一个周报任务跑到 done 并返回带产物的任务。 */
 function doneWeekly(): ReturnType<typeof createOfficeTask> {
-  let t = createOfficeTask('weekly', '', 't1')
-  for (let i = 0; i < t.plan.length + 1; i++) t = advanceOfficeTask(t)
-  expect(t.status).toBe('done')
-  return t
+  return runToDone(createOfficeTask('weekly', '', 't1'))
 }
 
 describe('办公任务模型', () => {
@@ -70,8 +83,7 @@ describe('办公任务模型', () => {
     let t = createOfficeTask('weekly', '', 't1')
     expect(t.status).toBe('idle')
     expect(t.file).toBeNull()
-    const n = t.plan.length + 1
-    for (let i = 0; i < n; i++) t = advanceOfficeTask(t)
+    t = runToDone(t)
     expect(t.status).toBe('done')
     expect(t.file?.name).toMatch(/周报/)
     expect(t.toolLog?.length).toBeGreaterThan(0)

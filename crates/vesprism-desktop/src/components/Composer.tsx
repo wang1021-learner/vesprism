@@ -18,6 +18,7 @@ import {
   reasoningLevelsFor,
 } from '../lib/reasoning'
 import { generateId } from '../lib/generateId'
+import { useDropdownPlacement } from '../lib/useDropdownPlacement'
 import { useComposerAssist } from './ComposerAssist'
 import {
   $activeTabId,
@@ -182,6 +183,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wsPickerRef = useRef<HTMLDivElement>(null)
   const modelPickerRef = useRef<HTMLDivElement>(null)
+  const modelMenuListRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState(() => $composerInput.get())
   const draftRef = useRef(draft)
   draftRef.current = draft
@@ -272,6 +274,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const sessionMode = useStore($sessionMode)
   const planChip = planChipLabel(planPhase, Boolean(planApproval))
   const askOn = sessionMode === 'ask'
+
+  const modelPlacement = useDropdownPlacement(modelPickerRef, modelOpen)
+  const wsPlacement = useDropdownPlacement(wsPickerRef, wsOpen, { gap: 14 })
+  const policyPlacement = useDropdownPlacement(policyPickerRef, policyOpen)
+  const attachPlacement = useDropdownPlacement(attachMenuRef, attachOpen)
 
   useEffect(() => {
     if (!canSwitchWorkspace) setWsOpen(false)
@@ -731,7 +738,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   <ChevronIcon up={wsOpen} />
                 </button>
                 {wsOpen && (
-                  <div className="composer-menu workspace-menu" role="listbox">
+                  <div
+                    className={`composer-menu workspace-menu place-${wsPlacement.placement}`}
+                    style={wsPlacement.style}
+                    role="listbox"
+                  >
                     <div className="composer-menu-label">会话位置</div>
                     <button
                       type="button"
@@ -927,7 +938,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <PlusIcon />
               </button>
               {attachOpen && (
-                <div className="composer-menu attach-menu" role="menu">
+                <div
+                  className={`composer-menu attach-menu place-${attachPlacement.placement}`}
+                  style={attachPlacement.style}
+                  role="menu"
+                >
                   {enableSlash ? (
                     <>
                   <div className="composer-menu-label">命令</div>
@@ -1108,7 +1123,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <ChevronIcon up={policyOpen} />
               </button>
               {policyOpen && (
-                <div className="composer-menu policy-menu" role="listbox">
+                <div
+                  className={`composer-menu policy-menu place-${policyPlacement.placement}`}
+                  style={policyPlacement.style}
+                  role="listbox"
+                >
                   <div className="composer-menu-label">执行策略</div>
                   {COMPOSER_POLICY_OPTIONS.map((opt) => {
                     const active =
@@ -1217,7 +1236,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 </button>
 
                 {modelOpen && (
-                  <div className="composer-menu model-menu" role="listbox">
+                  <div
+                    className={`composer-menu model-menu place-${modelPlacement.placement}`}
+                    style={modelPlacement.style}
+                    role="listbox"
+                    onWheel={(e) => {
+                      if (
+                        modelMenuListRef.current &&
+                        !modelMenuListRef.current.contains(e.target as Node)
+                      ) {
+                        modelMenuListRef.current.scrollTop += e.deltaY
+                        e.preventDefault()
+                      }
+                    }}
+                  >
                     {/* 下拉面板顶部：智能 / 思考强度调节区（对齐图 2） */}
                     {showReasoning && (
                       <div className="model-menu-reasoning-section">
@@ -1259,58 +1291,60 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                       <div className="composer-menu-divider" />
                     )}
 
-                    {(['official', 'custom'] as const).map((src) => {
-                      const group = models.filter((m) =>
-                        src === 'official' ? isOfficialModel(m) : !isOfficialModel(m),
-                      )
-                      if (!group.length) return null
-                      return (
-                        <div key={src}>
-                          <div className="composer-menu-label">
-                            {src === 'official' ? '登录账号 · 官方 Grok' : '自己配置'}
-                          </div>
-                          {group.map((m) => {
-                            const active = m.id === selectedModelId
-                            const title = m.model?.trim() || m.id
-                            const subBits = [
-                              src === 'official' ? '订阅' : '',
-                              m.supports_reasoning_effort ? '支持推理' : '',
-                              m.api_backend && m.api_backend !== 'chat_completions'
-                                ? m.api_backend
-                                : '',
-                              m.context_window > 0
-                                ? `上下文 ${formatTokenK(m.context_window)}`
-                                : '',
-                            ].filter(Boolean)
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                role="option"
-                                aria-selected={active}
-                                className={`composer-menu-item${active ? ' active' : ''}`}
-                                onClick={() => {
-                                  setModelOpen(false)
-                                  onSwitchModel(m.id)
-                                }}
-                              >
-                                <span className="menu-item-body">
-                                  <span className="menu-item-title">{title}</span>
-                                  {subBits.length > 0 && (
-                                    <span className="menu-item-sub">{subBits.join(' · ')}</span>
-                                  )}
-                                </span>
-                                {active && (
-                                  <span className="menu-item-check">
-                                    <CheckIcon />
+                    <div className="model-menu-list" ref={modelMenuListRef}>
+                      {(['official', 'custom'] as const).map((src) => {
+                        const group = models.filter((m) =>
+                          src === 'official' ? isOfficialModel(m) : !isOfficialModel(m),
+                        )
+                        if (!group.length) return null
+                        return (
+                          <div key={src}>
+                            <div className="composer-menu-label">
+                              {src === 'official' ? '登录账号 · 官方 Grok' : '自己配置'}
+                            </div>
+                            {group.map((m) => {
+                              const active = m.id === selectedModelId
+                              const title = m.model?.trim() || m.id
+                              const subBits = [
+                                src === 'official' ? '订阅' : '',
+                                m.supports_reasoning_effort ? '支持推理' : '',
+                                m.api_backend && m.api_backend !== 'chat_completions'
+                                  ? m.api_backend
+                                  : '',
+                                m.context_window > 0
+                                  ? `上下文 ${formatTokenK(m.context_window)}`
+                                  : '',
+                              ].filter(Boolean)
+                              return (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={active}
+                                  className={`composer-menu-item${active ? ' active' : ''}`}
+                                  onClick={() => {
+                                    setModelOpen(false)
+                                    onSwitchModel(m.id)
+                                  }}
+                                >
+                                  <span className="menu-item-body">
+                                    <span className="menu-item-title">{title}</span>
+                                    {subBits.length > 0 && (
+                                      <span className="menu-item-sub">{subBits.join(' · ')}</span>
+                                    )}
                                   </span>
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )
-                    })}
+                                  {active && (
+                                    <span className="menu-item-check">
+                                      <CheckIcon />
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

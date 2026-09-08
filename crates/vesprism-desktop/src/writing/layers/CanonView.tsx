@@ -46,6 +46,11 @@ export function CanonView({ card }: { card: CanonCard }) {
       </Zone>
       <Zone title="硬门">
         <Field label="力量上限" warn value={card.powerCap} onChange={(v) => set({ powerCap: v })} />
+        <Field
+          label="主角当前力量（入卷时自动写回，写章时算离上限距离）"
+          value={card.powerNow ?? ''}
+          onChange={(v) => set({ powerNow: v })}
+        />
         <Field label="时间规则" value={card.timeRule} onChange={(v) => set({ timeRule: v })} />
         <Field label="信息规则" value={card.infoRule} onChange={(v) => set({ infoRule: v })} />
         <Field label="视角规则" value={card.povRule} onChange={(v) => set({ povRule: v })} />
@@ -54,6 +59,11 @@ export function CanonView({ card }: { card: CanonCard }) {
         <Field label="叙事禁" value={card.narrativeBan} onChange={(v) => set({ narrativeBan: v })} />
         <Field label="设定禁" value={card.settingBan} onChange={(v) => set({ settingBan: v })} />
         <Field label="句式禁" value={card.sentenceBan} onChange={(v) => set({ sentenceBan: v })} />
+        <Field
+          label="平台审核红线（分号分隔，正文不得出现）"
+          value={card.complianceBan}
+          onChange={(v) => set({ complianceBan: v })}
+        />
         <Field label="一章算写完" value={card.doneWhen} onChange={(v) => set({ doneWhen: v })} />
       </Zone>
     </Section>

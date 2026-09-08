@@ -75,8 +75,12 @@
   --shadow-lg: 0 12px 28px rgba(28, 28, 30, 0.08), 0 2px 6px rgba(28, 28, 30, 0.04);
   --shadow-glow: 0 0 0 3px var(--accent-glow);
 
-  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
-    'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --font-sans: 'Inter', 'Roboto', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Monaco, Consolas, monospace;
+
+  font-family: var(--font-sans, 'Inter', 'Roboto', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif);
   font-size: 14px;
   line-height: 1.4;
   font-weight: 400;

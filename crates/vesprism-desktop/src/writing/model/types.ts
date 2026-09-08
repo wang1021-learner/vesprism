@@ -11,6 +11,8 @@ export type DeskNodeId = string
 export interface PitchCard {
   titles: string[]
   platform: string
+  /** 类型：都市爽文 / 玄幻修真 / 末世 / 系统文 / 穿书文…（驱动类型套路契约） */
+  genre?: string
   logline: string
   cheat: string
   cost: string
@@ -34,6 +36,13 @@ export interface CanonCard {
   narrativeBan: string
   settingBan: string
   sentenceBan: string
+  /** 平台审核红线（作者自填，分号分隔）。写手与入卷门禁都用它。 */
+  complianceBan: string
+  /** 起点专属红线（空则回落到 complianceBan） */
+  complianceBanQidian?: string
+  /** 当前主角力量/境界（入卷时从检查单 powerNow 更新），配合 powerCap 注入「离上限距离」。 */
+  powerNow?: string
+  powerAsOfChapter?: number
   doneWhen: string
 }
 
@@ -50,6 +59,10 @@ export interface PersonCard {
   relationToLead: string
   stateAsOfChapter: number
   state: string
+  /** 入卷时追加的状态快照；最新一条 == state/stateAsOfChapter。 */
+  stateHistory?: Array<{ at: number; state: string }>
+  /** 最近出场章号（入卷时按 cast 自动更新），用于案卷按活跃度排序。 */
+  lastAppearChapter?: number
   volumeArc: string
 }
 
@@ -93,6 +106,8 @@ export interface OutlineCard {
   act1: string
   act2: string
   act3: string
+  /** 完本计划 / 结局盘点：收尾段（最后几章）必须有，否则提示先补。 */
+  endingPlan?: string
   foreshadows: ForeshadowRow[]
   volumeUpgrade: string[]
 }
@@ -191,6 +206,8 @@ export interface ReviewCard {
   cheatAbuse: string
   dueSeen: string
   unnumbered: string
+  /** 本章末主角力量/境界（一句话，入卷写回 canon.powerNow） */
+  powerNow?: string
   states: string[]
   foreshadow: string[]
   summary80: string
@@ -202,6 +219,8 @@ export interface BookDemo {
   title: string
   /** 最近保存时间（ISO；落盘时写入，书库排序用） */
   updatedAt?: string
+  /** 每章引擎调用次数（成本限流；key=chapterId） */
+  chapterSpend?: Record<string, number>
   pitch: PitchCard
   canon: CanonCard
   people: PersonCard[]

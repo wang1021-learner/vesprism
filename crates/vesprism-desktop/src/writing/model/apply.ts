@@ -122,6 +122,7 @@ const REVIEW_STRING_FIELDS = [
   'cheatAbuse',
   'dueSeen',
   'unnumbered',
+  'powerNow',
   'summary80',
 ] as const
 
@@ -203,17 +204,49 @@ export function adoptIntoDossier(book: BookDemo, chapterId: string): BookDemo {
     ),
   }
 
+  // 主角力量：检查单 powerNow 写回 canon，供写章时算「离上限距离」。
+  if ((review.powerNow || '').trim() && ch) {
+    next = {
+      ...next,
+      canon: {
+        ...next.canon,
+        powerNow: (review.powerNow || '').trim(),
+        powerAsOfChapter: ch.no,
+      },
+    }
+  }
+
+  // 出场人物最近出场章号（案卷按活跃度排序用）。
+  if (ch) {
+    const cast = new Set(ch.cast)
+    next = {
+      ...next,
+      people: next.people.map((p) =>
+        cast.has(p.id) ? { ...p, lastAppearChapter: ch.no } : p,
+      ),
+    }
+  }
+
   // 人物 / 规则 / 地点：优先 id，其次名字。只改对上的第一张。
   for (const s of review.states) {
     const parsed = parseKeyedLine(s)
     if (!parsed) continue
     const person = lookupByIdThenName(next.people, parsed.key)
     if (person) {
+      const at = ch?.no ?? person.stateAsOfChapter
       next = {
         ...next,
         people: next.people.map((p) =>
           p.id === person.id
-            ? { ...p, state: parsed.value, stateAsOfChapter: ch?.no ?? p.stateAsOfChapter }
+            ? {
+                ...p,
+                state: parsed.value,
+                stateAsOfChapter: at,
+                stateHistory: [
+                  ...(p.stateHistory ?? []).filter((h) => h.at !== at),
+                  { at, state: parsed.value },
+                ],
+              }
             : p,
         ),
       }

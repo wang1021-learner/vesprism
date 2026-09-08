@@ -45,6 +45,10 @@
 
 .composer-menu.model-menu {
   min-width: 310px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 /* 模型菜单 · 推理挡位：紫色分段 pills（无滑条） */
@@ -55,6 +59,36 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.model-menu .composer-menu-divider {
+  flex-shrink: 0;
+}
+
+/* 下半部分模型列表独立滚动容器 */
+.model-menu-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong-solid, rgba(0, 0, 0, 0.2)) transparent;
+}
+
+.model-menu-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.model-menu-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong-solid, var(--border-solid, #e5e7eb));
+  border-radius: 4px;
+}
+
+.model-menu-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
 }
 
 .model-menu-header {

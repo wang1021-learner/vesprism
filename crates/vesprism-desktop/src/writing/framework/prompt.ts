@@ -3,9 +3,12 @@
 import type { BeatCard, BookDemo, ChapterCard, DraftPage } from '../model/types'
 import type { ChatMessage } from '../../types'
 import type { WriteSlice } from '../model/slice'
-import { writeSlice } from '../model/slice'
+import { writeSlice, recentPatternNotes } from '../model/slice'
 import { beatAimChars } from './scale'
 import { effectiveSentenceBan } from '../model/sentence-ban'
+import { effectiveComplianceBanFor } from '../model/compliance'
+import { endingNotes, goldenThreeNotes } from '../model/review-gate'
+import { coldStartLine, genreContractLines } from '../model/genre'
 import type { FillCardTarget } from '../model/apply'
 import { nextChapterDebts } from '../model/create'
 import { draftBodyForBeat, FILL_TARGET_LABEL } from '../model/apply'
@@ -152,7 +155,7 @@ export function washUser(
 }
 
 export function reviewerJsonHint(): string {
-  return '只输出 JSON 检查单，字段：openHookOk/goalOk/endHookOk/voiceLeak/forbiddenKnow/cheatAbuse/dueSeen/unnumbered（字符串，unnumbered 无则写「无」），states（["id：当前态或剩余配额或谁能进"]，优先 id，其次名字），foreshadow（["F001：状态说明"]），summary80（80 字摘要）。不要解释。'
+  return '只输出 JSON 检查单，字段：openHookOk（开场钩是否真的在开头落地）/goalOk（正文是否做成章纲说的目标，不一致写明偏差）/endHookOk（章末钩是否落在文末）/voiceLeak（谁说了不像他的话）/forbiddenKnow（谁知道了不能知道的）/cheatAbuse（金手指白用或越界）/dueSeen/unnumbered（无则写「无」）/powerNow（本章末主角力量境界，一句话），states（["id：当前态或剩余配额或谁能进"]，优先 id，其次名字），foreshadow（["F001：状态说明"]），summary80（80 字摘要）。不要解释。'
 }
 
 export function writerSystem(): string {
@@ -170,7 +173,10 @@ export function reviewerSystem(): string {
   return [
     '你是写完的检查。对照章纲和设定集填入卷卡，不是看写得美不美。',
     '必须逐项回答：开场钩、目标、章末钩、口吻泄露、不能知道的、金手指白用、到期伏笔、未编号新埋。',
-    '给出每个人物当前态（一句话）和伏笔状态变化。80 字章摘要。',
+    '章纲偏差：逐字核对正文是否真的做成章纲说的目标、转折是否发生、章末钩是否落在文末；不一致就如实写偏差，别替 AI 圆场。',
+    '推断路径验证：主角每一个「突然想到/意识到」的推论，必须能从【他已知的信息】推导出来，不能是读者知道但主角不该知道的信息。',
+    '对话同质化：每句台词都要能认出是谁说的；换个人说同样的话就该不像他。',
+    '给出每个人物当前态（一句话）、主角当前力量境界（一句话）、伏笔状态变化。80 字章摘要。',
     '禁止调用任何工具：不要写文件。只输出 JSON 检查单。',
     '禁止改设定集。未标明「建议采纳」则视为未通过。',
   ].join('\n')
@@ -291,9 +297,27 @@ function sliceLines(slice: WriteSlice, book: BookDemo): string[] {
     lines.push(`上章第${prev.no}章末钩：${prev.endHook}`)
     if (prevReview?.summary80) lines.push(`上章摘要：${prevReview.summary80}`)
   }
+  if (slice.no <= 3) {
+    lines.push('黄金三章：本章是签约章——开场钩前 300 字落地，爽点必须兑现，章末钩要勾人。')
+  }
+  const cold = coldStartLine(slice.no)
+  if (cold) lines.push(cold)
+  for (const g of genreContractLines(book)) lines.push(g)
+  for (const r of recentPatternNotes(book, slice.no)) lines.push(r)
+  const powerNow = (book.canon.powerNow || '').trim()
+  lines.push(
+    powerNow
+      ? `主角当前力量：${powerNow}（截至第${book.canon.powerAsOfChapter ?? '?'}章）。上限：${slice.canon.powerCap || '未定'}。本章力量不得越界，增长必须肉眼可见且不过界。`
+      : `力量上限：${slice.canon.powerCap || '未定'}。本章不得突破上限。`,
+  )
+  for (const note of endingNotes(book, slice.chapterId)) lines.push(note)
+  const chPlat = book.chapters.find((c) => c.id === slice.chapterId)?.platform
+  const redlines = effectiveComplianceBanFor(book, chPlat)
+  if (redlines.length > 0) lines.push(`平台红线（正文不得出现）：${redlines.join('、')}`)
   for (const p of slice.people) {
     lines.push(`出场 ${p.name} 当前态：${p.state}`)
     lines.push(`出场 ${p.name} 不能知道：${p.mustNotKnow}`)
+    if (p.voice.trim()) lines.push(`出场 ${p.name} 口吻：${p.voice}`)
     lines.push(`出场 ${p.name} 样本：「${p.voiceSample}」`)
   }
   for (const p of slice.places) lines.push(`地点 ${p.name}：${p.job}`)

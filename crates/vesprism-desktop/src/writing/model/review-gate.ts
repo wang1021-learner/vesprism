@@ -1,6 +1,7 @@
 /** 入卷硬门：代码卡破设定，不评文笔。模型 JSON 只当摘句来源。 */
 
 import { countHanzi, parseChapterWords } from '../framework/scale'
+import { complianceHits } from './compliance'
 import { DEFAULT_SENTENCE_BAN, effectiveSentenceBan } from './sentence-ban'
 import type { BookDemo, ChapterCard } from './types'
 
@@ -14,6 +15,102 @@ export function unnumberedIsEmpty(s: string): boolean {
   const t = (s || '').trim()
   if (!t) return true
   return /^(无|没有|无新埋|无未编号)[。.]?$/.test(t)
+}
+
+/** 黄金三章（1～3 章）专项硬门：签约率命门，比中段更严。 */
+export function goldenThreeNotes(book: BookDemo, chapterId: string): string[] {
+  const ch = book.chapters.find((c) => c.id === chapterId)
+  if (!ch || ch.no > 3) return []
+  const notes: string[] = []
+  if (!(ch.pleasure || '').trim()) notes.push('黄金三章：本章爽点兑现（pleasure）不能空。')
+  if (!ch.endHookKind) notes.push('黄金三章：章末钩类型不能空。')
+  return notes
+}
+
+/** 收尾段提示：最后几章（或最后一卷）必须有完本计划，否则只提示不挡入卷。 */
+export function endingNotes(book: BookDemo, chapterId: string): string[] {
+  const ch = book.chapters.find((c) => c.id === chapterId)
+  if (!ch) return []
+  const maxNo = Math.max(0, ...book.chapters.map((c) => c.no))
+  const nearEnd = ch.no >= maxNo - 2
+  const lastVol = book.volumes.at(-1)
+  const inFinalVolume = Boolean(
+    lastVol && book.units.some((u) => u.volumeId === lastVol.id && u.id === ch.unitId),
+  )
+  if ((nearEnd || inFinalVolume) && !(book.outline.endingPlan || '').trim()) {
+    return ['已到收尾段：总纲还没有完本计划（endingPlan），先补结局盘点再往下写。']
+  }
+  return []
+}
+
+/** 章号连续性：重号 / 缺号提醒（只提示，不自动重排，避免引入更隐蔽的错误）。 */
+export function chapterNumberNotes(book: BookDemo): string[] {
+  const nos = book.chapters.map((c) => c.no)
+  if (nos.length === 0) return []
+  const counts = new Map<number, number>()
+  for (const n of nos) counts.set(n, (counts.get(n) ?? 0) + 1)
+  const notes: string[] = []
+  for (const [n, c] of counts) {
+    if (c > 1) notes.push(`章号 ${n} 重复（${c} 章同号），请手动改。`)
+  }
+  const max = Math.max(...nos)
+  for (let n = 1; n < max; n++) {
+    if (!counts.has(n)) notes.push(`章号 ${n} 缺失（中间跳了号）。`)
+  }
+  return notes
+}
+
+/** 章纲偏差本地核对：章末钩是否真的落在正文末尾（只警告，不挡入卷）。 */
+export function chapterDriftNotes(book: BookDemo, chapterId: string): string[] {
+  const ch = book.chapters.find((c) => c.id === chapterId)
+  if (!ch) return []
+  const notes: string[] = []
+  const body = draftText(book, chapterId)
+  if (!body.trim()) return notes
+
+  const hook = (ch.endHook || '').trim()
+  if (hook) {
+    const frag = hook
+      .replace(/[「」『』""'"？！。…]/g, '')
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 3)
+      .slice(0, 4)
+    const tail = body.slice(-160)
+    const landed = frag.some((f) => tail.includes(f))
+    if (!landed && frag.length > 0) {
+      notes.push(`章纲偏差：章末钩「${hook}」没有落到正文末尾，可能被 AI 静默跳过。`)
+    }
+  }
+  return notes
+}
+
+/** 伏笔孤儿：line 里提到的人名/地名已不在设定集（可能是改过名或删卡）。 */
+export function foreshadowOrphans(book: BookDemo): string[] {
+  const names = new Set<string>()
+  for (const p of book.people) {
+    names.add(p.name)
+    names.add(p.id)
+  }
+  for (const pl of book.places) {
+    names.add(pl.name)
+    names.add(pl.id)
+  }
+  const STOP = new Set([
+    '旧门', '拍场', '库房', '夜场', '钥匙', '残器', '图纸', '身份', '死局', '对赌', '影子',
+    '第三', '眼睛', '瞳', '拍卖', '学徒', '鉴真', '母亲', '北宋', '官窑', '喷枪',
+  ])
+  const out: string[] = []
+  for (const f of book.outline.foreshadows) {
+    const tokens = (f.line.match(/[\u4e00-\u9fa5]{2,6}/g) ?? []).filter(
+      (t) => !STOP.has(t) && t.length >= 2,
+    )
+    const unknown = [...new Set(tokens.filter((t) => !names.has(t)))]
+    if (unknown.length > 0) {
+      out.push(`伏笔 ${f.id} 提到「${unknown.join('、')}」，可能已不是设定集里的人/地。`)
+    }
+  }
+  return out
 }
 
 export function banTokens(s: string): string[] {
@@ -66,6 +163,13 @@ export function reviewBlocksAdopt(
   if (!ch || !review) return { ok: false, hints: ['先检查，再入卷。'] }
 
   const body = draftText(book, chapterId)
+
+  for (const hit of complianceHits(book, body, ch.platform)) {
+    hints.push(`正文命中平台红线「${hit}」。`)
+  }
+  for (const g of goldenThreeNotes(book, chapterId)) {
+    hints.push(g)
+  }
 
   if (textHitsBan(body, book.canon.powerCap)) {
     hints.push('正文命中力量上限。')

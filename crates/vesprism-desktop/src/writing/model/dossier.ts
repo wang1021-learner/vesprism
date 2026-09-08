@@ -20,6 +20,7 @@ export type DossierPerson = {
   role: string
   state: string
   asOf: number
+  history: Array<{ at: number; state: string }>
 }
 
 export type DossierRule = {
@@ -54,6 +55,7 @@ export function bookDossier(book: BookDemo): BookDossier {
       role: p.role,
       state: p.state,
       asOf: p.stateAsOfChapter,
+      history: p.stateHistory ?? [],
     })),
     rules: book.rules.map((r) => ({
       id: r.id,

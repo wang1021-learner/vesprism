@@ -77,11 +77,7 @@ export function CommandDock({
           onChange={(e) => setLine(e.target.value)}
         />
       </label>
-      <p className="wd-cmd-preview">
-        {busy
-          ? '引擎生成中…这一轮完自动回来'
-          : `${fallback.kind === 'read' ? '只读 · ' : '将下达 · '}${fallback.label}${line.trim() ? ` · ${line.trim()}` : ' · 无额外约束'}${fallback.ok ? '' : ` · ${fallback.hint}`}`}
-      </p>
+
       {ask ? (
         <button
           type="button"

@@ -7,6 +7,8 @@
    ═══════════════════════════════════════════════════ */
 
 .md-body {
+  font-family: var(--font-sans, 'Inter', 'Roboto', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif);
   font-size: 14px;
   font-weight: 400;
   line-height: 1.62;
@@ -75,25 +77,37 @@
   color: var(--text-secondary);
 }
 
-/* ── 行内代码（清晰的 Code Badge 胶囊） ── */
-.md-body :not(pre)>code {
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+/* ── 行内代码（现代轻量通透风，类似 Claude / Linear） ── */
+.md-body :not(pre)>code,
+.md-body > code {
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace);
   font-size: 12px;
-  background: color-mix(in srgb, var(--surface-muted) 85%, var(--text-primary) 4%);
-  border: 1px solid color-mix(in srgb, var(--border-solid) 90%, transparent);
-  border-radius: 5px;
-  padding: 0.12em 0.42em;
-  margin: 0 0.1em;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border: none;
+  border-radius: 4px;
+  padding: 0.12em 0.4em;
+  margin: 0 0.15em;
   color: var(--text-primary);
   word-break: break-word;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
-/* ── 代码块：中性浅灰；过长竖向折行，无横滚 ── */
+.md-h1 code,
+.md-h2 code,
+.md-h3 code,
+.md-h4 code {
+  font-size: 0.88em;
+  font-weight: inherit;
+}
+
+/* ── 代码块：纯白底色；极细浅边框；右侧预留空间防遮挡 ── */
 .md-body pre {
-  background: var(--surface-muted, #f5f5f5);
+  position: relative;
+  background: var(--surface, #ffffff);
   border: 1px solid var(--border-solid, #ebebeb);
   border-radius: 6px;
-  padding: 0.65rem 0.8rem;
+  padding: 0.7rem 2.5rem 0.7rem 0.85rem;
   margin: 0.55em 0 0.9em;
   overflow-x: hidden;
   overflow-y: visible;
@@ -111,9 +125,9 @@
   background: transparent;
   padding: 0;
   margin: 0;
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11.5px;
-  line-height: 1.55;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace);
+  font-size: 12.5px;
+  line-height: 1.6;
   color: var(--text-primary);
   white-space: inherit;
   word-break: inherit;
@@ -224,6 +238,10 @@
   border-bottom-color: var(--accent-hover);
 }
 
+.md-link code {
+  color: inherit;
+}
+
 /* ── 图片 ── */
 .md-image {
   max-width: 100%;
@@ -287,18 +305,20 @@
   margin-bottom: 0;
 }
 
-/* ── 表格：圆角卡片 + 明确结构线 + 自适应横滚 + 主题自适应 ── */
-.md-table-wrapper {
+/* ── 表格：纯净纯白风格 + 极细横线分隔（类似 Linear / Notion） ── */
+.md-table-wrapper,
+.md-body [data-streamdown='table-wrapper'] {
   margin: 0.8em 0 1.2em;
   overflow-x: auto;
   border-radius: 8px;
-  border: 1px solid var(--border-solid);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-solid, #ebebeb);
+  background: var(--surface, #ffffff);
+  box-shadow: none;
   max-width: 100%;
 }
 
-.md-table {
+.md-table,
+.md-body [data-streamdown='table'] {
   border-collapse: collapse;
   border-spacing: 0;
   width: 100%;
@@ -306,13 +326,16 @@
   table-layout: auto;
   font-size: 13.5px;
   line-height: 1.55;
+  background: var(--surface, #ffffff);
 }
 
 .md-table th,
-.md-table td {
+.md-table td,
+.md-body [data-streamdown='table-header-cell'],
+.md-body [data-streamdown='table-cell'] {
   border: none;
-  border-bottom: 1px solid var(--border-solid);
-  border-right: 1px solid color-mix(in srgb, var(--border-solid) 80%, transparent);
+  border-bottom: 1px solid var(--border-solid, #ebebeb);
+  border-right: none;
   padding: 0.65rem 0.85rem;
   text-align: left;
   vertical-align: top;
@@ -321,49 +344,97 @@
   word-break: normal;
 }
 
-.md-table th:last-child,
-.md-table td:last-child {
-  border-right: none;
+.md-table thead,
+.md-table thead tr,
+.md-body [data-streamdown='table-header'],
+.md-body [data-streamdown='table-header'] tr {
+  background: var(--surface-muted, #f8f9fa) !important;
 }
 
-.md-table th {
-  background: var(--surface-muted);
+.md-table th,
+.md-body [data-streamdown='table-header-cell'] {
+  background: var(--surface-muted, #f8f9fa) !important;
   color: var(--text-primary);
-  font-weight: 650;
+  font-weight: 600;
   font-size: 12.5px;
-  border-bottom: 1.5px solid var(--border-strong-solid);
+  border-bottom: 1px solid var(--border-solid, #ebebeb);
 }
 
-.md-table td {
+.md-table tbody,
+.md-table tbody tr,
+.md-table td,
+.md-table tbody tr td,
+.md-body [data-streamdown='table-body'],
+.md-body [data-streamdown='table-body'] tr,
+.md-body [data-streamdown='table-cell'] {
+  background: var(--surface, #ffffff) !important;
   color: var(--text-primary);
-  background: var(--surface);
 }
 
-.md-table tbody tr:last-child td {
+
+
+.md-table tbody tr:last-child td,
+.md-body [data-streamdown='table-body'] tr:last-child td,
+.md-body [data-streamdown='table-body'] tr:last-child [data-streamdown='table-cell'] {
   border-bottom: none;
 }
 
-.md-table tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--surface-muted) 55%, var(--surface) 45%);
+/* 彻底杜绝斑马条纹：全行背景纯净统一 */
+.md-table tbody tr:nth-child(even),
+.md-table tbody tr:nth-child(even) td,
+.md-body [data-streamdown='table-body'] tr:nth-child(even),
+.md-body [data-streamdown='table-body'] tr:nth-child(even) td,
+.md-body [data-streamdown='table-body'] tr:nth-child(even) [data-streamdown='table-cell'] {
+  background: var(--surface, #ffffff) !important;
 }
 
 /* 表内代码与标签对齐 */
-.md-table code {
-  font-size: 11.5px;
+.md-table code,
+.md-body .md-table code,
+.md-body [data-streamdown='table'] code {
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-primary);
   padding: 0.08em 0.35em;
+  border-radius: 4px;
+  border: none;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
-/* Streamdown 代码块：与应用中性灰一致 */
+/* Streamdown 代码块：纯白底色，极细浅边框，去除 Tailwind 默认内边距与间隙 */
 .md-body [data-streamdown='code-block'],
 .md-body [data-slot='code-card'] {
   margin: 0.55em 0 0.95em !important;
   border: 1px solid var(--border-solid, #ebebeb) !important;
   border-radius: 6px !important;
-  background: var(--surface-muted, #f5f5f5) !important;
+  background: var(--surface, #ffffff) !important;
   box-shadow: none !important;
   overflow: hidden;
   position: relative;
   max-width: 100%;
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+/* Streamdown 内部包裹层重置：去除内部嵌套边框与内边距 */
+.md-body [data-streamdown='code-block'] [data-streamdown='code-block-body'] {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.md-body [data-streamdown='code-block'] [data-streamdown='code-block-actions'] {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .md-body [data-streamdown='code-block'] pre,
@@ -379,8 +450,11 @@
   overflow-wrap: anywhere !important;
   overflow-x: hidden !important;
   max-width: 100%;
-  padding: 0.65rem 0.8rem !important;
+  padding: 0.75rem 2.5rem 0.75rem 0.85rem !important;
   tab-size: 2;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace) !important;
+  font-size: 12.5px !important;
+  line-height: 1.6 !important;
 }
 
 .md-body [data-streamdown='code-block'] code,
@@ -389,8 +463,9 @@
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
-  font-size: 11px !important;
-  line-height: 1.55 !important;
+  font-family: var(--font-mono, 'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace) !important;
+  font-size: 12.5px !important;
+  line-height: 1.6 !important;
   color: var(--text-primary, #1c1c1c) !important;
   white-space: inherit !important;
   word-break: inherit !important;
@@ -398,19 +473,33 @@
   max-width: 100%;
 }
 
-/* 语言标签 / header：弱化 */
+.md-body [data-streamdown='code-block'] .shiki .line,
+.md-body [data-slot='code-card'] .shiki .line {
+  line-height: 1.6 !important;
+}
+
+/* 语言标签 / header：弱化，高度与复制按钮居中对齐 */
 .md-body [data-streamdown='code-block'] [data-streamdown='code-block-header'],
 .md-body [data-slot='code-card'] [data-slot='code-card-header'],
 .md-body [data-streamdown='code-block'] [class*='header'],
 .md-body [data-slot='code-card'] [class*='header'] {
   background: transparent !important;
   border: none !important;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-solid) 80%, transparent) !important;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-solid, #ebebeb) 80%, transparent) !important;
   color: var(--text-tertiary, #9a9a9a) !important;
-  font-size: 0.6875rem !important;
+  font-size: 11.5px !important;
   font-weight: 500 !important;
-  padding: 0.3rem 0.65rem !important;
-  min-height: 0 !important;
+  padding: 0 2.5rem 0 0.85rem !important;
+  min-height: 38px !important;
+  height: 38px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+/* 无语言标识时隐藏空 header 条目 */
+.md-body [data-streamdown='code-block'][data-language=''] [data-streamdown='code-block-header'],
+.md-body [data-streamdown='code-block']:not([data-language]) [data-streamdown='code-block-header'] {
+  display: none !important;
 }
 
 /* 彻底隐藏下载类控件（controls 已关，双保险） */
@@ -425,58 +514,78 @@
   display: none !important;
 }
 
-/* 复制按钮：中性灰小方钮，悬停才显 */
+/* 复制按钮：精致微浮雕小胶囊形态，悬停平滑浮起高亮 */
 .md-body [data-streamdown='code-block'] button,
-.md-body [data-slot='code-card'] button {
+.md-body [data-streamdown='code-block-copy-button'],
+.md-body [data-slot='code-card'] button,
+.md-body pre>button {
   position: absolute !important;
-  top: 0.35rem !important;
-  right: 0.35rem !important;
+  top: 6px !important;
+  right: 8px !important;
   z-index: 2;
-  width: 1.5rem !important;
-  height: 1.5rem !important;
-  min-width: 1.5rem !important;
-  min-height: 1.5rem !important;
+  width: 1.625rem !important;
+  height: 1.625rem !important;
+  min-width: 1.625rem !important;
+  min-height: 1.625rem !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
   margin: 0 !important;
   padding: 0 !important;
-  border: 1px solid transparent !important;
-  border-radius: 5px !important;
-  background: transparent !important;
-  color: var(--text-muted, #a3a3a3) !important;
-  box-shadow: none !important;
+  border: 1px solid var(--border-solid, #ebebeb) !important;
+  border-radius: 6px !important;
+  background: var(--surface, #ffffff) !important;
+  color: var(--text-secondary, #6b6b6b) !important;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04)) !important;
   cursor: pointer !important;
   opacity: 0;
+  transform: translateY(0);
   transition:
-    opacity 0.12s ease,
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease !important;
+    opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease !important;
 }
 
 .md-body [data-streamdown='code-block']:hover button,
+.md-body [data-streamdown='code-block']:hover [data-streamdown='code-block-copy-button'],
 .md-body [data-slot='code-card']:hover button,
+.md-body pre:hover>button,
 .md-body [data-streamdown='code-block'] button:focus-visible,
-.md-body [data-slot='code-card'] button:focus-visible {
+.md-body [data-streamdown='code-block-copy-button']:focus-visible,
+.md-body [data-slot='code-card'] button:focus-visible,
+.md-body pre>button:focus-visible {
   opacity: 1;
 }
 
 .md-body [data-streamdown='code-block'] button:hover,
-.md-body [data-slot='code-card'] button:hover {
-  background: color-mix(in srgb, var(--surface-elevated, #fff) 92%, transparent) !important;
-  border-color: var(--border-solid, #ebebeb) !important;
-  color: var(--text-secondary, #6b6b6b) !important;
+.md-body [data-streamdown='code-block-copy-button']:hover,
+.md-body [data-slot='code-card'] button:hover,
+.md-body pre>button:hover {
+  transform: translateY(-1px) !important;
+  background: var(--surface-elevated, #ffffff) !important;
+  border-color: var(--border-strong-solid, #d1d5db) !important;
+  color: var(--text-primary, #1c1c1c) !important;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08), var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04)) !important;
 }
 
 .md-body [data-streamdown='code-block'] button:active,
-.md-body [data-slot='code-card'] button:active {
-  background: var(--surface-muted, #f0f0f0) !important;
+.md-body [data-streamdown='code-block-copy-button']:active,
+.md-body [data-slot='code-card'] button:active,
+.md-body pre>button:active {
+  transform: translateY(0) scale(0.97) !important;
+  background: var(--surface-hover, #f0f0f0) !important;
+  border-color: var(--border-strong-solid, #d1d5db) !important;
   color: var(--text-primary, #1c1c1c) !important;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04)) !important;
 }
 
 .md-body [data-streamdown='code-block'] button svg,
-.md-body [data-slot='code-card'] button svg {
+.md-body [data-streamdown='code-block-copy-button'] svg,
+.md-body [data-slot='code-card'] button svg,
+.md-body pre>button svg {
   width: 0.875rem !important;
   height: 0.875rem !important;
   stroke-width: 1.75 !important;

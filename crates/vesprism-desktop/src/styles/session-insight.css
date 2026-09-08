@@ -245,7 +245,7 @@
 }
 
 .insight-dl dd.is-mono {
-  font-family: ui-monospace, 'JetBrains Mono', Consolas, monospace;
+  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, Consolas, monospace);
   font-size: 12px;
 }
 

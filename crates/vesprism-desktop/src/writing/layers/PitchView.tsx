@@ -42,6 +42,12 @@ export function PitchView({ card }: { card: PitchCard }) {
           />
         </FieldRow>
         <Field
+          label="类型（都市爽文 / 玄幻修真 / 末世 / 系统文 / 穿书文）"
+          short
+          value={card.genre ?? ''}
+          onChange={(v) => set({ genre: v })}
+        />
+        <Field
           label="一句话卖点（谁 + 局 + 靠什么活）"
           value={card.logline}
           onChange={(v) => set({ logline: v })}

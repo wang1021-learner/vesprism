@@ -118,31 +118,72 @@ type ScaffoldIconKind =
   | 'plan'
   | 'agent'
 
-function toolIconKind(tool: ToolCallData): ScaffoldIconKind {
+const READ_TOOL_RE =
+  /(?:^|[^a-z0-9])(?:view_file|read_file|list_dir|list_directory|read_dir|cat_file|open_file|show_file|get_file|read_file_content)(?:[^a-z0-9]|$)/i
+const EDIT_TOOL_RE =
+  /(?:^|[^a-z0-9])(?:replace_file_content|write_to_file|write_file|edit_file|create_file|patch_file|apply_patch|str_replace_editor|hashline_edit|search_replace|save_file)(?:[^a-z0-9]|$)/i
+const SEARCH_TOOL_RE =
+  /(?:^|[^a-z0-9])(?:grep_search|find_by_name|file_search|search_files|search_code|find_files|glob|ripgrep|code_search)(?:[^a-z0-9]|$)/i
+const WEB_TOOL_RE =
+  /(?:^|[^a-z0-9])(?:read_url_content|read_url|web_search|web_fetch|open_page|browse_page|search_web|fetch_web_page)(?:[^a-z0-9]|$)/i
+const TERMINAL_TOOL_RE =
+  /(?:^|[^a-z0-9])(?:run_command|execute_command|run_terminal_command|run_terminal_cmd|bash|shell|terminal|powershell|pwsh|cmd|manage_task|get_command_or_subagent_output)(?:[^a-z0-9]|$)/i
+
+export function toolIconKind(tool: ToolCallData): ScaffoldIconKind {
   const k = (tool.kind || '').toLowerCase()
+  const title = (tool.title || '').toLowerCase()
   const blob = `${tool.title || ''} ${tool.detail || ''}`.toLowerCase()
+  if (k === 'think' || k === 'thought') return 'thought'
   if (k === 'subagent') return 'agent'
-  if (k === 'ask_user') return 'ask'
-  if (k === 'plan_mode' || /exit_plan_mode|enter_plan_mode/.test(blob)) return 'plan'
-  if (k === 'execute') return 'terminal'
+  if (k === 'ask_user' || k === 'ask_question' || k === 'ask') return 'ask'
   if (
-    k === 'fetch' ||
-    /web_search|web_fetch|open_page|browse|http|https:\/\//.test(blob)
+    k === 'plan_mode' ||
+    k === 'plan' ||
+    Boolean(tool.todo) ||
+    /exit_plan_mode|enter_plan_mode|todo_write|todowrite/.test(blob)
   ) {
+    return 'plan'
+  }
+  // 显式工具名称优先识别（避免常见文件读写、搜索、终端操作退化成通用工具）
+  if (k === 'read' || READ_TOOL_RE.test(title)) {
+    return 'read'
+  }
+  if (
+    k === 'edit' ||
+    k === 'write' ||
+    k === 'delete' ||
+    k === 'move' ||
+    EDIT_TOOL_RE.test(title)
+  ) {
+    return 'edit'
+  }
+  if (WEB_TOOL_RE.test(title)) {
     return 'web'
   }
-  if (k === 'search' || /\bgrep\b|\bsearch\b|ripgrep|rg\b/.test(blob)) {
+  if (SEARCH_TOOL_RE.test(title)) {
     return 'search'
   }
-  if (k === 'read') return 'read'
-  if (k === 'edit' || k === 'write' || k === 'delete' || k === 'move') return 'edit'
-  // 终端类：命令行工具名或 curl 等
+  if (TERMINAL_TOOL_RE.test(title)) {
+    return 'terminal'
+  }
+  // 终端类优先于纯 URL 匹配（例如 curl / wget 请求含 https:// 仍属终端）
   if (
-    /terminal|bash|shell|cmd\.exe|powershell|pwsh|curl(\.exe)?|wget|npm |pnpm |yarn |cargo |git |python|node\.exe/.test(
+    k === 'execute' ||
+    k === 'terminal' ||
+    /terminal|bash|shell|cmd\.exe|powershell|pwsh|\b(?:curl|wget|node|npx|npm|pnpm|yarn|bun|deno|cargo|rustc|git|python|python3|pip|pytest|vitest|docker|kubectl|make)\b/i.test(
       blob,
     )
   ) {
     return 'terminal'
+  }
+  if (
+    k === 'fetch' ||
+    /web_search|web_fetch|open_page|browse|https?:\/\//i.test(blob)
+  ) {
+    return 'web'
+  }
+  if (k === 'search' || /grep|search|ripgrep|\brg\b|\bglob\b/i.test(blob)) {
+    return 'search'
   }
   return 'tool'
 }
@@ -153,12 +194,12 @@ const ScaffoldTypeIcon = memo(function ScaffoldTypeIcon({
   kind: ScaffoldIconKind
 }) {
   const common = {
-    width: 12,
-    height: 12,
+    width: 14,
+    height: 14,
     viewBox: '0 0 24 24',
     fill: 'none',
     stroke: 'currentColor',
-    strokeWidth: 1.85,
+    strokeWidth: 2,
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
     'aria-hidden': true as const,
@@ -168,70 +209,75 @@ const ScaffoldTypeIcon = memo(function ScaffoldTypeIcon({
       // Thinking：灯泡
       return (
         <svg {...common}>
-          <path d="M9 18h6" />
-          <path d="M10 22h4" />
-          <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
+          <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5" />
+          <line x1="9" y1="18" x2="15" y2="18" />
+          <line x1="10" y1="21" x2="14" y2="21" />
         </svg>
       )
     case 'terminal':
       return (
         <svg {...common}>
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M7 9l3 3-3 3M12 15h5" />
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" y1="19" x2="20" y2="19" />
         </svg>
       )
     case 'web':
       return (
         <svg {...common}>
-          <circle cx="12" cy="12" r="9" />
-          <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+          <circle cx="12" cy="12" r="10" />
+          <line x1="2" y1="12" x2="22" y2="12" />
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
         </svg>
       )
     case 'search':
       return (
         <svg {...common}>
-          <circle cx="11" cy="11" r="7" />
-          <path d="M20 20l-3.5-3.5" />
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
       )
     case 'read':
       return (
         <svg {...common}>
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <path d="M14 2v6h6M8 13h8M8 17h6" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
         </svg>
       )
     case 'edit':
       return (
         <svg {...common}>
           <path d="M12 20h9" />
-          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
         </svg>
       )
     case 'ask':
       return (
         <svg {...common}>
-          <circle cx="12" cy="12" r="9" />
-          <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4" />
-          <path d="M12 17h.01" />
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
       )
     case 'plan':
       return (
         <svg {...common}>
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <path d="M14 2v6h6" />
-          <path d="M8 13h8M8 17h5" />
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+          <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+          <line x1="9" y1="11" x2="15" y2="11" />
+          <line x1="9" y1="15" x2="15" y2="15" />
         </svg>
       )
     case 'agent':
       // 分支 / 子任务
       return (
         <svg {...common}>
-          <circle cx="6" cy="6" r="2.5" />
-          <circle cx="18" cy="6" r="2.5" />
-          <circle cx="12" cy="18" r="2.5" />
-          <path d="M6 8.5v3a4 4 0 0 0 4 4h2a4 4 0 0 0 4-4v-3M12 15.5V12" />
+          <circle cx="12" cy="18" r="3" />
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="18" cy="6" r="3" />
+          <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" />
+          <path d="M12 12v3" />
         </svg>
       )
     case 'tool':
@@ -284,7 +330,21 @@ const ScaffoldGlyph = memo(function ScaffoldGlyph({
         aria-hidden
         title={`${ICON_TITLE[iconKind]} · 失败`}
       >
-        !
+        <svg
+          width={14}
+          height={14}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
       </span>
     )
   }
@@ -832,7 +892,7 @@ const ThoughtLine = memo(function ThoughtLine({
   )
 })
 
-function toolHeadline(tool: ToolCallData, live = false): string {
+export function toolHeadline(tool: ToolCallData, live = false): string {
   // 子任务：title 已是完整「子任务 · 名 · 状态」
   if (tool.kind === 'subagent') {
     return tool.title?.trim() || '子任务'
@@ -845,24 +905,33 @@ function toolHeadline(tool: ToolCallData, live = false): string {
   const short =
     detail.length > 72 ? `${detail.slice(0, 70)}…` : detail
   const label = short || tool.title?.trim() || 'tool'
-  // scaffold 风格工具行
-  switch (tool.kind) {
-    case 'ask_user':
-      return `Ask · ${label}`
-    case 'plan_mode':
-      return `Plan · ${label}`
-    case 'execute':
-      return `Run ${label}`
+
+  // 特殊子动词保留更精准的动作表达
+  if (tool.kind === 'write') return `Write ${label}`
+  if (tool.kind === 'move') return `Move ${label}`
+  if (tool.kind === 'delete') return `Delete ${label}`
+
+  // 基于 toolIconKind 统一语义分派，图标与文案 100% 保持一致
+  const iconKind = toolIconKind(tool)
+  switch (iconKind) {
     case 'read':
       return `Read ${label}`
     case 'edit':
       return `Edit ${label}`
     case 'search':
       return `Search ${label}`
-    case 'fetch':
+    case 'web':
       return `Fetch ${label}`
-    case 'delete':
-      return `Delete ${label}`
+    case 'terminal':
+      return `Run ${label}`
+    case 'ask':
+      return `Ask · ${label}`
+    case 'plan':
+      return `Plan · ${label}`
+    case 'thought':
+      return `Thought · ${label}`
+    case 'agent':
+      return tool.title?.trim() || `子任务 · ${label}`
     default:
       return `Run ${label}`
   }
@@ -876,6 +945,7 @@ const PlanToolLine = memo(function PlanToolLine({
   tool: ToolCallData
   onFocus?: (toolCallId: string) => void
 }) {
+  const failed = tool.status === 'failed'
   const pending =
     tool.status === 'pending' || tool.status === 'in_progress'
   const detail = tool.detail?.trim() || tool.title || '计划稿'
@@ -886,13 +956,13 @@ const PlanToolLine = memo(function PlanToolLine({
 
   return (
     <div
-      className={`message-row scaffold-row tool-row kind-plan${pending ? ' is-awaiting is-live' : ''}`}
+      className={`message-row scaffold-row tool-row kind-plan${pending ? ' is-awaiting is-live' : ''}${failed ? ' is-error' : ''}`}
       data-tool-call-id={tool.toolCallId}
       data-tool-kind="plan_mode"
       data-conversation-scaffold=""
     >
       <div className="scaffold-line">
-        <ScaffoldGlyph tone="thought" live={pending} iconKind="plan" />
+        <ScaffoldGlyph tone={failed ? 'tool-failed' : 'tool'} live={pending} iconKind="plan" />
         <div className="scaffold-main">
           <button
             type="button"
@@ -922,6 +992,7 @@ const AskUserToolLine = memo(function AskUserToolLine({
   tool: ToolCallData
   onFocus?: (toolCallId: string) => void
 }) {
+  const failed = tool.status === 'failed'
   const pending =
     tool.status === 'pending' || tool.status === 'in_progress'
   const question = tool.detail?.trim() || tool.title || '向你提问'
@@ -934,13 +1005,13 @@ const AskUserToolLine = memo(function AskUserToolLine({
 
   return (
     <div
-      className={`message-row scaffold-row tool-row ask-user-row kind-ask-user${pending ? ' is-awaiting is-live' : ''}${!pending && answer ? ' is-answered' : ''}`}
+      className={`message-row scaffold-row tool-row ask-user-row kind-ask-user${pending ? ' is-awaiting is-live' : ''}${failed ? ' is-error' : ''}${!pending && answer ? ' is-answered' : ''}`}
       data-tool-call-id={tool.toolCallId}
       data-tool-kind="ask_user"
       data-conversation-scaffold=""
     >
       <div className="scaffold-line">
-        <ScaffoldGlyph tone="thought" live={pending} iconKind="ask" />
+        <ScaffoldGlyph tone={failed ? 'tool-failed' : 'tool'} live={pending} iconKind="ask" />
         <div className="scaffold-main">
           <button
             type="button"

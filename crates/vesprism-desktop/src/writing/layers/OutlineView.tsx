@@ -52,6 +52,13 @@ export function OutlineView({
         <Field label="第2幕（对抗）" value={card.act2} onChange={(v) => set({ act2: v })} />
         <Field label="第3幕（收束）" value={card.act3} onChange={(v) => set({ act3: v })} />
       </Zone>
+      <Zone title="完本 / 收尾">
+        <Field
+          label="完本计划（结局盘点 · 大结局钩子 · 伏笔回收清单）"
+          value={card.endingPlan ?? ''}
+          onChange={(v) => set({ endingPlan: v })}
+        />
+      </Zone>
       <Zone title="长线伏笔">
         <table className="wd-table">
           <caption>伏线（正文只吃到期的那些）</caption>

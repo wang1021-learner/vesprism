@@ -64,6 +64,20 @@ export function DossierRail({
               </span>
               <span className="wd-ticket-sub">{p.state}</span>
             </button>
+            {p.history.length > 1 ? (
+              <details className="wd-ledger-closed">
+                <summary>状态时间线 · {p.history.length} 次</summary>
+                <ul className="wd-ticket-list">
+                  {[...p.history].reverse().map((h, i) => (
+                    <li key={i}>
+                      <span className="wd-ticket-line">
+                        第{h.at}章：{h.state}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </li>
         ))}
       </ul>

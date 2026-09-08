@@ -249,4 +249,45 @@ describe('写台真实回写', () => {
     )
     expect(next.chapters.find((c) => c.id === 'ch-5')?.locked).toBe(true)
   })
+
+  it('入卷按章追加状态时间线，同章去重只留最新', () => {
+    const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', {
+      states: ['沈见真：看见死局。'],
+      summary80: '库房旧门有人逼开第三眼。',
+    })
+    const accepted = {
+      ...withReview,
+      drafts: withReview.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
+    }
+    const first = adoptIntoDossier(accepted, 'ch-4')
+    expect(first.people.find((p) => p.id === 'shen')?.stateHistory).toContainEqual({
+      at: 4,
+      state: '看见死局。',
+    })
+
+    const again = applyReviewFromJson(first, 'ch-4', {
+      states: ['沈见真：配额用尽。'],
+      summary80: '库房旧门有人逼开第三眼。',
+    })
+    const second = adoptIntoDossier(again, 'ch-4')
+    const history = second.people.find((p) => p.id === 'shen')?.stateHistory ?? []
+    expect(history.filter((h) => h.at === 4)).toHaveLength(1)
+    expect(history.at(-1)).toEqual({ at: 4, state: '配额用尽。' })
+  })
+
+  it('入卷写回主角力量与出场章号', () => {
+    const withReview = applyReviewFromJson(YANPIN_EYE, 'ch-4', {
+      powerNow: '鉴真瞳开第三次，境界：夜场不敢再当众拿捏。',
+      summary80: '库房旧门有人逼开第三眼。',
+    })
+    const accepted = {
+      ...withReview,
+      drafts: withReview.drafts.map((d) => (d.chapterId === 'ch-4' ? { ...d, accepted: true } : d)),
+    }
+    const next = adoptIntoDossier(accepted, 'ch-4')
+    expect(next.canon.powerNow).toContain('境界')
+    expect(next.canon.powerAsOfChapter).toBe(4)
+    expect(next.people.find((p) => p.id === 'shen')?.lastAppearChapter).toBe(4)
+    expect(next.people.find((p) => p.id === 'zhou')?.lastAppearChapter).toBeUndefined()
+  })
 })
