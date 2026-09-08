@@ -176,9 +176,14 @@ async fn run() -> anyhow::Result<()> {
                     attempt,
                     max_retries,
                     reason,
+                    error_type,
                 }) => {
-                    println!("\n--- 正在重试 ({}/{}): {}", attempt, max_retries, reason);
+                    println!(
+                        "\n--- 正在重试 ({}/{}): {} {:?}\n",
+                        attempt, max_retries, reason, error_type
+                    );
                 }
+                Some(SessionEvent::ConfigOptions { .. }) => {}
                 Some(SessionEvent::Other(_)) => {}
                 Some(SessionEvent::PermissionRequest {
                     description,

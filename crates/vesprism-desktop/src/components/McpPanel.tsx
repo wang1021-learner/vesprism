@@ -147,7 +147,7 @@ export function McpPanel() {
   }
 
   const onToggle = async (row: McpRow) => {
-    if (!tabId || busyName) return
+    if (!tabId || busyName || row.policyDenied) return
     setBusyName(row.name)
     try {
       await toggleMcpServer(tabId, row.name, !row.enabled)
@@ -632,6 +632,9 @@ export function McpPanel() {
                               {row.setupRequired ? (
                                 <span className="mcp-pill warn">需配置</span>
                               ) : null}
+                              {row.policyDenied ? (
+                                <span className="mcp-pill warn">企业策略</span>
+                              ) : null}
                               {row.tools.length > 0 ? (
                                 <span className="mcp-pill">
                                   {row.tools.filter((t) => t.enabled).length}/{row.tools.length} 工具
@@ -674,9 +677,10 @@ export function McpPanel() {
                             <button
                               type="button"
                               className={`mcp-toggle${row.enabled ? ' is-on' : ''}`}
-                              disabled={busyName === row.name || !ready}
+                              disabled={busyName === row.name || !ready || row.policyDenied}
                               onClick={() => void onToggle(row)}
                               aria-pressed={row.enabled}
+                              title={row.policyDenied ? row.statusDetail || '企业策略禁止' : undefined}
                             >
                               {busyName === row.name ? '…' : row.enabled ? '已启用' : '已停用'}
                             </button>

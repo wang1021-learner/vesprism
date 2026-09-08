@@ -21,6 +21,8 @@ export type MarketplaceSource = {
   kind: string
   url: string
   error: string
+  /** 企业策略拦截（strictKnownMarketplaces / requirements.toml） */
+  policyDenied: boolean
   plugins: MarketplacePlugin[]
 }
 
@@ -76,11 +78,18 @@ export function parseMarketplaceList(raw: unknown): MarketplaceSource[] {
         remoteUrl: str(o.remoteUrl ?? o.remote_url),
       })
     }
+    const error = str(s.error)
+    const policyDenied = Boolean(
+      s.policyDenied ??
+        s.policy_denied ??
+        /strictKnownMarketplaces|requirements\.toml|managed.?policy/i.test(error),
+    )
     out.push({
       name,
       kind: str(s.sourceKind ?? s.source_kind),
       url,
-      error: str(s.error),
+      error,
+      policyDenied,
       plugins,
     })
   }

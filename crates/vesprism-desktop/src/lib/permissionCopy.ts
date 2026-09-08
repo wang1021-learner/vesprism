@@ -5,10 +5,16 @@
 import type { PermissionRequest } from '../types'
 
 export function permissionLead(
-  p: Pick<PermissionRequest, 'kindLabel' | 'summary'>,
+  p: Pick<PermissionRequest, 'kindLabel' | 'summary' | 'title'>,
 ): { title: string; note: string } {
+  const hookTitle = (p.title || '').trim()
   const kind = (p.kindLabel || '').trim()
-  const title = kind && kind !== '需要审批' ? kind : '需要审批'
+  const title =
+    hookTitle.includes(' — ')
+      ? hookTitle
+      : kind && kind !== '需要审批'
+        ? kind
+        : hookTitle || '需要审批'
   const summary = (p.summary || '').trim()
   const note = summary && summary !== title ? summary : ''
   return { title, note }

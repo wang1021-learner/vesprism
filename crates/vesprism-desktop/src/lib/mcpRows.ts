@@ -35,6 +35,8 @@ export type McpRow = {
   /** 本地 config 条目可删可改；托管不可 */
   canDelete: boolean
   canEdit: boolean
+  /** 企业托管策略禁止（官方 managed_policy / requirements.toml） */
+  policyDenied: boolean
 }
 
 export const MCP_GROUP_ORDER: McpGroupId[] = ['managed', 'plugin', 'local']
@@ -205,6 +207,22 @@ export function normalizeMcpServer(s: McpServerDto): McpRow {
   }))
   const group = mcpGroupOf(source, sourceLabel, transport)
   const canDelete = group === 'local'
+  const extra = s as {
+    policyDenied?: boolean
+    policy_denied?: boolean
+    policyReason?: string | null
+    policy_reason?: string | null
+    blockReason?: string | null
+    disabledReason?: string | null
+    disabled_reason?: string | null
+  }
+  const disabledReason = str(extra.disabledReason || extra.disabled_reason)
+  const policyReason = str(
+    extra.policyReason || extra.policy_reason || extra.blockReason || disabledReason,
+  )
+  const policyDenied = Boolean(
+    extra.policyDenied ?? extra.policy_denied ?? (disabledReason ? true : false),
+  )
   return {
     name: s.name,
     displayName,
@@ -213,9 +231,12 @@ export function normalizeMcpServer(s: McpServerDto): McpRow {
     group,
     transport,
     detail,
-    enabled: session?.enabled !== false,
+    enabled: policyDenied ? false : session?.enabled !== false,
     status: (session?.status || (session ? 'ready' : '—')).toString(),
-    statusDetail: '',
+    statusDetail: policyDenied
+      ? policyReason || '企业策略禁止'
+      : '',
+    policyDenied,
     tools,
     authRequired: Boolean(session?.authRequired ?? session?.auth_required),
     setupRequired: Boolean(session?.setupRequired ?? session?.setup_required),

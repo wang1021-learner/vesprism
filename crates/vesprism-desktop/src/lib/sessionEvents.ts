@@ -63,6 +63,7 @@ import { keepTail } from './terminalCards'
 import { notifyChatsChanged, upsertLiveChat } from './recordSessionInSidebar'
 import { cleanSessionTitle } from './sessionTitle'
 import { applyScheduledTask } from './scheduleLoop'
+import { parseSessionConfigOptions } from './sessionConfig'
 import {
   mergeQueueEntries,
   paintRunningUserBubbles,
@@ -591,10 +592,25 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     // 非终态：仅 toast 提示重试进度（不置 error banner，避免干扰流式输出）
     case 'retry_in_progress': {
       if (ev.attempt === 1) {
+        const kind = (ev.error_type || '').trim()
+        const kindHint =
+          kind === 'auth'
+            ? '鉴权'
+            : kind === 'context_length'
+              ? '上下文过长'
+              : kind === 'rate_limit' || kind === 'rate'
+                ? '限流'
+                : ''
+        const why = ev.reason ? `：${ev.reason}` : ''
         pushToast(
-          `自动重试中（${ev.attempt}/${ev.max_retries ?? '?'}）${ev.reason ? '：' + ev.reason : ''}`
+          `自动重试中（${ev.attempt}/${ev.max_retries ?? '?'}${kindHint ? ' · ' + kindHint : ''}）${why}`,
         )
       }
+      break
+    }
+    case 'config_options': {
+      const options = parseSessionConfigOptions(ev.config_options ?? ev.options)
+      patchTab(tabId, { configOptions: options })
       break
     }
     // 官方 git HEAD 变化（分支切换 / 提交）：右栏「工作区改动」自动刷新

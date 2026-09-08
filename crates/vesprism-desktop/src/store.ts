@@ -35,6 +35,7 @@ import {
   type ProductId,
 } from './products/catalog'
 import { spawnReasoningEffort } from './lib/reasoning'
+import type { SessionConfigOption } from './lib/sessionConfig'
 
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
@@ -145,6 +146,8 @@ export interface TabState {
   sessionAlert: SessionAlert | null
   /** 当前后端能力（缺省当 Grok 全开） */
   sessionCaps: SessionCaps
+  /** 官方 session configOptions（模型允许集 / 推理档） */
+  configOptions: SessionConfigOption[]
 }
 
 export type MemoryFileInfo = {
@@ -260,6 +263,7 @@ export function emptyTabState(): TabState {
     scheduledTasks: [],
     sessionAlert: null,
     sessionCaps: GROK_SESSION_CAPS,
+    configOptions: [],
   }
 }
 
@@ -683,6 +687,7 @@ function projectPatch(patch: Partial<TabState>): void {
   if ('scheduledTasks' in patch) $scheduledTasks.set(patch.scheduledTasks ?? [])
   if ('sessionAlert' in patch) $sessionAlert.set(patch.sessionAlert ?? null)
   if ('sessionCaps' in patch) $sessionCaps.set(patch.sessionCaps ?? GROK_SESSION_CAPS)
+  if ('configOptions' in patch) $sessionConfigOptions.set(patch.configOptions ?? [])
   if ('executionPolicyOverride' in patch) {
     $sessionPolicyOverride.set(patch.executionPolicyOverride ?? null)
   }
@@ -730,6 +735,7 @@ function projectTab(id: string): void {
     scheduledTasks: s.scheduledTasks,
     sessionAlert: s.sessionAlert,
     sessionCaps: s.sessionCaps,
+    configOptions: s.configOptions,
     executionPolicyOverride: s.executionPolicyOverride,
   })
 }
@@ -773,6 +779,7 @@ function resetProjection(): void {
     scheduledTasks: [],
     sessionAlert: null,
     sessionCaps: GROK_SESSION_CAPS,
+    configOptions: [],
     executionPolicyOverride: null,
   })
 }
@@ -876,6 +883,7 @@ export function resetTabToNewChat(id: string, cwd?: string): void {
     scheduledTasks: [],
     sessionAlert: null,
     sessionCaps: GROK_SESSION_CAPS,
+    configOptions: [],
     ...(workCwd ? { cwd: workCwd } : {}),
   })
 }
@@ -1032,6 +1040,8 @@ export const $settingsDefaultModelId = atom('')
  */
 export const $defaultModelId = atom('')
 export const $reasoningEffort = atom('medium')
+/** 当前 tab 的官方 configOptions（模型允许集 / 按档 model id） */
+export const $sessionConfigOptions = atom<SessionConfigOption[]>([])
 
 // ── 工作区（$workspaceCwd 是当前 tab 投影；历史列表全局） ──
 export const $workspaceCwd = atom('')

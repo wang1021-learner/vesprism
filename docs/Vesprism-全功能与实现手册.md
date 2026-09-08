@@ -1,8 +1,8 @@
 # Vesprism 全功能与实现手册
 
 > **写给接手的 AI / 工程师。** 读完应能改功能、追 bug、判断该动哪一层，而不是再扫一遍仓库。  
-> **对照日期：** 2026-08-31  
-> **官方壳：** Grok Build **1.0.12**（`SOURCE_REV` `d5a0335a`，同步说明见 `docs/官方同步-1.0.12合并说明.md`）  
+> **对照日期：** 2026-09-08  
+> **官方壳：** Grok Build **1.0.16**（`SOURCE_REV` `a549186d`，同步说明见 `docs/官方同步-1.0.16合并说明.md`）  
 > **代码根：** 本仓库 `grok-build/`（fork 自 `xai-org/grok-build`，本地产品在 `crates/vesprism-desktop`）  
 > **产品名：** Vesprism（`package.json` `productName`、`tauri.conf.json` `identifier: com.vesprism.desktop`）  
 > **用户数据：** `~/.vesprism`（环境变量 `GROK_HOME`；与 CLI `grok` 的 `~/.grok` 隔离）
@@ -185,6 +185,7 @@ npm run typecheck && npm test
 | 排队 | 生成中且非 interject：写入 `queuedPrompts`，仍 `sendPrompt`；官方 `queue_changed` 对齐 |
 | 插话 | `x.ai/interject`（`commands.rs` `interject_prompt`） |
 | 停止 | `src/lib/cancelActiveTurn.ts`：先 deny 挂起审批，再 `cancel_turn`，乐观 idle |
+| 切模型 / 推理档 | 官方 `session/set_config_option`（`configOptions` 允许集）；失败再 `set_model_with_label`。UI：`sessionConfig.ts` |
 | 事件→气泡 | `sessionEvents.ts` → `sessionTranscript.ts` `applyTranscriptEvent` |
 | 渲染 | `MessageList.tsx` + `MessageItem.tsx` + Streamdown |
 

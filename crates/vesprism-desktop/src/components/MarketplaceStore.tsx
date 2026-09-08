@@ -77,6 +77,14 @@ export function MarketplaceStore({
   }, [sources, query])
 
   const selected = plugins.find((p) => pluginKey(p) === sel) || plugins[0]
+  const selectedSource = selected
+    ? sources.find(
+        (s) =>
+          s.url === selected.sourceUrl ||
+          s.name === selected.sourceName,
+      )
+    : undefined
+  const selectedBlocked = Boolean(selectedSource?.policyDenied)
 
   const act = async (action: Record<string, unknown>, ok: string) => {
     if (!tabId || busy) return
@@ -130,11 +138,15 @@ export function MarketplaceStore({
           {error}
         </Notice>
       ) : null}
-      {sources.some((s) => s.error) ? (
+      {sources.some((s) => s.error || s.policyDenied) ? (
         <Notice tone="warning">
           {sources
-            .filter((s) => s.error)
-            .map((s) => `${s.name}：${s.error}`)
+            .filter((s) => s.error || s.policyDenied)
+            .map((s) =>
+              s.policyDenied
+                ? `${s.name}：企业策略禁止${s.error ? `（${s.error}）` : ''}`
+                : `${s.name}：${s.error}`,
+            )
             .join('；')}
         </Notice>
       ) : null}
@@ -198,11 +210,21 @@ export function MarketplaceStore({
                 路径：{selected.relativePath || selected.name}
               </p>
               <div className="work-panel-actions">
+                {selectedBlocked ? (
+                  <p className="work-row-sub" style={{ marginBottom: 12 }}>
+                    企业策略禁止从此源安装。
+                  </p>
+                ) : null}
                 {selected.installStatus === 'not_installed' ? (
                   <button
                     type="button"
                     className="skills-btn"
-                    disabled={Boolean(busy) || !selected.sourceUrl || !selected.relativePath}
+                    disabled={
+                      Boolean(busy) ||
+                      selectedBlocked ||
+                      !selected.sourceUrl ||
+                      !selected.relativePath
+                    }
                     onClick={() => {
                       const key = pluginKey(selected)
                       if (confirmKey !== key) {
@@ -228,7 +250,7 @@ export function MarketplaceStore({
                   <button
                     type="button"
                     className="skills-btn"
-                    disabled={Boolean(busy)}
+                    disabled={Boolean(busy) || selectedBlocked}
                     onClick={() =>
                       void act(
                         {

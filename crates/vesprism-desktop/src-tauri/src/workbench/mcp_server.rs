@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, ErrorData as McpError, JsonObject,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData as McpError,
+    JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
 use serde_json::{Value as Json, json};
 use xai_grok_mcp::rmcp;
@@ -442,8 +442,7 @@ impl ServerHandler for VesprismMcpServer {
         async move {
             Ok(ListToolsResult {
                 tools: (*tools).clone(),
-                next_cursor: None,
-                meta: None,
+                ..Default::default()
             })
         }
     }
@@ -452,12 +451,12 @@ impl ServerHandler for VesprismMcpServer {
         &self,
         request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let args: HashMap<String, Json> =
             request.arguments.unwrap_or_default().into_iter().collect();
         match request.name.as_ref() {
-            "database_query" => self.handle_database_query(&args),
-            "knowledge_search" => self.handle_knowledge_search(&args),
+            "database_query" => self.handle_database_query(&args).map(Into::into),
+            "knowledge_search" => self.handle_knowledge_search(&args).map(Into::into),
             other => Err(McpError::invalid_params(
                 format!("unknown tool: {other}"),
                 None,

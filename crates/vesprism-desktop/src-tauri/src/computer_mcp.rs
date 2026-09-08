@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use rmcp::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, ErrorData as McpError, JsonObject,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData as McpError,
+    JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
 use serde_json::{Value as Json, json};
 use xai_grok_mcp::rmcp;
@@ -125,8 +125,7 @@ impl ServerHandler for ComputerMcp {
                     tool_key(),
                     tool_size(),
                 ],
-                next_cursor: None,
-                meta: None,
+                ..Default::default()
             })
         }
     }
@@ -135,7 +134,7 @@ impl ServerHandler for ComputerMcp {
         &self,
         request: CallToolRequestParams,
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let args: HashMap<String, Json> =
             request.arguments.unwrap_or_default().into_iter().collect();
         let text = match request.name.as_ref() {
@@ -187,7 +186,7 @@ impl ServerHandler for ComputerMcp {
                 ));
             }
         };
-        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into())
     }
 }
 

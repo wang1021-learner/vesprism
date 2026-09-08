@@ -7,10 +7,8 @@ pub(crate) mod subprocess;
 pub(crate) mod text_sanitize;
 pub(crate) mod user_identity;
 
-// The foundation utilities live in `xai-grok-shell-base` (upstream of this
-// crate so they build in parallel). Re-exported at the original paths so
-// existing `crate::util::…` / `xai_grok_shell::util::…` users compile
-// unchanged.
+// The foundation utilities live in `xai-grok-shell-base` (upstream of this crate so they build in parallel)
+// Re-exported at the original paths so existing `crate::util::…` and `xai_grok_shell::util::…` users compile unchanged
 pub use xai_grok_shell_base::util::*;
 
 pub(crate) fn is_user_instruction_path(
@@ -128,7 +126,6 @@ mod expand_home_tests {
 
     #[test]
     fn does_not_handle_user_tilde() {
-        // `~bob/path` is treated as a literal relative path.
         assert_eq!(
             expand_home("~bob/path"),
             std::path::PathBuf::from("~bob/path")

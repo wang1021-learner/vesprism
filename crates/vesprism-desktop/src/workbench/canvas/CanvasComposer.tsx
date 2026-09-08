@@ -4,7 +4,7 @@
  * @ 仍用当前会话目录。
  * 发给引擎时仍包编排说明书。
  */
-import { memo, useCallback, useEffect, useState, type PointerEvent, type WheelEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, type PointerEvent, type WheelEvent } from 'react'
 import { useStore } from '@nanostores/react'
 import { Composer } from '../../components/Composer'
 import { McpElicitPanel } from '../../components/McpElicit'
@@ -19,6 +19,7 @@ import {
   $models,
   $queuedPrompts,
   $reasoningEffort,
+  $sessionConfigOptions,
   $sessionCaps,
   $sessionPhase,
   $shellReady,
@@ -41,6 +42,7 @@ import {
 import { useQueuedPromptActions } from '../../lib/useQueuedPromptActions'
 import { cancelActiveTurn } from '../../lib/cancelActiveTurn'
 import { reasoningEffortLabel, spawnReasoningEffort } from '../../lib/reasoning'
+import { filterModelsByPolicy } from '../../lib/sessionConfig'
 import { sendSessionPrompt } from '../../lib/sendSessionPrompt'
 import { generateId } from '../../lib/generateId'
 import { useActivePermission } from '../../lib/useActivePermission'
@@ -77,6 +79,11 @@ export const CanvasComposer = memo(function CanvasComposer({
   const ready = useStore($shellReady)
   const phase = useStore($sessionPhase)
   const models = useStore($models)
+  const configOptions = useStore($sessionConfigOptions)
+  const visibleModels = useMemo(
+    () => filterModelsByPolicy(models, configOptions),
+    [models, configOptions],
+  )
   const modelId = useStore($defaultModelId)
   const effort = useStore($reasoningEffort)
   const tabId = useStore($activeTabId)
@@ -226,7 +233,7 @@ export const CanvasComposer = memo(function CanvasComposer({
         engineGenerating={generating}
         shellReady={ready}
         sessionPhase={phase}
-        models={models}
+        models={visibleModels}
         selectedModelId={modelId}
         reasoningEffort={effort}
         workspaceCwd={cwd}

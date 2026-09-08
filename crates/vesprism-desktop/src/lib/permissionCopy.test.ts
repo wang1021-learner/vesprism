@@ -20,6 +20,19 @@ describe('permissionLead', () => {
       permissionLead({ kindLabel: '读取文件', summary: '读取文件' }),
     ).toEqual({ title: '读取文件', note: '' })
   })
+
+  it('Hook 问用户时标题带官方 hook 后缀，不当成普通类型', () => {
+    expect(
+      permissionLead({
+        kindLabel: '编辑文件',
+        title: 'search_replace — Hook: confirm overwrite of secrets.env',
+        summary: 'secrets.env',
+      }),
+    ).toEqual({
+      title: 'search_replace — Hook: confirm overwrite of secrets.env',
+      note: 'secrets.env',
+    })
+  })
 })
 
 describe('permissionDetailLabel', () => {

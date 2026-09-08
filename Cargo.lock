@@ -1299,6 +1299,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "base64-simd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2678,6 +2684,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
+dependencies = [
+ "darling_core 0.24.1",
+ "darling_macro 0.24.1",
+]
+
+[[package]]
 name = "darling_core"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2705,6 +2721,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "darling_core"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6837e2cf7485aaae18f86181d2f0e9a7ed297a025e220aeabf63fdebd3a2ddff"
+dependencies = [
+ "ident_case",
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn 3.0.4",
+]
+
+[[package]]
 name = "darling_macro"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2724,6 +2753,17 @@ dependencies = [
  "darling_core 0.23.0",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "darling_macro"
+version = "0.24.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
+dependencies = [
+ "darling_core 0.24.1",
+ "quote",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -9777,15 +9817,17 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "2.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f00a32c3b81b7b254076a65abd5ab2551209146713ba38f73818657e865e9433"
+checksum = "42b6914fac0be956fe704a38239c3f44a9f841d1b06a5713d2f638065593f5b5"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
+ "bytes",
  "chrono",
  "futures",
  "http 1.4.0",
+ "indexmap 2.14.0",
  "oauth2",
  "pastey",
  "pin-project-lite",
@@ -9801,19 +9843,20 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
 name = "rmcp-macros"
-version = "2.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ee70afb7956da9f30d5348a2539b5eb90d9038f834463657ab717076ac3b1ad"
+checksum = "cdf1c49bd4d52014b94db0877410db273c2008f01628b0252a2e9460ad9b7fda"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.24.1",
  "proc-macro2",
  "quote",
  "serde_json",
- "syn 2.0.117",
+ "syn 3.0.4",
 ]
 
 [[package]]
@@ -11165,9 +11208,9 @@ dependencies = [
 
 [[package]]
 name = "sse-stream"
-version = "0.2.1"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb4dc4d33c68ec1f27d386b5610a351922656e1fdf5c05bbaad930cd1519479a"
+checksum = "c123f296ade4ec4b8b0f6162116e6629f5146922ca5ab40ca9d3c2e73ab4761e"
 dependencies = [
  "bytes",
  "futures-util",
@@ -11728,9 +11771,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-dialog"
-version = "2.7.2"
+version = "2.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2d3c1dbe38037e7f590cdf2492594d5ceebe031e7bc7e827509b22a999d2940"
+checksum = "61854a36651aa48381e5e209f69a01273b77f3f9f91f0c430b1b98d33bd47229"
 dependencies = [
  "log",
  "raw-window-handle",
@@ -11746,9 +11789,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-fs"
-version = "2.5.1"
+version = "2.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7ecc274121aca0c036a2b42d1cbe83d368d348f54e0bb8a735c2b1548e8f371"
+checksum = "de22eef34fd78c0da050e748710edd50bf127e651d02ea1b2bfada1523cc5c51"
 dependencies = [
  "anyhow",
  "dunce",
@@ -11770,9 +11813,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-log"
-version = "2.9.0"
+version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6792296e6f389268016c77db21ebae1fc0568f2fccf88b1ec7e2ea71330afb4c"
+checksum = "b4e8861142c21636b03ff6eb9682a073814112e35220435670738a8be7b49896"
 dependencies = [
  "android_logger",
  "fern",
@@ -15459,6 +15502,7 @@ dependencies = [
  "reqwest-middleware 0.4.2",
  "rustls",
  "serde_json",
+ "tokio",
  "tracing",
  "xai-grok-auth",
  "xai-grok-extra-ca",
@@ -15554,6 +15598,7 @@ dependencies = [
  "filetime",
  "flate2",
  "git2",
+ "libc",
  "nix 0.30.1",
  "notify",
  "reqwest 0.12.24",
@@ -15603,7 +15648,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "1.0.12"
+version = "1.0.16"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -15699,7 +15744,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "1.0.12"
+version = "1.0.16"
 dependencies = [
  "anyhow",
  "clap",
@@ -15889,9 +15934,11 @@ dependencies = [
  "reqwest 0.12.24",
  "serde",
  "serde_json",
+ "strum 0.27.2",
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "xai-grok-auth",
  "xai-grok-extra-ca",
@@ -16019,7 +16066,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "1.0.12"
+version = "1.0.16"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -16049,6 +16096,7 @@ dependencies = [
  "git2",
  "glob",
  "globset",
+ "hmac",
  "ignore",
  "image",
  "indexmap 2.14.0",
@@ -16277,7 +16325,6 @@ dependencies = [
  "chrono",
  "ctor 0.4.3",
  "filetime",
- "futures-executor",
  "git2",
  "http 1.4.0",
  "mid",
@@ -16437,6 +16484,7 @@ dependencies = [
  "xai-tool-types",
  "xai-tty-utils",
  "zip",
+ "zstd",
 ]
 
 [[package]]
@@ -16485,7 +16533,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-version"
-version = "1.0.12"
+version = "1.0.16"
 dependencies = [
  "semver",
 ]
@@ -16748,7 +16796,6 @@ name = "xai-ratatui-textarea"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "chrono",
  "crossterm",
  "fuzzy-matcher",
  "ignore",

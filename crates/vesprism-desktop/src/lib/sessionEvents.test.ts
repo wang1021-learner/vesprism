@@ -191,6 +191,35 @@ describe('turn_ended status', () => {
       message: 'login',
     })
   })
+
+  it('retry_in_progress 不是终态，不盖掉横幅', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'retry_in_progress',
+      attempt: 1,
+      max_retries: 3,
+      reason: '401',
+      error_type: 'auth',
+    })
+    expect(getTabState('tab-1')?.sessionAlert).toBeNull()
+    expect(getTabState('tab-1')?.status).toBe('generating')
+  })
+
+  it('config_options 写入 tab，供模型/档位选择器过滤', () => {
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'config_options',
+      config_options: [
+        {
+          id: 'model',
+          name: 'Model',
+          currentValue: 'grok-4',
+          values: [{ value: 'grok-4', name: 'Grok 4' }],
+        },
+      ],
+    })
+    expect(getTabState('tab-1')?.configOptions?.[0]?.id).toBe('model')
+  })
 })
 
 describe('queue_changed', () => {

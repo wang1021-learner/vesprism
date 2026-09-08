@@ -25,13 +25,13 @@ pub use backend::{SessionBackend, SessionCaps, StartOpts};
 use agent_client_protocol::{
     Agent, CancelNotification, Client, ClientCapabilities, ClientSideConnection, ContentBlock,
     CreateTerminalRequest, CreateTerminalResponse, ExtNotification, ExtRequest, ExtResponse,
-    InitializeRequest, KillTerminalRequest, KillTerminalResponse, LoadSessionRequest, ModelId,
-    NewSessionRequest, PromptRequest, ProtocolVersion, ReleaseTerminalRequest,
-    ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionModeId,
-    SessionNotification, SessionUpdate, SetSessionModeRequest, SetSessionModelRequest,
-    TerminalOutputRequest, TerminalOutputResponse, WaitForTerminalExitRequest,
-    WaitForTerminalExitResponse,
+    InitializeRequest, KillTerminalRequest, KillTerminalResponse, LoadSessionRequest, McpServer,
+    McpServerHttp, McpServerStdio, ModelId, NewSessionRequest, PromptRequest, ProtocolVersion,
+    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
+    SessionModeId, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    SetSessionModeRequest, SetSessionModelRequest, TerminalOutputRequest, TerminalOutputResponse,
+    WaitForTerminalExitRequest, WaitForTerminalExitResponse,
 };
 use futures::FutureExt;
 use std::sync::Arc;
@@ -317,6 +317,12 @@ pub enum SessionEvent {
         attempt: u32,
         max_retries: u32,
         reason: String,
+        /// 官方 RetryState::Retrying.error_type（auth / context_length / …）
+        error_type: Option<String>,
+    },
+    /// 官方 `session/new` / `set_config_option` / ConfigOptionUpdate 的允许集。
+    ConfigOptions {
+        options: serde_json::Value,
     },
     /// 其它未专门映射的通知（调试用）。
     Other(String),
@@ -571,13 +577,15 @@ impl std::fmt::Debug for SessionEvent {
                 attempt,
                 max_retries,
                 reason,
+                error_type,
             } => {
                 write!(
                     f,
-                    "RetryInProgress {{ attempt: {}, max_retries: {}, reason: {:?} }}",
-                    attempt, max_retries, reason
+                    "RetryInProgress {{ attempt: {}, max_retries: {}, reason: {:?}, error_type: {:?} }}",
+                    attempt, max_retries, reason, error_type
                 )
             }
+            Self::ConfigOptions { .. } => write!(f, "ConfigOptions"),
             Self::Other(o) => write!(f, "Other({:?})", o),
             Self::McpPush { method, .. } => write!(f, "McpPush {{ method: {method:?} }}"),
             Self::ToolCall(t) => write!(
@@ -1171,9 +1179,21 @@ impl Client for GuiClient {
                         RetryState::Exhausted { reason, is_rate_limited: true, .. } => {
                             SessionEvent::RateLimitExceeded { message: reason }
                         }
-                        RetryState::Retrying { attempt, max_retries, reason } => {
-                            SessionEvent::RetryInProgress { attempt, max_retries, reason }
-                        }
+                        RetryState::Retrying {
+                            attempt,
+                            max_retries,
+                            reason,
+                            error_type,
+                        } => SessionEvent::RetryInProgress {
+                            attempt,
+                            max_retries,
+                            reason,
+                            error_type,
+                        },
+                        RetryState::Failed { message, .. } => SessionEvent::Error {
+                            message,
+                            prompt_id: None,
+                        },
                         other_retry_state => {
                             SessionEvent::Other(format!("{:?}", other_retry_state))
                         }
@@ -2411,8 +2431,61 @@ pub fn session_update_to_event(
         SessionUpdate::CurrentModeUpdate(update) => SessionEvent::CurrentModeUpdate {
             mode_id: update.current_mode_id.to_string(),
         },
+        SessionUpdate::ConfigOptionUpdate(update) => SessionEvent::ConfigOptions {
+            options: serde_json::to_value(&update.config_options).unwrap_or(serde_json::json!([])),
+        },
         other => SessionEvent::Other(format!("{other:?}")),
     }
+}
+
+async fn emit_config_options(
+    event_tx: &mpsc::Sender<SessionEvent>,
+    options: Option<&Vec<agent_client_protocol::SessionConfigOption>>,
+) {
+    let Some(options) = options else { return };
+    if options.is_empty() {
+        return;
+    }
+    let value = serde_json::to_value(options).unwrap_or(serde_json::json!([]));
+    let _ = event_tx
+        .send(SessionEvent::ConfigOptions { options: value })
+        .await;
+}
+
+fn mcp_refs_to_acp(refs: Vec<crate::composition::McpServerRef>) -> Vec<McpServer> {
+    let mut out = Vec::new();
+    for server in refs {
+        let name = server.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(url) = server
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            out.push(McpServer::Http(McpServerHttp::new(name, url)));
+            continue;
+        }
+        if let Some(cmd) = server
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let (bin, argv) = crate::composition::split_stdio_command(cmd, server.args.as_deref());
+            if bin.is_empty() {
+                continue;
+            }
+            let mut stdio = McpServerStdio::new(name, bin);
+            if !argv.is_empty() {
+                stdio.args = argv;
+            }
+            out.push(McpServer::Stdio(stdio));
+        }
+    }
+    out
 }
 
 /// `session/new` `_meta`：流程挂载 + 官方 1.0.5 的 `modelId` / `reasoningEffort`。
@@ -2549,7 +2622,7 @@ impl GrokSession {
     ///
     /// 必须在 `LocalSet` 中调用。
     pub async fn start(cwd: impl Into<String>) -> anyhow::Result<Self> {
-        Self::start_inner(cwd.into(), None, None, None).await
+        Self::start_inner(cwd.into(), None, None, None, Vec::new()).await
     }
 
     /// 同 [`Self::start`]，并把 `flows` 写入 `session/new` 的 `_meta["x.ai/flows"]`。
@@ -2557,7 +2630,7 @@ impl GrokSession {
         cwd: impl Into<String>,
         flows: impl Into<Vec<String>>,
     ) -> anyhow::Result<Self> {
-        Self::start_inner(cwd.into(), Some(flows.into()), None, None).await
+        Self::start_inner(cwd.into(), Some(flows.into()), None, None, Vec::new()).await
     }
 
     /// 同 [`Self::start_with_flows`]，并在 `session/new` `_meta` 写入官方
@@ -2568,7 +2641,25 @@ impl GrokSession {
         model_id: Option<&str>,
         reasoning_effort: Option<&str>,
     ) -> anyhow::Result<Self> {
-        Self::start_inner(cwd.into(), Some(flows.into()), model_id, reasoning_effort).await
+        Self::start_spawned_with_mcp(cwd, flows, model_id, reasoning_effort, Vec::new()).await
+    }
+
+    /// 同 [`Self::start_spawned`]，并在 `session/new` 带上绑定期 MCP servers。
+    pub async fn start_spawned_with_mcp(
+        cwd: impl Into<String>,
+        flows: impl Into<Vec<String>>,
+        model_id: Option<&str>,
+        reasoning_effort: Option<&str>,
+        mcp_servers: Vec<crate::composition::McpServerRef>,
+    ) -> anyhow::Result<Self> {
+        Self::start_inner(
+            cwd.into(),
+            Some(flows.into()),
+            model_id,
+            reasoning_effort,
+            mcp_servers,
+        )
+        .await
     }
 
     async fn start_inner(
@@ -2576,6 +2667,7 @@ impl GrokSession {
         flows: Option<Vec<String>>,
         model_id: Option<&str>,
         reasoning_effort: Option<&str>,
+        mcp_servers: Vec<crate::composition::McpServerRef>,
     ) -> anyhow::Result<Self> {
         // 从环境变量与配置目录加载合并后的有效配置。
         let raw_config = xai_grok_shell::config::load_effective_config()
@@ -2660,9 +2752,14 @@ impl GrokSession {
         if let Some(m) = spawn_session_meta(flows, model_id, reasoning_effort) {
             new_req = new_req.meta(Some(m));
         }
+        let acp_mcp = mcp_refs_to_acp(mcp_servers);
+        if !acp_mcp.is_empty() {
+            new_req = new_req.mcp_servers(acp_mcp);
+        }
         let session_response = connection.new_session(new_req).await?;
         *client_session_id.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(session_response.session_id.clone());
+        emit_config_options(&event_tx, session_response.config_options.as_ref()).await;
 
         let _ = status_tx.send(SessionStatus::Idle);
 
@@ -2778,7 +2875,8 @@ impl GrokSession {
         if has_meta {
             load_req = load_req.meta(Some(m));
         }
-        connection.load_session(load_req).await?;
+        let load_response = connection.load_session(load_req).await?;
+        emit_config_options(&event_tx, load_response.config_options.as_ref()).await;
 
         let _ = status_tx.send(SessionStatus::Idle);
         Ok(Self {
@@ -3203,8 +3301,57 @@ impl GrokSession {
         model_id: impl Into<String>,
         reasoning_effort: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.set_model_with_label(model_id, reasoning_effort, None, None)
+        let model_id = model_id.into();
+        match self
+            .set_config_option("model", &model_id)
             .await
+        {
+            Ok(options) => {
+                if let Some(effort) = reasoning_effort.map(str::trim).filter(|s| !s.is_empty()) {
+                    if let Ok(more) = self.set_config_option("reasoning_effort", effort).await {
+                        let _ = self
+                            .event_tx
+                            .send(SessionEvent::ConfigOptions { options: more })
+                            .await;
+                    }
+                } else {
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::ConfigOptions { options })
+                        .await;
+                }
+                *self
+                    .last_model_id
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(model_id);
+                Ok(())
+            }
+            Err(_) => {
+                self.set_model_with_label(model_id, reasoning_effort, None, None)
+                    .await
+            }
+        }
+    }
+
+    /// 官方 `session/set_config_option`（configId = `model` / `reasoning_effort`）。
+    pub async fn set_config_option(
+        &self,
+        config_id: &str,
+        value: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let config_id = config_id.to_string();
+        let value = value.to_string();
+        let req = SetSessionConfigOptionRequest::new(
+            self.session_id.clone(),
+            config_id,
+            value.as_str(),
+        );
+        let resp = self
+            .connection
+            .set_session_config_option(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("set_config_option 失败: {e:?}"))?;
+        Ok(serde_json::to_value(&resp.config_options).unwrap_or(serde_json::json!([])))
     }
 
     /// 切模型，并可同时写入 `_meta.systemPromptLabel`（模型不变时也会重渲人设）。

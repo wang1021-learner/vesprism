@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { useStoreSelect } from './lib/useStoreSelect'
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Composer } from './components/Composer'
 import { SandboxBanner } from './components/SandboxBanner'
 import { PlanBanner } from './components/PlanBanner'
@@ -43,6 +43,7 @@ import {
   $activeTabId, $tabs,
   $activeChatId, $chats,
   $defaultModelId, $error, $generating, $messages, $models, $queuedPrompts,
+  $sessionConfigOptions,
   $permission, $userQuestion, $mcpElicit, $reasoningEffort, $sessionPhase,
   $settingsDefaultModelId, $utilityKind,
   $sidebarCollapsed, $shellReady, $workspaceCwd, $workspaceOptions,
@@ -77,6 +78,7 @@ import {
 import { sendSessionPrompt } from './lib/sendSessionPrompt'
 import { useQueuedPromptActions } from './lib/useQueuedPromptActions'
 import { reasoningEffortLabel, spawnReasoningEffort } from './lib/reasoning'
+import { filterModelsByPolicy } from './lib/sessionConfig'
 import { cancelActiveTurn } from './lib/cancelActiveTurn'
 import { handleSessionEvent } from './lib/sessionEvents'
 import { policyFromDto } from './lib/executionPolicy'
@@ -497,6 +499,11 @@ function AppComposer({ empty = false }: { empty?: boolean }) {
   const ready = useStore($shellReady)
   const phase = useStore($sessionPhase)
   const models = useStore($models)
+  const configOptions = useStore($sessionConfigOptions)
+  const visibleModels = useMemo(
+    () => filterModelsByPolicy(models, configOptions),
+    [models, configOptions],
+  )
   const modelId = useStore($defaultModelId)
   const effort = useStore($reasoningEffort)
   const cwd = useStore($workspaceCwd)
@@ -612,7 +619,7 @@ function AppComposer({ empty = false }: { empty?: boolean }) {
       engineGenerating={generating}
       shellReady={ready}
       sessionPhase={phase}
-      models={models}
+      models={visibleModels}
       selectedModelId={modelId}
       reasoningEffort={effort}
       workspaceCwd={cwd}

@@ -661,6 +661,14 @@ export type McpServerDto = {
     setupRequired?: boolean
     setup_required?: boolean
   } | null
+  policyDenied?: boolean
+  policy_denied?: boolean
+  policyReason?: string | null
+  policy_reason?: string | null
+  blockReason?: string | null
+  /** 官方 inspect / 未来 mcp/list 的策略拦截原因 */
+  disabledReason?: string | null
+  disabled_reason?: string | null
 }
 
 // ── 密钥 ──
@@ -880,6 +888,9 @@ export interface SessionEventPayload {
   /** RetryInProgress：自动重试进度 */
   max_retries?: number
   reason?: string
+  error_type?: string
+  /** 官方 session configOptions（与权限 options 共用字段名时走 type 分流） */
+  config_options?: unknown
   /** git_head_changed：官方 git HEAD 变化通知 */
   branch?: string | null
   // ── 权限请求安全预检发现（x.ai/security_findings token 列表）──

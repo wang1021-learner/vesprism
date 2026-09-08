@@ -56,6 +56,35 @@ describe('normalizeMcpServer', () => {
     expect(row.canDelete).toBe(false)
     expect(row.authRequired).toBe(true)
   })
+
+  it('企业策略禁止时关掉开关并写出原因', () => {
+    const row = normalizeMcpServer({
+      name: 'blocked',
+      type: 'stdio',
+      command: 'npx',
+      source: 'local',
+      policyDenied: true,
+      policyReason: 'a requirements.toml pin',
+      session: { enabled: true, status: 'ready' },
+    })
+    expect(row.enabled).toBe(false)
+    expect(row.policyDenied).toBe(true)
+    expect(row.statusDetail).toContain('requirements.toml')
+  })
+
+  it('官方 disabledReason 也当成策略禁止', () => {
+    const row = normalizeMcpServer({
+      name: 'denied',
+      type: 'http',
+      url: 'https://example',
+      source: 'local',
+      disabledReason: 'matches deniedMcpServers (requirements.toml)',
+      session: { enabled: true, status: 'ready' },
+    })
+    expect(row.enabled).toBe(false)
+    expect(row.policyDenied).toBe(true)
+    expect(row.statusDetail).toContain('deniedMcpServers')
+  })
 })
 
 describe('groupMcpRows', () => {

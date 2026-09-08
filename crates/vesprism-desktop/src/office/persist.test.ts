@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { advanceOfficeTask, createOfficeTask } from './model'
+import {
+  advanceOfficeTask,
+  createOfficeTask,
+  tickStreamCursor,
+  type OfficeTask,
+} from './model'
 import {
   $officeActiveId,
   $officeFormat,
@@ -15,6 +20,20 @@ import {
   resetOfficePersistForTests,
   saveOfficePersist,
 } from './persist'
+
+/** 推进步骤 + 抽干假流式，直到 done。无上限会死循环（流式阶段 advance 不会切 done）。 */
+function runToDone(task: OfficeTask): OfficeTask {
+  let t = task
+  for (let i = 0; i < 8000 && t.status !== 'done'; i++) {
+    if (t.status === 'running' && t.stepIndex >= t.plan.length && t.streamCursor !== undefined) {
+      t = tickStreamCursor(t)
+    } else {
+      t = advanceOfficeTask(t)
+    }
+  }
+  expect(t.status).toBe('done')
+  return t
+}
 
 function installStorage() {
   const map = new Map<string, string>()
@@ -85,8 +104,7 @@ describe('office persist', () => {
   })
 
   it('缺 slides 的 pptx 任务被 skip，其它任务留下', () => {
-    let done = createOfficeTask('weekly', '', 'good', 'week', 'doc')
-    while (done.status !== 'done') done = advanceOfficeTask(done)
+    const done = runToDone(createOfficeTask('weekly', '', 'good', 'week', 'doc'))
     const bad = {
       ...createOfficeTask('deck', '', 'bad', 'week', 'pptx'),
       status: 'done' as const,
@@ -152,8 +170,7 @@ describe('office persist', () => {
     bootOfficePersist()
     $officeFormat.set('pptx')
     const custom = startOfficeTask('custom', '做一页')
-    let t = $officeTasks.get().find((x) => x.id === custom.id)!
-    while (t.status !== 'done') t = advanceOfficeTask(t)
+    const t = runToDone($officeTasks.get().find((x) => x.id === custom.id)!)
     expect(t.file?.kind).toBe('pptx')
     expect(t.file?.slides).toHaveLength(1)
 
@@ -163,8 +180,7 @@ describe('office persist', () => {
     $officeFormat.set('pptx')
     const weekly = startOfficeTask('weekly', '')
     expect(weekly.starterId).toBe('weekly')
-    let w = weekly
-    while (w.status !== 'done') w = advanceOfficeTask(w)
+    const w = runToDone(weekly)
     expect(w.file?.kind).toBe('doc')
 
     resetOfficePersistForTests()
@@ -172,8 +188,7 @@ describe('office persist', () => {
     bootOfficePersist()
     $officeFormat.set('pptx')
     const skill = startOfficeTask('custom', '技能稿', undefined, 'doc')
-    let s = skill
-    while (s.status !== 'done') s = advanceOfficeTask(s)
+    const s = runToDone(skill)
     expect(s.file?.kind).toBe('doc')
     expect(s.format).toBe('doc')
   })

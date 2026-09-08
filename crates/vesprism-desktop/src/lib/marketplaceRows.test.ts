@@ -30,7 +30,23 @@ describe('parseMarketplaceList', () => {
     expect(sources[0].name).toBe('官方')
     expect(sources[0].plugins[0].skillCount).toBe(2)
     expect(sources[0].plugins[0].hasHooks).toBe(true)
+    expect(sources[0].policyDenied).toBe(false)
     expect(installStatusLabel(sources[0].plugins[0].installStatus)).toBe('未安装')
+  })
+
+  it('源被企业策略拦截时标 policyDenied', () => {
+    const sources = parseMarketplaceList({
+      sources: [
+        {
+          sourceName: '第三方',
+          sourceUrlOrPath: 'https://evil.example/plugins',
+          error: 'source not in strictKnownMarketplaces (requirements.toml)',
+          plugins: [],
+        },
+      ],
+    })
+    expect(sources[0].policyDenied).toBe(true)
+    expect(sources[0].error).toContain('strictKnownMarketplaces')
   })
 
   it('空输入得到空列表', () => {

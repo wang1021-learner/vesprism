@@ -444,6 +444,11 @@ pub enum FrontendEvent {
         attempt: u32,
         max_retries: u32,
         reason: String,
+        error_type: Option<String>,
+    },
+    /// 官方 session configOptions（模型允许集 / 推理档）。
+    ConfigOptions {
+        config_options: serde_json::Value,
     },
     /// 其它调试信息。
     Other {
@@ -2025,17 +2030,24 @@ async fn begin_fresh_session(
             status: SessionStatus::Initializing,
         },
     );
-    let seed_flows =
+    let seed_comp =
         grok_session::composition::load_workspace_composition(std::path::Path::new(&cwd))
             .ok()
-            .flatten()
-            .map(|c| c.flows)
-            .filter(|ids| !ids.is_empty());
-    match GrokSession::start_spawned(
+            .flatten();
+    let seed_flows = seed_comp
+        .as_ref()
+        .map(|c| c.flows.clone())
+        .filter(|ids| !ids.is_empty())
+        .unwrap_or_default();
+    let seed_mcp = seed_comp
+        .map(|c| c.mcp.servers)
+        .unwrap_or_default();
+    match GrokSession::start_spawned_with_mcp(
         cwd.clone(),
-        seed_flows.unwrap_or_default(),
+        seed_flows,
         model_id.as_deref(),
         reasoning_effort.as_deref(),
+        seed_mcp,
     )
     .await
     {
@@ -2271,6 +2283,7 @@ fn forward_event(
             attempt,
             max_retries,
             reason,
+            error_type,
         } => {
             emit(
                 app,
@@ -2279,6 +2292,16 @@ fn forward_event(
                     attempt,
                     max_retries,
                     reason,
+                    error_type,
+                },
+            );
+        }
+        SessionEvent::ConfigOptions { options } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::ConfigOptions {
+                    config_options: options,
                 },
             );
         }

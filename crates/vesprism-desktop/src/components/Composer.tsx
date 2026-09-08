@@ -17,6 +17,7 @@ import {
   looksLikeDeepSeek,
   reasoningLevelsFor,
 } from '../lib/reasoning'
+import { effortValuesFromConfig } from '../lib/sessionConfig'
 import { generateId } from '../lib/generateId'
 import { useDropdownPlacement } from '../lib/useDropdownPlacement'
 import { useComposerAssist } from './ComposerAssist'
@@ -31,6 +32,7 @@ import {
   $securityPolicy,
   $sessionPolicyOverride,
   $totalTokens,
+  $sessionConfigOptions,
   isScratchCwd,
   openFeedback,
   openSessionIntent,
@@ -322,10 +324,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     () => models.find((x) => x.id === selectedModelId),
     [models, selectedModelId],
   )
+  const sessionConfigOptions = useStore($sessionConfigOptions)
 
-  // 档位表与设置页 / 后端 commands.rs 对齐：DeepSeek 只有低/高/最高；
-  // messages 协议会静默丢掉 none/minimal，这里一并藏掉。
+  // 官方 configOptions.reasoning_effort 优先（含 per-effort model id）。
+  // 否则档位表与设置页对齐：DeepSeek 只有低/高/最高；messages 协议藏 none/minimal。
   const availableReasoningLevels = useMemo(() => {
+    const official = effortValuesFromConfig(sessionConfigOptions)
+    if (official) {
+      return official.map((v) => ({ value: v.value, label: v.name }))
+    }
     if (!selectedModel) return []
     return reasoningLevelsFor({
       model: selectedModel.model,
@@ -333,7 +340,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       apiBackend: selectedModel.api_backend,
       allowed: selectedModel.reasoning_efforts,
     })
-  }, [selectedModel])
+  }, [selectedModel, sessionConfigOptions])
 
   const effortIndex = useMemo(() => {
     const i = availableReasoningLevels.findIndex((x) => x.value === reasoningEffort)
