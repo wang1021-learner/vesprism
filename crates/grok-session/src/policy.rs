@@ -255,7 +255,7 @@ impl RuleMatcher {
 
     /// 工具类别与 glob 都命中才算命中。省略 kind 的规则对工具名做 glob；
     /// 带 kind 的规则对 `detail`（命令/路径摘要）做 glob，detail 为空时
-    /// 只有 `*` 这类全通配能命中。
+    /// 只有 `*` 这类全通配能命中。路径里的 `\` 当成 `/`，Windows 才能命中 `**/.env`。
     pub fn matches(&self, tool_name: &str, detail: &str) -> bool {
         let kind_hit = match &self.kind {
             ToolKind::Any => true,
@@ -264,10 +264,12 @@ impl RuleMatcher {
         if !kind_hit {
             return false;
         }
+        let normalized;
         let target = if matches!(self.kind, ToolKind::Any) {
             tool_name
         } else {
-            detail
+            normalized = detail.replace('\\', "/");
+            normalized.as_str()
         };
         self.pattern.matches(target)
     }
@@ -463,6 +465,36 @@ mod tests {
         );
         assert!(engine.has_deny("execute", "git push origin main"));
         assert!(!engine.has_deny("execute", "cargo build"));
+    }
+
+    #[test]
+    fn read_env_deny_hits_unix_and_windows_paths() {
+        let engine = PolicyEngine::new(
+            PermissionMode::Ask,
+            vec![PermissionRule {
+                matcher: "read:**/.env".to_string(),
+                policy: Policy::Deny,
+            }],
+        );
+        assert!(engine.has_deny("read", "src/.env"));
+        assert!(engine.has_deny("read_file", "/home/u/proj/.env"));
+        assert!(engine.has_deny("read", r"D:\proj\.env"));
+        assert!(engine.has_deny("read", r"C:\Users\x\.env"));
+        assert!(!engine.has_deny("read", "src/main.rs"));
+        assert!(!engine.has_deny("search_replace", "src/.env"));
+    }
+
+    #[test]
+    fn session_overlay_read_env_rule_still_denies_after_merge() {
+        let overlay = vec![PermissionRule {
+            matcher: "read:**/.env".to_string(),
+            policy: Policy::Deny,
+        }];
+        let engine = PolicyEngine::new(PermissionMode::Ask, overlay);
+        assert_eq!(
+            engine.evaluate("read", r"repo\.env"),
+            PolicyDecision::Respond(Policy::Deny)
+        );
     }
 
     #[test]

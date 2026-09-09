@@ -7,8 +7,11 @@ vi.mock('../bridge', () => ({
   loadSession: vi.fn(),
   respondPermission: vi.fn(),
   respondExitPlanMode: vi.fn(),
+  respondUserQuestion: vi.fn(),
   setCurrentModel: vi.fn(),
+  setSessionMode: vi.fn(),
   startSession: vi.fn(),
+  getComposition: vi.fn().mockResolvedValue({ flows: [] }),
   sessionCaps: vi.fn().mockResolvedValue({
     recap: true,
     askMode: true,

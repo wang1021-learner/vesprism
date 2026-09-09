@@ -95,6 +95,8 @@ import {
   $writingLoaded,
   $writingOpenId,
   bootWritingLibrary,
+  chapterIdOfNode,
+  hydrateWritingChapter,
   mapWritingBooks,
   rememberLastBook,
 } from './library'
@@ -300,6 +302,15 @@ export function WritingDesk() {
   openIdRef.current = openId
 
   const book = useMemo(() => books.find((b) => b.id === openId), [books, openId])
+
+  useEffect(() => {
+    if (!book) return
+    const chapterId = chapterIdOfNode(parseNode(node))
+    if (!chapterId) return
+    void hydrateWritingChapter(book.id, chapterId).catch((e) => {
+      console.warn('[writing] 灌章失败:', e)
+    })
+  }, [book, node])
 
   // ── 持久化：每书一份待写快照；切书先冲刷上一本，禁止共用一个 timer 把 A 冲成 B ──
   const flushSave = (b: BookDemo) => {

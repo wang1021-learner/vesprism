@@ -55,7 +55,13 @@ export const getSecurityPolicy = (cwd?: string) =>
 export const setSecurityPolicy = (policy: SecurityPolicyDto) =>
   invoke<SecurityPolicyDto>('set_security_policy', { policy })
 
-export const getComputerUse = () => invoke<boolean>('get_computer_use')
+export type ComputerUseStatus = {
+  enabled: boolean
+  supported: boolean
+  platform?: string
+}
+
+export const getComputerUse = () => invoke<ComputerUseStatus>('get_computer_use')
 
 export type AccountStatus = {
   logged_in: boolean

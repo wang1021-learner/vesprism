@@ -8,6 +8,7 @@ import {
   type WorktreeStatusInfo,
 } from '../bridge'
 import { SettingsHelp, SettingsLabel } from './SettingsHelp'
+import { settingsSavedMessage } from './settingsHelpers'
 
 function parseDomainLines(text: string): string[] {
   return text
@@ -84,7 +85,7 @@ export function EngineSettings({
       setWsMode(
         next.web_search_allowed.length > 0 ? 'allow' : next.web_search_excluded.length > 0 ? 'exclude' : 'none',
       )
-      onToast('引擎设置已写入 config.toml', 'success')
+      onToast(settingsSavedMessage('engine'), 'success')
     } catch (e) {
       onToast(String(e), 'error')
     } finally {
@@ -118,6 +119,9 @@ export function EngineSettings({
 
   return (
     <div className="settings-panel-inner">
+      <p className="settings-hint">
+        本页写入 <code>~/.vesprism/config.toml</code>。新开会话会读到；当前这场要重启 Vesprism。
+      </p>
       <section className="settings-card">
         <h3 className="settings-card-title">会话搜索索引</h3>
         <p className="settings-card-desc">
@@ -151,7 +155,7 @@ export function EngineSettings({
           <SettingsHelp text="这是总开关，保存后新会话才生效。当前这场对话要不要用，在「记忆」页再切。关掉不会删已有文件。" />
         </label>
         <p className="settings-hint">
-          保存后新开的对话才生效。已有文件不会被删除。
+          保存后新开的对话才生效。当前这场要重启 Vesprism。已有文件不会被删除。
         </p>
       </section>
 
@@ -171,6 +175,7 @@ export function EngineSettings({
           合并连续排队提问
           <SettingsHelp text="只合并纯文本提问。改排队稿、带附件、斜杠命令不会并在一起。" />
         </label>
+        <p className="settings-hint">保存后新会话生效；当前这场要重启 Vesprism。</p>
       </section>
 
       <section className="settings-card">
@@ -221,7 +226,7 @@ export function EngineSettings({
               onChange={(e) => setAllowedText(e.target.value)}
               placeholder="docs.x.ai&#10;arxiv.org"
             />
-            <p className="settings-hint">保存后新会话生效。</p>
+            <p className="settings-hint">保存后新会话生效；当前这场要重启 Vesprism。</p>
           </>
         )}
         {wsMode === 'exclude' && (
@@ -237,7 +242,7 @@ export function EngineSettings({
               onChange={(e) => setExcludedText(e.target.value)}
               placeholder="reddit.com"
             />
-            <p className="settings-hint">保存后新会话生效。</p>
+            <p className="settings-hint">保存后新会话生效；当前这场要重启 Vesprism。</p>
           </>
         )}
         {wsMode === 'none' && (
@@ -290,7 +295,7 @@ export function EngineSettings({
             }
           />
         </div>
-        <p className="settings-hint">官方默认图像 8、视频 4。保存写入 config.toml。</p>
+        <p className="settings-hint">官方默认图像 8、视频 4。保存写入 config.toml，新会话生效。</p>
       </section>
 
       <section className="settings-card">

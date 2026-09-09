@@ -9,6 +9,141 @@ use base64::Engine as _;
 
 const MAX_SHOT_WIDTH: u32 = 1280;
 
+/// Windows / macOS / Linux 桌面可用。
+pub fn is_supported() -> bool {
+    cfg!(any(windows, target_os = "macos", target_os = "linux"))
+}
+
+pub fn platform_id() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "other"
+    }
+}
+
+/// 未知系统才拦开启；关闭永远允许。
+pub fn blocked_enable_reason(on: bool) -> Option<&'static str> {
+    if on && !is_supported() {
+        Some("电脑操作目前只支持 Windows、macOS 和 Linux。")
+    } else {
+        None
+    }
+}
+
+/// 截图坐标 → 屏幕坐标（图可能被缩到 `MAX_SHOT_WIDTH`）。
+pub fn map_shot_to_screen(
+    x: i32,
+    y: i32,
+    screen_w: u32,
+    screen_h: u32,
+    origin_x: i32,
+    origin_y: i32,
+) -> (i32, i32) {
+    let sw = screen_w.max(1);
+    let sh = screen_h.max(1);
+    let img_w = (sw.min(MAX_SHOT_WIDTH) as i32).max(1);
+    let img_h = (((sh as u64 * img_w as u64) / sw as u64) as i32).max(1);
+    let sx = origin_x + (x as i64 * sw as i64 / img_w as i64) as i32;
+    let sy = origin_y + (y as i64 * sh as i64 / img_h as i64) as i32;
+    (sx, sy)
+}
+
+fn decode_png_rgb(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("读 PNG 失败: {e}"))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("解码 PNG 失败: {e}"))?;
+    let w = info.width;
+    let h = info.height;
+    let src = &buf[..info.buffer_size()];
+    let rgb = match info.color_type {
+        png::ColorType::Rgb => src.to_vec(),
+        png::ColorType::Rgba => {
+            let mut out = Vec::with_capacity((w * h * 3) as usize);
+            for px in src.chunks_exact(4) {
+                out.extend_from_slice(&px[..3]);
+            }
+            out
+        }
+        png::ColorType::Grayscale => {
+            let mut out = Vec::with_capacity((w * h * 3) as usize);
+            for g in src {
+                out.extend_from_slice(&[*g, *g, *g]);
+            }
+            out
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut out = Vec::with_capacity((w * h * 3) as usize);
+            for px in src.chunks_exact(2) {
+                out.extend_from_slice(&[px[0], px[0], px[0]]);
+            }
+            out
+        }
+        other => return Err(format!("不支持的 PNG 色型: {other:?}")),
+    };
+    Ok((w, h, rgb))
+}
+
+#[cfg(unix)]
+fn shot_from_png_bytes(bytes: &[u8], origin_x: i32, origin_y: i32) -> Result<Shot, String> {
+    let (sw, sh, rgb) = decode_png_rgb(bytes)?;
+    if sw == 0 || sh == 0 {
+        return Err("截屏得到空图".into());
+    }
+    let (width, height, scaled) = downscale_rgb(sw, sh, &rgb, MAX_SHOT_WIDTH);
+    let png = encode_png_rgb(width, height, &scaled)?;
+    Ok(Shot {
+        width,
+        height,
+        screen_width: sw,
+        screen_height: sh,
+        origin_x,
+        origin_y,
+        png,
+    })
+}
+
+#[cfg(unix)]
+fn run_cmd(program: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| format!("启动 {program} 失败: {e}"))
+}
+
+#[cfg(unix)]
+fn cmd_ok(out: &std::process::Output, program: &str) -> Result<(), String> {
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let err = err.trim();
+    if err.is_empty() {
+        Err(format!("{program} 失败（exit {}）", out.status))
+    } else {
+        Err(format!("{program} 失败: {err}"))
+    }
+}
+
+#[cfg(unix)]
+fn tool_exists(name: &str) -> bool {
+    std::process::Command::new("sh")
+        .args(["-lc", &format!("command -v {name}")])
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
 /// `[desktop] computer_use`，缺省为关。
 pub fn is_enabled() -> bool {
     let Ok(root) = crate::commands::load_config_root() else {
@@ -21,6 +156,9 @@ pub fn is_enabled() -> bool {
 }
 
 pub fn set_enabled(on: bool) -> Result<(), String> {
+    if let Some(msg) = blocked_enable_reason(on) {
+        return Err(msg.into());
+    }
     let mut root = crate::commands::load_config_root()?;
     let root_tbl = root
         .as_table_mut()
@@ -135,9 +273,19 @@ fn screenshot_os() -> Result<Shot, String> {
     windows_screenshot()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn screenshot_os() -> Result<Shot, String> {
-    Err("电脑操作目前只在 Windows 上可用".into())
+    macos_screenshot()
+}
+
+#[cfg(target_os = "linux")]
+fn screenshot_os() -> Result<Shot, String> {
+    linux_screenshot()
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+fn screenshot_os() -> Result<Shot, String> {
+    Err("电脑操作目前只支持 Windows、macOS 和 Linux。".into())
 }
 
 #[cfg(windows)]
@@ -145,9 +293,19 @@ fn click_os(x: i32, y: i32, button: &str) -> Result<String, String> {
     windows_click(x, y, button)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn click_os(x: i32, y: i32, button: &str) -> Result<String, String> {
+    macos_click(x, y, button)
+}
+
+#[cfg(target_os = "linux")]
+fn click_os(x: i32, y: i32, button: &str) -> Result<String, String> {
+    linux_click(x, y, button)
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn click_os(_x: i32, _y: i32, _button: &str) -> Result<String, String> {
-    Err("电脑操作目前只在 Windows 上可用".into())
+    Err("电脑操作目前只支持 Windows、macOS 和 Linux。".into())
 }
 
 #[cfg(windows)]
@@ -155,9 +313,19 @@ fn type_os(text: &str) -> Result<String, String> {
     windows_type(text)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn type_os(text: &str) -> Result<String, String> {
+    macos_type(text)
+}
+
+#[cfg(target_os = "linux")]
+fn type_os(text: &str) -> Result<String, String> {
+    linux_type(text)
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn type_os(_text: &str) -> Result<String, String> {
-    Err("电脑操作目前只在 Windows 上可用".into())
+    Err("电脑操作目前只支持 Windows、macOS 和 Linux。".into())
 }
 
 #[cfg(windows)]
@@ -165,9 +333,19 @@ fn key_os(key: &str) -> Result<String, String> {
     windows_key(key)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn key_os(key: &str) -> Result<String, String> {
+    macos_key(key)
+}
+
+#[cfg(target_os = "linux")]
+fn key_os(key: &str) -> Result<String, String> {
+    linux_key(key)
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn key_os(_key: &str) -> Result<String, String> {
-    Err("电脑操作目前只在 Windows 上可用".into())
+    Err("电脑操作目前只支持 Windows、macOS 和 Linux。".into())
 }
 
 #[cfg(windows)]
@@ -175,9 +353,19 @@ fn screen_size_os() -> Result<(u32, u32), String> {
     windows_screen_size()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn screen_size_os() -> Result<(u32, u32), String> {
-    Err("电脑操作目前只在 Windows 上可用".into())
+    macos_screen_size()
+}
+
+#[cfg(target_os = "linux")]
+fn screen_size_os() -> Result<(u32, u32), String> {
+    linux_screen_size()
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+fn screen_size_os() -> Result<(u32, u32), String> {
+    Err("电脑操作目前只支持 Windows、macOS 和 Linux。".into())
 }
 
 #[cfg(windows)]
@@ -300,10 +488,7 @@ fn windows_click(x: i32, y: i32, button: &str) -> Result<String, String> {
             GetSystemMetrics(SM_YVIRTUALSCREEN),
         )
     };
-    let img_w = ((sw.min(MAX_SHOT_WIDTH)) as i32).max(1);
-    let img_h = (((sh as u64 * img_w as u64) / sw as u64) as i32).max(1);
-    let sx = vx + (x as i64 * sw as i64 / img_w as i64) as i32;
-    let sy = vy + (y as i64 * sh as i64 / img_h as i64) as i32;
+    let (sx, sy) = map_shot_to_screen(x, y, sw, sh, vx, vy);
     unsafe {
         SetCursorPos(sx, sy).map_err(|e| format!("移动光标失败: {e}"))?;
         let (down, up) = match button.trim().to_ascii_lowercase().as_str() {
@@ -450,9 +635,340 @@ fn windows_key(key: &str) -> Result<String, String> {
     Ok(format!("已按 {key}"))
 }
 
+#[cfg(target_os = "macos")]
+fn macos_tmp_png() -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("vesprism-shot-{}-{nanos}.png", std::process::id()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_screenshot() -> Result<Shot, String> {
+    let path = macos_tmp_png();
+    let out = run_cmd("screencapture", &["-x", "-t", "png", &path.to_string_lossy()])?;
+    if let Err(e) = cmd_ok(&out, "screencapture") {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!(
+            "{e}。请在系统设置 → 隐私与安全性 → 屏幕录制 里允许 Vesprism。"
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("读截屏失败: {e}"))?;
+    let _ = std::fs::remove_file(&path);
+    shot_from_png_bytes(&bytes, 0, 0)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_screen_size() -> Result<(u32, u32), String> {
+    let out = run_cmd(
+        "osascript",
+        &["-e", "tell application \"Finder\" to get bounds of window of desktop"],
+    )?;
+    if cmd_ok(&out, "osascript").is_ok() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let nums: Vec<i32> = text
+            .split(|c: char| !c.is_ascii_digit() && c != '-')
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if nums.len() >= 4 {
+            let w = (nums[2] - nums[0]).unsigned_abs().max(1);
+            let h = (nums[3] - nums[1]).unsigned_abs().max(1);
+            return Ok((w, h));
+        }
+    }
+    let shot = macos_screenshot()?;
+    Ok((shot.screen_width, shot.screen_height))
+}
+
+#[cfg(target_os = "macos")]
+fn osascript(source: &str) -> Result<(), String> {
+    let out = run_cmd("osascript", &["-e", source])?;
+    cmd_ok(&out, "osascript").map_err(|e| {
+        format!("{e}。请在系统设置 → 隐私与安全性 → 辅助功能 里允许 Vesprism。")
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn macos_click(x: i32, y: i32, button: &str) -> Result<String, String> {
+    if button.trim().eq_ignore_ascii_case("middle") {
+        return Err("macOS 电脑操作暂不支持中键点击".into());
+    }
+    let (sw, sh) = macos_screen_size()?;
+    let (sx, sy) = map_shot_to_screen(x, y, sw, sh, 0, 0);
+    let which = if button.trim().eq_ignore_ascii_case("right") {
+        "right click"
+    } else {
+        "click"
+    };
+    osascript(&format!(
+        "tell application \"System Events\" to {which} at {{{sx}, {sy}}}"
+    ))?;
+    Ok(format!("已点击 ({sx},{sy})"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_type(text: &str) -> Result<String, String> {
+    if text.is_empty() {
+        return Err("要打的字是空的".into());
+    }
+    for chunk in text
+        .chars()
+        .collect::<Vec<_>>()
+        .chunks(80)
+        .map(|c| c.iter().collect::<String>())
+    {
+        osascript(&format!(
+            "tell application \"System Events\" to keystroke \"{}\"",
+            applescript_escape(&chunk)
+        ))?;
+    }
+    Ok(format!("已输入 {} 个字符", text.chars().count()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_key_code(name: &str) -> Result<i32, String> {
+    Ok(match name {
+        "enter" | "return" => 36,
+        "tab" => 48,
+        "esc" | "escape" => 53,
+        "space" => 49,
+        "backspace" => 51,
+        "delete" | "del" => 117,
+        "up" => 126,
+        "down" => 125,
+        "left" => 123,
+        "right" => 124,
+        "home" => 115,
+        "end" => 119,
+        "pageup" => 116,
+        "pagedown" => 121,
+        "f4" => 118,
+        other if other.len() == 1 && other.as_bytes()[0].is_ascii_alphanumeric() => {
+            // 字母用 keystroke；数字/字母走 keystroke 更稳
+            return Err("letter".into());
+        }
+        _ => return Err(format!("不认识的按键: {name}")),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_key(key: &str) -> Result<String, String> {
+    let raw = key.trim().to_ascii_lowercase();
+    if raw.is_empty() {
+        return Err("按键名是空的".into());
+    }
+    let mut using: Vec<&str> = Vec::new();
+    let mut main = raw.as_str();
+    if let Some(rest) = raw.strip_prefix("ctrl+") {
+        using.push("control down");
+        main = rest;
+    }
+    if let Some(rest) = main.strip_prefix("alt+") {
+        using.push("option down");
+        main = rest;
+    }
+    if let Some(rest) = main.strip_prefix("shift+") {
+        using.push("shift down");
+        main = rest;
+    }
+    if let Some(rest) = main.strip_prefix("cmd+") {
+        using.push("command down");
+        main = rest;
+    }
+    let using_clause = if using.is_empty() {
+        String::new()
+    } else {
+        format!(" using {{{}}}", using.join(", "))
+    };
+    match macos_key_code(main) {
+        Ok(code) => {
+            osascript(&format!(
+                "tell application \"System Events\" to key code {code}{using_clause}"
+            ))?;
+        }
+        Err(e) if e == "letter" => {
+            osascript(&format!(
+                "tell application \"System Events\" to keystroke \"{}\"{using_clause}",
+                applescript_escape(main)
+            ))?;
+        }
+        Err(e) => return Err(e),
+    }
+    Ok(format!("已按 {key}"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_screenshot() -> Result<Shot, String> {
+    if tool_exists("grim") {
+        let out = run_cmd("grim", &["-t", "png", "-"])?;
+        cmd_ok(&out, "grim")?;
+        if !out.stdout.is_empty() {
+            return shot_from_png_bytes(&out.stdout, 0, 0);
+        }
+    }
+    if tool_exists("import") {
+        let out = run_cmd("import", &["-silent", "-window", "root", "png:-"])?;
+        cmd_ok(&out, "import")?;
+        if !out.stdout.is_empty() {
+            return shot_from_png_bytes(&out.stdout, 0, 0);
+        }
+    }
+    if tool_exists("scrot") {
+        let path = std::env::temp_dir().join(format!(
+            "vesprism-shot-{}.png",
+            std::process::id()
+        ));
+        let out = run_cmd("scrot", &["-o", &path.to_string_lossy()])?;
+        if let Err(e) = cmd_ok(&out, "scrot") {
+            let _ = std::fs::remove_file(&path);
+            return Err(e);
+        }
+        let bytes = std::fs::read(&path).map_err(|e| format!("读截屏失败: {e}"))?;
+        let _ = std::fs::remove_file(&path);
+        return shot_from_png_bytes(&bytes, 0, 0);
+    }
+    Err("Linux 截屏需要 grim（Wayland）或 ImageMagick import / scrot（X11）".into())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_screen_size() -> Result<(u32, u32), String> {
+    if tool_exists("xdotool") {
+        let out = run_cmd("xdotool", &["getdisplaygeometry"])?;
+        if cmd_ok(&out, "xdotool").is_ok() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut it = text.split_whitespace().filter_map(|s| s.parse::<u32>().ok());
+            if let (Some(w), Some(h)) = (it.next(), it.next()) {
+                if w > 0 && h > 0 {
+                    return Ok((w, h));
+                }
+            }
+        }
+    }
+    let shot = linux_screenshot()?;
+    Ok((shot.screen_width, shot.screen_height))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_btn(button: &str) -> u8 {
+    match button.trim().to_ascii_lowercase().as_str() {
+        "right" => 3,
+        "middle" => 2,
+        _ => 1,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_click(x: i32, y: i32, button: &str) -> Result<String, String> {
+    let (sw, sh) = linux_screen_size()?;
+    let (sx, sy) = map_shot_to_screen(x, y, sw, sh, 0, 0);
+    let btn = linux_btn(button);
+    if tool_exists("xdotool") {
+        let out = run_cmd(
+            "xdotool",
+            &[
+                "mousemove",
+                "--sync",
+                &sx.to_string(),
+                &sy.to_string(),
+                "click",
+                &btn.to_string(),
+            ],
+        )?;
+        cmd_ok(&out, "xdotool")?;
+        return Ok(format!("已点击 ({sx},{sy})"));
+    }
+    if tool_exists("ydotool") {
+        let code = match btn {
+            3 => "0xC1",
+            2 => "0xC2",
+            _ => "0xC0",
+        };
+        let mv = run_cmd(
+            "ydotool",
+            &["mousemove", "--absolute", &sx.to_string(), &sy.to_string()],
+        )?;
+        cmd_ok(&mv, "ydotool")?;
+        let ck = run_cmd("ydotool", &["click", code])?;
+        cmd_ok(&ck, "ydotool")?;
+        return Ok(format!("已点击 ({sx},{sy})"));
+    }
+    Err("Linux 点击需要 xdotool（X11）或 ydotool（Wayland）".into())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_type(text: &str) -> Result<String, String> {
+    if text.is_empty() {
+        return Err("要打的字是空的".into());
+    }
+    if tool_exists("xdotool") {
+        let out = run_cmd("xdotool", &["type", "--clearmodifiers", "--", text])?;
+        cmd_ok(&out, "xdotool")?;
+        return Ok(format!("已输入 {} 个字符", text.chars().count()));
+    }
+    if tool_exists("ydotool") {
+        let out = run_cmd("ydotool", &["type", "--", text])?;
+        cmd_ok(&out, "ydotool")?;
+        return Ok(format!("已输入 {} 个字符", text.chars().count()));
+    }
+    Err("Linux 打字需要 xdotool（X11）或 ydotool（Wayland）".into())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_key(key: &str) -> Result<String, String> {
+    let raw = key.trim().to_ascii_lowercase();
+    if raw.is_empty() {
+        return Err("按键名是空的".into());
+    }
+    let spec = raw;
+    if tool_exists("xdotool") {
+        let out = run_cmd("xdotool", &["key", "--clearmodifiers", &spec])?;
+        cmd_ok(&out, "xdotool")?;
+        return Ok(format!("已按 {key}"));
+    }
+    if tool_exists("ydotool") {
+        let out = run_cmd("ydotool", &["key", &spec])?;
+        cmd_ok(&out, "ydotool")?;
+        return Ok(format!("已按 {key}"));
+    }
+    Err("Linux 按键需要 xdotool（X11）或 ydotool（Wayland）".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocked_enable_reason_only_when_turning_on_unsupported() {
+        assert_eq!(blocked_enable_reason(false), None);
+        if is_supported() {
+            assert_eq!(blocked_enable_reason(true), None);
+        } else {
+            assert!(blocked_enable_reason(true).unwrap().contains("Linux"));
+        }
+    }
+
+    #[test]
+    fn map_shot_to_screen_scales_from_1280_preview() {
+        let (sx, sy) = map_shot_to_screen(640, 360, 1920, 1080, 0, 0);
+        assert_eq!((sx, sy), (960, 540));
+        let (sx, sy) = map_shot_to_screen(10, 10, 1280, 720, 100, 200);
+        assert_eq!((sx, sy), (110, 210));
+    }
+
+    #[test]
+    fn png_roundtrip_decodes_to_rgb() {
+        let rgb = [255u8, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30];
+        let png = encode_png_rgb(2, 2, &rgb).unwrap();
+        let (w, h, out) = decode_png_rgb(&png).unwrap();
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(out, rgb);
+    }
 
     #[test]
     fn png_roundtrip_header() {

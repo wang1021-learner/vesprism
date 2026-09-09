@@ -5,6 +5,7 @@ import {
   $activeTabId,
   $compositionOpen,
   $workspaceCwd,
+  patchTab,
   pushToast,
 } from '../store'
 import { applyComposition, getComposition, saveComposition } from '../bridge'
@@ -86,10 +87,12 @@ function CompositionPanelInner() {
   const onApply = useCallback(async () => {
     setBusy(true)
     try {
+      const flows = Array.isArray(draft.flows) ? draft.flows : []
       await applyComposition(tabId, sessionId || null, {
         ...draft,
-        flows: Array.isArray(draft.flows) ? draft.flows : [],
+        flows,
       })
+      if (tabId) patchTab(tabId, { mountedFlows: flows })
       pushToast('组装单已应用到当前会话', 'success')
       close()
     } catch (e) {

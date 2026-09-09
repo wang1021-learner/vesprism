@@ -75,6 +75,17 @@
 .goal-pause {
   color: #9a6a00;
 }
+.goal-strip-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-solid, #e5e7eb);
+  font-size: 11px;
+  color: var(--muted, #6b7280);
+  line-height: 1.45;
+}
 .goal-create-head {
   display: flex;
   align-items: baseline;

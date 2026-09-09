@@ -147,6 +147,7 @@ function GoalCreateStrip() {
 
 function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
   const ready = useStore($sessionPhase) === 'ready'
+  const [open, setOpen] = useState(false)
   const act = async (cmd: string, ok: string) => {
     try {
       await sendEngineSlash(cmd)
@@ -177,6 +178,14 @@ function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
           {goal.totalVerifyRounds > 0 && ` · ${goal.totalVerifyRounds} 轮验证`}
           {goal.currentSubagentRole && ` · ${goal.currentSubagentRole}`}
         </span>
+        <button
+          type="button"
+          className="skills-btn"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? '收起' : '详情'}
+        </button>
       </div>
       {(pct != null || goal.lastEvent || goal.pauseMessage) && (
         <div className="goal-strip-foot">
@@ -195,6 +204,32 @@ function GoalStripInner({ goal }: { goal: GoalInfoDto }) {
           {goal.pauseMessage && <span className="goal-pause">{goal.pauseMessage}</span>}
         </div>
       )}
+      {open ? (
+        <div className="goal-strip-detail">
+          {goal.lastClassifierVerdict ? (
+            <div>
+              判定：{goal.lastClassifierVerdict}
+              {goal.classifierRunsAttempted != null && goal.classifierMaxRuns != null
+                ? `（${goal.classifierRunsAttempted}/${goal.classifierMaxRuns}）`
+                : ''}
+            </div>
+          ) : (
+            <div>还没有分类器判定。</div>
+          )}
+          {goal.liveTurnCount != null && (
+            <div>
+              本轮 {goal.liveTurnCount} 回合
+              {goal.liveToolCallCount != null ? ` · ${goal.liveToolCallCount} 次工具` : ''}
+            </div>
+          )}
+          {goal.lastEvent ? (
+            <div>
+              最近：{goal.lastEvent}
+              {goal.lastEventDetail ? ` — ${goal.lastEventDetail}` : ''}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {goal.status === 'complete' ? (
         <div className="work-panel-actions" style={{ marginTop: 8 }}>
           <button

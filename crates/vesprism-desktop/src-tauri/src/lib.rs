@@ -351,6 +351,8 @@ pub fn run() {
             commands::stop_pty,
             writing_store::writing_list_books,
             writing_store::writing_load_book,
+            writing_store::writing_load_book_skeleton,
+            writing_store::writing_load_chapter,
             writing_store::writing_save_book,
             writing_store::writing_delete_book,
             writing_store::writing_export_book,

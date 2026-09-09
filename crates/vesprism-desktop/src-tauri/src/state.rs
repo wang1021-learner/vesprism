@@ -748,6 +748,9 @@ pub async fn run_tab_actor(
             // 处理来自 Tauri 命令的控制消息。
             cmd = cmd_rx.recv() => {
                 let Some(cmd) = cmd else {
+                    if let Some(s) = session.take() {
+                        let _ = s.revert_composition().await;
+                    }
                     break; // 所有 sender 已释放（CloseTab 已从共享表移除）→ 优雅退出
                 };
                 if command_holds_actor(&cmd) {
@@ -2005,6 +2008,7 @@ async fn begin_fresh_session(
     // 销毁旧会话：drop 关闭内存双工管道，底层 agent 任务应随之退出
     if let Some(old_session) = session.take() {
         let old_id = old_session.session_id();
+        let _ = old_session.revert_composition().await;
         drop(old_session);
         if discard_blank_old {
             // 未说过话的会话不进历史；删除失败不阻断新建

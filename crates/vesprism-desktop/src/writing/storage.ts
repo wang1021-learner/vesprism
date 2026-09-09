@@ -22,6 +22,10 @@ export type WritingBookMeta = {
 
 export const writingListBooks = () => invoke<WritingBookMeta[]>('writing_list_books')
 export const writingLoadBook = (id: string) => invoke<string>('writing_load_book', { id })
+export const writingLoadBookSkeleton = (id: string) =>
+  invoke<string>('writing_load_book_skeleton', { id })
+export const writingLoadChapter = (id: string, chapterId: string) =>
+  invoke<string>('writing_load_chapter', { id, chapterId })
 export const writingSaveBook = (id: string, json: string) =>
   invoke<void>('writing_save_book', { id, json })
 export const writingDeleteBook = (id: string) =>

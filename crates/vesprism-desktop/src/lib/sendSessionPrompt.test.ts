@@ -37,6 +37,37 @@ describe('sendSessionPrompt', () => {
     expect(getTabState('tab-1')?.error).toContain('重试')
   })
 
+  it('组装单白名单拦住未挂载的具名工作流', async () => {
+    createTab('tab-1', {
+      chatId: 'sid-1',
+      sessionId: 'sid-1',
+      messages: [],
+      phase: 'ready',
+      mountedFlows: ['demo-linear'],
+    })
+    switchTab('tab-1')
+    const id = await sendSessionPrompt({ text: '/other-flow' })
+    expect(id).toBeNull()
+    expect(sendPrompt).not.toHaveBeenCalled()
+    expect(getTabState('tab-1')?.error).toContain('other-flow')
+  })
+
+  it('白名单内的流程和 /workflow pause 放行', async () => {
+    createTab('tab-1', {
+      chatId: 'sid-1',
+      sessionId: 'sid-1',
+      messages: [],
+      phase: 'ready',
+      mountedFlows: ['demo-linear'],
+    })
+    switchTab('tab-1')
+    await sendSessionPrompt({ text: '/demo-linear' })
+    expect(sendPrompt).toHaveBeenCalled()
+    sendPrompt.mockClear()
+    await sendSessionPrompt({ text: '/workflow pause demo-linear', hidden: true })
+    expect(sendPrompt).toHaveBeenCalled()
+  })
+
   it('已接上则照常发送', async () => {
     createTab('tab-1', {
       chatId: 'sid-1',

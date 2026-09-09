@@ -85,7 +85,7 @@ npm run desktop:build    # 安装包
 npm run typecheck && npm test
 ```
 
-密钥与模型：`~/.vesprism/config.toml` + `~/.vesprism/.env`。**禁止**把 API key 写进仓库。设置里加模型（如 LongCat）与改 `config.toml` 等价；改完需**重启进程**才会被引擎读到。
+密钥与模型：`~/.vesprism/config.toml` + `~/.vesprism/.env`。**禁止**把 API key 写进仓库。设置里保存模型会 `reload_models`（当前会话热加载）；引擎偏好 / Hooks 只写盘，新开会话才生效。
 
 ---
 
@@ -480,7 +480,7 @@ resetCanvasGraphWait()        // 卸载画布、开始试跑
 | `chapters/NNNN.json` | 节拍、试笔、检查单 |
 | `~/.vesprism/writing/<id>/` | 该书会话 cwd |
 
-打开一本才 `writing_load_book` 拼成 `BookDemo`。保存拆盘。导入旧 `<id>.json` 会迁到目录。
+打开一本走 `writing_load_book_skeleton`（结构 + 入卷标记，正文 `body` 留在章文件）。点进某一章再 `writing_load_chapter` 灌正文。骨架保存带 `bodyOmitted` 时不覆盖盘上已有正文。导入旧 `<id>.json` 会迁到目录。
 
 硬门：入卷要 80 字摘要；到期伏笔按章号。写台会话 `is_writing_cwd` 锁 `ask`，不能切到可改文件的模式。导出只出已进正史的 txt。
 
@@ -567,7 +567,7 @@ CanvasComposer.onSend
 5. **Tab 状态不要写全局 atom 当事实源。** 用 `patchTab` / `tabWorkspaceCwd`。
 6. **画布认图只认当前 pending promptId**；试跑斜杠永不 apply；卸载和 startRun 要 `resetCanvasGraphWait`。
 7. **画布输入不要挂回工作栏**，不要显示工作区「闲聊」芯片。
-8. **`flow-run` 禁止 startSession。**
+8. **`flow-run` 禁止 startSession。** 组装单 `flows` 非空时，未挂载的 `/{id}` / `/workflow id` 不要发出去（`workflowGate.ts`）；`/workflow pause|resume|stop|list` 放行。
 9. **同 utilityKind 复用 Tab**，不要叠三个「流程画布」。
 10. **中文提交信息**沿用：`功能(流程画布)：…` / `功能(桌面端)：…` / `功能(写完)：…` / `安全(桌面端)：…`。
 11. **发布流程不要把 rhai 从前端送进 `save_flow`。** 编译只在 Rust `flow_compile.rs`。
@@ -612,9 +612,10 @@ CanvasComposer.onSend
 - 画布试跑**共用画布会话**，靠斜杠过滤认图，不是单独 session。
 - 未绑定产物的画布会话不出现在侧栏。
 - 第三方模型会读到官方系统提示「released by xAI」。
-- `config.toml` 改模型需重启 Vesprism 进程。
+- 引擎偏好 / Hooks / 联网域名写入 `config.toml` 后，新开会话才生效；当前这场要重启 Vesprism。模型列表保存后会热加载。
+- 电脑操作：Windows 用系统 API；macOS 用 `screencapture` + System Events（要屏幕录制和辅助功能）；Linux 用 grim/import/scrot + xdotool/ydotool。
 - 根 workspace 全量 `cargo build` 极慢；桌面开发用 `npm run desktop`。
 - 官方 TUI（`grok` CLI）与 Vesprism 数据目录隔离，互不影响。
-- 写完打开一本仍把该书各章拼进前端；书库列表不灌正文。
+- 写完打开一本只灌骨架（章正文按章懒加载）；书库列表不灌正文。
 - 旧流程 zip（无 `graph.json`）不能导入，需在本机重新导出。
 - 办公桌是 demo：预置计划与产物，不 startSession、不接引擎、不操作电脑。

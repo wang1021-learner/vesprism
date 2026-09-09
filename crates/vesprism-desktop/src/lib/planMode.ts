@@ -10,6 +10,7 @@ import {
   pushToast,
 } from '../store'
 import { setSessionMode } from '../bridge'
+import { writingMustStayAsk } from '../writing/isolate'
 
 /** 模型没写出稿时仍要弹出审批卡，避免看起来像卡住。 */
 export const EMPTY_PLAN_PLACEHOLDER = `\
@@ -165,6 +166,10 @@ export async function togglePlanMode(): Promise<void> {
   if (!tabId) return
   const st = getTabState(tabId)
   if (!st) return
+  if (writingMustStayAsk(st.cwd)) {
+    pushToast('写台只能只答，不能进计划模式', 'info')
+    return
+  }
   if (st.planApproval) {
     patchTab(tabId, { planPreviewOpen: true })
     return
@@ -200,6 +205,10 @@ export async function toggleAskMode(): Promise<void> {
   if (!tabId) return
   const st = getTabState(tabId)
   if (!st) return
+  if (writingMustStayAsk(st.cwd)) {
+    pushToast('写台只能只答，不能关掉问答模式', 'info')
+    return
+  }
   if (st.planApproval) {
     pushToast('先处理计划稿审批', 'info')
     patchTab(tabId, { planPreviewOpen: true })

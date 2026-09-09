@@ -148,6 +148,8 @@ export interface TabState {
   sessionCaps: SessionCaps
   /** 官方 session configOptions（模型允许集 / 推理档） */
   configOptions: SessionConfigOption[]
+  /** 组装单挂载的流程 id；非空时拦住未挂载的 `/workflow` / `/{id}` */
+  mountedFlows: string[]
 }
 
 export type MemoryFileInfo = {
@@ -264,6 +266,7 @@ export function emptyTabState(): TabState {
     sessionAlert: null,
     sessionCaps: GROK_SESSION_CAPS,
     configOptions: [],
+    mountedFlows: [],
   }
 }
 

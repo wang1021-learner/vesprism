@@ -159,7 +159,7 @@ npm run desktop:build    # 打当前平台安装包
 npm run typecheck && npm test
 ```
 
-密钥、模型、工作区写在本机 `~/.vesprism/config.toml` 和 `~/.vesprism/.env`。设置页里加模型和直接改配置文件等价；改完通常要**重启进程**才会被引擎读到。
+密钥、模型、工作区写在本机 `~/.vesprism/config.toml` 和 `~/.vesprism/.env`。设置里保存**模型**会热加载当前会话；引擎偏好、Hooks、联网域名只写盘，**新开会话**才生效，当前这场要重启 Vesprism。
 
 **不要把 API key 提交进 Git。** 仓库根和桌面包的 `node_modules/` 也不要提交。
 
@@ -176,10 +176,10 @@ npm run typecheck && npm test
 
 | 位置 | 作用 |
 |------|------|
-| 设置 → 模型 | 列表、默认模型、思考强度、上下文窗口、采样、自定义 Header |
+| 设置 → 模型 | 列表、默认模型、思考强度、上下文窗口、采样、自定义 Header。保存后当前会话热加载 |
 | 设置 → 安全 | 执行策略、联网、文件范围；本会话「信任模式」与 `/always-approve` 相同 |
-| 设置 → 引擎 / Hooks | 引擎偏好、仓库 Hooks 信任 |
-| 电脑操作 | 默认关闭（`[desktop] computer_use = false`）。打开后经内置 MCP 截屏/点击/打字，**每次仍走工具审批** |
+| 设置 → 引擎 / Hooks | 引擎偏好、仓库 Hooks 信任。只写盘，新开会话才生效 |
+| 电脑操作 | 默认关闭（`[desktop] computer_use = false`）。Windows / macOS / Linux。打开后经内置 MCP 截屏/点击/打字，**每次仍走工具审批**。macOS 需屏幕录制+辅助功能；Linux 需 grim 或 import，以及 xdotool / ydotool |
 
 第三方模型仍可能读到引擎内置的系统提示模板（会自称由 xAI 发布），这是模板不是产品文案。
 

@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { WRITING_SESSION_MODE, needsFreshSession, sessionReady, taskBelongsToBook } from './isolate'
+import {
+  WRITING_SESSION_MODE,
+  needsFreshSession,
+  sessionReady,
+  taskBelongsToBook,
+  writingMustStayAsk,
+} from './isolate'
 
 describe('写台会话与数据隔离', () => {
   it('写台会话用只答模式，不给编程工具', () => {
     expect(WRITING_SESSION_MODE).toBe('ask')
+    expect(writingMustStayAsk('C:\\Users\\x\\.vesprism\\writing\\book-1')).toBe(true)
+    expect(writingMustStayAsk('/home/u/.vesprism/writing/book-1')).toBe(true)
+    expect(writingMustStayAsk('/home/u/code/app')).toBe(false)
   })
 
   it('写正文 / 检查 / 重写 / 补卡都要新开一轮会话，避免上一张卡漏进写手', () => {

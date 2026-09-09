@@ -1549,9 +1549,21 @@ pub(crate) fn write_config_root(root: &toml::Value) -> Result<(), String> {
     atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 config.toml 失败: {e}"))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComputerUseStatusDto {
+    pub enabled: bool,
+    pub supported: bool,
+    pub platform: String,
+}
+
 #[tauri::command]
-pub fn get_computer_use() -> bool {
-    crate::computer::is_enabled()
+pub fn get_computer_use() -> ComputerUseStatusDto {
+    ComputerUseStatusDto {
+        enabled: crate::computer::is_enabled(),
+        supported: crate::computer::is_supported(),
+        platform: crate::computer::platform_id().to_string(),
+    }
 }
 
 #[tauri::command]

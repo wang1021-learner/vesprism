@@ -193,7 +193,7 @@ export interface BeatCard {
 export interface DraftPage {
   chapterId: string
   accepted: boolean
-  beats: { beatId: string; body: string }[]
+  beats: { beatId: string; body: string; bodyOmitted?: boolean }[]
 }
 
 export interface ReviewCard {

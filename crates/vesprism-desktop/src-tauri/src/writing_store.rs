@@ -418,14 +418,24 @@ pub(crate) fn save_book_at(root: &Path, id: &str, json: &str) -> Result<(), Stri
     write_json_file(&dir.join("meta.json"), &meta_val)?;
     write_json_file(&dir.join("book.json"), &book)?;
     let mut keep: HashSet<String> = HashSet::new();
-    for (no, file) in chapters {
+    for (no, mut file) in chapters {
         let name = format!("{no:04}.json");
         keep.insert(name.clone());
+        let path = chap_dir.join(&name);
+        if draft_omits_bodies(&file) && path.is_file() {
+            if let Ok(existing) = fs::read_to_string(&path) {
+                if let Ok(prev) = serde_json::from_str::<Value>(&existing) {
+                    if let Some(d) = prev.get("draft") {
+                        file["draft"] = d.clone();
+                    }
+                }
+            }
+        }
         let bytes = to_json_bytes(&file)?;
         if bytes.len() > crate::security::MAX_BOOK_JSON_BYTES {
             return Err("章节超过 16MB，拒绝写入".into());
         }
-        crate::commands::atomic_write(&chap_dir.join(&name), &bytes)
+        crate::commands::atomic_write(&path, &bytes)
             .map_err(|e| format!("保存章节失败: {e}"))?;
     }
     if let Ok(entries) = fs::read_dir(&chap_dir) {
@@ -473,6 +483,74 @@ pub(crate) fn load_book_at(root: &Path, id: &str) -> Result<String, String> {
     }
     let assembled = assemble_from_parts(book, files);
     serde_json::to_string(&assembled).map_err(|e| format!("组装书失败: {e}"))
+}
+
+fn strip_draft_bodies(mut book: Value) -> Value {
+    if let Some(arr) = book.get_mut("drafts").and_then(|d| d.as_array_mut()) {
+        for d in arr {
+            let Some(beats) = d.get_mut("beats").and_then(|b| b.as_array_mut()) else {
+                continue;
+            };
+            for beat in beats {
+                let Some(obj) = beat.as_object_mut() else {
+                    continue;
+                };
+                let nonempty = obj
+                    .get("body")
+                    .and_then(|b| b.as_str())
+                    .is_some_and(|s| !s.is_empty());
+                if nonempty {
+                    obj.insert("body".into(), json!(""));
+                    obj.insert("bodyOmitted".into(), json!(true));
+                }
+            }
+        }
+    }
+    book
+}
+
+pub(crate) fn load_book_skeleton_at(root: &Path, id: &str) -> Result<String, String> {
+    let full = load_book_at(root, id)?;
+    let book = strip_draft_bodies(parse_value(&full)?);
+    serde_json::to_string(&book).map_err(|e| format!("组装书失败: {e}"))
+}
+
+fn draft_omits_bodies(file: &Value) -> bool {
+    file.get("draft")
+        .and_then(|d| d.get("beats"))
+        .and_then(|b| b.as_array())
+        .is_some_and(|beats| {
+            beats.iter().any(|beat| beat.get("bodyOmitted") == Some(&json!(true)))
+        })
+}
+
+pub(crate) fn load_chapter_at(root: &Path, id: &str, chapter_id: &str) -> Result<String, String> {
+    let clean = sanitize_id(id).ok_or_else(|| "书 id 不合法".to_string())?;
+    let want = chapter_id.trim();
+    if want.is_empty() {
+        return Err("章 id 不能为空".into());
+    }
+    migrate_one(root, &clean)?;
+    let chap_dir = book_dir(root, &clean).join("chapters");
+    if !chap_dir.is_dir() {
+        return Err("这本书没有章节".into());
+    }
+    let entries = fs::read_dir(&chap_dir).map_err(|e| format!("读取章节目录失败: {e}"))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_s = name.to_string_lossy();
+        if !name_s.ends_with(".json") {
+            continue;
+        }
+        let text = fs::read_to_string(entry.path()).map_err(|e| format!("读取章节失败: {e}"))?;
+        let Ok(v) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        if v.get("id").and_then(|x| x.as_str()) == Some(want) {
+            return Ok(text);
+        }
+    }
+    Err(format!("没有这一章：{want}"))
 }
 
 fn read_meta_file(dir: &Path, id: &str) -> Option<WritingBookMeta> {
@@ -710,6 +788,18 @@ pub fn writing_list_books() -> Result<Vec<WritingBookMeta>, String> {
 #[tauri::command]
 pub fn writing_load_book(id: String) -> Result<String, String> {
     load_book_at(&books_root(), &id)
+}
+
+/// 打开书用：结构 + 入卷标记，正文 body 留在章文件里。
+#[tauri::command]
+pub fn writing_load_book_skeleton(id: String) -> Result<String, String> {
+    load_book_skeleton_at(&books_root(), &id)
+}
+
+/// 打开某一章时再灌正文。
+#[tauri::command]
+pub fn writing_load_chapter(id: String, chapter_id: String) -> Result<String, String> {
+    load_chapter_at(&books_root(), &id, &chapter_id)
 }
 
 /// 保存一本书：拆成 meta / 结构 / 按章文件。
@@ -979,6 +1069,26 @@ mod tests {
         assert_eq!(assembled["drafts"][0]["beats"][0]["body"], "他推开门。");
         assert_eq!(assembled["beatsByChapter"]["ch-1"][0]["title"], "切块1");
         assert_eq!(assembled["reviews"][0]["summary80"], "他推开门。");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn skeleton_omits_draft_bodies_and_partial_save_keeps_them() {
+        let root = tmp_books();
+        super::save_book_at(&root, "b1", &sample_book_json()).unwrap();
+        let skeleton: serde_json::Value =
+            serde_json::from_str(&super::load_book_skeleton_at(&root, "b1").unwrap()).unwrap();
+        assert_eq!(skeleton["drafts"][0]["beats"][0]["body"], "");
+        assert_eq!(skeleton["drafts"][0]["beats"][0]["bodyOmitted"], true);
+        assert_eq!(skeleton["drafts"][0]["accepted"], true);
+        let ch: serde_json::Value =
+            serde_json::from_str(&super::load_chapter_at(&root, "b1", "ch-1").unwrap()).unwrap();
+        assert_eq!(ch["draft"]["beats"][0]["body"], "他推开门。");
+
+        super::save_book_at(&root, "b1", &skeleton.to_string()).unwrap();
+        let full: serde_json::Value =
+            serde_json::from_str(&super::load_book_at(&root, "b1").unwrap()).unwrap();
+        assert_eq!(full["drafts"][0]["beats"][0]["body"], "他推开门。");
         let _ = std::fs::remove_dir_all(&root);
     }
 

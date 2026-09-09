@@ -33,11 +33,13 @@ import {
   setWorkspaceCwd,
   getSecurityPolicy,
   getComputerUse,
+  type ComputerUseStatus,
   setComputerUse,
   setSecurityPolicy,
   restartSession,
 } from '../bridge'
 import { policyFromDto, type ExecutionPolicy, type FileAccess, type InternetAccess } from '../lib/executionPolicy'
+import { computerUsePlatformHint } from '../lib/computerUse'
 import {
   autoEnvKey,
   CONTEXT_WINDOW_PRESETS,
@@ -72,6 +74,7 @@ import { Notice } from './Notice'
 import {
   API_BACKENDS,
   headersToText,
+  settingsSavedMessage,
   type SettingsTab,
 } from './settingsHelpers'
 import { AccountCard } from './AccountCard'
@@ -134,6 +137,8 @@ export function SettingsModal() {
   const [fileAccess, setFileAccess] = useState<FileAccess>('workspace-only')
   const [policyScope, setPolicyScope] = useState<'global' | 'workspace'>('global')
   const [computerUse, setComputerUseOn] = useState(false)
+  const [computerUseSupported, setComputerUseSupported] = useState(true)
+  const [computerUsePlatform, setComputerUsePlatform] = useState('windows')
   const [computerUseAck, setComputerUseAck] = useState(false)
   const [computerBusy, setComputerBusy] = useState(false)
 
@@ -228,9 +233,14 @@ export function SettingsModal() {
           /* 默认审批模式 */
         }
         try {
-          setComputerUseOn(await getComputerUse())
+          const cu: ComputerUseStatus = await getComputerUse()
+          setComputerUseOn(Boolean(cu.enabled))
+          setComputerUseSupported(cu.supported !== false)
+          setComputerUsePlatform(cu.platform || '')
         } catch {
           setComputerUseOn(false)
+          setComputerUseSupported(true)
+          setComputerUsePlatform('')
         }
         setSettingsCwd($workspaceCwd.get())
         const entry = normalized.find((m) => m.id === pick)
@@ -506,7 +516,7 @@ export function SettingsModal() {
     if (res.ok) {
       if (tab === 'models') {
         setToast({
-          message: '模型已保存。密钥在 .env，其余在 config.toml。可再点「测连通」。',
+          message: settingsSavedMessage('models'),
           type: 'success',
         })
         const ent = models.find((m) => m.id === selectedModelId)
@@ -839,14 +849,20 @@ export function SettingsModal() {
                   <p className="settings-card-desc">
                     默认关闭。打开后，模型可以通过内置 MCP 截取你的屏幕、移动鼠标、点击和打字（工具里含 Alt+F4 这类系统快捷键）。
                     这不是官方引擎自带的通道，是 Vesprism 在本机接的。每次调用仍会走工具审批（除非你开了信任模式）：你点「允许」等于真的在这台电脑上点下去，不是预览。
-                    Windows 可用。会写入当前工作区的 <code>.mcp.json</code>。
+                    Windows、macOS、Linux 可用。会写入当前工作区的 <code>.mcp.json</code>。
                   </p>
+                  {computerUsePlatformHint(computerUsePlatform) ? (
+                    <p className="settings-hint">{computerUsePlatformHint(computerUsePlatform)}</p>
+                  ) : null}
+                  {!computerUseSupported ? (
+                    <p className="settings-hint">当前系统开不了电脑操作。</p>
+                  ) : null}
                   <label className="settings-hint" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                     <input
                       type="checkbox"
                       checked={computerUseAck}
                       onChange={(e) => setComputerUseAck(e.target.checked)}
-                      disabled={computerUse}
+                      disabled={computerUse || !computerUseSupported}
                     />
                     <span>我明白：开启后模型能看到屏幕内容，并能模拟键鼠操作本机。</span>
                   </label>
@@ -854,7 +870,10 @@ export function SettingsModal() {
                     <button
                       type="button"
                       className="skills-btn"
-                      disabled={computerBusy || (!computerUse && !computerUseAck)}
+                      disabled={
+                        computerBusy ||
+                        (!computerUse && (!computerUseAck || !computerUseSupported))
+                      }
                       onClick={() => {
                         void (async () => {
                           setComputerBusy(true)

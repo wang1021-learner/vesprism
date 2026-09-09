@@ -491,6 +491,182 @@ impl Composition {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 技能 / MCP 会话级快照与复原（官方 toggle 会写进项目 config）
+// ---------------------------------------------------------------------------
+
+/// apply 前记下技能开关和 MCP 工具启用态，关会话时按这份复原。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompositionBaseline {
+    pub skills: BTreeMap<String, bool>,
+    pub mcp_tools: BTreeMap<String, BTreeMap<String, bool>>,
+    pub disabled_tools: BTreeMap<String, Vec<String>>,
+}
+
+/// 从 `x.ai/skills/list` 抽出 `(name, scope, enabled)`。
+pub fn parse_listed_skills(listed: &serde_json::Value) -> Vec<(String, String, bool)> {
+    let skills = listed
+        .get("skills")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for sk in skills {
+        let name = sk
+            .get("name")
+            .or_else(|| sk.get("skillName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let scope = sk
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let enabled = sk.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+        out.push((name, scope, enabled));
+    }
+    out
+}
+
+pub fn skill_enabled_map(listed: &[(String, String, bool)]) -> BTreeMap<String, bool> {
+    listed
+        .iter()
+        .map(|(n, _, e)| (n.clone(), *e))
+        .collect()
+}
+
+/// 组装单 scopes/exclude 下每个技能该开还是该关。
+pub fn skill_desired_map(
+    listed: &[(String, String, bool)],
+    scopes: &[String],
+    exclude: &[String],
+) -> BTreeMap<String, bool> {
+    let mut out = BTreeMap::new();
+    for (name, scope, _) in listed {
+        let in_scope =
+            scopes.is_empty() || scopes.iter().any(|s| s.trim().eq_ignore_ascii_case(scope));
+        let excluded = skill_name_excluded(name, exclude);
+        out.insert(name.clone(), in_scope && !excluded);
+    }
+    out
+}
+
+/// `current` → `desired` 需要发出的 toggle（name, enabled）。
+pub fn enabled_toggles(
+    current: &BTreeMap<String, bool>,
+    desired: &BTreeMap<String, bool>,
+) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for (name, want) in desired {
+        if current.get(name) != Some(want) {
+            out.push((name.clone(), *want));
+        }
+    }
+    out
+}
+
+/// 从 `x.ai/mcp/list` 抽出 server → (tool → enabled)。
+pub fn parse_mcp_tool_enabled(
+    listed: &serde_json::Value,
+) -> BTreeMap<String, BTreeMap<String, bool>> {
+    let servers = listed
+        .get("servers")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = BTreeMap::new();
+    for srv in servers {
+        let name = srv
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let tools = srv
+            .get("session")
+            .and_then(|s| s.get("tools"))
+            .or_else(|| srv.get("tools"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut map = BTreeMap::new();
+        for t in tools {
+            let tn = t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if tn.is_empty() {
+                continue;
+            }
+            let enabled = t.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            map.insert(tn, enabled);
+        }
+        out.insert(name, map);
+    }
+    out
+}
+
+/// 组装单要停的 MCP 工具：只对当前为开的发出 enabled=false。
+pub fn mcp_disable_toggles(
+    current: &BTreeMap<String, BTreeMap<String, bool>>,
+    want_disabled: &BTreeMap<String, Vec<String>>,
+) -> Vec<(String, String, bool)> {
+    let mut out = Vec::new();
+    for (server, tools) in want_disabled {
+        for tool in tools {
+            let t = tool.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let on = current
+                .get(server)
+                .and_then(|m| m.get(t))
+                .copied()
+                .unwrap_or(true);
+            if on {
+                out.push((server.clone(), t.to_string(), false));
+            }
+        }
+    }
+    out
+}
+
+/// 关会话：把本次停掉、原先是开的 MCP 工具重新打开。
+pub fn mcp_restore_toggles(
+    snapshot: &BTreeMap<String, BTreeMap<String, bool>>,
+    want_disabled: &BTreeMap<String, Vec<String>>,
+) -> Vec<(String, String, bool)> {
+    let mut out = Vec::new();
+    for (server, tools) in want_disabled {
+        for tool in tools {
+            let t = tool.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if snapshot
+                .get(server)
+                .and_then(|m| m.get(t))
+                .copied()
+                == Some(true)
+            {
+                out.push((server.clone(), t.to_string(), true));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,5 +939,100 @@ tools:
             split_stdio_command(r#""C:\Program Files\foo.exe" --flag"#, None),
             ("C:\\Program Files\\foo.exe".into(), vec!["--flag".into()])
         );
+    }
+
+    #[test]
+    fn overlay_read_env_deny_survives_resolve_merge() {
+        let overlay = parse_composition(
+            r#"
+permissions:
+  mode: ask
+  rules:
+    - match: "read:**/.env"
+      policy: deny
+"#,
+            "overlay",
+        )
+        .unwrap();
+        overlay.validate().unwrap();
+        let merged = merge_composition(&Composition::default(), &overlay);
+        assert_eq!(merged.permissions.rules.len(), 1);
+        assert_eq!(merged.permissions.rules[0].matcher, "read:**/.env");
+        let engine = crate::policy::PolicyEngine::new(
+            merged.permissions.mode,
+            merged.permissions.rules.clone(),
+        );
+        assert!(engine.has_deny("read", r"D:\ws\.env"));
+    }
+
+    #[test]
+    fn skill_desired_respects_scope_and_exclude() {
+        let listed = vec![
+            ("ui-design".into(), "user".into(), true),
+            ("web-search".into(), "user".into(), true),
+            ("repo-only".into(), "repo".into(), true),
+        ];
+        let desired = skill_desired_map(
+            &listed,
+            &["user".into()],
+            &["web-*".into()],
+        );
+        assert_eq!(desired.get("ui-design"), Some(&true));
+        assert_eq!(desired.get("web-search"), Some(&false));
+        assert_eq!(desired.get("repo-only"), Some(&false));
+        let current = skill_enabled_map(&listed);
+        let toggles = enabled_toggles(&current, &desired);
+        assert!(toggles.contains(&("web-search".into(), false)));
+        assert!(toggles.contains(&("repo-only".into(), false)));
+        assert!(!toggles.iter().any(|(n, _)| n == "ui-design"));
+        let restore = enabled_toggles(&desired, &current);
+        assert!(restore.contains(&("web-search".into(), true)));
+        assert!(restore.contains(&("repo-only".into(), true)));
+    }
+
+    #[test]
+    fn mcp_disable_and_restore_only_touch_previously_enabled() {
+        let mut brave = BTreeMap::new();
+        brave.insert("search".into(), true);
+        brave.insert("summarize".into(), false);
+        let mut current = BTreeMap::new();
+        current.insert("brave".into(), brave);
+        let mut want = BTreeMap::new();
+        want.insert(
+            "brave".into(),
+            vec!["search".into(), "summarize".into(), "missing".into()],
+        );
+        let off = mcp_disable_toggles(&current, &want);
+        assert!(off.contains(&("brave".into(), "search".into(), false)));
+        assert!(off.contains(&("brave".into(), "missing".into(), false)));
+        assert!(!off.iter().any(|(_, t, _)| t == "summarize"));
+        let on = mcp_restore_toggles(&current, &want);
+        assert_eq!(on, vec![("brave".into(), "search".into(), true)]);
+    }
+
+    #[test]
+    fn parse_listed_skills_and_mcp_tools() {
+        let skills = serde_json::json!({
+            "skills": [
+                {"name": "ui-design", "scope": "User", "enabled": true},
+                {"skillName": "skip-empty", "scope": "repo"}
+            ]
+        });
+        let parsed = parse_listed_skills(&skills);
+        assert_eq!(parsed[0].0, "ui-design");
+        assert_eq!(parsed[0].1, "user");
+        assert!(parsed[0].2);
+        let mcp = serde_json::json!({
+            "servers": [{
+                "name": "brave",
+                "session": {"tools": [
+                    {"name": "search", "enabled": true},
+                    {"name": "summarize", "enabled": false}
+                ]}
+            }]
+        });
+        let tools = parse_mcp_tool_enabled(&mcp);
+        assert_eq!(tools["brave"]["search"], true);
+        assert_eq!(tools["brave"]["summarize"], false);
     }
 }

@@ -2541,6 +2541,9 @@ pub struct GrokSession {
     inflight_prompts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// 会话工作区，组装单技能/插件路径相对它解析。
     cwd: String,
+    /// apply 前的技能 / MCP 开关；关会话或再 apply 时复原。
+    composition_baseline:
+        std::sync::Arc<std::sync::RwLock<Option<crate::composition::CompositionBaseline>>>,
 }
 
 impl GrokSession {
@@ -2774,6 +2777,7 @@ impl GrokSession {
             last_model_id: seed_model_lock(model_id),
             inflight_prompts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             cwd: cwd_owned,
+            composition_baseline: std::sync::Arc::new(std::sync::RwLock::new(None)),
         })
     }
 
@@ -2890,6 +2894,7 @@ impl GrokSession {
             last_model_id: std::sync::Arc::new(std::sync::RwLock::new(None)),
             inflight_prompts: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             cwd: cwd_owned,
+            composition_baseline: std::sync::Arc::new(std::sync::RwLock::new(None)),
         })
     }
 
@@ -3440,13 +3445,81 @@ impl GrokSession {
     ) -> anyhow::Result<()> {
         let prev_policy = self.clone_policy();
         let prev_overrides = self.clone_tool_overrides();
+        let _ = self.revert_composition().await;
+        let snapshot = self.capture_composition_baseline(composition).await;
         match self.apply_composition_inner(composition).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                let mut g = self
+                    .composition_baseline
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner());
+                *g = Some(snapshot);
+                Ok(())
+            }
             Err(e) => {
                 self.set_policy(prev_policy);
                 self.set_tool_overrides(prev_overrides);
+                {
+                    let mut g = self
+                        .composition_baseline
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner());
+                    *g = Some(snapshot);
+                }
+                let _ = self.revert_composition().await;
                 Err(e)
             }
+        }
+    }
+
+    /// 把本次组装单对技能 / MCP 的改动复原（关 Tab / 再 apply 之前）。
+    pub async fn revert_composition(&self) -> anyhow::Result<()> {
+        let baseline = {
+            let mut g = self
+                .composition_baseline
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            g.take()
+        };
+        let Some(baseline) = baseline else {
+            return Ok(());
+        };
+        let listed = self
+            .list_skills(&self.cwd)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let current = crate::composition::skill_enabled_map(
+            &crate::composition::parse_listed_skills(&listed),
+        );
+        for (name, want) in crate::composition::enabled_toggles(&current, &baseline.skills) {
+            let _ = self.toggle_skill(&name, want, &self.cwd).await;
+        }
+        for (server, tool, enabled) in
+            crate::composition::mcp_restore_toggles(&baseline.mcp_tools, &baseline.disabled_tools)
+        {
+            let _ = self.toggle_mcp_tool(&server, &tool, enabled).await;
+        }
+        Ok(())
+    }
+
+    async fn capture_composition_baseline(
+        &self,
+        composition: &crate::composition::Composition,
+    ) -> crate::composition::CompositionBaseline {
+        let listed = self
+            .list_skills(&self.cwd)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let mcp = self
+            .list_mcp_servers(true)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        crate::composition::CompositionBaseline {
+            skills: crate::composition::skill_enabled_map(
+                &crate::composition::parse_listed_skills(&listed),
+            ),
+            mcp_tools: crate::composition::parse_mcp_tool_enabled(&mcp),
+            disabled_tools: composition.mcp.disabled_tools.clone(),
         }
     }
 
@@ -3508,7 +3581,11 @@ impl GrokSession {
         }
 
         self.update_flows(&composition.flows).await?;
-        self.apply_composition_mcp(composition).await?;
+        let mcp_listed = self
+            .list_mcp_servers(true)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        self.apply_composition_mcp(composition, &mcp_listed).await?;
         self.apply_composition_skills(composition).await?;
         self.apply_composition_plugins(composition).await?;
 
@@ -3518,6 +3595,7 @@ impl GrokSession {
     async fn apply_composition_mcp(
         &self,
         composition: &crate::composition::Composition,
+        listed: &serde_json::Value,
     ) -> anyhow::Result<()> {
         for server in &composition.mcp.servers {
             let name = server.name.trim();
@@ -3568,14 +3646,11 @@ impl GrokSession {
             self.upsert_mcp_server(name, serde_json::Value::Object(cfg))
                 .await?;
         }
-        for (server, tools) in &composition.mcp.disabled_tools {
-            for tool in tools {
-                let t = tool.trim();
-                if t.is_empty() {
-                    continue;
-                }
-                self.toggle_mcp_tool(server, t, false).await?;
-            }
+        let current = crate::composition::parse_mcp_tool_enabled(listed);
+        for (server, tool, enabled) in
+            crate::composition::mcp_disable_toggles(&current, &composition.mcp.disabled_tools)
+        {
+            self.toggle_mcp_tool(&server, &tool, enabled).await?;
         }
         Ok(())
     }
@@ -3590,36 +3665,11 @@ impl GrokSession {
             return Ok(());
         }
         let listed = self.list_skills(&self.cwd).await?;
-        let skills = listed
-            .get("skills")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        for sk in skills {
-            let name = sk
-                .get("name")
-                .or_else(|| sk.get("skillName"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if name.is_empty() {
-                continue;
-            }
-            let scope = sk
-                .get("scope")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_ascii_lowercase();
-            let enabled = sk.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-            let in_scope =
-                scopes.is_empty() || scopes.iter().any(|s| s.trim().eq_ignore_ascii_case(&scope));
-            let excluded = crate::composition::skill_name_excluded(&name, exclude);
-            let want = in_scope && !excluded;
-            if want != enabled {
-                self.toggle_skill(&name, want, &self.cwd).await?;
-            }
+        let parsed = crate::composition::parse_listed_skills(&listed);
+        let current = crate::composition::skill_enabled_map(&parsed);
+        let desired = crate::composition::skill_desired_map(&parsed, scopes, exclude);
+        for (name, want) in crate::composition::enabled_toggles(&current, &desired) {
+            self.toggle_skill(&name, want, &self.cwd).await?;
         }
         Ok(())
     }

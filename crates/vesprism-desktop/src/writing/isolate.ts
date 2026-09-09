@@ -1,7 +1,14 @@
 /** 写台与引擎对接的隔离规则：每本书、每一轮任务互不串。 */
 
+import { isWritingSessionCwd } from '../lib/writingCwd'
+
 /** 官方 ask：只答、不给工具。写台只要对话正文，不要 write/bash。 */
 export const WRITING_SESSION_MODE = 'ask'
+
+/** 写台 cwd 不准切到可改文件的模式。 */
+export function writingMustStayAsk(cwd: string | undefined): boolean {
+  return isWritingSessionCwd(cwd || '')
+}
 
 export function needsFreshSession(kind: string): boolean {
   return (

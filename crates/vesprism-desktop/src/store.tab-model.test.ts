@@ -263,6 +263,7 @@ describe('Tab 活动灯', () => {
     expect(s.modelId).toBe('')
     expect(s.reasoningEffort).toBe('medium')
     expect(s.utilityKind).toBeNull()
+    expect(s.mountedFlows).toEqual([])
   })
 
   it('findTabByUtilityKind 可复用 workflows 专用 Tab', () => {

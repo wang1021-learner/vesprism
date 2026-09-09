@@ -4,7 +4,9 @@ import {
   bookLandLine,
   bookProgress,
   bookStatus,
+  chapterNeedsBody,
   createWritingBook,
+  mergeChapterIntoBook,
   resetWritingLibraryForTests,
   shelfFromBook,
   $writingBooks,
@@ -40,5 +42,24 @@ describe('写完书库', () => {
     expect(item.accepted_chars).toBe(0)
     expect(item.land_line).toBe('开卷')
     expect(JSON.stringify(item)).not.toMatch(/beatsByChapter/)
+  })
+
+  it('骨架书缺正文时 merge 章文件补回 body', () => {
+    const book = emptyBook({ title: '试', platform: '番茄', logline: '一句' })
+    book.drafts = [
+      {
+        chapterId: 'ch-1',
+        accepted: true,
+        beats: [{ beatId: 'b1', body: '', bodyOmitted: true }],
+      },
+    ]
+    expect(chapterNeedsBody(book, 'ch-1')).toBe(true)
+    const next = mergeChapterIntoBook(book, {
+      id: 'ch-1',
+      draft: { chapterId: 'ch-1', accepted: true, beats: [{ beatId: 'b1', body: '他推开门。' }] },
+    })
+    expect(next.drafts[0].beats[0].body).toBe('他推开门。')
+    expect(next.drafts[0].beats[0].bodyOmitted).toBeUndefined()
+    expect(chapterNeedsBody(next, 'ch-1')).toBe(false)
   })
 })

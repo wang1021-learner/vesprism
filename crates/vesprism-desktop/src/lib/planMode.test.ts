@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../bridge', () => ({
+  setSessionMode: vi.fn(),
+}))
+
 import {
   applyModeUpdate,
   EMPTY_PLAN_PLACEHOLDER,
@@ -8,7 +13,10 @@ import {
   parseSessionMode,
   planChipLabel,
   planPreviewBody,
+  toggleAskMode,
+  togglePlanMode,
 } from './planMode'
+import { createTab, getTabState, resetTabsForTests, switchTab } from '../store'
 
 describe('planChipLabel', () => {
   it('关 / 待发 / 开 / 等你批', () => {
@@ -103,5 +111,24 @@ describe('planPreviewBody', () => {
   })
   it('有稿用原文', () => {
     expect(planPreviewBody('# 做法', true)).toBe('# 做法')
+  })
+})
+
+describe('写台锁死只答', () => {
+  beforeEach(() => {
+    resetTabsForTests()
+  })
+
+  it('写台 cwd 不能关问答、不能进计划', async () => {
+    createTab('tab-w', {
+      cwd: 'C:\\Users\\x\\.vesprism\\writing\\book-1',
+      sessionMode: 'ask',
+      phase: 'ready',
+    })
+    switchTab('tab-w')
+    await toggleAskMode()
+    expect(getTabState('tab-w')?.sessionMode).toBe('ask')
+    await togglePlanMode()
+    expect(getTabState('tab-w')?.planPhase).toBe('off')
   })
 })

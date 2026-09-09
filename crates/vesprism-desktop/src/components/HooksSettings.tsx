@@ -3,6 +3,7 @@ import { useStore } from '@nanostores/react'
 import { hooksAction, hooksList, listConfigHooks, setConfigHooks, type HookGroup, type HookHandler } from '../bridge'
 import { $activeTabId, $sessionPhase, pushToast } from '../store'
 import { SettingsLabel } from './SettingsHelp'
+import { settingsSavedMessage } from './settingsHelpers'
 
 const HOOK_EVENTS = [
   'PreToolUse',
@@ -92,7 +93,7 @@ export function HooksSettings({
     try {
       const saved = await setConfigHooks(groups)
       setGroups(saved)
-      onToast('Hooks 已写入 config.toml', 'success')
+      onToast(settingsSavedMessage('hooks'), 'success')
     } catch (e) {
       onToast(String(e), 'error')
     } finally {

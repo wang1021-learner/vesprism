@@ -238,6 +238,20 @@ function MemberRowView({
       setOpening(false)
     }
   }
+  const onContinue = async () => {
+    if (!m.childSessionId || opening) return
+    setOpening(true)
+    try {
+      const tab = await openSubagentTab(m.childSessionId, { title: m.label })
+      if (!tab) {
+        pushToast('打开子代理失败', 'error')
+        return
+      }
+      window.dispatchEvent(new CustomEvent('vesprism:focus-composer'))
+    } finally {
+      setOpening(false)
+    }
+  }
   return (
     <div className="st-member" data-state={m.state}>
       <div className="st-member-row">
@@ -293,6 +307,17 @@ function MemberRowView({
             }
           >
             {opening ? '…' : readonly || onViewConversation ? '对话' : '打开'}
+          </button>
+        ) : null}
+        {m.childSessionId && !readonly && !onViewConversation ? (
+          <button
+            type="button"
+            className="st-action"
+            disabled={opening}
+            onClick={() => void onContinue()}
+            title="打开子会话并接着发话（官方通道，不另发明令）"
+          >
+            {opening ? '…' : '续话'}
           </button>
         ) : null}
       </div>

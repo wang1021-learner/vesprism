@@ -37,6 +37,18 @@ export function headersToText(headers: Record<string, string> | undefined): stri
     .join('\n')
 }
 
+/** 设置保存后的诚实回执：模型热加载，引擎/Hooks 只写盘。 */
+export function settingsSavedMessage(kind: 'models' | 'engine' | 'hooks'): string {
+  switch (kind) {
+    case 'models':
+      return '模型已保存。密钥在 .env，其余在 config.toml。当前会话已重载模型列表。'
+    case 'engine':
+      return '引擎设置已写入 config.toml。新开会话生效；当前这场要重启 Vesprism。'
+    case 'hooks':
+      return 'Hooks 已写入 config.toml。新开会话生效；当前这场点「重载」或重启 Vesprism。'
+  }
+}
+
 export function textToHeaders(text: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const line of text.split('\n')) {

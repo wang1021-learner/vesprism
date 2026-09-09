@@ -13,15 +13,18 @@ import {
   remainToTarget,
   volumeLandLine,
 } from './framework/scale'
-import type { BookDemo } from './model/types'
+import type { BeatCard, BookDemo, DraftPage, ReviewCard } from './model/types'
+import type { ParsedNode } from './model/nodes'
 import {
   isLoadableBook,
   persistBook,
   writingDeleteBook,
   writingListBooks,
-  writingLoadBook,
+  writingLoadBookSkeleton,
+  writingLoadChapter,
   type WritingBookMeta,
 } from './storage'
+
 
 export const LAST_BOOK_KEY = 'vesprism.writing.lastBook'
 export const WRITING_CHAPTER_AIM = chapterCountFor()
@@ -199,7 +202,7 @@ export async function selectWritingBook(id: string): Promise<void> {
   if ($writingBooks.get().some((b) => b.id === id)) return
   if (!isTauriRuntime()) return
   try {
-    const raw = await writingLoadBook(id)
+    const raw = await writingLoadBookSkeleton(id)
     const book = JSON.parse(raw) as unknown
     if (!isLoadableBook(book) || book.id !== id) {
       console.warn('[writing] 这本书结构不完整:', id)
@@ -212,6 +215,60 @@ export async function selectWritingBook(id: string): Promise<void> {
     console.warn('[writing] 打开书失败:', id, e)
     if ($writingOpenId.get() === id) $writingOpenId.set(null)
   }
+}
+
+export function chapterIdOfNode(node: ParsedNode): string | null {
+  if (node.kind === 'chapter') return node.id
+  if (node.kind === 'beats' || node.kind === 'draft' || node.kind === 'review') return node.chapterId
+  return null
+}
+
+export function chapterNeedsBody(book: BookDemo, chapterId: string): boolean {
+  const d = book.drafts.find((x) => x.chapterId === chapterId)
+  return Boolean(d?.beats.some((b) => b.bodyOmitted))
+}
+
+type ChapterFile = {
+  id?: string
+  beats?: BeatCard[]
+  draft?: DraftPage
+  review?: ReviewCard
+}
+
+export function mergeChapterIntoBook(book: BookDemo, raw: unknown): BookDemo {
+  const file = raw as ChapterFile
+  const id = (file.id || '').trim()
+  if (!id) return book
+  const draft = file.draft
+    ? {
+        ...file.draft,
+        beats: (file.draft.beats || []).map((b) => ({
+          beatId: b.beatId,
+          body: b.body || '',
+        })),
+      }
+    : undefined
+  return {
+    ...book,
+    beatsByChapter: file.beats
+      ? { ...book.beatsByChapter, [id]: file.beats }
+      : book.beatsByChapter,
+    drafts: draft
+      ? [...book.drafts.filter((d) => d.chapterId !== id), draft]
+      : book.drafts,
+    reviews: file.review
+      ? [...book.reviews.filter((r) => r.chapterId !== id), file.review]
+      : book.reviews,
+  }
+}
+
+export async function hydrateWritingChapter(bookId: string, chapterId: string): Promise<void> {
+  const book = $writingBooks.get().find((b) => b.id === bookId)
+  if (!book || !chapterNeedsBody(book, chapterId)) return
+  if (!isTauriRuntime()) return
+  const raw = await writingLoadChapter(bookId, chapterId)
+  const file = JSON.parse(raw) as unknown
+  mapWritingBooks((prev) => prev.map((b) => (b.id === bookId ? mergeChapterIntoBook(b, file) : b)))
 }
 
 /** 测试用 */

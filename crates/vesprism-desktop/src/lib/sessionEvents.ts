@@ -29,12 +29,14 @@ import {
   type QueuedPrompt,
 } from '../store'
 import {
+  getComposition,
   loadSession,
   respondExitPlanMode,
   respondPermission,
   respondUserQuestion,
   sessionCaps,
   setCurrentModel,
+  setSessionMode,
   startSession,
 } from '../bridge'
 import {
@@ -59,6 +61,7 @@ import {
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
 import { applyModeUpdate, parseSessionMode } from './planMode'
+import { writingMustStayAsk } from '../writing/isolate'
 import { keepTail } from './terminalCards'
 import { notifyChatsChanged, upsertLiveChat } from './recordSessionInSidebar'
 import { cleanSessionTitle } from './sessionTitle'
@@ -386,7 +389,11 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     case 'current_mode_update': {
       const st = getTabState(tabId)
       const next = applyModeUpdate(ev.mode_id || '', st?.planPhase ?? 'off')
-      const sessionMode = parseSessionMode(ev.mode_id)
+      let sessionMode = parseSessionMode(ev.mode_id)
+      if (writingMustStayAsk(st?.cwd) && sessionMode !== 'ask') {
+        sessionMode = 'ask'
+        void setSessionMode(tabId, 'ask').catch(() => {})
+      }
       const patch: Parameters<typeof patchTab>[1] = { planPhase: next, sessionMode }
       if (next === 'off' && !st?.planApproval) {
         patch.planPreviewOpen = false
@@ -669,6 +676,17 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         void sessionCaps(tabId)
           .then((caps) => patchTab(tabId, { sessionCaps: caps }))
           .catch(() => {})
+        const cwd = looksAbsolutePath(nextCwd) ? nextCwd : prev?.cwd || ''
+        if (cwd) {
+          void getComposition(ev.session_id, cwd)
+            .then((c) => {
+              const flows = Array.isArray(c?.flows)
+                ? c.flows.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+                : []
+              patchTab(tabId, { mountedFlows: flows })
+            })
+            .catch(() => {})
+        }
         // 工具面板（画布/编制等）会话不进主聊天历史；写台要进「写完」分组，不当工具会话藏掉
         if (
           prev?.utilityKind &&

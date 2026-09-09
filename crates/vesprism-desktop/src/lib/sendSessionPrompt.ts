@@ -11,6 +11,7 @@ import {
   getTabState,
   patchActiveTab,
   patchTab,
+  pushToast,
 } from '../store'
 import { interjectPrompt, sendPrompt, type PromptAttach } from '../bridge'
 import type { MessageAttach } from '../types'
@@ -18,6 +19,7 @@ import { generateId } from './generateId'
 import { markPlanActivatedOnSend } from './planMode'
 import { recordLiveSession } from './recordSessionInSidebar'
 import { removeUserMessageByPromptId } from './sessionTranscript'
+import { workflowSendAllowed } from './workflowGate'
 
 export type SendSessionPromptOpts = {
   text?: string
@@ -70,6 +72,13 @@ export async function sendSessionPrompt(
     return null
   }
   if (!opts.hidden) markPlanActivatedOnSend(tabId)
+  const gate = workflowSendAllowed(wire, tab?.mountedFlows)
+  if (!gate.ok) {
+    const blocked = `组装单未挂载流程「${gate.id}」，没有发出去`
+    patchTab(tabId, { error: blocked })
+    pushToast(blocked, 'info')
+    return null
+  }
   if (opts.hidden) {
     if (!wire && attach.length === 0) return null
     try {
