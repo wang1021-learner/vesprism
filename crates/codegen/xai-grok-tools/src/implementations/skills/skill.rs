@@ -1,59 +1,44 @@
-//! Skill 工具实现 —— 允许 Agent 触发执行用户自定义的技能 (Skill)。
+//! Skill tool implementation - allows the agent to invoke user-defined skills.
 //!
-//! Skill 是用户定义的 Prompt 指令模板（存储为 Markdown 文件），
-//! 可以由用户在聊天窗口中通过 Slash 命令（如 `/commit`）显式调用，
-//! 也可以由 AI 模型通过本工具按需动态调用。
+//! Skills are user-defined prompts stored as Markdown files that can be invoked
+//! by the user via slash commands (e.g., /commit) or by the model via this tool.
 
 use crate::implementations::skills::types::SkillInfo;
 
-/// Skill 工具的输入参数。
+/// Input for the Skill tool
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SkillInput {
-    /// 要调用的技能名称（如 "commit"、"review-pr" 或全限定名称 "user:commit"）
-    #[schemars(description = "要调用的 Skill 名称")]
+    /// The name of the skill to invoke (e.g., "commit", "review-pr", or fully qualified "user:commit")
+    #[schemars(description = "The name of the skill to invoke")]
     pub skill: String,
 
-    /// 传递给 Skill 的可选参数列表
+    /// Optional arguments to pass to the skill
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "传递给 Skill 的可选参数字符串")]
+    #[schemars(description = "Optional arguments to pass to the skill")]
     pub args: Option<String>,
 }
 
-/// Skill 工具的输出结果。
+/// Output from the Skill tool
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SkillOutput {
-    /// Skill 是否成功解析并加载
+    /// Whether the skill was successfully resolved
     pub success: bool,
-    /// 简短的回退提示消息
+    /// Brief fallback message, used as the tool result when there is no skill body.
     pub tool_result: String,
-    /// Skill 的展示名称
+    /// The skill's display name
     pub skill_name: String,
-    /// 格式化后的 Skill 详细 Prompt 内容，作为工具执行结果提交给模型
+    /// The formatted skill content, delivered to the model as the tool result.
     pub skill_message: Option<String>,
-    /// 加载或解析失败时的错误提示
+    /// Error message if the skill failed to load
     pub error: Option<String>,
 }
 
-/// 构造展示给模型的格式化 Skill 消息。
-///
-/// Canonical formatter for skill content injection. Used by the skill tool
-/// (invocation path), TUI slash commands, the pager, and agent definition
-/// preloading — every path that surfaces a skill to the model routes
-/// through this function so the presentation stays consistent.
-///
-/// Format: `<skill>` envelope with name, description, and path attributes
-/// wraps the raw markdown body. The open/close tags give the model a clear
-/// identity and boundary — everything inside is additional instructions
-/// to follow, not a program being invoked.
-///
-/// ```text
-/// <skill name="{name}" description="{description}" path="{path}">
-/// {body}
-/// </skill>
-/// ```
-///
-/// Used on both the invocation path (skill tool, slash expansion) and
-/// preloading paths (agent definitions) — no separate instruct prefix.
+// Old `SkillToolImpl` + `impl Tool` deleted.
+// New implementation is in `grok_build/skill/`.
+
+/// Build the formatted skill message shown to the model. Canonical formatter for skill content injection. Used by the
+/// skill tool (invocation path), TUI slash commands, the pager, and agent definition preloading — every path that
+/// surfaces a skill to the model routes through this function so the presentation stays consistent.
 pub fn build_skill_message(skill: &SkillInfo, content: &str) -> String {
     format!(
         "<skill name=\"{}\" description=\"{}\" path=\"{}\">\n{}\n</skill>",
@@ -61,17 +46,9 @@ pub fn build_skill_message(skill: &SkillInfo, content: &str) -> String {
     )
 }
 
-/// Build a `<skill>` block for user-invoked skill expansion.
-///
-/// Used in the `<skill_information>` envelope when skills are expanded
-/// at prompt-assembly time (the new zero-round-trip path). Includes the
-/// `args` attribute so the model knows what arguments were provided.
-///
-/// ```text
-/// <skill name="commit" args="fix typo">
-/// {body}
-/// </skill>
-/// ```
+/// Build a `<skill>` block for user-invoked skill expansion. Used in the `<skill_information>`
+/// envelope when skills are expanded at prompt-assembly time (the new zero-round-trip path).
+/// Includes the `args` attribute so the model knows what arguments were provided.
 pub fn build_skill_block(name: &str, args: &str, content: &str) -> String {
     if args.is_empty() {
         format!("<skill name=\"{name}\">\n{content}\n</skill>")
@@ -87,15 +64,9 @@ pub struct SkillRef<'a> {
     pub path: &'a str,
 }
 
-/// Wrap one or more `<skill>` blocks in a `<skill_information>` envelope.
-///
-/// Includes a `<skills_referenced>` index listing each skill's name and
-/// full path so the model can quickly see what skills are loaded and where
-/// they live on disk.
-///
-/// Returns an empty string if no blocks are provided. The caller should
-/// append the returned string directly after the `<user_query>` block
-/// when assembling the user message.
+/// Wrap one or more `<skill>` blocks in a `<skill_information>` envelope. Includes a `<skills_referenced>` index listing each skill's name and
+/// full path so the model can quickly see what skills are loaded and where they live on disk. Returns an empty string if no blocks are
+/// provided. The caller should append the returned string directly after the `<user_query>` block when assembling the user message.
 pub fn build_skill_information(skill_blocks: &[String], refs: &[SkillRef<'_>]) -> String {
     if skill_blocks.is_empty() {
         return String::new();
@@ -145,18 +116,9 @@ pub fn format_skill_name(skill: &SkillInfo) -> String {
     format!("{}:{}", skill.scope.as_ref(), skill.name)
 }
 
-/// Extract a clean display string from skill XML markup.
-///
-/// Skill invocations are encoded on the wire as XML tags:
-/// ```text
-/// <command-name>NAME</command-name>
-/// <command-message>/NAME</command-message>
-/// <command-args>ARGS</command-args>           (optional)
-/// ```
-///
-/// Returns `Some("/NAME ARGS")` if the text contains skill markup, `None` otherwise.
-/// Falls back to `<command-name>` when `<command-message>` is absent (e.g. stored
-/// session titles that were truncated to just the first XML tag).
+/// Extract a clean display string from skill XML markup. Returns `Some("/NAME ARGS")` if the text
+/// contains skill markup, `None` otherwise. Falls back to `<command-name>` when `<command-message>`
+/// is absent (e.g. stored session titles that were truncated to just the first XML tag).
 pub fn extract_skill_display_text(text: &str) -> Option<String> {
     let name_open = "<command-name>";
     let name_close = "</command-name>";
@@ -222,10 +184,9 @@ fn escape_xml(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Non-argument substitution inputs for `apply_substitutions`.
-///
-/// Bundles the four same-typed `Option<&str>` context values so callers name
-/// each field by hand and cannot transpose them positionally.
+/// Non-argument substitution inputs for `apply_substitutions`. Bundles the four same-typed
+/// `Option<&str>` context values so callers name each field by hand and cannot transpose them
+/// positionally.
 #[derive(Default)]
 pub struct SubstitutionContext<'a> {
     pub skill_dir: Option<&'a str>,
@@ -234,31 +195,9 @@ pub struct SubstitutionContext<'a> {
     pub plugin_data: Option<&'a str>,
 }
 
-/// Apply variable substitutions to skill content.
-///
-/// Supported variables (Grok-native names + compat aliases):
-///
-/// | Variable | Alias | Description |
-/// |----------|-------|-------------|
-/// | `$ARGUMENTS` | | Full arguments string (empty if none) |
-/// | `$ARGUMENTS[N]` | | Nth argument (0-indexed, whitespace-split) |
-/// | `$N` | | Shorthand for `$ARGUMENTS[N]` (no upper bound) |
-/// | `${SKILL_DIR}` | `${CLAUDE_SKILL_DIR}` | Directory containing the SKILL.md |
-/// | `${SESSION_ID}` | `${CLAUDE_SESSION_ID}` | Current session ID |
-/// | `${GROK_PLUGIN_ROOT}` | `${CLAUDE_PLUGIN_ROOT}` | Plugin root dir (plugin-backed skills) |
-/// | `${GROK_PLUGIN_DATA}` | `${CLAUDE_PLUGIN_DATA}` | Plugin data dir (plugin-backed skills) |
-///
-/// The body is treated as argument-aware only when it contains an *argument*
-/// token (`$ARGUMENTS`, `$ARGUMENTS[N]`, or `$N`); in that case the args are
-/// expanded inline and the `**ARGUMENTS:** ...` suffix is **not** appended.
-/// Path/metadata tokens (`${SKILL_DIR}`, `${SESSION_ID}`,
-/// `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, and their aliases) are
-/// expanded but do NOT suppress the suffix, so a body that references only a
-/// path token still receives its arguments. If no argument token is present,
-/// arguments are appended as a suffix in the traditional format for backward
-/// compatibility.
-///
-/// Unknown `$` tokens are left unchanged.
+/// Apply variable substitutions to skill content. The body is treated as argument-aware only when it contains an *argument* token
+/// (`$ARGUMENTS`, `$ARGUMENTS[N]`, or `$N`); in that case the args are expanded inline and the `**ARGUMENTS:** ...` suffix is **not** appended.
+/// If no argument token is present, arguments are appended as a suffix in the traditional format for backward compatibility.
 pub fn apply_substitutions(content: &mut String, args: Option<&str>, ctx: &SubstitutionContext) {
     let args_str = args.unwrap_or("");
     let argv: Vec<&str> = if args_str.is_empty() {
@@ -267,10 +206,9 @@ pub fn apply_substitutions(content: &mut String, args: Option<&str>, ctx: &Subst
         args_str.split_whitespace().collect()
     };
 
-    // Track whether an *argument* token consumed the args. Only that suppresses
-    // the **ARGUMENTS:** fallback; path/metadata tokens (SKILL_DIR, SESSION_ID,
-    // plugin root/data) expand without suppressing it, so a body that uses only
-    // a path token still receives its arguments.
+    // Track whether an *argument* token consumed the args. Only that suppresses the **ARGUMENTS:**
+    // fallback; path/metadata tokens (SKILL_DIR, SESSION_ID, plugin root/data) expand without
+    // suppressing it, so a body that uses only a path token still receives its arguments.
     let mut args_substituted = false;
 
     // $ARGUMENTS[N] first (before $ARGUMENTS to avoid partial match).
@@ -472,12 +410,9 @@ pub fn extract_skill_body(content: &str) -> String {
     content.to_string()
 }
 
-/// Load skill content from its file, stripping YAML frontmatter.
-///
-/// Public entrypoint for the shell crate to load skill content at
-/// prompt-assembly time (the new zero-round-trip path). The private
-/// `load_skill_content` in `grok_build/skill/mod.rs` is a duplicate
-/// of this.
+/// Load skill content from its file, stripping YAML frontmatter. Public entrypoint for the shell
+/// crate to load skill content at prompt-assembly time (the new zero-round-trip path). The private
+/// `load_skill_content` in `grok_build/skill/mod.rs` is a duplicate of this.
 pub async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
     // Producers strip frontmatter before setting `body`. Re-strip would drop a
     // leading Markdown HR (`---`) and skip link resolution for disk skills.

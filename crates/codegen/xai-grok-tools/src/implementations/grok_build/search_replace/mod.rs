@@ -1,20 +1,18 @@
-//! SearchReplace (代码文本编辑与替换) 工具 —— 基于 `Tool` Trait 的新架构实现。
+//! SearchReplace (Edit) tool — new architecture (`Tool` trait).
 //!
-//! 在指定文件中精确替换目标字符串，支持：
-//! - 创建新文件（当 `old_string` 为空时）
-//! - 全部替换模式（`replace_all: true`）
+//! Replaces an exact string in a file, with support for:
+//! - New file creation (when `old_string` is empty)
+//! - Replace-all mode (`replace_all: true`)
 //!
-//! ## 依赖资源
+//! ## Resources
 //!
-//! - `Cwd` —— 用于解析文件路径的工作目录（必需）
-//! - `FileSystem` —— 读取与写入文件内容（必需）
-//! - `NotificationHandle` —— 发送 `FileWritten` 文件变更通知（可选）
-//! - `ToolCallId` —— 通知关联的工具调用 ID（可选）
-//! - `TemplateRenderer` —— 在错误提示中解析并渲染客户端工具名/参数名（可选）
-
+//! - `Cwd` — working directory for path resolution (required)
+//! - `FileSystem` — read/write file content (required)
+//! - `NotificationHandle` — emit `FileWritten` notifications (optional, noop fallback)
+//! - `ToolCallId` — notification correlation (optional, defaults empty)
+//! - `TemplateRenderer` — resolve client-facing tool/param names in error messages (optional)
 pub(crate) mod helpers;
 mod versions;
-
 use crate::notification::types::FileWritten;
 use crate::types::output::{
     SearchReplaceEditContextInformation, SearchReplaceEditDetail, SearchReplaceEditsApplied,
@@ -34,16 +32,13 @@ use helpers::{
     NormalizedMatchResult, build_edit_details, find_normalized_match_positions,
     replace_normalized_matches, replace_using_positions,
 };
-
 pub(crate) const CONTEXT_LINES: usize = 3;
-
-/// search_replace 工具的内部版本判别枚举。
+/// Internal version discriminant for search_replace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchReplaceVersion {
     Current,
     Legacy0_4_10,
 }
-
 impl SearchReplaceVersion {
     pub(crate) fn from_contract(v: Option<&str>) -> Self {
         match v {
@@ -51,17 +46,13 @@ impl SearchReplaceVersion {
             _ => Self::Current,
         }
     }
-
     pub(crate) fn is_legacy(self) -> bool {
         self == Self::Legacy0_4_10
     }
 }
-/// 默认完整工具集下的描述文本（含 MiniJinja 占位符）。
-///
-/// 使用基于 ToolKind 的模板键：
-/// - `${{ tools.by_kind.read }}` — Read 工具的客户端可见名
-/// - `${{ params.edit.old_string }}` — 客户端参数名
-/// - `${{ params.edit.replace_all }}` — 客户端参数名
+/// Full description (for the non-concise toolset). `${{ tools.by_kind.read }}` — client-facing name
+/// for the Read tool `${{ params.edit.old_string }}` — client-facing param name `${{
+/// params.edit.replace_all }}` — client-facing param name
 pub(crate) const DESCRIPTION_FULL: &str = r#"Replace an exact string in a file.
 
 ${% if tools.by_kind.read -%}
@@ -69,62 +60,59 @@ ${% if tools.by_kind.read -%}
 ${% endif -%}
 - `${{ params.edit.old_string }}` must match exactly one place in the file. If it appears more than once, add surrounding lines to make it unique, or set `${{ params.edit.replace_all }}` to change every occurrence (handy for renaming an identifier).
 - To create a new file, set `${{ params.edit.old_string }}` to an empty string. An empty `${{ params.edit.old_string }}` cannot overwrite an existing non-empty file."#;
-/// [`DESCRIPTION_FULL`] 中的覆盖保护句。仅在启用
-/// `empty_old_string_does_not_override` 时准确（opt-in；默认仍为旧的覆盖行为）；
-/// 未启用时 `versioned_definition` 会剥离该句。
+/// The overwrite-guard sentence in [`DESCRIPTION_FULL`]. Only accurate while
+/// `empty_old_string_does_not_override` is enabled (opt-in; the default is the legacy overwrite
+/// behavior); `versioned_definition` strips it unless a config enables the guard.
 pub(crate) const EMPTY_OLD_STRING_GUARD_SENTENCE: &str =
     " An empty `${{ params.edit.old_string }}` cannot overwrite an existing non-empty file.";
-/// search_replace 工具的输入参数。
+/// Input for the search_replace tool.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchReplaceInput {
-    #[schemars(description = "要修改的目标文件路径，支持工作区相对路径或绝对路径。")]
+    #[schemars(
+        description = "The path to the file to modify. You can use either a relative path in the workspace or an absolute path."
+    )]
     pub file_path: String,
-    #[schemars(description = "要在文件中匹配并替换的目标原字符串（old_string）")]
+    #[schemars(description = "The text to replace")]
     pub old_string: String,
-    #[schemars(description = "替换后的新字符串（new_string，必须与 old_string 不同）")]
+    #[schemars(
+        description = "The text to replace it with (must be different from ${{ params.edit.old_string }})"
+    )]
     pub new_string: String,
     #[serde(
         default,
         deserialize_with = "crate::types::schema::deserialize_lenient_bool"
     )]
     #[schemars(
-        description = "是否替换文件中所有匹配到的 old_string（默认 false，仅替换唯一匹配项）"
+        description = "Replace all occurrences of ${{ params.edit.old_string }} (default false)"
     )]
     pub replace_all: bool,
 }
-
 fn default_true() -> bool {
     true
 }
-/// search_replace 工具的配置参数，在 Resources 中以 `Params<SearchReplaceParams>` 形式存储。
+/// Configuration for the search_replace tool, stored as `Params<SearchReplaceParams>` in Resources.
 ///
-/// 替代旧的通过 `tool_options_as()` 存放的 `SearchReplaceOptions`。
+/// Replaces the old `SearchReplaceOptions` that was stored via `tool_options_as()`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchReplaceParams {
-    /// 运行时 No-op 配置（兼容旧配置格式）；仍用于 config-time 的 Read 工具依赖
-    /// （`requires_expr`）。
+    /// Deprecated runtime no-op, kept so configs still sending it deserialize under
+    /// `deny_unknown_fields`. Still gates the config-time Read-tool requirement (`requires_expr`).
     #[serde(default)]
     pub skip_read_before_edit: bool,
-    /// 为 true 时（opt-in），空的 `old_string` 仅可创建新文件或写入空文件，
-    /// 不会静默覆盖已有非空文件。默认 false（旧行为）：空 `old_string` 会
-    /// 替换整文件内容。仅在启用时，下发的 description 才包含保护句
-    /// （见 `versioned_definition`）。
+    /// When true (opt-in), an empty `old_string` may only create a new file or fill an empty one — it never silently overwrites an existing
+    /// non-empty file. Defaults to false (the legacy behavior): an empty `old_string` replaces the file's entire contents. The served description
+    /// includes the guard sentence only when this is enabled (see `versioned_definition`).
     #[serde(default)]
     pub empty_old_string_does_not_override: bool,
-    /// When true, enable normalized-fallback matching for Unicode confusable
-    /// characters (smart quotes, em-dashes, etc.).  When exact byte matching
-    /// fails, the tool will retry with confusable-normalized comparison and
-    /// perform the replacement if an unambiguous match is found.
-    ///
-    /// Default: `false` — disabled until Stage 1 diagnostics are stable.
+    /// When true, enable normalized-fallback matching for Unicode confusable characters (smart quotes, em-dashes, etc.).
+    /// When exact byte matching fails, the tool will retry with confusable-normalized comparison and perform the
+    /// replacement if an unambiguous match is found. Default: `false` — disabled until Stage 1 diagnostics are stable.
     #[serde(default)]
     pub unicode_normalized_fallback: bool,
-    /// When true, append a hint that the user may have changed the file
-    /// to `NoMatchesFound` error messages. This nudges the model to re-read
-    /// instead of blindly retrying with the same stale content.
-    ///
-    /// Default: `true`.
+    /// When true, append a hint that the user may have changed the file to `NoMatchesFound` error
+    /// messages. This nudges the model to re-read instead of blindly retrying with the same stale
+    /// content. Default: `true`.
     #[serde(default = "default_true")]
     pub include_user_edit_hint: bool,
 }
@@ -174,6 +162,7 @@ pub(crate) async fn run_search_replace(
         hints_enabled = res.get::<PathNotFoundHints>().is_some_and(|h| h.0);
     }
     let resolved = resolve_model_path(&cwd, display_cwd.as_deref(), &input.file_path);
+    let policy_path = resolved.clone();
     let path = match crate::util::fs::try_canonicalize(&resolved).await {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -230,6 +219,7 @@ pub(crate) async fn run_search_replace(
             &notification_handle,
             &tool_call_id,
             &path,
+            &policy_path,
             &cwd,
             display_cwd.as_deref(),
             hints_enabled,
@@ -244,6 +234,7 @@ pub(crate) async fn run_search_replace(
             &notification_handle,
             &tool_call_id,
             &path,
+            &policy_path,
             &cwd,
             display_cwd.as_deref(),
             hints_enabled,
@@ -272,10 +263,9 @@ pub(crate) async fn run_search_replace(
 /// Maximum length for a single path component (file or directory name).
 /// POSIX `NAME_MAX` is 255 on both macOS and Linux.
 const NAME_MAX: usize = 255;
-/// Validate that no path component exceeds `NAME_MAX`.
-///
-/// Returns `Some(SearchReplaceOutput::FilenameTooLong(..))` if any component is
-/// too long, `None` if the path is valid.
+/// Validate that no path component exceeds `NAME_MAX`. Returns
+/// `Some(SearchReplaceOutput::FilenameTooLong(..))` if any component is too long, `None` if the
+/// path is valid.
 fn validate_path_length(file_path: &str) -> Option<SearchReplaceOutput> {
     for component in std::path::Path::new(file_path).components() {
         if let std::path::Component::Normal(name) = component {
@@ -299,6 +289,7 @@ async fn handle_new_file_creation(
     notification_handle: &ToolNotificationHandle,
     tool_call_id: &str,
     path: &std::path::Path,
+    policy_path: &std::path::Path,
     cwd: &std::path::Path,
     display_cwd: Option<&std::path::Path>,
     hints_enabled: bool,
@@ -326,7 +317,18 @@ async fn handle_new_file_creation(
             old_string_name
         )));
     }
-    if let Err(e) = fs.write_file(path, input.new_string.as_bytes()).await {
+    let is_memory_write = match crate::types::memory_v2::write_memory_v2_file(
+        &resources,
+        policy_path,
+        input.new_string.as_bytes(),
+    )
+    .await
+    {
+        Ok(crate::types::memory_v2::MemoryV2Write::Written { .. }) => true,
+        Ok(crate::types::memory_v2::MemoryV2Write::Outside) => false,
+        Err(error) => return Ok(SearchReplaceOutput::InvalidInput(error)),
+    };
+    if !is_memory_write && let Err(e) = fs.write_file(path, input.new_string.as_bytes()).await {
         return Ok(match e.io_error_kind() {
             Some(std::io::ErrorKind::NotFound) => {
                 let display_dcwd = display_cwd_or_cwd(cwd, display_cwd);
@@ -404,11 +406,9 @@ async fn handle_new_file_creation(
         },
     ))
 }
-/// Return a short nearest-match hint for a `NoMatchesFound` error message.
-///
-/// Finds the first file line containing the longest token from `old_string`'s
-/// first line. Returns `"\n\nNearest match: line N: <content>"` (≤200 chars),
-/// or an empty string if no match is found.
+/// Return a short nearest-match hint for a `NoMatchesFound` error message. Finds the first file
+/// line containing the longest token from `old_string`'s first line. Returns `"\n\nNearest match:
+/// line N: <content>"` (≤200 chars), or an empty string if no match is found.
 fn build_nearest_match_hint(file: &str, old_string: &str) -> String {
     let keyword = old_string
         .lines()
@@ -429,19 +429,9 @@ fn build_nearest_match_hint(file: &str, old_string: &str) -> String {
         })
         .unwrap_or_default()
 }
-/// Build a Unicode-confusable diagnostic message when an exact match fails
-/// but the file contains typography characters that may have caused the miss.
-///
-/// Performs a normalized comparison: if `normalize_confusables(file)` contains
-/// `normalize_confusables(old_string)`, the miss was almost certainly caused by
-/// invisible Unicode characters.  In that case, returns a targeted diagnostic
-/// listing only the confusable-bearing lines that overlap the matched region
-/// (not every confusable line in the file).
-///
-/// Returns `None` when:
-/// - The file contains no confusables at all, or
-/// - The normalized comparison also fails (confusables are present but unrelated
-///   to the missed match — no false guidance).
+/// Unicode-confusable diagnostic when an exact match fails but typography may have caused the miss.
+/// Returns confusable-bearing lines overlapping the matched region, or `None` if the file has no
+/// confusables or the normalized comparison also fails (no false guidance).
 fn build_confusable_hint(
     file: &str,
     old_string: &str,
@@ -527,6 +517,7 @@ async fn handle_replacement(
     notification_handle: &ToolNotificationHandle,
     tool_call_id: &str,
     path: &std::path::Path,
+    policy_path: &std::path::Path,
     cwd: &std::path::Path,
     display_cwd: Option<&std::path::Path>,
     hints_enabled: bool,
@@ -712,7 +703,18 @@ async fn handle_replacement(
     } else {
         new_text.clone()
     };
-    if let Err(e) = fs.write_file(path, write_text.as_bytes()).await {
+    let is_memory_write = match crate::types::memory_v2::write_memory_v2_file(
+        &resources,
+        policy_path,
+        write_text.as_bytes(),
+    )
+    .await
+    {
+        Ok(crate::types::memory_v2::MemoryV2Write::Written { .. }) => true,
+        Ok(crate::types::memory_v2::MemoryV2Write::Outside) => false,
+        Err(error) => return Ok(SearchReplaceOutput::InvalidInput(error)),
+    };
+    if !is_memory_write && let Err(e) = fs.write_file(path, write_text.as_bytes()).await {
         return Ok(match e.io_error_kind() {
             Some(std::io::ErrorKind::AlreadyExists) => SearchReplaceOutput::InvalidInput(format!(
                 "Error: cannot write {}. A component of the path already exists as a file where a directory is expected.",
@@ -784,10 +786,9 @@ impl crate::types::tool_metadata::ToolMetadata for SearchReplaceTool {
     fn description_template(&self) -> &str {
         DESCRIPTION_FULL
     }
-    /// Params-aware description: the "cannot overwrite" sentence in
-    /// [`DESCRIPTION_FULL`] only holds while `empty_old_string_does_not_override`
-    /// is enabled, so it is served only for configs that opt into the guard and
-    /// stripped by default (legacy overwrite behavior).
+    /// Params-aware description: the "cannot overwrite" sentence in [`DESCRIPTION_FULL`] only holds
+    /// while `empty_old_string_does_not_override` is enabled, so it is served only for configs that
+    /// opt into the guard and stripped by default (legacy overwrite behavior).
     fn versioned_definition(
         &self,
         _contract_version: Option<&str>,
@@ -837,12 +838,9 @@ impl crate::types::tool_metadata::ToolMetadata for SearchReplaceTool {
                 )))),
                 ToolRequirement::tool_kind(ToolKind::Read),
             )),
-            // Description template references these input params via
-            // ${{ params.edit.old_string }}, ${{ params.edit.new_string }},
-            // ${{ params.edit.replace_all }}. They must remain visible.
-            // TODO: We can generate the schemas and requirement by enforcing
-            // it during the registry phase, since these are parts of the params which are
-            // tied to the tool
+            // Description template references these input params via ${{ params.edit.old_string }}, ${{ params.edit.new_string }},
+            // ${{ params.edit.replace_all }}. They must remain visible. TODO: We can generate the schemas and requirement by
+            // enforcing it during the registry phase, since these are parts of the params which are tied to the tool
             Expr::Value(ToolRequirement::input_param(ToolKind::Edit, "old_string")),
             Expr::Value(ToolRequirement::input_param(ToolKind::Edit, "new_string")),
             Expr::Value(ToolRequirement::input_param(ToolKind::Edit, "replace_all")),
@@ -2615,10 +2613,9 @@ neutTest_set);
             other => panic!("Expected EditsApplied, got {:?}", other),
         }
     }
-    /// Mixed line endings (\r\n and \n in the same file): CRLF normalization
-    /// kicks in because the file contains at least one \r\n, so all \n in the
-    /// result are converted to \r\n. This normalizes the file to consistent
-    /// CRLF endings, which is the expected behavior.
+    /// Mixed line endings (\r\n and \n in the same file): CRLF normalization kicks in because the
+    /// file contains at least one \r\n, so all \n in the result are converted to \r\n. This
+    /// normalizes the file to consistent CRLF endings, which is the expected behavior.
     #[tokio::test]
     async fn crlf_mixed_line_endings() {
         let tmp = TempDir::new().unwrap();

@@ -248,6 +248,7 @@ pub struct ToolContext {
     pub task_output_tool_name: String,
     /// Resolved name of the scheduled-task deletion tool, when available.
     pub scheduler_delete_tool_name: Option<String>,
+    pub scheduler_create_tool_name: Option<String>,
     /// When `false`, background task and subagent completions fall back to the idle-gated notification drain.
     pub auto_wake_enabled: bool,
     /// When set, bash and subagent auto-wake synthetic prompts are suppressed.
@@ -346,6 +347,7 @@ impl ToolContext {
             task_output_tool_name:
                 xai_grok_tools::reminders::task_completion::DEFAULT_TASK_OUTPUT_TOOL.to_string(),
             scheduler_delete_tool_name: None,
+            scheduler_create_tool_name: None,
             auto_wake_enabled: true,
             goal_loop_active_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             blocking_wait_depth: Arc::new(BlockingWaitState::new()),
@@ -442,6 +444,7 @@ mod tests {
                 task_output_tool_name:
                     xai_grok_tools::reminders::task_completion::DEFAULT_TASK_OUTPUT_TOOL.to_string(),
                 scheduler_delete_tool_name: None,
+                scheduler_create_tool_name: None,
                 auto_wake_enabled: true,
                 goal_loop_active_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 blocking_wait_depth: Arc::new(BlockingWaitState::new()),

@@ -1,15 +1,19 @@
-//! `image_gen` (图像生成) 工具 —— 通过 xAI Imagine API 生成图像，
-//! 并保存至本地文件系统，以便模型在代码中直接引用（例如 `<img src="images/hero.jpg">`）。
+//! `image_gen` tool — generates images via the xAI Imagine API and saves
+//! them to the local filesystem so the model can reference them in code
+//! (e.g. `<img src="images/hero.jpg">`).
 //!
-//! 整体架构采用与 `web_search` 相同的范式：
+//! Architecture follows the same pattern as `web_search`:
 //!
-//! - [`ImageGenConfig`] 由宿主从会话凭证构造并注入至工具注册表中。
-//! - 当处于 `Enabled` 启用状态时，构造一个 [`ImageGenClient`] 注入至 `Resources` 中。工具在运行时通过 `resources.require()` 读取。
-//! - 当处于 `Disabled` 禁用状态时，工具不会注册，模型也无法感知。
+//! - [`ImageGenConfig`] is built from session credentials by the host and
+//!   injected into the tool registry.
+//! - When `Enabled`, an [`ImageGenClient`] is constructed once and injected
+//!   into `Resources`. The tool reads it at runtime via `resources.require()`.
+//! - When `Disabled`, the tool is not registered so the model never sees it.
 //!
-//! 生成的图像会保存至 `<session_folder>/images/<n>.jpg`，
-//! 其中 `<n>` 为会话作用域内的自增计数器（1, 2, 3...）。
-//! 工具返回绝对路径，模型需要持久化资产时可将其复制或移动至项目工作目录中。
+//! The generated image is written to `<session_folder>/images/<n>.jpg`
+//! where `<n>` is a session-scoped counter (1, 2, 3, ... — 1 token each).
+//! The tool returns the absolute path so the model can copy or move the
+//! image into the project working directory when it needs a persistent asset.
 
 use base64::Engine as _;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -22,11 +26,12 @@ use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::resources::SessionFolder;
 use crate::types::tool::{ToolKind, ToolNamespace};
 
-/// `image_gen` 工具默认使用的 Imagine 模型。
-/// 除非在 `ImageGenConfig::Enabled` 中显式指定 `model_override`，否则默认使用此模型。
+/// Default Imagine model for `image_gen`. Used unless an explicit
+/// `model_override` is supplied via `ImageGenConfig::Enabled`.
 const XAI_IMAGINE_MODEL: &str = "grok-imagine-image-quality";
-
-// 超时时间配置： Imagine 模型生成图像耗时较长，保持宽松的超时设置
+// Some Imagine models (e.g. `grok-imagine-image`, selectable via `model_override`) expand the prompt then generate,
+// and the proxy buffers the whole image before sending any bytes — so the client may receive nothing for well over a
+// minute. Keep these generous so a slow-but-progressing generation isn't cut off.
 const IMAGE_GEN_TIMEOUT_SECS: u64 = 300;
 const IMAGE_GEN_READ_TIMEOUT_SECS: u64 = 240;
 const DEFAULT_IMAGE_DIR: &str = "images";
@@ -35,22 +40,30 @@ pub use xai_grok_tools_api::slash_commands::{
     IMAGE_GEN_TOOL_NAME, IMAGINE_COMMAND_NAME, imagine_instruction, imagine_usage_message,
 };
 
-/// 当免费 / X Basic 梯队用户调用 `image_gen` 或 `image_edit` 时回传给模型的提示文案。
+/// Prose returned to the model (as a normal, successful tool result) when a free / X Basic user calls `image_gen` or
+/// `image_edit`. The model relays it to the user. The deliberate `/imagine` slash command shows the richer SuperGrok
+/// upsell modal instead; this covers the natural-language path.
 pub(crate) const TIER_RESTRICTED_UPSELL: &str = "Image generation is a SuperGrok feature and isn't available on the free or X Basic tier. Let the user know they can unlock image and video generation by upgrading to SuperGrok: https://grok.com/supergrok?referrer=grok-build. Do not retry this tool.";
 
-/// xAI Imagine API 的 HTTP 客户端。单次请求间可安全 Clone（共享内部 `Arc` 状态）。
+/// HTTP client for xAI Imagine API. Cloned per-request; shares `Arc` state.
 #[derive(Clone)]
 pub struct ImageGenClient {
     http: reqwest::Client,
     base_url: String,
-    /// `generate()` 使用的 Imagine 模型 slug，在构造时确定。
+    /// Imagine model slug used by `generate()`. Selected at construction from
+    /// `ImageGenConfig::model_override` (falling back to [`XAI_IMAGINE_MODEL`]). `image_edit` uses
+    /// its own model and is unaffected.
     model: String,
     edit_model: String,
     writer: super::storage::SessionFileWriter,
     api_key_provider: Option<SharedApiKeyProvider>,
-    /// 可选的 401 鉴权失败归因回调 Hook。
+    /// Optional 401-attribution hook. Hosts wire this so a 401 from the
+    /// Imagine API emits an `auth_401_attribution` event with
+    /// `consumer == "ImageGen"` for unified auth-failure telemetry.
     attribution_callback: Option<SharedAttributionCallback>,
-    /// 为 `true` 时表示用户处于受限梯队（如免费或 X Basic 账户）。
+    /// When `true`, the user is on a tier the Imagine server zero-limits (free / X Basic).
+    /// `image_gen` / `image_edit` short-circuit before any HTTP call and return the SuperGrok
+    /// upsell prose instead. See [`ImageGenClient::is_tier_restricted`].
     tier_restricted: bool,
     /// Per-request [`SESSION_ID_HEADER`]; kept off `default_headers` so the
     /// transport stays session-independent and cacheable.
@@ -300,18 +313,14 @@ pub enum ImageGenConfig {
         extra_headers: indexmap::IndexMap<String, String>,
         image_gen_enabled: bool,
         image_edit_enabled: bool,
-        /// Optional Imagine model override for `image_gen`. When `Some(non-empty)`,
-        /// `image_gen` calls that model instead of the default quality model
-        /// ([`XAI_IMAGINE_MODEL`]). Driven by the remote
-        /// `image_gen_model_override` config flag. `image_edit` is unaffected.
+        /// Optional Imagine model override for `image_gen`. When `Some(non-empty)`, `image_gen`
+        /// calls that model instead of the default quality model ([`XAI_IMAGINE_MODEL`]). Driven by
+        /// the remote `image_gen_model_override` config flag. `image_edit` is unaffected.
         model_override: Option<String>,
         edit_model_override: Option<String>,
-        /// `true` when the user is on a tier the Imagine server zero-limits
-        /// (free / X Basic). The tools stay advertised to the model, but
-        /// `image_gen` / `image_edit` short-circuit at call time with the
-        /// SuperGrok upsell prose instead of a doomed request. Set by the
-        /// host from the subscription tier; always `false` for team /
-        /// API-key / workspace callers.
+        /// `true` when the user is on a tier the Imagine server zero-limits (free / X Basic). The tools stay advertised to the
+        /// model, but `image_gen` / `image_edit` short-circuit at call time with the SuperGrok upsell prose instead of a doomed
+        /// request. Set by the host from the subscription tier; always `false` for team / API-key / workspace callers.
         tier_restricted: bool,
     },
 }
@@ -463,7 +472,14 @@ impl xai_tool_runtime::Tool for ImageGenTool {
             return Ok(ToolOutput::Text(TIER_RESTRICTED_UPSELL.into()));
         }
 
+        let generate_span = tracing::info_span!(
+            "image_gen.generate_wait",
+            elapsed_ms = tracing::field::Empty,
+        );
+        let generate_start = std::time::Instant::now();
         let image_bytes = client.generate(&input.prompt, &input.aspect_ratio).await?;
+        generate_span.record("elapsed_ms", generate_start.elapsed().as_millis() as i64);
+        drop(generate_span);
 
         let session_folder = {
             let res = resources.lock().await;
@@ -682,10 +698,9 @@ mod tests {
 
     #[tokio::test]
     async fn tier_restricted_short_circuits_with_upsell() {
-        // A free / X Basic user's image_gen call returns the SuperGrok upsell
-        // prose as a normal result (no HTTP, no error card) so the model can
-        // relay it. Only the client is inserted — the short-circuit returns
-        // before any other resource (e.g. SessionFolder) is required.
+        // A free / X Basic user's image_gen call returns the SuperGrok upsell prose as a normal
+        // result (no HTTP, no error card) so the model can relay it. Only the client is inserted —
+        // the short-circuit returns before any other resource (e.g. SessionFolder) is required.
         let cfg = ImageGenConfig::Enabled {
             api_key: "k".into(),
             base_url: "https://api.x.ai/v1".into(),

@@ -142,9 +142,8 @@ pub struct VideoGenClient {
     writer: super::storage::SessionFileWriter,
     zdr_video_output_s3: Option<ZdrVideoOutputS3Config>,
     api_key_provider: Option<SharedApiKeyProvider>,
-    /// Optional 401-attribution hook. Hosts wire this so a 401 from the
-    /// Video Generation API emits an `auth_401_attribution` event with
-    /// `consumer` of `"VideoGen.start"` (start request) or
+    /// Optional 401-attribution hook. Hosts wire this so a 401 from the Video Generation API emits
+    /// an `auth_401_attribution` event with `consumer` of `"VideoGen.start"` (start request) or
     /// `"VideoGen.poll"` (poll request) for unified auth-failure telemetry.
     attribution_callback: Option<SharedAttributionCallback>,
     /// When `true`, the user is on a tier the Imagine server zero-limits
@@ -257,11 +256,9 @@ impl VideoGenClient {
         })
     }
 
-    /// Attach the session-id header per start/poll request; a
-    /// caller-provided `extra_headers` value is never overridden.
-    /// Every Imagine video API request goes through here so no call site
-    /// can miss the bearer or per-request session header (the presigned
-    /// download client stays separate: its URLs carry their own auth).
+    /// Attach the session-id header per start/poll request; a caller-provided `extra_headers` value is never overridden.
+    /// Every Imagine video API request goes through here so no call site can miss the bearer or per-request session header
+    /// (the presigned download client stays separate: its URLs carry their own auth).
     fn request(
         &self,
         method: reqwest::Method,
@@ -737,15 +734,13 @@ pub enum VideoGenConfig {
         base_url: String,
         extra_headers: indexmap::IndexMap<String, String>,
         zdr_video_output_s3: Option<Box<ZdrVideoOutputS3Config>>,
-        /// `true` when the user is on a tier the Imagine server zero-limits
-        /// (free / X Basic). The video tools stay advertised but short-circuit
-        /// at call time with the SuperGrok upsell prose. Set by the host from
-        /// the subscription tier; always `false` for team / API-key / workspace.
+        /// `true` when the user is on a tier the Imagine server zero-limits (free / X Basic). The video tools stay advertised
+        /// but short-circuit at call time with the SuperGrok upsell prose. Set by the host from the subscription tier; always
+        /// `false` for team / API-key / workspace.
         tier_restricted: bool,
-        /// `true` when `tools.disable_zdr_incompatible_tools` is set with no
-        /// valid `[tools.zdr_video_output_s3]` bucket. The video tools stay
-        /// advertised but fail at call time with [`ZDR_RESTRICTED_MESSAGE`]
-        /// instead of being silently dropped.
+        /// `true` when `tools.disable_zdr_incompatible_tools` is set with no valid
+        /// `[tools.zdr_video_output_s3]` bucket. The video tools stay advertised but fail at call
+        /// time with [`ZDR_RESTRICTED_MESSAGE`] instead of being silently dropped.
         zdr_restricted: bool,
     },
 }
@@ -756,10 +751,9 @@ impl VideoGenConfig {
     }
 }
 
-/// Prose returned to the model (as a normal, successful tool result) when a
-/// free / X Basic user calls a video tool. The model relays it to the user;
-/// the deliberate `/imagine-video` slash command shows the SuperGrok upsell
-/// modal instead.
+/// Prose returned to the model (as a normal, successful tool result) when a free / X Basic user
+/// calls a video tool. The model relays it to the user; the deliberate `/imagine-video` slash
+/// command shows the SuperGrok upsell modal instead.
 pub(crate) const TIER_RESTRICTED_UPSELL: &str = "Video generation is a SuperGrok feature and isn't available on the free or X Basic tier. Let the user know they can unlock image and video generation by upgrading to SuperGrok: https://grok.com/supergrok?referrer=grok-build. Do not retry this tool.";
 
 /// Error for video tool calls in a ZDR session with no output bucket.
@@ -1159,6 +1153,11 @@ impl xai_tool_runtime::Tool for ImageToVideoTool {
             return Err(zdr_restricted_error());
         }
 
+        let generate_span = tracing::info_span!(
+            "video_gen.generate_wait",
+            elapsed_ms = tracing::field::Empty,
+        );
+        let generate_start = std::time::Instant::now();
         let outcome = client
             .generate_with_images(
                 XAI_VIDEO_MODEL,
@@ -1175,6 +1174,8 @@ impl xai_tool_runtime::Tool for ImageToVideoTool {
                 Vec::new(),
             )
             .await?;
+        generate_span.record("elapsed_ms", generate_start.elapsed().as_millis() as i64);
+        drop(generate_span);
 
         let media = media_output_from_outcome(&client, &session_folder, outcome).await?;
 
@@ -1292,6 +1293,11 @@ impl xai_tool_runtime::Tool for ReferenceToVideoTool {
             return Err(zdr_restricted_error());
         }
 
+        let generate_span = tracing::info_span!(
+            "video_gen.generate_wait",
+            elapsed_ms = tracing::field::Empty,
+        );
+        let generate_start = std::time::Instant::now();
         let outcome = client
             .generate_with_images(
                 XAI_VIDEO_MODEL,
@@ -1308,6 +1314,8 @@ impl xai_tool_runtime::Tool for ReferenceToVideoTool {
                 input.voices,
             )
             .await?;
+        generate_span.record("elapsed_ms", generate_start.elapsed().as_millis() as i64);
+        drop(generate_span);
 
         let media = media_output_from_outcome(&client, &session_folder, outcome).await?;
 

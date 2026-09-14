@@ -1,15 +1,24 @@
-//! `list_dir` (目录列表) 工具 —— 基于 `Tool` Trait 的新架构实现。
+//! `list_dir` tool — new architecture (`Tool` trait).
 //!
-//! 用于列出指定目录下的文件与子目录结构。
-//! 从 `Resources` 读取 `Cwd` 并在自身的 `Params<ListDirParams>` 中获取 `max_output_chars` 限制。
+//! This is the new-architecture implementation of the directory listing tool.
+//! It reads `Cwd` from `Resources` and `max_output_chars` from its own
+//! `Params<ListDirParams>` instead of receiving them via `ToolContext`.
 //!
-//! 在受控深度广度搜索（BFS）展开前先种子化 Depth-1 的第一层子项（限制为 `MAX_SEED_ITEMS`），
-//! 防止早期的庞大兄弟目录剥夺后续顶层目录的搜索配额。
+//! Seeds depth-1 children (capped at `MAX_SEED_ITEMS`) before the budgeted deep walk
+//! so a fat early sibling cannot starve later top-level dirs (`MAX_GLOBAL_ITEMS`
+//! applies only to depth ≥ 2). Then BFS-expands dirs within the char budget
+//! (`continue` on fat dirs). When either seed or walk hits its item limit, the
+//! agent-visible cutoff notice is emitted (copy unchanged from `main`).
 //!
-//! 在 `legacy-0.4.10` 契约下，使用旧版深度阈值算法（详见 `versions::legacy_0_4_10`）。
-
+//! Partial-output case: when `walk_truncated` is true, a sibling surfaced by the
+//! seed may be listed by name only while its descendants are absent (the walk cap
+//! was exhausted inside an earlier sibling). The agent-visible notice copy is
+//! intentionally left identical to `main`; this behavior is documented in the
+//! CHANGELOG rather than via new model-facing wording.
+//!
+//! Under `legacy-0.4.10`, the old depth-threshold algorithm is used instead
+//! (see `versions::legacy_0_4_10` module).
 mod versions;
-
 use crate::types::output::{ListDirContent, ListDirOutput};
 #[allow(unused_imports)]
 use crate::types::resources::{
@@ -20,30 +29,30 @@ use crate::types::template_renderer::TemplateRenderer;
 use crate::types::tool::{ToolKind, ToolNamespace};
 use std::collections::HashMap;
 use std::path::Path;
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListDirInput {
-    #[schemars(description = "要列出内容的目录路径，支持工作区根目录相对路径或绝对路径。")]
+    #[schemars(
+        description = "Path to directory to list contents of, relative to the workspace root or absolute."
+    )]
     pub target_directory: String,
 }
-
-/// `list_dir` 工具的配置参数，在 Resources 中以 `Params<ListDirParams>` 的形式存储。
+/// Per-tool configuration for `list_dir`, stored as `Params<ListDirParams>`
+/// in Resources. Set via `SetToolOptions` / gRPC or at registration time.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListDirParams {
-    /// 广度优先搜索（BFS）展开的字符上限预算，超出时自动停止搜索并输出截断说明。
-    /// 默认值为 `DEFAULT_MAX_OUTPUT_CHARS` (10,000)。
+    /// BFS expansion stops when this budget would be exceeded.
+    /// Defaults to `DEFAULT_MAX_OUTPUT_CHARS` (10,000) to match the Python
     pub max_output_chars: Option<usize>,
 }
-
 crate::register_resource!("grok_build", "ListDir", ListDirParams);
-
-/// Legacy-0.4.10 契约下无效目录的错误渲染信息。
+/// Exact historical invalid-directory message for `list_dir` in legacy-0.4.10. Historical fixture
+/// captured from an earlier (0.4.10) revision of this tool. Historical 0.4.10 collapsed nonexistent
+/// paths, file paths, and other invalid-directory failures into the same generic message.
 fn render_legacy_list_dir_error(path: &Path) -> String {
     format!("Error: {} is not a valid directory", path.display())
 }
-
-/// list_dir 工具的内部版本判别枚举。
+/// Internal version discriminant for list_dir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListDirVersion {
     Current,
@@ -95,10 +104,9 @@ fn root_truncation_notice(renderer: Option<&TemplateRenderer>) -> String {
 /// Hard cap on deep-walk (depth ≥ 2) items; depth-1 seed is not counted. Matches
 /// the Python SWE tool's `MAX_GLOBAL_ITEMS`.
 const MAX_GLOBAL_ITEMS: usize = 100_000;
-/// Cap on depth-1 seed entries so a pathological flat root (millions of direct
-/// children) cannot fully materialize into `DirNode` before the char budget truncates.
-/// Independent in role from `MAX_GLOBAL_ITEMS`, but pinned equal to it (see guard below) so
-/// the cutoff notice's shared count stays correct whichever cap triggers truncation.
+/// Cap on depth-1 seed entries so a pathological flat root (millions of direct children) cannot fully materialize into
+/// `DirNode` before the char budget truncates. Independent in role from `MAX_GLOBAL_ITEMS`, but pinned equal to it (see
+/// guard below) so the cutoff notice's shared count stays correct whichever cap triggers truncation.
 const MAX_SEED_ITEMS: usize = 100_000;
 const _: () = assert!(MAX_SEED_ITEMS == MAX_GLOBAL_ITEMS);
 #[derive(Debug, Default)]
@@ -534,6 +542,11 @@ impl xai_tool_runtime::Tool for ListDirTool {
         let path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.target_directory);
         let display_base = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
         let display_path = compute_display_path(&display_base, &input.target_directory);
+        if let Err(error) =
+            crate::types::memory_v2::validate_memory_v2_read(&resources, &path).await
+        {
+            return Ok(ListDirOutput::PermissionDenied(error));
+        }
         let meta = tokio::fs::metadata(&path).await;
         let is_dir = meta.as_ref().is_ok_and(|m| m.is_dir());
         if !is_dir {
