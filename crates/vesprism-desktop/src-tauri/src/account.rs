@@ -20,6 +20,10 @@ pub(crate) fn load_agent_config() -> Result<xai_grok_shell::agent::config::Confi
         .map_err(|e| format!("创建 agent 配置失败: {e}"))
 }
 
+fn proxy_base_url(cfg: &xai_grok_shell::agent::config::Config) -> String {
+    cfg.endpoints.proxy_url()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AccountStatusDto {
     pub logged_in: bool,
@@ -72,7 +76,11 @@ fn status_from_auth(auth: Option<GrokAuth>, api_key_env: bool) -> AccountStatusD
 
 async fn current_status() -> Result<AccountStatusDto, String> {
     let cfg = load_agent_config()?;
-    let auth = xai_grok_shell::auth::try_ensure_fresh_auth(&cfg.grok_com_config).await;
+    let auth = xai_grok_shell::auth::try_ensure_fresh_auth(
+        &cfg.grok_com_config,
+        proxy_base_url(&cfg),
+    )
+    .await;
     let api_key_env = xai_grok_shell::agent::auth_method::has_xai_api_key_env();
     Ok(status_from_auth(auth, api_key_env))
 }
@@ -92,9 +100,23 @@ fn run_cli_login_local() -> Result<(), String> {
     local.block_on(&rt, async {
         let cfg = load_agent_config()?;
         // oauth=true：浏览器回环，适合桌面窗口；不走 SSH 用的设备码。
-        xai_grok_shell::auth::run_cli_login(&cfg, true, false, false)
+        let authenticated = xai_grok_shell::auth::run_cli_login(
+            cfg.grok_com_config.clone(),
+            cfg.login_device_flow,
+            proxy_base_url(&cfg),
+            true,
+            false,
+            false,
+            |auth_manager| {
+                xai_grok_shell::agent::init::update_telemetry_config(&cfg, auth_manager)
+            },
+        )
+        .await
+        .map_err(|e| format!("登录失败: {e}"))?;
+        xai_grok_shell::agent::init::apply_post_login_config(authenticated)
             .await
-            .map_err(|e| format!("登录失败: {e}"))
+            .map_err(|e| format!("登录后配置失败: {e}"))?;
+        Ok(())
     })
 }
 
@@ -113,7 +135,8 @@ pub async fn account_login() -> Result<AccountStatusDto, String> {
 #[tauri::command]
 pub async fn account_logout() -> Result<AccountStatusDto, String> {
     let cfg = load_agent_config()?;
-    xai_grok_shell::auth::run_cli_logout(&cfg).map_err(|e| format!("退出失败: {e}"))?;
+    xai_grok_shell::auth::run_cli_logout(&cfg.grok_com_config)
+        .map_err(|e| format!("退出失败: {e}"))?;
     current_status().await
 }
 

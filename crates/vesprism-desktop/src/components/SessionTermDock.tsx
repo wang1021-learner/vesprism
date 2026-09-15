@@ -21,6 +21,7 @@ import {
   type SessionDockKind,
 } from '../store'
 import { killTask } from '../bridge'
+import { runningBackgroundTaskEntries } from '../lib/backgroundTasks'
 import { isWorkflowLive } from '../lib/workflowCards'
 import { SubagentRunTree } from './SubagentRunTree'
 
@@ -93,7 +94,7 @@ export function SessionTermDock() {
       Object.values(workflows).some((w) => isWorkflowLive(w.status)) ||
       subagents.some((s) => s.status === 'running'),
     terminal: Boolean(tabId && ptyAlive[tabId]),
-    bgTasks: Object.keys(bgTasks).length > 0,
+    bgTasks: runningBackgroundTaskEntries(bgTasks).length > 0,
   }
 
   const width = useStore($sessionDockWidth)
@@ -160,14 +161,14 @@ function SubagentsPane() {
 function BgTasksPane() {
   const tasks = useStore($backgroundTasks)
   const tabId = useStore($activeTabId)
-  const entries = Object.entries(tasks)
+  const entries = runningBackgroundTaskEntries(tasks)
   if (entries.length === 0) {
     return <div className="session-term-empty">没有运行中的后台任务。这是模型扔到后台还在跑的命令，不是能打字的终端。</div>
   }
   return (
     <ul className="session-bg-list">
-      {entries.map(([toolCallId, t]) => (
-        <li key={toolCallId} className="session-bg-item">
+      {entries.map(([taskId, t]) => (
+        <li key={taskId} className="session-bg-item">
           <span className="session-bg-dot" aria-hidden />
           <span className="session-bg-cmd" title={t.command}>
             {t.description || t.command || t.taskId}
@@ -177,7 +178,7 @@ function BgTasksPane() {
             className="session-term-panel-close"
             onClick={() => {
               void killTask(tabId, t.taskId)
-                .then(() => removeBackgroundTask(tabId, toolCallId))
+                .then(() => removeBackgroundTask(tabId, t.taskId))
                 .catch(() => {})
             }}
           >

@@ -24,6 +24,7 @@ import {
   sealStreamingMessages,
   type TranscriptEvent,
 } from './sessionTranscript'
+import { backgroundToolCallIdSet } from './backgroundTasks'
 import type { ChatMessage } from '../types'
 
 /** load_session 进行中：历史 chunk 一律丢弃（按 tab 分片） */
@@ -61,7 +62,7 @@ function flushPendingChunks(): void {
     const target = key === '' ? undefined : key
     const cur = target ? (getTabState(target)?.messages ?? $messages.get()) : $messages.get()
     const bgs = target
-      ? new Set(Object.keys(getTabState(target)?.backgroundTasks || {}))
+      ? backgroundToolCallIdSet(getTabState(target)?.backgroundTasks || {})
       : undefined
     let next = cur
     for (const ev of evs) {
@@ -199,7 +200,9 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
       // 顺序事件前先落盘攒批的文本（保序）；flush 后重新读 store，避免覆盖刚落盘的文本。
       flushBeforeSequential()
       const cur = target ? (getTabState(target)?.messages ?? $messages.get()) : $messages.get()
-      const bgs = target ? new Set(Object.keys(getTabState(target)?.backgroundTasks || {})) : undefined
+      const bgs = target
+        ? backgroundToolCallIdSet(getTabState(target)?.backgroundTasks || {})
+        : undefined
       if (target) {
         patchTab(target, { messages: applyTranscriptEvent(cur, ev, bgs, target) })
       }
@@ -220,7 +223,9 @@ export function pushTranscriptEvent(ev: TranscriptEvent, tabId?: string): boolea
       // 先 flush 攒批文本，保证 seal 前该回合全部文本已落盘；flush 后重读 store。
       flushBeforeSequential()
       const cur = target ? (getTabState(target)?.messages ?? $messages.get()) : $messages.get()
-      const bgs = target ? new Set(Object.keys(getTabState(target)?.backgroundTasks || {})) : undefined
+      const bgs = target
+        ? backgroundToolCallIdSet(getTabState(target)?.backgroundTasks || {})
+        : undefined
       if (target) {
         patchTab(target, { messages: sealStreamingMessages(cur, ev.prompt_id, bgs) })
       }

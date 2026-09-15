@@ -242,6 +242,13 @@
   color: var(--text-tertiary);
 }
 
+.schedule-item-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .schedule-strip {
   display: flex;
   align-items: center;

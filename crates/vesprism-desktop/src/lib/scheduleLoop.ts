@@ -1,6 +1,7 @@
 /**
  * 官方 `/loop`：最短 60 秒，7 天后过期。
  * 创建走会话斜杠（引擎展开成 scheduler_create）；列表来自本会话通知，没有 list ACP。
+ * 1.0.19+ 触发一律后台跑，不再往对话注入 turn。
  */
 import type { ScheduledTaskInfo } from '../store'
 
@@ -78,6 +79,21 @@ export function humanScheduleZh(token: string): string {
     default:
       return `每 ${token}`
   }
+}
+
+/** 引擎英文 human_schedule → 间隔 token（如 `5m`）；解析不了返回 null。 */
+export function tokenFromHumanSchedule(raw: string): string | null {
+  const s = raw.trim()
+  const m = s.match(/^every\s+(\d+)\s+(second|seconds|minute|minutes|hour|hours|day|days)s?$/i)
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n <= 0) return null
+  const unit = m[2].toLowerCase()
+  if (unit.startsWith('second')) return `${n}s`
+  if (unit.startsWith('minute')) return `${n}m`
+  if (unit.startsWith('hour')) return `${n}h`
+  if (unit.startsWith('day')) return `${n}d`
+  return null
 }
 
 /** 引擎英文 human_schedule → 中文。 */

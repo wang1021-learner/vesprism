@@ -126,6 +126,38 @@ describe('turn_ended status', () => {
     expect(getTabState('tab-1')?.planPhase).toBe('off')
   })
 
+  it('background_tasks 非 truncated 整表替换并保留 toolCallId', () => {
+    patchTab('tab-1', {
+      backgroundTasks: {
+        t1: {
+          taskId: 't1',
+          command: 'old',
+          toolCallId: 'tc-1',
+          status: 'running',
+        },
+        gone: { taskId: 'gone', command: 'x', status: 'running' },
+      },
+    })
+    handleSessionEvent({
+      tab_id: 'tab-1',
+      type: 'background_tasks',
+      truncated: false,
+      tasks: [
+        {
+          task_id: 't1',
+          command: 'sleep 1',
+          display_command: 'sleep',
+          status: 'running',
+          kind: 'bash',
+        },
+      ],
+    })
+    const tasks = getTabState('tab-1')?.backgroundTasks ?? {}
+    expect(Object.keys(tasks)).toEqual(['t1'])
+    expect(tasks.t1.toolCallId).toBe('tc-1')
+    expect(tasks.t1.command).toBe('sleep')
+  })
+
   it('scheduled_task 创建写入本 tab，删除清掉', () => {
     handleSessionEvent({
       tab_id: 'tab-1',

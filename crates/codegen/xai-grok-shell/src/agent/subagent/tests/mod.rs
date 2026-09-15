@@ -304,6 +304,7 @@ async fn cancelled_attempt_fails_closed_when_the_signals_read_never_answers() {
                 task_prompt_text: "task",
                 prompt_id: uuid::Uuid::now_v7().to_string(),
                 inherited_tool_overrides: None,
+                inherited_flows: Vec::new(),
                 gcs_bucket_url: None,
                 gcs_upload_method: None,
                 turn_number: 0,

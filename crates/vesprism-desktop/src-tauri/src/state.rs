@@ -490,6 +490,11 @@ pub enum FrontendEvent {
         monitor_description: Option<String>,
         description: Option<String>,
     },
+    /// 官方耐用后台任务整表快照。
+    BackgroundTasks {
+        tasks: Vec<grok_session::BackgroundTaskRowDto>,
+        truncated: bool,
+    },
     /// 权限请求（前端展示选项后通过 command 回传）。
     PermissionRequest {
         request_id: u64,
@@ -503,6 +508,7 @@ pub enum FrontendEvent {
     /// 子 agent 已创建。
     SubagentSpawned {
         subagent_id: String,
+        attempt_id: Option<String>,
         parent_session_id: String,
         child_session_id: String,
         subagent_type: String,
@@ -2357,6 +2363,13 @@ fn forward_event(
                 },
             );
         }
+        SessionEvent::BackgroundTasks { tasks, truncated } => {
+            emit(
+                app,
+                tab_id,
+                FrontendEvent::BackgroundTasks { tasks, truncated },
+            );
+        }
         SessionEvent::PermissionRequest {
             description,
             options,
@@ -2422,6 +2435,7 @@ fn forward_event(
         }
         SessionEvent::SubagentSpawned {
             subagent_id,
+            attempt_id,
             parent_session_id,
             child_session_id,
             subagent_type,
@@ -2434,6 +2448,7 @@ fn forward_event(
                 tab_id,
                 FrontendEvent::SubagentSpawned {
                     subagent_id,
+                    attempt_id,
                     parent_session_id,
                     child_session_id,
                     subagent_type,

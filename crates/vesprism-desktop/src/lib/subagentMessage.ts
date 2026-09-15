@@ -71,9 +71,12 @@ export function formatRecentTools(tools?: string[] | null, max = 3): string {
   return unique.join(', ')
 }
 
-/** 进行中/结束后的一行摘要：耗时 · 轮次 · 最近工具。空则返回 ''。 */
+/** 进行中/结束后的一行摘要：耗时 · 轮次 · attempt · 最近工具。空则返回 ''。 */
 export function formatSubagentLiveMeta(
-  s: Pick<SubagentRuntime, 'durationMs' | 'turnCount' | 'toolCallCount' | 'toolsUsed'>,
+  s: Pick<
+    SubagentRuntime,
+    'durationMs' | 'turnCount' | 'toolCallCount' | 'toolsUsed' | 'attemptId'
+  >,
   elapsedMs?: number,
 ): string {
   const ms = elapsedMs ?? s.durationMs
@@ -82,6 +85,10 @@ export function formatSubagentLiveMeta(
   if (elapsed) bits.push(elapsed)
   if (typeof s.turnCount === 'number' && s.turnCount > 0) {
     bits.push(`${s.turnCount} 轮`)
+  }
+  const attempt = (s.attemptId || '').trim()
+  if (attempt) {
+    bits.push(`#${attempt.slice(0, 8)}`)
   }
   const tools = formatRecentTools(s.toolsUsed)
   if (tools) bits.push(tools)

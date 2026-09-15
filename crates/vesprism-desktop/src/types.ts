@@ -188,6 +188,8 @@ export type SubagentRuntime = {
   description: string
   status: 'running' | 'completed' | 'failed' | 'cancelled'
   model?: string | null
+  /** 官方 attempt id：同 subagent 续跑/再激活 */
+  attemptId?: string | null
   durationMs?: number
   turnCount?: number
   toolCallCount?: number

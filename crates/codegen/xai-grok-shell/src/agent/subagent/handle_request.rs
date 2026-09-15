@@ -718,6 +718,7 @@ pub(crate) async fn run_shell_child(
         &mut definition,
         effective_runtime.capability_mode,
         allow_nested_subagents,
+        &effective_runtime.disabled_tools,
     );
     if let Some(mode) = effective_runtime.capability_mode {
         tracing::info!(
@@ -1675,6 +1676,7 @@ pub(crate) async fn run_shell_child(
         task_prompt_text: &task_prompt_text,
         prompt_id: child_prompt_id,
         inherited_tool_overrides: ctx.inherited_tool_overrides.clone(),
+        inherited_flows: ctx.inherited_flows.clone(),
         gcs_bucket_url: ctx.gcs_bucket_url.as_deref(),
         gcs_upload_method: ctx.gcs_upload_method.as_ref(),
         turn_number,

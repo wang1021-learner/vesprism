@@ -25,9 +25,14 @@ import {
   upsertRecentWorkflow,
   bumpGitHeadRevision,
   setBackgroundTask,
+  replaceBackgroundTasks,
   $mcpPush,
   type QueuedPrompt,
 } from '../store'
+import {
+  applyBackgroundTasksSnapshot,
+  type BackgroundTaskSnapshotRow,
+} from './backgroundTasks'
 import {
   getComposition,
   loadSession,
@@ -464,17 +469,19 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
       if (!taskId || !line) break
       const st = getTabState(tabId)
       const tasks = { ...(st?.backgroundTasks ?? {}) }
-      let key = Object.keys(tasks).find((k) => tasks[k].taskId === taskId)
-      if (!key) key = `monitor:${taskId}`
-      const prev = tasks[key]
+      const prev = tasks[taskId]
       const lastEvents = [...(prev?.lastEvents ?? []), line].slice(-24)
-      tasks[key] = {
+      tasks[taskId] = {
         taskId,
         command: prev?.command || '',
         outputFile: prev?.outputFile,
         monitorDescription: String(ev.description || prev?.monitorDescription || '监视'),
         description: prev?.description,
         lastEvents,
+        toolCallId: prev?.toolCallId,
+        kind: prev?.kind ?? 'monitor',
+        status: prev?.status ?? 'running',
+        cwd: prev?.cwd,
       }
       patchTab(tabId, { backgroundTasks: tasks })
       break
@@ -506,6 +513,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
           subagentType: ev.subagent_type || 'general-purpose',
           description: ev.description || '',
           model: ev.model,
+          attemptId: ev.attempt_id ?? ev.attemptId ?? null,
           status: 'running',
         })
         trackSubagentRunning(ev.subagent_id, ev.parent_session_id || '')
@@ -636,6 +644,50 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
         })
       }
       break
+    // 官方耐用后台任务整表快照（last-wins；tasks=[] 清空）
+    case 'background_tasks': {
+      const raw = (ev.tasks ?? []) as Array<Record<string, unknown>>
+      const rows: BackgroundTaskSnapshotRow[] = raw
+        .map((t) => ({
+          taskId: String(t.task_id ?? t.taskId ?? ''),
+          command: String(t.command ?? ''),
+          displayCommand:
+            (t.display_command as string | null | undefined) ??
+            (t.displayCommand as string | null | undefined) ??
+            null,
+          description: (t.description as string | null | undefined) ?? null,
+          cwd: t.cwd != null ? String(t.cwd) : undefined,
+          kind: t.kind != null ? String(t.kind) : undefined,
+          status: t.status != null ? String(t.status) : undefined,
+          startedAt:
+            (t.started_at as string | undefined) ??
+            (t.startedAt as string | undefined),
+          endedAt:
+            (t.ended_at as string | null | undefined) ??
+            (t.endedAt as string | null | undefined) ??
+            null,
+          outputFile:
+            (t.output_file as string | null | undefined) ??
+            (t.outputFile as string | null | undefined) ??
+            null,
+          exitCode:
+            (t.exit_code as number | null | undefined) ??
+            (t.exitCode as number | null | undefined) ??
+            null,
+          signal: (t.signal as string | null | undefined) ?? null,
+        }))
+        .filter((r) => r.taskId)
+      const st = getTabState(tabId)
+      replaceBackgroundTasks(
+        tabId,
+        applyBackgroundTasksSnapshot(
+          st?.backgroundTasks ?? {},
+          rows,
+          Boolean(ev.truncated),
+        ),
+      )
+      break
+    }
     case 'tab_recovering':
       void replayTabAfterCrash(ev.tab_id || tabId, {
         attempt: ev.attempt ?? 0,

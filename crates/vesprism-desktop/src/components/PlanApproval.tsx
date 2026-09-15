@@ -28,6 +28,7 @@ import {
   planPreviewBody,
 } from '../lib/planMode'
 import { applyTranscriptEvent } from '../lib/sessionTranscript'
+import { backgroundToolCallIdSet } from '../lib/backgroundTasks'
 import { sendSessionPrompt } from '../lib/sendSessionPrompt'
 
 function isMacPlatform(): boolean {
@@ -153,7 +154,7 @@ export function PlanApprovalPanel() {
         return
       }
       const cur = getTabState(tabId)?.messages ?? $messages.get()
-      const bgs = new Set(Object.keys(getTabState(tabId)?.backgroundTasks || {}))
+      const bgs = backgroundToolCallIdSet(getTabState(tabId)?.backgroundTasks || {})
       const next = applyTranscriptEvent(
         cur,
         {

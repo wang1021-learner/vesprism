@@ -21,11 +21,13 @@ import {
   buildLoopCommand,
   humanScheduleZh,
   intervalBelowMin,
+  isIntervalToken,
   lastFiredLabel,
   makeIntervalToken,
   makePendingTask,
   nextFireLabel,
   promptPreview,
+  tokenFromHumanSchedule,
   zhHumanSchedule,
   type IntervalUnit,
 } from '../lib/scheduleLoop'
@@ -130,6 +132,31 @@ export function SchedulePanel() {
     }
   }
 
+  /** 官方只有 delete ACP：改 = 回填表单并删旧任务，再点「开始定时」重建。 */
+  const beginEdit = async (t: (typeof tasks)[number]) => {
+    if (!tabId || busy) return
+    const tok = tokenFromHumanSchedule(t.humanSchedule)
+    if (tok && INTERVAL_PRESETS.some((p) => p.token === tok)) {
+      setCustom(false)
+      setIntervalToken(tok)
+    } else if (tok && isIntervalToken(tok)) {
+      setCustom(true)
+      setCustomN(tok.slice(0, -1))
+      setCustomUnit(tok.slice(-1) as IntervalUnit)
+    }
+    setPrompt(t.prompt || '')
+    setConfirmId('')
+    setBusy(`edit:${t.taskId}`)
+    try {
+      await schedulerDelete(tabId, t.taskId)
+      pushToast('旧任务已取消，内容已填回表单；改完点「开始定时」', 'info')
+    } catch (e) {
+      pushToast(`未能取消旧任务：${String(e)}。表单已填入，可手动取消后再重建。`, 'error')
+    } finally {
+      setBusy('')
+    }
+  }
+
   return (
     <div className="insight-dock schedule-dock" role="region" aria-label="定时任务">
       <div className="insight-card schedule-card">
@@ -138,7 +165,7 @@ export function SchedulePanel() {
             <h2 className="schedule-title">定时任务</h2>
             <p className="schedule-sub">
               本会话按间隔反复发同一条指令。最短 1 分钟，{LOOP_EXPIRE_HINT}
-              。每次在后台新开一轮，看不到当前对话，把路径和判定写进提示词。
+              。触发后只在后台跑（不会插进当前对话流），把路径和判定写进提示词。
             </p>
           </div>
           <button
@@ -275,18 +302,30 @@ export function SchedulePanel() {
                       {t.fireCount ? <span>已跑 {t.fireCount} 轮</span> : null}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="insight-btn"
-                    disabled={!ready || Boolean(busy)}
-                    onClick={() => void cancel(t.taskId, t.pending)}
-                  >
-                    {t.pending
-                      ? '去掉'
-                      : confirmId === t.taskId
-                        ? '再点确认取消'
-                        : '取消'}
-                  </button>
+                  <div className="schedule-item-actions">
+                    {!t.pending ? (
+                      <button
+                        type="button"
+                        className="insight-btn"
+                        disabled={!ready || Boolean(busy)}
+                        onClick={() => void beginEdit(t)}
+                      >
+                        改
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="insight-btn"
+                      disabled={!ready || Boolean(busy)}
+                      onClick={() => void cancel(t.taskId, t.pending)}
+                    >
+                      {t.pending
+                        ? '去掉'
+                        : confirmId === t.taskId
+                          ? '再点确认取消'
+                          : '取消'}
+                    </button>
+                  </div>
                 </li>
               )
             })}

@@ -902,13 +902,17 @@ export interface SessionEventPayload {
   // ── 权限请求安全预检发现（x.ai/security_findings token 列表）──
   security_findings?: string[]
   tool_kind?: string
-  // ── task_backgrounded：bash 命令转入后台 ──
+  // ── task_backgrounded / background_tasks ──
   task_id?: string
   command?: string
   output_file?: string
   monitor_description?: string | null
+  /** SessionUpdate::BackgroundTasks 整表（与终端 output truncated 共用字段名） */
+  tasks?: Array<Record<string, unknown>>
   // ── 子 agent ──
   subagent_id?: string
+  attempt_id?: string | null
+  attemptId?: string | null
   parent_session_id?: string
   child_session_id?: string
   subagent_type?: string
@@ -942,6 +946,7 @@ export interface SessionEventPayload {
   terminal_id?: string
   exit_code?: number | null
   signal?: string | null
+  /** 终端输出截断，或 BackgroundTasks 快照截断 */
   truncated?: boolean
   killed?: boolean
   /** 官方 MCP 推送 */

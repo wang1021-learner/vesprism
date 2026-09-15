@@ -36,12 +36,16 @@ import {
 } from './products/catalog'
 import { spawnReasoningEffort } from './lib/reasoning'
 import type { SessionConfigOption } from './lib/sessionConfig'
+import { upsertBackgroundTaskIncremental } from './lib/backgroundTasks'
 
 
 // ── Tab 分片 ──────────────────────────────────────────────────────────
 
 /** 单个 tab 的会话状态（字段语义对齐官方 RosterEntry：sessionId/title/cwd/modelId/activity） */
-/** bash 后台任务（官方 x.ai/task_backgrounded；key=toolCallId） */
+/**
+ * bash / monitor 后台任务。
+ * map key = taskId（官方 BackgroundTasks 快照权威）；toolCallId 仅工具行徽标反查。
+ */
 export interface BackgroundTaskInfo {
   taskId: string
   command: string
@@ -50,6 +54,16 @@ export interface BackgroundTaskInfo {
   description?: string | null
   /** 监视任务最近若干行 stdout */
   lastEvents?: string[]
+  /** 来自增量 task_backgrounded，供 MessageItem 按工具行查找 */
+  toolCallId?: string
+  cwd?: string
+  kind?: string
+  /** running | completed | failed；缺省视为仍在跑（旧增量） */
+  status?: string
+  startedAt?: string
+  endedAt?: string | null
+  exitCode?: number | null
+  signal?: string | null
 }
 
 export interface TabState {
@@ -99,7 +113,7 @@ export interface TabState {
   modelId: string
   /** 本 tab 推理强度 */
   reasoningEffort: string
-  /** bash 后台任务（key=toolCallId → 任务信息；活跃 tab 投影到 $backgroundTasks） */
+  /** bash/monitor 后台任务（key=taskId → 任务信息；活跃 tab 投影到 $backgroundTasks） */
   backgroundTasks: Record<string, BackgroundTaskInfo>
   /**
    * 专用面板 Tab：mcp / skills / tools / workflows / flow-canvas / agents；null=普通对话。
@@ -1286,26 +1300,51 @@ export function closeSessionIntent() {
   $sessionIntent.set(null)
 }
 
-// ── bash 后台任务（task_backgrounded）──
+// ── bash / monitor 后台任务（task_backgrounded + BackgroundTasks 快照）──
 export const $backgroundTasks = atom<Record<string, BackgroundTaskInfo>>({})
-/** 登记后台任务（事件到达时） */
+/** 增量登记后台任务（事件到达时；权威 key = taskId） */
 export function setBackgroundTask(
   tabId: string,
   toolCallId: string,
-  info: BackgroundTaskInfo
+  info: BackgroundTaskInfo,
 ): void {
   const st = getTabState(tabId)
   if (!st) return
   patchTab(tabId, {
-    backgroundTasks: { ...st.backgroundTasks, [toolCallId]: info },
+    backgroundTasks: upsertBackgroundTaskIncremental(st.backgroundTasks, toolCallId, {
+      taskId: info.taskId,
+      command: info.command,
+      outputFile: info.outputFile,
+      monitorDescription: info.monitorDescription,
+      description: info.description,
+    }),
   })
 }
-/** 移除后台任务（kill 成功 / 工具结束） */
-export function removeBackgroundTask(tabId: string, toolCallId: string): void {
+
+/** 用快照合并结果整表写入 */
+export function replaceBackgroundTasks(
+  tabId: string,
+  tasks: Record<string, BackgroundTaskInfo>,
+): void {
+  if (!getTabState(tabId)) return
+  patchTab(tabId, { backgroundTasks: tasks })
+}
+
+/** 按 taskId 或 toolCallId 移除一条后台任务 */
+export function removeBackgroundTask(tabId: string, taskIdOrToolCallId: string): void {
   const st = getTabState(tabId)
   if (!st) return
   const next = { ...st.backgroundTasks }
-  delete next[toolCallId]
+  if (next[taskIdOrToolCallId]) {
+    delete next[taskIdOrToolCallId]
+  } else {
+    for (const [k, v] of Object.entries(next)) {
+      if (v.taskId === taskIdOrToolCallId || v.toolCallId === taskIdOrToolCallId) {
+        delete next[k]
+        break
+      }
+    }
+  }
   patchTab(tabId, { backgroundTasks: next })
 }
 

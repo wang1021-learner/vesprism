@@ -2,20 +2,21 @@ import { useState } from 'react'
 import { useStore } from '@nanostores/react'
 import { $activeTabId, $backgroundTasks, pushToast, removeBackgroundTask } from '../store'
 import { killTask } from '../bridge'
+import { runningBackgroundTaskEntries } from '../lib/backgroundTasks'
 
 export function BgTaskBar() {
   const tasks = useStore($backgroundTasks)
   const tabId = useStore($activeTabId)
   const [busy, setBusy] = useState('')
-  const list = Object.entries(tasks)
+  const list = runningBackgroundTaskEntries(tasks)
   if (!list.length) return null
 
-  const kill = async (toolCallId: string, taskId: string) => {
+  const kill = async (taskId: string) => {
     if (!tabId || busy) return
     setBusy(taskId)
     try {
       await killTask(tabId, taskId)
-      removeBackgroundTask(tabId, toolCallId)
+      removeBackgroundTask(tabId, taskId)
     } catch (e) {
       pushToast(String(e), 'error')
     } finally {
@@ -25,9 +26,11 @@ export function BgTaskBar() {
 
   return (
     <div className="bg-task-bar" aria-label="后台命令">
-      {list.map(([toolCallId, t]) => (
-        <div key={toolCallId} className="bg-task-pill">
-          {t.monitorDescription ? <span className="bg-task-tag">监视</span> : null}
+      {list.map(([taskId, t]) => (
+        <div key={taskId} className="bg-task-pill">
+          {t.monitorDescription || t.kind === 'monitor' ? (
+            <span className="bg-task-tag">监视</span>
+          ) : null}
           <span title={t.command || t.monitorDescription || ''}>
             {t.monitorDescription || t.description || t.command || t.taskId}
             {t.lastEvents?.length ? ` · ${t.lastEvents[t.lastEvents.length - 1]}` : ''}
@@ -35,7 +38,7 @@ export function BgTaskBar() {
           <button
             type="button"
             disabled={busy === t.taskId}
-            onClick={() => void kill(toolCallId, t.taskId)}
+            onClick={() => void kill(t.taskId)}
           >
             {busy === t.taskId ? '…' : '终止'}
           </button>

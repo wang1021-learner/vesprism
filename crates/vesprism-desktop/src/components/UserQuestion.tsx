@@ -22,6 +22,7 @@ import {
   applyTranscriptEvent,
   formatAskUserAnswerPreview,
 } from '../lib/sessionTranscript'
+import { backgroundToolCallIdSet } from '../lib/backgroundTasks'
 
 interface Props {
   request: UserQuestionRequest | null
@@ -109,7 +110,7 @@ export function UserQuestionPanel({ request, focusKey = 0 }: Props) {
           ? formatAskUserAnswerPreview('accepted', payload.answers)
           : formatAskUserAnswerPreview(payload.outcome)
       const cur = getTabState(tabId)?.messages ?? $messages.get()
-      const bgs = new Set(Object.keys(getTabState(tabId)?.backgroundTasks || {}))
+      const bgs = backgroundToolCallIdSet(getTabState(tabId)?.backgroundTasks || {})
       const next = applyTranscriptEvent(cur, {
         type: 'user_question_resolved',
         tool_call_id: request.toolCallId,

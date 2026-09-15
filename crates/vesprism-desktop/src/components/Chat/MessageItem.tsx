@@ -25,6 +25,7 @@ import {
 import { isHiddenUserMessage } from '../../lib/userMessage'
 import { writingToolLabel } from '../../lib/writingToolLabel'
 import { killTask } from '../../bridge'
+import { findBackgroundTaskByToolCallId } from '../../lib/backgroundTasks'
 
 const USER_BUBBLE_FOLD_THRESHOLD = 600
 
@@ -1125,9 +1126,8 @@ const ToolLine = memo(function ToolLine({
   }, [diffs, formattedPreview, tool.detail, tool.title])
 
   // bash 后台任务（x.ai/task_backgrounded）：工具行显示徽标 + 终止入口
-  const bgTask = useStoreSelect(
-    $backgroundTasks,
-    (tasks) => tasks[tool.toolCallId],
+  const bgTask = useStoreSelect($backgroundTasks, (tasks) =>
+    findBackgroundTaskByToolCallId(tasks, tool.toolCallId),
   )
   const [killing, setKilling] = useState(false)
   const onKillBg = useCallback(async () => {
@@ -1135,14 +1135,14 @@ const ToolLine = memo(function ToolLine({
     setKilling(true)
     try {
       await killTask($activeTabId.get(), bgTask.taskId)
-      removeBackgroundTask($activeTabId.get(), tool.toolCallId)
+      removeBackgroundTask($activeTabId.get(), bgTask.taskId)
       pushToast('已终止后台任务', 'success')
     } catch (e) {
       pushToast(`终止失败：${String(e)}`, 'error')
     } finally {
       setKilling(false)
     }
-  }, [bgTask, killing, tool.toolCallId])
+  }, [bgTask, killing])
 
   return (
     <div

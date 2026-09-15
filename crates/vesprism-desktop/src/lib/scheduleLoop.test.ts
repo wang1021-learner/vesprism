@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyScheduledTask,
+  tokenFromHumanSchedule,
   buildLoopCommand,
   formatDurationZh,
   humanScheduleZh,
@@ -48,6 +49,13 @@ describe('human schedule', () => {
     expect(zhHumanSchedule('every 5 minutes')).toBe('每 5 分钟')
     expect(zhHumanSchedule('every 1 hour')).toBe('每小时')
     expect(zhHumanSchedule('scheduling…')).toBe('正在创建…')
+  })
+
+  it('引擎英文还原成 interval token，供「改」回填', () => {
+    expect(tokenFromHumanSchedule('every 5 minutes')).toBe('5m')
+    expect(tokenFromHumanSchedule('every 1 hour')).toBe('1h')
+    expect(tokenFromHumanSchedule('every 90 seconds')).toBe('90s')
+    expect(tokenFromHumanSchedule('scheduling…')).toBeNull()
   })
 })
 

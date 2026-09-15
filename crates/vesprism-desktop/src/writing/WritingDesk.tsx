@@ -38,7 +38,7 @@ import { PitchView } from './layers/PitchView'
 import { ReviewView } from './layers/ReviewView'
 import { UnitView } from './layers/UnitView'
 import { VolumeView } from './layers/VolumeView'
-import { answerAsk, defaultVerb, gapLabel, landNode, washSpanGate, verbsForStation, type StationVerb } from './framework/station'
+import { answerAsk, defaultVerb, landNode, washSpanGate, verbsForStation, type StationVerb } from './framework/station'
 import {
   assembleWriteChapter,
   assistantTextAfter,
@@ -113,7 +113,7 @@ import {
 } from './model/nodes'
 import { writeSlice } from './model/slice'
 import type { BookDemo, DeskNodeId } from './model/types'
-import { acceptedChars, chapterCountFor, countHanzi, parseChapterWords, remainToTarget, volumeLandLine } from './framework/scale'
+import { acceptedChars, chapterCountFor, countHanzi, parseChapterWords, volumeLandLine } from './framework/scale'
 import { persistBook, writingExportBook, writingSessionCwd } from './storage'
 
 /** 写台任务：发给引擎的一个动词（回合并按 TASK 标记归属） */
@@ -803,7 +803,6 @@ function OpenDesk({
   const wordsAim = parseChapterWords(book.canon.chapterWords)
   const aim = chapterCountFor(undefined, wordsAim.aim)
   const chars = acceptedChars(book)
-  const remain = remainToTarget(book)
   const volLine = volumeLandLine(book)
   const beats = chapterId ? book.beatsByChapter[chapterId] || [] : []
   const pct = Math.min(100, Math.round((chars / 1_000_000) * 1000) / 10)

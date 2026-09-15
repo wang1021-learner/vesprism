@@ -158,6 +158,71 @@ pub struct RunningSubagentInfo {
     pub error_count: u32,
 }
 
+/// 官方 `BackgroundTaskRow` 投影（snake_case，对齐 session-event / 前端）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BackgroundTaskRowDto {
+    pub task_id: String,
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub cwd: String,
+    /// `bash` | `monitor`
+    pub kind: String,
+    /// `running` | `completed` | `failed`
+    pub status: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+}
+
+/// 把官方后台任务行转成桌面 DTO（纯函数，单测覆盖）。
+pub fn background_task_row_to_dto(
+    row: xai_grok_shell::extensions::notification::BackgroundTaskRow,
+) -> BackgroundTaskRowDto {
+    use xai_grok_shell::extensions::notification::BackgroundTaskStatus;
+    let status = match row.status {
+        BackgroundTaskStatus::Running => "running",
+        BackgroundTaskStatus::Completed => "completed",
+        BackgroundTaskStatus::Failed => "failed",
+    }
+    .to_string();
+    let kind = serde_json::to_value(&row.kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "bash".to_string());
+    BackgroundTaskRowDto {
+        task_id: row.task_id,
+        command: row.command,
+        display_command: row.display_command,
+        description: row.description,
+        cwd: row.cwd,
+        kind,
+        status,
+        started_at: row.started_at,
+        ended_at: row.ended_at,
+        output_file: row.output_file,
+        exit_code: row.exit_code,
+        signal: row.signal,
+    }
+}
+
+/// 桌面打开的工作区：正式包写入 folder-trust；开发 inert 构建无副作用。
+fn trust_workspace_cwd(cwd: &str) {
+    let path = std::path::Path::new(cwd);
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    let _ = xai_grok_shell::agent::folder_trust::grant_folder_trust(path);
+}
+
 /// Goal 编排进度（官方 `SessionUpdate::GoalUpdated` 投影；camelCase 对齐官方线格式）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -356,6 +421,11 @@ pub enum SessionEvent {
         monitor_description: Option<String>,
         description: Option<String>,
     },
+    /// 官方耐用后台任务整表快照（`SessionUpdate::BackgroundTasks`；last-wins）。
+    BackgroundTasks {
+        tasks: Vec<BackgroundTaskRowDto>,
+        truncated: bool,
+    },
     /// 工具权限门控：通过 `respond` 发送选中的 `option_id` 作答。
     PermissionRequest {
         description: String,
@@ -369,6 +439,8 @@ pub enum SessionEvent {
     /// 子 agent 已创建（父会话 `x.ai/session_notification`）。
     SubagentSpawned {
         subagent_id: String,
+        /// 官方 attempt id（同 subagent 续跑/多轮激活）
+        attempt_id: Option<String>,
         parent_session_id: String,
         child_session_id: String,
         subagent_type: String,
@@ -613,6 +685,12 @@ impl std::fmt::Debug for SessionEvent {
                 f,
                 "TaskBackgrounded {{ task_id: {:?}, command: {:?} }}",
                 task_id, command
+            ),
+            Self::BackgroundTasks { tasks, truncated } => write!(
+                f,
+                "BackgroundTasks {{ count: {}, truncated: {} }}",
+                tasks.len(),
+                truncated
             ),
             Self::PermissionRequest {
                 description,
@@ -1214,45 +1292,22 @@ impl Client for GuiClient {
                 }
                 xai_grok_shell::extensions::notification::SessionUpdate::SubagentSpawned {
                     subagent_id,
+                    attempt_id,
                     parent_session_id,
                     parent_prompt_id,
                     child_session_id,
                     subagent_type,
                     description,
                     model,
-                    permission_rules,
                     ..
                 } => {
-                    // jike: spawn 通知早于子会话 Prompt，此处挂 deny，第一下工具就能拦。
-                    {
-                        let mut deny = self
-                            .per_agent_deny
-                            .write()
-                            .unwrap_or_else(|e| e.into_inner());
-                        if permission_rules.is_empty() {
-                            deny.remove(&child_session_id);
-                        } else {
-                            let rules: Vec<crate::policy::PermissionRule> = permission_rules
-                                .iter()
-                                .filter(|m| !m.trim().is_empty())
-                                .map(|m| crate::policy::PermissionRule {
-                                    matcher: m.clone(),
-                                    policy: crate::policy::Policy::Deny,
-                                })
-                                .collect();
-                            deny.insert(
-                                child_session_id.clone(),
-                                crate::policy::PolicyEngine::new(
-                                    crate::policy::PermissionMode::Ask,
-                                    rules,
-                                ),
-                            );
-                        }
-                    }
+                    // 官方 1.0.24 wire 已去掉 spawn 上的 permission_rules；
+                    // per-agent deny 改由组装层其它路径注入（若有）。
                     let _ = self
                         .event_tx
                         .send(SessionEvent::SubagentSpawned {
                             subagent_id,
+                            attempt_id,
                             parent_session_id,
                             child_session_id,
                             subagent_type,
@@ -1340,6 +1395,19 @@ impl Client for GuiClient {
                         })
                         .await;
                 }
+                xai_grok_shell::extensions::notification::SessionUpdate::BackgroundTasks {
+                    tasks,
+                    truncated,
+                } => {
+                    let tasks = tasks
+                        .into_iter()
+                        .map(background_task_row_to_dto)
+                        .collect();
+                    let _ = self
+                        .event_tx
+                        .send(SessionEvent::BackgroundTasks { tasks, truncated })
+                        .await;
+                }
                 // Goal 编排进度（官方 GoalUpdated；此前落入 other 被丢弃）。
                 xai_grok_shell::extensions::notification::SessionUpdate::GoalUpdated {
                     goal_id,
@@ -1421,45 +1489,8 @@ impl Client for GuiClient {
                     pause_message,
                     result_summary,
                 } => {
-                    // jike: 更新 per-agent deny 映射（child_session_id == agent_id），
-                    // 供 request_permission 在子会话自动放行之前拦截。
-                    {
-                        let mut deny = self
-                            .per_agent_deny
-                            .write()
-                            .unwrap_or_else(|e| e.into_inner());
-                        for a in &agents {
-                            let terminal = matches!(
-                                a.state.to_ascii_lowercase().as_str(),
-                                "completed"
-                                    | "complete"
-                                    | "failed"
-                                    | "cancelled"
-                                    | "canceled"
-                                    | "error"
-                                    | "done"
-                            );
-                            if a.permission_rules.is_empty() || terminal {
-                                deny.remove(&a.agent_id);
-                            } else {
-                                let rules: Vec<crate::policy::PermissionRule> = a
-                                    .permission_rules
-                                    .iter()
-                                    .map(|m| crate::policy::PermissionRule {
-                                        matcher: m.clone(),
-                                        policy: crate::policy::Policy::Deny,
-                                    })
-                                    .collect();
-                                deny.insert(
-                                    a.agent_id.clone(),
-                                    crate::policy::PolicyEngine::new(
-                                        crate::policy::PermissionMode::Ask,
-                                        rules,
-                                    ),
-                                );
-                            }
-                        }
-                    }
+                    // 官方 WorkflowAgentInfo 已去掉 capability/isolation/permission_rules；
+                    // DTO 仍保留字段以兼容前端，填默认值。
                     let _ = self
                         .event_tx
                         .send(SessionEvent::WorkflowUpdated(WorkflowInfoDto {
@@ -1495,9 +1526,9 @@ impl Client for GuiClient {
                                     state: a.state,
                                     tokens_used: a.tokens_used,
                                     duration_ms: a.duration_ms,
-                                    capability_mode: a.capability_mode,
-                                    isolation_worktree: a.isolation_worktree,
-                                    permission_rules: a.permission_rules,
+                                    capability_mode: None,
+                                    isolation_worktree: false,
+                                    permission_rules: Vec::new(),
                                 })
                                 .collect(),
                             last_event,
@@ -2672,6 +2703,10 @@ impl GrokSession {
         reasoning_effort: Option<&str>,
         mcp_servers: Vec<crate::composition::McpServerRef>,
     ) -> anyhow::Result<Self> {
+        // 桌面用户显式打开的工作区：正式包 folder-trust 闸下直接授权，
+        // 开发未打 GROK_VERSION 戳时 inert，grant 无副作用。
+        trust_workspace_cwd(&cwd);
+
         // 从环境变量与配置目录加载合并后的有效配置。
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
@@ -2699,14 +2734,16 @@ impl GrokSession {
         let compat_rx = agent_rx.compat();
         let compat_tx = agent_tx.compat_write();
 
-        // 官方记忆配置必须随 spawn 注入（spawn_agent_local 第 4 参数），
-        // 否则 MvpAgent.memory_config 保持 None，记忆后端不会初始化。
+        // 官方记忆配置必须随 spawn 注入。
+        // boot=None：不走 CLI/TUI 的 BootstrapPrefetch（启动前并行拉 remote settings /
+        // 模型目录）；桌面仍由 agent 内部正常 bootstrap，只是少了「会话创建前先预热」那一步。
         let memory_config = agent_config.memory_config.clone();
 
         tokio::task::spawn_local(async move {
             let handle_io = spawn_agent_local(
                 agent_config,
                 auth_manager,
+                None,
                 None,
                 memory_config,
                 compat_tx,
@@ -2790,6 +2827,8 @@ impl GrokSession {
         restore_code: Option<bool>,
         reasoning_effort: Option<&str>,
     ) -> anyhow::Result<Self> {
+        let cwd = cwd.into();
+        trust_workspace_cwd(&cwd);
         let raw_config = xai_grok_shell::config::load_effective_config()
             .map_err(|e| anyhow::anyhow!("加载配置失败: {}", e))?;
         let mut agent_config = AgentConfig::new_from_toml_cfg(&raw_config)
@@ -2813,12 +2852,13 @@ impl GrokSession {
         let (agent_rx, agent_tx) = tokio::io::split(agent_stream);
         let compat_rx = agent_rx.compat();
         let compat_tx = agent_tx.compat_write();
-        // 同 start_inner：官方记忆配置随 spawn 注入。
+        // 同 start_inner：记忆注入；boot=None（不预热 remote settings / 模型目录）。
         let memory_config = agent_config.memory_config.clone();
         tokio::task::spawn_local(async move {
             let handle_io = spawn_agent_local(
                 agent_config,
                 auth_manager,
+                None,
                 None,
                 memory_config,
                 compat_tx,
@@ -4827,5 +4867,34 @@ mod tests {
             SessionEvent::CurrentModeUpdate { mode_id } => assert_eq!(mode_id, "plan"),
             other => panic!("期望 CurrentModeUpdate，实际 {:?}", other),
         }
+    }
+
+    #[test]
+    fn background_task_row_dto_maps_status_and_kind() {
+        use xai_grok_shell::extensions::notification::{
+            BackgroundTaskRow, BackgroundTaskStatus,
+        };
+        let row = BackgroundTaskRow {
+            task_id: "t1".into(),
+            command: "sleep 9".into(),
+            display_command: Some("sleep".into()),
+            description: Some("等待".into()),
+            cwd: "/tmp".into(),
+            kind: serde_json::from_value(serde_json::json!("monitor")).expect("kind"),
+            status: BackgroundTaskStatus::Failed,
+            started_at: "2026-01-01T00:00:00Z".into(),
+            ended_at: Some("2026-01-01T00:00:01Z".into()),
+            output_file: Some("/tmp/out".into()),
+            exit_code: Some(1),
+            signal: None,
+        };
+        let dto = background_task_row_to_dto(row);
+        assert_eq!(dto.task_id, "t1");
+        assert_eq!(dto.command, "sleep 9");
+        assert_eq!(dto.display_command.as_deref(), Some("sleep"));
+        assert_eq!(dto.kind, "monitor");
+        assert_eq!(dto.status, "failed");
+        assert_eq!(dto.exit_code, Some(1));
+        assert_eq!(dto.output_file.as_deref(), Some("/tmp/out"));
     }
 }
