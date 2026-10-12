@@ -13,11 +13,29 @@ pub(super) const NO_SESSION_NOTICE: &str = "No active session";
 
 /// The active agent's root session id, if any.
 /// Used to scope server-queue edit Effects to the foregrounded session.
+/// Root-only by construction, even under a subagent takeover: the read-only child queue pane keeps child actions out.
 pub(super) fn active_agent_session_id(app: &AppView) -> Option<acp::SessionId> {
     let ActiveView::Agent(id) = app.active_view else {
         return None;
     };
     app.agents.get(&id)?.session.session_id.clone()
+}
+
+/// Tells the user, in the session or as a toast, that this build withholds `capability`, and says
+/// whether it did. The caller then drops the action.
+pub(super) fn refuse_withheld(app: &mut AppView, capability: xai_grok_config::Capability) -> bool {
+    let Some(refusal) = app.distribution.refusal(capability) else {
+        return false;
+    };
+    match get_active_agent_mut(app) {
+        Some(agent) => {
+            agent
+                .scrollback
+                .push_block(crate::scrollback::block::RenderBlock::system(refusal));
+        }
+        None => app.show_toast(refusal),
+    }
+    true
 }
 
 /// Apply a closure to the active agent (if any).
@@ -67,13 +85,19 @@ pub(super) fn get_active_agent(app: &AppView) -> Option<&AgentView> {
 
 /// Get a mutable reference to the visible agent view (if any).
 pub(super) fn get_active_agent_mut(app: &mut AppView) -> Option<&mut AgentView> {
-    let id = match app.active_view {
-        ActiveView::Agent(id) => id,
-        ActiveView::Welcome | ActiveView::AgentDashboard => return None,
+    visible_agent_mut(&mut app.agents, app.active_view)
+}
+
+/// [`get_active_agent_mut`] over the split-out fields, for a caller that must hold another `AppView` field alongside the view.
+pub(super) fn visible_agent_mut(
+    agents: &mut indexmap::IndexMap<AgentId, AgentView>,
+    active_view: ActiveView,
+) -> Option<&mut AgentView> {
+    let ActiveView::Agent(id) = active_view else {
+        return None;
     };
-    let agent = app.agents.get_mut(&id)?;
-    if matches!(app.active_view, ActiveView::Agent(_))
-        && let Some(child_sid) = agent.active_subagent.clone()
+    let agent = agents.get_mut(&id)?;
+    if let Some(child_sid) = agent.active_subagent.clone()
         && agent.subagent_views.contains_key(&child_sid)
     {
         return agent.subagent_views.get_mut(&child_sid).map(|b| &mut **b);

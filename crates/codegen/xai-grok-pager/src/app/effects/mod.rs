@@ -8,6 +8,7 @@ use super::worktree_session;
 #[allow(unused_imports)]
 use super::{agent, dispatch};
 pub use helpers::CompactError;
+pub(crate) use helpers::timed_out_while;
 pub use session_list::ConversationsPartial;
 pub(super) use helpers::{
     parse_session_load_running_prompt_id, parse_session_memory_mode,
@@ -31,19 +32,20 @@ use tokio::task::JoinSet;
 use xai_acp_lib::{AcpAgentTx, acp_send};
 use xai_grok_telemetry::startup::{self, StartupPhase};
 use actions::{
-    ClipboardPasteTarget, Effect, ProbedAttachment, SubagentKillOutcome,
-    SwitchModelError, TaskResult, WorkspaceMutation, WorkspaceMutationFailure,
-    WorkspaceWriteCompletion,
+    ClipboardPasteTarget, Effect, SubagentKillOutcome, SwitchModelError, TaskResult,
+    WorkspaceMutation, WorkspaceMutationFailure, WorkspaceWriteCompletion,
 };
 use actions::PermissionModeKind;
-use crate::app::session_startup::stamp_phase_traceparent;
+use crate::app::session_startup::stamp_span_traceparent;
 use crate::views::usage_modal::SessionInfoField;
 #[cfg(test)]
 use actions::PermissionModePersist;
-#[cfg(test)]
 use agent::AgentId;
 use crate::unified_log as ulog;
 use xai_grok_shell::sampling::error::http_status_from_error;
+use xai_grok_shell::sampling::types::{
+    CONTEXT_WINDOW_META_KEY, context_window_meta_value,
+};
 use xai_grok_shell::session::{ExtMethodResult, SessionInfoResponse};
 /// The shell's `x.ai/feedback/upload-trace` params. `intent` is omitted (not null) when absent, so a legacy upload's request stays byte-identical to the pre-intent shape.
 /// absent, so a legacy upload's request stays byte-identical to the pre-intent shape.
@@ -91,6 +93,31 @@ fn apply_permission_mode_override(
     let meta = meta.get_or_insert_with(acp::Meta::new);
     meta.insert("yoloMode".into(), serde_json::Value::Bool(mode.is_always_approve()));
     meta.insert("autoMode".into(), serde_json::Value::Bool(mode.is_auto()));
+}
+/// Send `session/new` inside the `session_create.backend_rpc` region and stamp that region's
+/// traceparent, so the agent-side leg nests under this round-trip, not the enclosing phase span.
+async fn create_session_in_backend_rpc(
+    request: acp::NewSessionRequest,
+    mut meta: Option<acp::Meta>,
+    tx: &AcpAgentTx,
+    action: &str,
+) -> Result<acp::NewSessionResponse, helpers::SessionRpcError> {
+    let rpc_span = match startup::current_phase_span().as_ref() {
+        Some(parent) => {
+            xai_grok_telemetry::region!(
+            "startup.session_create.backend_rpc",
+            xai_grok_telemetry::region::Parent::Explicit(parent)
+        )
+        }
+        None => {
+            xai_grok_telemetry::region!(
+            "session.create.backend_rpc",
+            xai_grok_telemetry::region::Parent::Inherit
+        )
+        }
+    };
+    stamp_span_traceparent(&mut meta, rpc_span.span());
+    helpers::acp_send_bounded(request.meta(meta), tx, action).await
 }
 pub(crate) fn execute(
     effect: Effect,
@@ -163,6 +190,11 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks.spawn(async move { send_check_subscription(&tx, verify).await });
         }
+        Effect::HydrateTeamCapability { identity } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move { send_hydrate_team_capability(&tx, identity).await });
+        }
         Effect::CreditLimitRecheck { agent_id } => {
             let tx = acp_tx.clone();
             tasks.spawn(async move { send_credit_limit_recheck(&tx, agent_id).await });
@@ -231,45 +263,27 @@ pub(crate) fn execute(
                             return TaskResult::SessionFailed {
                                 agent_id,
                                 error: sanitize_user_error(&e.to_string()),
+                                timed_out: false,
                             };
                         }
                     }
                     let mcp_servers = discover_mcp_servers(session_cwd.clone()).await;
                     let mcp_count = mcp_servers.len();
                     let _phase = startup::phase_scope(StartupPhase::SessionCreate);
-                    let mut meta = meta;
-                    stamp_phase_traceparent(&mut meta);
                     ulog::info(
                         "session.create.start",
                         None,
                         Some(serde_json::json!({"mcp_server_count": mcp_count})),
                     );
                     let create_start = std::time::Instant::now();
-                    let create_phase_span = xai_grok_telemetry::startup::current_phase_span();
-                    let result = {
-                        let _rpc_span = match create_phase_span.as_ref() {
-                            Some(parent) => {
-                                xai_grok_telemetry::region!(
-                            "startup.session_create.backend_rpc",
-                            xai_grok_telemetry::region::Parent::Explicit(parent)
+                    let result = create_session_in_backend_rpc(
+                            acp::NewSessionRequest::new(session_cwd)
+                                .mcp_servers(mcp_servers),
+                            meta,
+                            &tx,
+                            "Session creation",
                         )
-                            }
-                            None => {
-                                xai_grok_telemetry::region!(
-                            "session.create.backend_rpc",
-                            xai_grok_telemetry::region::Parent::Inherit
-                        )
-                            }
-                        };
-                        helpers::acp_send_bounded(
-                                acp::NewSessionRequest::new(session_cwd)
-                                    .mcp_servers(mcp_servers)
-                                    .meta(meta),
-                                &tx,
-                                "Session creation",
-                            )
-                            .await
-                    };
+                        .await;
                     let create_elapsed_ms = create_start.elapsed().as_millis() as u64;
                     match result {
                         Ok(resp) => {
@@ -290,10 +304,12 @@ pub(crate) fn execute(
                                     agent_id,
                                     session_id: resp.session_id,
                                     models: resp.models,
+                                    modes: resp.modes,
                                 }),
                             }
                         }
                         Err(e) => {
+                            let timed_out = e.timed_out();
                             let error = e.to_string();
                             ulog::error(
                                 "session.create.failed",
@@ -308,6 +324,7 @@ pub(crate) fn execute(
                             TaskResult::SessionFailed {
                                 agent_id,
                                 error: sanitize_user_error(&error),
+                                timed_out,
                             }
                         }
                     }
@@ -321,6 +338,7 @@ pub(crate) fn execute(
             model_id,
             permission_mode_override,
             preferred_session_id,
+            minted_session_id,
             chat_kind,
         } => {
             let tx = acp_tx.clone();
@@ -336,7 +354,11 @@ pub(crate) fn execute(
                 meta.get_or_insert_with(acp::Meta::new)
                     .insert("modelId".into(), serde_json::json!(mid.0));
             }
-            if load_session_id.is_none() && let Some(ref sid) = preferred_session_id {
+            let client_session_id = load_session_id
+                .is_none()
+                .then(|| preferred_session_id.clone().or(minted_session_id))
+                .flatten();
+            if let Some(ref sid) = client_session_id {
                 meta.get_or_insert_with(acp::Meta::new)
                     .insert("sessionId".into(), serde_json::json!(sid));
             }
@@ -385,7 +407,9 @@ pub(crate) fn execute(
                             Err(e) => {
                                 TaskResult::WorktreeSessionFailed {
                                     agent_id,
-                                    error: e.0,
+                                    error: e.message,
+                                    orphaned_worktree_root: None,
+                                    timed_out: false,
                                 }
                             }
                         };
@@ -405,14 +429,16 @@ pub(crate) fn execute(
                         Err(e) => {
                             return TaskResult::WorktreeSessionFailed {
                                 agent_id,
-                                error: e.0,
+                                error: e.message,
+                                orphaned_worktree_root: None,
+                                timed_out: false,
                             };
                         }
                     };
                     let worktree_root = created.worktree_root;
                     let session_cwd = created.session_cwd;
                     let strategy_summary = created.strategy_summary;
-                    if let Some(ref sid) = preferred_session_id {
+                    if let Some(ref sid) = client_session_id {
                         let session_cwd_str = session_cwd.to_string_lossy();
                         if let Err(e) = crate::app::session_startup::ensure_session_id_available(
                             sid,
@@ -420,21 +446,18 @@ pub(crate) fn execute(
                         ) {
                             return TaskResult::WorktreeSessionFailed {
                                 agent_id,
-                                error: worktree_session::note_orphaned_worktree(
-                                    &sanitize_user_error(&e.to_string()),
-                                    &worktree_root,
-                                ),
+                                error: sanitize_user_error(&e.to_string()),
+                                orphaned_worktree_root: Some(worktree_root),
+                                timed_out: false,
                             };
                         }
                     }
                     let mcp_servers = discover_mcp_servers(session_cwd.clone()).await;
                     let _phase = startup::phase_scope(StartupPhase::SessionCreate);
-                    let mut meta = meta;
-                    stamp_phase_traceparent(&mut meta);
-                    let result = helpers::acp_send_bounded(
+                    let result = create_session_in_backend_rpc(
                             acp::NewSessionRequest::new(session_cwd.clone())
-                                .mcp_servers(mcp_servers)
-                                .meta(meta),
+                                .mcp_servers(mcp_servers),
+                            meta,
                             &tx,
                             "Worktree session creation",
                         )
@@ -450,6 +473,7 @@ pub(crate) fn execute(
                                     worktree_path: worktree_root,
                                     session_cwd,
                                     models: resp.models,
+                                    modes: resp.modes,
                                     strategy_summary,
                                 }),
                             }
@@ -457,14 +481,11 @@ pub(crate) fn execute(
                         Err(e) => {
                             TaskResult::WorktreeSessionFailed {
                                 agent_id,
-                                error: worktree_session::note_orphaned_worktree(
-                                    &sanitize_user_error(
-                                        &format!(
-                                "couldn't create session in worktree: {e}"
-                            ),
-                                    ),
-                                    &worktree_root,
+                                error: sanitize_user_error(
+                                    &format!("couldn't create session in worktree: {e}"),
                                 ),
+                                orphaned_worktree_root: Some(worktree_root),
+                                timed_out: e.timed_out(),
                             }
                         }
                     }
@@ -522,6 +543,7 @@ pub(crate) fn execute(
                                     agent_id,
                                     session_id: acp_session_id,
                                     models: resp.models,
+                                    modes: resp.modes,
                                     code_restored,
                                     restore_summary,
                                     restore_degree,
@@ -681,25 +703,36 @@ pub(crate) fn execute(
                     "limit": limit,
                     "headless": headless_policy.as_wire_str(),
                 });
-                    if let Some(q) = &query {
-                        params["query"] = serde_json::Value::String(q.clone());
-                    } else {
-                        params["allowRelax"] = serde_json::Value::Bool(true);
-                    }
-                    if let Some(kinds) = &kind_filter {
-                        params["_meta"] = serde_json::json!({
-                        "x.ai/facetFilters": { "kind": kinds },
-                    });
-                        tracing::info!(
-                        target: "grok.pager.workspace_mode",
-                        event = "session_list_fetch",
-                        kind_filter = ?kinds,
-                        query = ?query,
-                        ?host,
-                        generation,
-                        seq,
-                        "FetchSessionList with kind facet filter"
-                    );
+                    if let Some(obj) = params.as_object_mut() {
+                        if let Some(q) = &query {
+                            obj.insert(
+                                "query".into(),
+                                serde_json::Value::String(q.clone()),
+                            );
+                        } else {
+                            obj.insert(
+                                "allowRelax".into(),
+                                serde_json::Value::Bool(true),
+                            );
+                        }
+                        if let Some(kinds) = &kind_filter {
+                            obj.insert(
+                                "_meta".into(),
+                                serde_json::json!({
+                                "x.ai/facetFilters": { "kind": kinds },
+                            }),
+                            );
+                            tracing::info!(
+                            target: "grok.pager.workspace_mode",
+                            event = "session_list_fetch",
+                            kind_filter = ?kinds,
+                            query = ?query,
+                            ?host,
+                            generation,
+                            seq,
+                            "FetchSessionList with kind facet filter"
+                        );
+                        }
                     }
                     let request = acp::ExtRequest::new(
                         "x.ai/session/list",
@@ -1026,7 +1059,19 @@ pub(crate) fn execute(
         }
         Effect::RestoreAndLoadSession { agent_id, session_id, session_cwd: _ } => {
             use xai_grok_shell::agent::session_registry_client::SessionRegistryClient;
-            use xai_grok_shell::session::restore::restore_session_with_storage;
+            use xai_grok_shell::session::restore::{
+                ensure_available, restore_session_with_storage,
+            };
+            if let Err(error) = ensure_available() {
+                tasks
+                    .spawn(async move {
+                        TaskResult::SessionRestoreFailed {
+                            agent_id,
+                            error: format!("{error:#}"),
+                        }
+                    });
+                return (false, meta);
+            }
             let setup_started = std::time::Instant::now();
             let raw_config = xai_grok_shell::config::load_effective_config();
             let setup = raw_config
@@ -1115,23 +1160,17 @@ pub(crate) fn execute(
                                             .map(|detail| format!("Session state restored ({detail})."))
                                     }
                                     (RestorePhase::Finalize, _) => {
-                                        let elapsed_secs = event.elapsed.as_secs();
                                         let status = if event.incomplete {
                                             "Restore incomplete"
                                         } else {
                                             "Restore complete"
                                         };
-                                        if elapsed_secs >= 60 {
-                                            Some(
-                                                format!(
-                                        "{status} ({}m{:02}s).",
-                                        elapsed_secs / 60,
-                                        elapsed_secs % 60
-                                    ),
-                                            )
-                                        } else {
-                                            Some(format!("{status} ({elapsed_secs}s)."))
-                                        }
+                                        Some(
+                                            format!(
+                                    "{status} ({}).",
+                                    crate::views::dock::fmt_elapsed(event.elapsed.as_secs())
+                                ),
+                                        )
                                     }
                                     _ => None,
                                 };
@@ -1265,6 +1304,58 @@ pub(crate) fn execute(
                     }),
                         ),
                     );
+                    log_prompt_result(&session_id, &result);
+                    let http_status = result
+                        .as_ref()
+                        .err()
+                        .and_then(http_status_from_error);
+                    TaskResult::PromptResponse {
+                        agent_id,
+                        result: result
+                            .map_err(|e| format_acp_error(&e, is_api_key_auth)),
+                        http_status,
+                        prompt_id: Some(prompt_id),
+                    }
+                });
+        }
+        Effect::ExecutePlan {
+            agent_id,
+            session_id,
+            prompt_id,
+            plan_file_content,
+            plan_file_uri,
+        } => {
+            let tx = acp_tx.clone();
+            let screen_mode = session_flags.screen_mode_label;
+            let is_api_key_auth = session_flags.is_api_key_auth;
+            tasks
+                .spawn(async move {
+                    let prompt = vec![acp::ContentBlock::Text(acp::TextContent::new(String::new()))];
+                    let mut meta = prompt_request_meta(&prompt_id, screen_mode);
+                    if let Some(map) = meta.as_object_mut() {
+                        let mut execute_plan = serde_json::Map::new();
+                        execute_plan
+                            .insert(
+                                "planFileContent".into(),
+                                serde_json::Value::String(plan_file_content),
+                            );
+                        if let Some(uri) = plan_file_uri
+                            .filter(|uri| !uri.trim().is_empty())
+                        {
+                            execute_plan
+                                .insert(
+                                    "planFileUri".into(),
+                                    serde_json::Value::String(uri),
+                                );
+                        }
+                        map.insert(
+                            "executePlan".into(),
+                            serde_json::Value::Object(execute_plan),
+                        );
+                    }
+                    let req = acp::PromptRequest::new(session_id.clone(), prompt)
+                        .meta(meta.as_object().cloned());
+                    let result = acp_send(req, &tx).await;
                     log_prompt_result(&session_id, &result);
                     let http_status = result
                         .as_ref()
@@ -1415,43 +1506,16 @@ pub(crate) fn execute(
             let trigger_str = trigger.map(|t| t.as_wire_str());
             tasks
                 .spawn(async move {
-                    ulog::info(
-                        "cancel.acp_send.start",
-                        Some(&session_id.0),
-                        Some(
-                            serde_json::json!({
-                        "cancel_subagents": cancel_subagents,
-                        "trigger": trigger_str,
-                        "rewind_if_no_output": rewind_prompt_id.is_some(),
-                        "rewind_prompt_id": rewind_prompt_id.as_deref(),
-                    }),
-                        ),
-                    );
-                    let send_start = std::time::Instant::now();
-                    let req = acp::CancelNotification::new(session_id.clone())
-                        .meta(
-                            Some(
-                                cancel_notification_meta(
-                                    cancel_subagents,
-                                    trigger_str,
-                                    rewind_prompt_id.as_deref(),
-                                ),
-                            ),
-                        );
-                    let result = acp_send(req, &tx).await;
-                    ulog::info(
-                        "cancel.acp_send.done",
-                        Some(&session_id.0),
-                        Some(
-                            serde_json::json!({
-                        "ok": result.is_ok(),
-                        "elapsed_ms": send_start.elapsed().as_millis() as u64,
-                    }),
-                        ),
-                    );
-                    if let Err(e) = result {
-                        tracing::warn!("Failed to send cancel notification: {e}");
-                    }
+                    send_cancel(
+                            &tx,
+                            &session_id,
+                            CancelMeta {
+                                cancel_subagents,
+                                trigger: trigger_str,
+                                rewind_prompt_id: rewind_prompt_id.as_deref(),
+                            },
+                        )
+                        .await;
                     TaskResult::CancelComplete
                 });
         }
@@ -1604,8 +1668,13 @@ pub(crate) fn execute(
                     "id": id,
                     "expectedVersion": expected_version,
                 });
-                    if let Some(new_text) = new_text {
-                        params["newText"] = serde_json::Value::String(new_text);
+                    if let Some(new_text) = new_text
+                        && let Some(obj) = params.as_object_mut()
+                    {
+                        obj.insert(
+                            "newText".into(),
+                            serde_json::Value::String(new_text),
+                        );
                     }
                     let notification = acp::ExtNotification::new(
                         "x.ai/queue/interject",
@@ -1623,9 +1692,15 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let req = acp::SetSessionModeRequest::new(session_id, mode_id);
+                    let req = acp::SetSessionModeRequest::new(
+                        session_id.clone(),
+                        mode_id,
+                    );
                     if let Err(e) = acp_send(req, &tx).await {
                         tracing::warn!("Failed to set session mode: {e}");
+                        return TaskResult::SetSessionModeFailed {
+                            session_id,
+                        };
                     }
                     TaskResult::CancelComplete
                 });
@@ -1677,24 +1752,11 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::Compact { agent_id, session_id, user_context } => {
+        Effect::Compact { agent_id, session_id } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let mut params = serde_json::Map::new();
-                    params
-                        .insert(
-                            "sessionId".into(),
-                            serde_json::Value::String(session_id.0.to_string()),
-                        );
-                    if let Some(ctx) = user_context {
-                        params
-                            .insert(
-                                "userContext".into(),
-                                serde_json::Value::String(ctx),
-                            );
-                    }
-                    let params = serde_json::Value::Object(params);
+                    let params = serde_json::json!({ "sessionId": session_id.0.to_string() });
                     let req = acp::ExtRequest::new(
                         "x.ai/compact_conversation",
                         serde_json::value::to_raw_value(&params)
@@ -1859,17 +1921,12 @@ pub(crate) fn execute(
                     TaskResult::CancelComplete
                 });
         }
-        Effect::SwitchModel {
-            agent_id,
-            session_id,
-            model_id,
-            effort,
-            prev_model_id,
-        } => {
+        Effect::SwitchModel { agent_id, session_id, choice, prev_model_id } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let meta = effort
+                    let mut meta = choice
+                        .effort
                         .map(|eff| {
                             use xai_grok_shell::sampling::types::{
                                 REASONING_EFFORT_META_KEY, reasoning_effort_meta_value,
@@ -1881,9 +1938,16 @@ pub(crate) fn execute(
                             );
                             m
                         });
+                    if let Some(window) = choice.context_window_selection {
+                        meta.get_or_insert_default()
+                            .insert(
+                                CONTEXT_WINDOW_META_KEY.to_owned(),
+                                context_window_meta_value(window),
+                            );
+                    }
                     let req = acp::SetSessionModelRequest::new(
                             session_id,
-                            model_id.clone(),
+                            choice.model_id.clone(),
                         )
                         .meta(meta);
                     let result = acp_send(req, &tx)
@@ -1904,8 +1968,7 @@ pub(crate) fn execute(
                         });
                     TaskResult::SwitchModelComplete {
                         agent_id,
-                        model_id,
-                        effort,
+                        choice,
                         result,
                         prev_model_id,
                     }
@@ -1914,83 +1977,26 @@ pub(crate) fn execute(
         Effect::ProbeClipboardAttachment { ctx, change_count } => {
             tasks
                 .spawn(async move {
-                    let probe_target = ctx.target.clone();
                     let probe_text = ctx.source.text().map(str::to_owned);
                     let probe_bracketed = ctx.source.is_bracketed();
-                    let probe = tokio::task::spawn_blocking(move || {
-                        if change_count.is_some()
-                            && crate::clipboard::clipboard_change_count() != change_count
-                        {
-                            return (ProbedAttachment::ProbeDropped, None);
+                    let images_dir = match &ctx.target {
+                        ClipboardPasteTarget::AgentPrompt { images_dir, .. } => {
+                            images_dir.clone()
                         }
-                        if probe_bracketed
-                            && crate::terminal::terminal_context()
-                                .brand
-                                .delivers_ime_as_bracketed_paste()
-                        {
-                            match crate::clipboard::bracketed_payload_came_from_clipboard_result(
-                                probe_text.as_deref().unwrap_or(""),
-                            ) {
-                                Ok(true) => {}
-                                Ok(false) => return (ProbedAttachment::ProbeDropped, None),
-                                Err(_) => return (ProbedAttachment::ProbeFailed, None),
-                            }
-                        }
-                        let (image_data, file_urls) = match crate::clipboard::system_clipboard_probe_attachments(
-                            probe_text.as_deref(),
-                        ) {
-                            Ok(probe) => probe,
-                            Err(_) => return (ProbedAttachment::ProbeFailed, None),
-                        };
-                        let image = match image_data {
-                            Some(data) => {
-                                let mut pasted = crate::prompt_images::from_clipboard_data(
-                                    &data,
-                                );
-                                pasted.prepare_preview_blocking();
-                                match &probe_target {
-                                    ClipboardPasteTarget::AgentPrompt {
-                                        images_dir: Some(dir),
-                                        ..
-                                    } => {
-                                        match crate::prompt_images::persist_to_session(
-                                            &mut pasted,
-                                            dir,
-                                        ) {
-                                            Ok(()) => ProbedAttachment::Image(pasted),
-                                            Err(e) => ProbedAttachment::PersistFailed(e.to_string()),
-                                        }
-                                    }
-                                    ClipboardPasteTarget::AgentPrompt { images_dir: None, .. }
-                                    | ClipboardPasteTarget::FeedbackModal { .. } => {
-                                        ProbedAttachment::Image(pasted)
-                                    }
-                                    ClipboardPasteTarget::DashboardDispatch
-                                    | ClipboardPasteTarget::DashboardPeek { .. } => {
-                                        ProbedAttachment::Image(pasted)
-                                    }
-                                }
-                            }
-                            None => ProbedAttachment::NoRaster,
-                        };
-                        (image, file_urls)
-                    });
-                    let (image, file_urls) = match tokio::time::timeout(
-                            std::time::Duration::from_secs(CLIPBOARD_PROBE_TIMEOUT_SECS),
-                            probe,
-                        )
-                        .await
-                    {
-                        Ok(Ok(pair)) => pair,
-                        Ok(Err(e)) => {
-                            tracing::warn!(error = %e, "clipboard attachment probe task failed");
-                            (ProbedAttachment::ProbeFailed, None)
-                        }
-                        Err(_elapsed) => {
-                            tracing::warn!("clipboard attachment probe timed out");
-                            (ProbedAttachment::ProbeFailed, None)
-                        }
+                        ClipboardPasteTarget::FeedbackModal { .. }
+                        | ClipboardPasteTarget::DashboardDispatch
+                        | ClipboardPasteTarget::DashboardPeek { .. } => None,
                     };
+                    let (image, file_urls) = bounded_clipboard_probe(
+                            std::time::Duration::from_secs(CLIPBOARD_PROBE_TIMEOUT_SECS),
+                            move || probe_clipboard_attachment_blocking(
+                                change_count,
+                                probe_text,
+                                probe_bracketed,
+                                images_dir,
+                            ),
+                        )
+                        .await;
                     TaskResult::ClipboardAttachmentProbed {
                         ctx,
                         image,
@@ -2283,6 +2289,22 @@ pub(crate) fn execute(
                                 error,
                             }
                         }
+                    }
+                });
+        }
+        Effect::PersistFeatureOverride { feature, saved } => {
+            tasks
+                .spawn(async move {
+                    let result = xai_grok_shell::util::config::set_feature_override(
+                            feature,
+                            saved,
+                        )
+                        .await
+                        .map(|()| saved)
+                        .map_err(|e| e.to_string());
+                    TaskResult::FeatureOverridePersisted {
+                        feature,
+                        result,
                     }
                 });
         }
@@ -2615,6 +2637,153 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::FetchMemoryList { agent_id, session_id } => {
+            use xai_grok_shell::extensions::memory::{
+                MEMORY_LIST_METHOD, MemoryListRequest, MemoryListing,
+            };
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let req_body = MemoryListRequest {
+                        session_id: session_id.0.to_string(),
+                    };
+                    let req = acp::ExtRequest::new(
+                        MEMORY_LIST_METHOD,
+                        serde_json::value::to_raw_value(&req_body)
+                            .expect("serialize memory/list params")
+                            .into(),
+                    );
+                    let result = match acp_send(req, &tx).await {
+                        Ok(resp) => {
+                            serde_json::from_str::<MemoryListing>(resp.0.get())
+                                .map_err(|_| "Couldn't read the shell's reply.".to_string())
+                        }
+                        Err(e) => {
+                            Err(
+                                sanitize_user_error(&format!(
+                        "Couldn't load memory: {e}"
+                    )),
+                            )
+                        }
+                    };
+                    TaskResult::MemoryListLoaded {
+                        agent_id,
+                        result,
+                    }
+                });
+        }
+        Effect::MemoryToggle { agent_id, session_id, enabled } => {
+            use xai_grok_shell::extensions::memory::{
+                MEMORY_TOGGLE_METHOD, MemoryToggleRequest, MemoryToggleResponse,
+            };
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let req_body = MemoryToggleRequest {
+                        session_id: session_id.0.to_string(),
+                        enabled,
+                    };
+                    let req = acp::ExtRequest::new(
+                        MEMORY_TOGGLE_METHOD,
+                        serde_json::value::to_raw_value(&req_body)
+                            .expect("serialize memory/toggle params")
+                            .into(),
+                    );
+                    let result = match acp_send(req, &tx).await {
+                        Ok(resp) => {
+                            serde_json::from_str::<MemoryToggleResponse>(resp.0.get())
+                                .map_err(|_| "Couldn't read the shell's reply.".to_string())
+                        }
+                        Err(e) => {
+                            Err(
+                                sanitize_user_error(
+                                    &format!(
+                        "Couldn't change memory state: {e}"
+                    ),
+                                ),
+                            )
+                        }
+                    };
+                    TaskResult::MemoryToggleResult {
+                        agent_id,
+                        result,
+                    }
+                });
+        }
+        Effect::MemoryFlush { agent_id, session_id } => {
+            use xai_grok_shell::extensions::memory::{
+                MEMORY_FLUSH_METHOD, MemoryFlushResponse,
+            };
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let result = memory_command_request::<
+                        MemoryFlushResponse,
+                    >(MEMORY_FLUSH_METHOD, &session_id, &tx)
+                        .await;
+                    TaskResult::MemoryFlushComplete {
+                        agent_id,
+                        result,
+                    }
+                });
+        }
+        Effect::MemoryDream { agent_id, session_id } => {
+            use xai_grok_shell::extensions::memory::{
+                MEMORY_DREAM_METHOD, MemoryDreamResponse,
+            };
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let result = memory_command_request::<
+                        MemoryDreamResponse,
+                    >(MEMORY_DREAM_METHOD, &session_id, &tx)
+                        .await;
+                    TaskResult::MemoryDreamComplete {
+                        agent_id,
+                        result,
+                    }
+                });
+        }
+        Effect::MemoryForget { agent_id, session_id, path, expected_content_hash } => {
+            use xai_grok_shell::extensions::memory::{
+                MEMORY_FORGET_METHOD, MemoryForgetRequest, MemoryForgetResponse,
+            };
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let req_body = MemoryForgetRequest {
+                        session_id: session_id.0.to_string(),
+                        path: path.clone(),
+                        expected_content_hash,
+                    };
+                    let req = acp::ExtRequest::new(
+                        MEMORY_FORGET_METHOD,
+                        serde_json::value::to_raw_value(&req_body)
+                            .expect("serialize memory/forget params")
+                            .into(),
+                    );
+                    let result = match acp_send(req, &tx).await {
+                        Ok(resp) => {
+                            serde_json::from_str::<MemoryForgetResponse>(resp.0.get())
+                                .map_err(|_| "Couldn't read the shell's reply.".to_string())
+                        }
+                        Err(e) => {
+                            Err(
+                                sanitize_user_error(
+                                    &format!(
+                        "Couldn't delete the note: {e}"
+                    ),
+                                ),
+                            )
+                        }
+                    };
+                    TaskResult::MemoryForgetResult {
+                        agent_id,
+                        path,
+                        result,
+                    }
+                });
+        }
         Effect::HooksAction { agent_id, session_id, action } => {
             let tx = acp_tx.clone();
             tasks
@@ -2781,32 +2950,32 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::FetchSkillsList { agent_id, session_id: _ } => {
+        Effect::FetchSkillsList { agent_id, session_id, refresh, fetch } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let params = serde_json::json!({
-                    "cwd": "."
-                });
+                    use crate::acp::skills_listing::parse_reply;
+                    use xai_grok_shell::extensions::skills::{
+                        SKILLS_LIST_METHOD, SkillsListRequest,
+                    };
+                    let params = SkillsListRequest {
+                        cwd: ".".to_owned(),
+                        session_id: Some(session_id.clone()),
+                        refresh,
+                    };
                     let req = acp::ExtRequest::new(
-                        "x.ai/skills/list",
+                        SKILLS_LIST_METHOD,
                         serde_json::value::to_raw_value(&params)
                             .expect("serialize skills/list params")
                             .into(),
                     );
                     let result = match acp_send(req, &tx).await {
                         Ok(resp) => {
-                            let wrapper: serde_json::Value = serde_json::from_str(
-                                    resp.0.get(),
-                                )
-                                .unwrap_or_default();
-                            let inner = wrapper.get("result").unwrap_or(&wrapper);
-                            serde_json::from_value::<
-                                Vec<
-                                    xai_grok_tools::implementations::skills::types::SkillInfo,
-                                >,
-                            >(inner.get("skills").cloned().unwrap_or_default())
-                                .map_err(|_| "couldn't load skills".to_string())
+                            parse_reply(resp.0.get())
+                                .map_err(|error| {
+                                    tracing::warn!(%error, "skills list reply did not parse");
+                                    "couldn't load skills".to_string()
+                                })
                         }
                         Err(e) => {
                             Err(
@@ -2816,6 +2985,8 @@ pub(crate) fn execute(
                     };
                     TaskResult::SkillsListLoaded {
                         agent_id,
+                        session_id,
+                        fetch,
                         result,
                     }
                 });
@@ -2872,24 +3043,20 @@ pub(crate) fn execute(
                     "cwd": ".",
                 });
                     let req = acp::ExtRequest::new(
-                        "x.ai/skills/toggle",
+                        xai_grok_shell::extensions::skills::SKILLS_TOGGLE_METHOD,
                         serde_json::value::to_raw_value(&params)
                             .expect("serialize skills/toggle params")
                             .into(),
                     );
                     let result = match acp_send(req, &tx).await {
                         Ok(resp) => {
-                            let wrapper: serde_json::Value = serde_json::from_str(
+                            let parsed = crate::acp::skills_listing::parse_reply(
                                     resp.0.get(),
                                 )
-                                .unwrap_or_default();
-                            let inner = wrapper.get("result").unwrap_or(&wrapper);
-                            let parsed = serde_json::from_value::<
-                                Vec<
-                                    xai_grok_tools::implementations::skills::types::SkillInfo,
-                                >,
-                            >(inner.get("skills").cloned().unwrap_or_default())
-                                .map_err(|_| "couldn't toggle skill".to_string());
+                                .map_err(|error| {
+                                    tracing::warn!(%error, "skills toggle reply did not parse");
+                                    "couldn't toggle skill".to_string()
+                                });
                             if parsed.is_ok() {
                                 let refresh = acp::ExtRequest::new(
                                     "x.ai/skills/refresh-baseline",
@@ -3586,12 +3753,7 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SetCodingDataSharing {
-            agent_id,
-            opted_in,
-            rollback_to_opted_in,
-            seq,
-        } => {
+        Effect::SetCodingDataSharing { agent_id, opted_in, seq } => {
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
@@ -3613,7 +3775,6 @@ pub(crate) fn execute(
                                     return TaskResult::CodingDataSharingFailed {
                                         agent_id,
                                         error: format!("malformed response: {e}"),
-                                        rollback_to_opted_in,
                                         seq,
                                     };
                                 }
@@ -3629,7 +3790,6 @@ pub(crate) fn execute(
                                 return TaskResult::CodingDataSharingFailed {
                                     agent_id,
                                     error: msg,
-                                    rollback_to_opted_in,
                                     seq,
                                 };
                             }
@@ -3648,7 +3808,6 @@ pub(crate) fn execute(
                             TaskResult::CodingDataSharingFailed {
                                 agent_id,
                                 error: format!("{e}"),
-                                rollback_to_opted_in,
                                 seq,
                             }
                         }
@@ -3723,6 +3882,7 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
+                    let image_count = images.len();
                     let raw_params = if let Some(draft) = draft {
                         serde_json::value::to_raw_value(
                             &FeedbackDraftSendRequest {
@@ -3770,6 +3930,8 @@ pub(crate) fn execute(
                             return TaskResult::FeedbackFailed {
                                 agent_id,
                                 origin,
+                                feedback_text,
+                                image_count,
                                 error: sanitize_user_error(
                                     &format!(
                                 "couldn't serialize feedback: {e}"
@@ -3821,6 +3983,8 @@ pub(crate) fn execute(
                                             TaskResult::FeedbackFailed {
                                                 agent_id,
                                                 origin,
+                                                feedback_text,
+                                                image_count,
                                                 error: sanitize_user_error(
                                                     &format!(
                                 "couldn't decode feedback response: {error}"
@@ -3847,6 +4011,8 @@ pub(crate) fn execute(
                                     TaskResult::FeedbackFailed {
                                         agent_id,
                                         origin,
+                                        feedback_text,
+                                        image_count,
                                         error: sanitize_user_error(
                                             &format!("couldn't send feedback: {e}"),
                                         ),
@@ -4168,14 +4334,17 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
+                    use xai_grok_shell::extensions::memory::{
+                        MEMORY_REWRITE_METHOD, MemoryRewriteRequest,
+                    };
                     let request = acp::ExtRequest::new(
-                        "x.ai/memory/rewrite",
+                        MEMORY_REWRITE_METHOD,
                         serde_json::value::to_raw_value(
-                                &serde_json::json!({
-                        "sessionId": session_id.0.to_string(),
-                        "rawText": raw_text,
-                        "contextSummary": context_summary,
-                    }),
+                                &MemoryRewriteRequest {
+                                    session_id: session_id.0.to_string(),
+                                    raw_text: raw_text.clone(),
+                                    context_summary,
+                                },
                             )
                             .expect("serialize memory/rewrite params")
                             .into(),
@@ -4233,22 +4402,71 @@ pub(crate) fn execute(
                     }
                 });
         }
-        Effect::SendBtw { agent_id, session_id, question, minimal_request_id } => {
+        Effect::SendBtw {
+            agent_id,
+            session_id,
+            question,
+            images,
+            cwd,
+            minimal_request_id,
+        } => {
             let tx = acp_tx.clone();
             let is_api_key_auth = session_flags.is_api_key_auth;
             tasks
                 .spawn(async move {
-                    let request = acp::ExtRequest::new(
-                        "x.ai/btw",
-                        serde_json::value::to_raw_value(
-                                &serde_json::json!({
-                        "sessionId": session_id.0.to_string(),
-                        "question": question,
-                    }),
-                            )
-                            .expect("serialize btw params")
-                            .into(),
-                    );
+                    let attached = images.len();
+                    let question_fallback = question.clone();
+                    let session_fallback = session_id.clone();
+                    let images = BtwSendImages(images);
+                    let prepared = tokio::task::spawn_blocking(move || {
+                            let mut encoded = crate::app::dispatch::notes::encode_btw_images(
+                                &question,
+                                &images.0,
+                                &cwd,
+                            );
+                            let mut question = question;
+                            if let Some(notice) = btw_image_notice(
+                                encoded.omitted,
+                                attached,
+                            ) {
+                                append_btw_notice(
+                                    &mut question,
+                                    encoded.blocks.as_mut(),
+                                    &notice,
+                                );
+                            }
+                            let image_notice = btw_cap_omission_notice(
+                                encoded.omitted_by_cap,
+                                attached,
+                            );
+                            let params = build_btw_params(
+                                &session_id,
+                                &question,
+                                encoded.blocks.as_deref(),
+                            );
+                            let raw = serde_json::value::to_raw_value(&params)
+                                .expect("serialize btw params");
+                            (raw, image_notice, encoded.skipped_display_numbers)
+                        })
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("btw image encode task failed: {e}");
+                            let notice = btw_image_notice(attached, attached);
+                            let mut question = question_fallback;
+                            if let Some(notice) = notice.as_deref() {
+                                append_btw_notice(&mut question, None, notice);
+                            }
+                            let params = build_btw_params(
+                                &session_fallback,
+                                &question,
+                                None,
+                            );
+                            let raw = serde_json::value::to_raw_value(&params)
+                                .expect("serialize btw params");
+                            (raw, notice, Vec::new())
+                        });
+                    let (raw, image_notice, skipped_image_numbers) = prepared;
+                    let request = acp::ExtRequest::new("x.ai/btw", raw.into());
                     match acp_send(request, &tx).await {
                         Ok(resp) => {
                             let parsed: serde_json::Value = serde_json::from_str(
@@ -4265,6 +4483,8 @@ pub(crate) fn execute(
                                 agent_id,
                                 result: Ok(answer),
                                 minimal_request_id,
+                                image_notice,
+                                skipped_image_numbers,
                             }
                         }
                         Err(e) => {
@@ -4272,6 +4492,8 @@ pub(crate) fn execute(
                                 agent_id,
                                 result: Err(format_acp_error(&e, is_api_key_auth)),
                                 minimal_request_id,
+                                image_notice,
+                                skipped_image_numbers,
                             }
                         }
                     }
@@ -4317,94 +4539,13 @@ pub(crate) fn execute(
             interjection_id,
             blocks,
         } => {
-            let tx = acp_tx.clone();
-            tasks
-                .spawn(async move {
-                    let params = build_interject_params(
-                        &session_id,
-                        &text,
-                        &interjection_id,
-                        blocks.as_deref(),
-                    );
-                    let request = acp::ExtRequest::new(
-                        "x.ai/interject",
-                        serde_json::value::to_raw_value(&params)
-                            .expect("serialize interject params")
-                            .into(),
-                    );
-                    match acp_send(request, &tx).await {
-                        Ok(_) => {
-                            TaskResult::InterjectQueued {
-                                agent_id,
-                            }
-                        }
-                        Err(e) => {
-                            TaskResult::InterjectFailed {
-                                agent_id,
-                                error: sanitize_user_error(
-                                    &format!("couldn't send interjection: {e}"),
-                                ),
-                                text,
-                                blocks,
-                            }
-                        }
-                    }
-                });
-        }
-        Effect::FetchCatalogEntry { kind, name } => {
-            let tx = acp_tx.clone();
-            tasks
-                .spawn(async move {
-                    let params = serde_json::json!({ "kind": kind, "name": name });
-                    let request = acp::ExtRequest::new(
-                        "x.ai/bundle/entry/get",
-                        serde_json::value::to_raw_value(&params)
-                            .expect("serialize bundle/entry/get params")
-                            .into(),
-                    );
-                    match acp_send(request, &tx).await {
-                        Ok(resp) => {
-                            let wrapper: serde_json::Value = serde_json::from_str(
-                                    resp.0.get(),
-                                )
-                                .unwrap_or_default();
-                            if let Some(err) = wrapper.get("error") {
-                                let msg = err
-                                    .as_str()
-                                    .map(String::from)
-                                    .unwrap_or_else(|| "unknown error".to_string());
-                                return TaskResult::CatalogEntryFailed {
-                                    error: msg,
-                                };
-                            }
-                            let inner = wrapper.get("result").unwrap_or(&wrapper);
-                            match serde_json::from_value::<
-                                super::bundle::EntryGetResult,
-                            >(inner.clone()) {
-                                Ok(r) => {
-                                    TaskResult::CatalogEntryReady {
-                                        kind: r.kind,
-                                        name: r.name,
-                                        content: r.content,
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::debug!("failed to parse catalog entry response: {e}");
-                                    TaskResult::CatalogEntryFailed {
-                                        error: "couldn't load entry".to_string(),
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            TaskResult::CatalogEntryFailed {
-                                error: sanitize_user_error(
-                                    &format!("couldn't load entry: {e}"),
-                                ),
-                            }
-                        }
-                    }
-                });
+            spawn_ordered_interjects(
+                tasks,
+                acp_tx,
+                agent_id,
+                session_id,
+                vec![(text, interjection_id, blocks)],
+            );
         }
         Effect::FetchBundleStatus => {
             let tx = acp_tx.clone();
@@ -4488,6 +4629,7 @@ pub(crate) fn execute(
                                 .unwrap_or_default();
                             TaskResult::AvailableCommandsRefreshed {
                                 agent_id,
+                                session_id,
                                 commands,
                             }
                         }
@@ -4495,6 +4637,7 @@ pub(crate) fn execute(
                             tracing::warn!("commands/list refresh failed: {e}");
                             TaskResult::AvailableCommandsRefreshed {
                                 agent_id,
+                                session_id,
                                 commands: vec![],
                             }
                         }
@@ -4505,59 +4648,14 @@ pub(crate) fn execute(
             let tx = acp_tx.clone();
             tasks
                 .spawn(async move {
-                    let request = acp::ExtRequest::new(
-                        "x.ai/rewind/points",
-                        serde_json::value::to_raw_value(
-                                &serde_json::json!({
-                        "sessionId": session_id.0.to_string()
-                    }),
-                            )
-                            .expect("serialize rewind/points params")
-                            .into(),
-                    );
-                    match acp_send(request, &tx).await {
-                        Ok(resp) => {
-                            let wrapper: serde_json::Value = serde_json::from_str(
-                                    resp.0.get(),
-                                )
-                                .unwrap_or_default();
-                            if let Some(err) = wrapper
-                                .get("error")
-                                .filter(|v| !v.is_null())
-                            {
-                                return TaskResult::RewindPointsFailed {
-                                    agent_id,
-                                    error: err.as_str().unwrap_or("unknown error").to_string(),
-                                };
-                            }
-                            let result_val = wrapper
-                                .get("result")
-                                .cloned()
-                                .unwrap_or(wrapper.clone());
-                            match serde_json::from_value::<
-                                crate::views::rewind::RewindPointsResponse,
-                            >(result_val) {
-                                Ok(r) => {
-                                    TaskResult::RewindPointsLoaded {
-                                        agent_id,
-                                        points: r.rewind_points,
-                                    }
-                                }
-                                Err(e) => {
-                                    TaskResult::RewindPointsFailed {
-                                        agent_id,
-                                        error: format!("invalid response: {e}"),
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            TaskResult::RewindPointsFailed {
-                                agent_id,
-                                error: sanitize_user_error(&e.to_string()),
-                            }
-                        }
-                    }
+                    fetch_rewind_points(&tx, agent_id, session_id).await
+                });
+        }
+        Effect::CancelTurnThenFetchRewindPoints { agent_id, session_id } => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    cancel_then_fetch_rewind_points(&tx, agent_id, session_id).await
                 });
         }
         Effect::RewindExecute { agent_id, session_id, target_prompt_index } => {
@@ -5104,15 +5202,7 @@ async fn fetch_session_usage(
             .expect("serialize session/usage params")
             .into(),
     );
-    let resp = acp_send(request, tx)
-        .await
-        .map_err(|e| {
-            if i32::from(e.code) == i32::from(acp::Error::method_not_found().code) {
-                "not supported by this agent version".to_string()
-            } else {
-                sanitize_user_error(&e.to_string())
-            }
-        })?;
+    let resp = acp_send(request, tx).await.map_err(unsupported_or_sanitized)?;
     let parsed: xai_grok_shell::extensions::usage::SessionUsageResponse = serde_json::from_str(
             resp.0.get(),
         )
@@ -5121,6 +5211,14 @@ async fn fetch_session_usage(
             "invalid session usage response".to_string()
         })?;
     Ok(parsed.usage)
+}
+/// An agent that predates an extension answers `method_not_found`
+fn unsupported_or_sanitized(e: acp::Error) -> String {
+    if i32::from(e.code) == i32::from(acp::Error::method_not_found().code) {
+        "not supported by this agent version".to_string()
+    } else {
+        sanitize_user_error(&e.to_string())
+    }
 }
 /// Shared `x.ai/session/rename` RPC for rename and `/rename --auto`.
 async fn session_rename_rpc(
@@ -5317,22 +5415,123 @@ fn prompt_request_meta(
     }
     serde_json::Value::Object(map)
 }
+/// The cancel is answered before points is asked, so the backend has already stopped the turn when it lists
+pub(crate) async fn cancel_then_fetch_rewind_points(
+    tx: &AcpAgentTx,
+    agent_id: AgentId,
+    session_id: acp::SessionId,
+) -> TaskResult {
+    send_cancel(
+            tx,
+            &session_id,
+            CancelMeta {
+                cancel_subagents: true,
+                ..CancelMeta::default()
+            },
+        )
+        .await;
+    fetch_rewind_points(tx, agent_id, session_id).await
+}
+async fn fetch_rewind_points(
+    tx: &AcpAgentTx,
+    agent_id: AgentId,
+    session_id: acp::SessionId,
+) -> TaskResult {
+    let request = acp::ExtRequest::new(
+        "x.ai/rewind/points",
+        serde_json::value::to_raw_value(
+                &serde_json::json!({
+            "sessionId": session_id.0.to_string()
+        }),
+            )
+            .expect("serialize rewind/points params")
+            .into(),
+    );
+    match acp_send(request, tx).await {
+        Ok(resp) => parse_rewind_points_response(agent_id, resp.0.get()),
+        Err(e) => {
+            TaskResult::RewindPointsFailed {
+                agent_id,
+                error: sanitize_user_error(&e.to_string()),
+            }
+        }
+    }
+}
+fn parse_rewind_points_response(agent_id: AgentId, body: &str) -> TaskResult {
+    let response = worktree_session::ext_result(body)
+        .and_then(|result| {
+            serde_json::from_value::<crate::views::rewind::RewindPointsResponse>(result)
+                .map_err(|e| format!("invalid response: {e}"))
+        });
+    match response {
+        Ok(r) => {
+            TaskResult::RewindPointsLoaded {
+                agent_id,
+                points: r.rewind_points,
+            }
+        }
+        Err(error) => {
+            TaskResult::RewindPointsFailed {
+                agent_id,
+                error,
+            }
+        }
+    }
+}
+async fn send_cancel(
+    tx: &AcpAgentTx,
+    session_id: &acp::SessionId,
+    meta: CancelMeta<'_>,
+) {
+    let CancelMeta { cancel_subagents, trigger, rewind_prompt_id } = meta;
+    ulog::info(
+        "cancel.acp_send.start",
+        Some(&session_id.0),
+        Some(
+            serde_json::json!({
+            "cancel_subagents": cancel_subagents,
+            "trigger": trigger,
+            "rewind_if_no_output": rewind_prompt_id.is_some(),
+            "rewind_prompt_id": rewind_prompt_id,
+        }),
+        ),
+    );
+    let send_start = std::time::Instant::now();
+    let req = acp::CancelNotification::new(session_id.clone())
+        .meta(Some(cancel_notification_meta(&meta)));
+    let result = acp_send(req, tx).await;
+    ulog::info(
+        "cancel.acp_send.done",
+        Some(&session_id.0),
+        Some(
+            serde_json::json!({
+            "ok": result.is_ok(),
+            "elapsed_ms": send_start.elapsed().as_millis() as u64,
+        }),
+        ),
+    );
+    if let Err(e) = result {
+        tracing::warn!("Failed to send cancel notification: {e}");
+    }
+}
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CancelMeta<'a> {
+    pub(crate) cancel_subagents: bool,
+    pub(crate) trigger: Option<&'a str>,
+    pub(crate) rewind_prompt_id: Option<&'a str>,
+}
 /// Build the `session/cancel` `_meta`, shared by the TUI cancel effect and the headless fail-safe so the wire shape has one owner.
 /// The rewind is a request, not a command: the shell re-checks rewindable and prompt identity.
-pub(crate) fn cancel_notification_meta(
-    cancel_subagents: bool,
-    trigger: Option<&str>,
-    rewind_prompt_id: Option<&str>,
-) -> acp::Meta {
+pub(crate) fn cancel_notification_meta(cancel: &CancelMeta<'_>) -> acp::Meta {
     let mut meta = acp::Meta::new();
-    meta.insert("cancelSubagents".into(), cancel_subagents.into());
-    if let Some(trigger) = trigger {
+    meta.insert("cancelSubagents".into(), cancel.cancel_subagents.into());
+    if let Some(trigger) = cancel.trigger {
         meta.insert(
             crate::app::turn_completion::CANCEL_TRIGGER_KEY.into(),
             trigger.into(),
         );
     }
-    if let Some(pid) = rewind_prompt_id {
+    if let Some(pid) = cancel.rewind_prompt_id {
         meta.insert("rewindIfNoOutput".into(), true.into());
         meta.insert("rewindIfPristine".into(), true.into());
         meta.insert("promptId".into(), pid.into());
@@ -5351,6 +5550,165 @@ pub(crate) fn rewind_execute_params(
         "mode": REWIND_MODE_WIRE,
     })
 }
+/// The shell prefers the `content` text block over `question`. The omit notice
+/// has to be on both, or a partial drop never reaches the model.
+fn append_btw_notice(
+    question: &mut String,
+    blocks: Option<&mut Vec<acp::ContentBlock>>,
+    notice: &str,
+) {
+    question.push_str("\n\n");
+    question.push_str(notice);
+    let Some(blocks) = blocks else {
+        return;
+    };
+    if let Some(acp::ContentBlock::Text(text)) = blocks
+        .iter_mut()
+        .find(|block| matches!(block, acp::ContentBlock::Text(_)))
+    {
+        text.text.push_str("\n\n");
+        text.text.push_str(notice);
+    }
+}
+/// Unlinks `/btw` image files when the encode task finishes, panics, or is dropped.
+struct BtwSendImages(Vec<crate::prompt_images::PastedImage>);
+impl Drop for BtwSendImages {
+    fn drop(&mut self) {
+        crate::prompt_images::drain_and_cleanup(
+            crate::prompt_images::SessionPathPolicy::Delete,
+            &mut self.0,
+        );
+    }
+}
+fn btw_image_notice(omitted: usize, attached: usize) -> Option<String> {
+    if omitted == 0 {
+        return None;
+    }
+    Some(
+        if omitted == attached {
+            "Attached images were not included (too large or could not be loaded)."
+                .to_string()
+        } else {
+            format!(
+            "{omitted} attached image(s) were not included (over the 50MB side-question limit or could not be loaded)."
+        )
+        },
+    )
+}
+/// Notice for the attachments the aggregate cap dropped. No trailing period: the flush may join it
+/// with the per-number read-failure notice.
+fn btw_cap_omission_notice(omitted_by_cap: usize, attached: usize) -> Option<String> {
+    if omitted_by_cap == 0 {
+        return None;
+    }
+    Some(
+        if omitted_by_cap == attached {
+            "Attached images were not included (over the 50MB side-question limit)"
+                .to_string()
+        } else {
+            format!(
+            "{omitted_by_cap} attached image(s) were not included (over the 50MB side-question limit)"
+        )
+        },
+    )
+}
+/// Build the `x.ai/btw` params.
+/// `content` is omitted when `None` so a text-only side question stays byte-identical on the wire.
+#[expect(
+    clippy::expect_used,
+    reason = "ACP content blocks are always JSON-serializable; failure is a bug"
+)]
+fn build_btw_params(
+    session_id: &acp::SessionId,
+    question: &str,
+    blocks: Option<&[acp::ContentBlock]>,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "sessionId": session_id.0.to_string(),
+        "question": question,
+    });
+    if let Some(blocks) = blocks && let Some(object) = params.as_object_mut() {
+        object
+            .insert(
+                "content".to_owned(),
+                serde_json::to_value(blocks).expect("serialize btw content"),
+            );
+    }
+    params
+}
+/// Send interjections oldest-first in one task so ACP order matches the effect vector.
+pub(crate) fn spawn_ordered_interjects(
+    tasks: &mut JoinSet<TaskResult>,
+    acp_tx: &AcpAgentTx,
+    agent_id: crate::app::agent::AgentId,
+    session_id: acp::SessionId,
+    items: Vec<(String, String, Option<Vec<acp::ContentBlock>>)>,
+) {
+    let tx = acp_tx.clone();
+    tasks
+        .spawn(async move {
+            let mut pending: std::collections::VecDeque<_> = items.into();
+            while let Some((text, interjection_id, blocks)) = pending.pop_front() {
+                let params = build_interject_params(
+                    &session_id,
+                    &text,
+                    &interjection_id,
+                    blocks.as_deref(),
+                );
+                let request = acp::ExtRequest::new(
+                    "x.ai/interject",
+                    serde_json::value::to_raw_value(&params)
+                        .expect("serialize interject params")
+                        .into(),
+                );
+                if let Err(e) = acp_send(request, &tx).await {
+                    let mut leftover = vec![(text, interjection_id, blocks)];
+                    leftover.extend(pending);
+                    let detail = invalid_params_detail(&e)
+                        .unwrap_or_else(|| e.to_string());
+                    return TaskResult::InterjectFailed {
+                        agent_id,
+                        error: sanitize_user_error(
+                            &format!("couldn't send interjection: {detail}"),
+                        ),
+                        remaining: leftover,
+                    };
+                }
+            }
+            TaskResult::InterjectQueued {
+                agent_id,
+            }
+        });
+}
+/// Consume a leading `SendInterject` plus consecutive same-session ones; spawn them in order.
+/// Returns `Some(effect)` when `first` was not an interject.
+pub(crate) fn take_coalesced_interjects(
+    first: Effect,
+    rest: &mut std::iter::Peekable<impl Iterator<Item = Effect>>,
+    tasks: &mut JoinSet<TaskResult>,
+    acp_tx: &AcpAgentTx,
+) -> Option<Effect> {
+    let Effect::SendInterject { agent_id, session_id, text, interjection_id, blocks } = first
+    else {
+        return Some(first);
+    };
+    let mut items = vec![(text, interjection_id, blocks)];
+    while let Some(
+        Effect::SendInterject { agent_id: next_agent, session_id: next_session, .. },
+    ) = rest.peek()
+    {
+        if *next_agent != agent_id || *next_session != session_id {
+            break;
+        }
+        let Some(Effect::SendInterject { text, interjection_id, blocks, .. }) = rest
+            .next() else {
+            break;
+        };
+        items.push((text, interjection_id, blocks));
+    }
+    spawn_ordered_interjects(tasks, acp_tx, agent_id, session_id, items);
+    None
+}
 /// Build the `x.ai/interject` params.
 /// The optional structured `content` (text and images) is omitted ENTIRELY when `None` so the legacy wire shape stays byte-identical.
 /// Extracted from the spawn for testability.
@@ -5365,9 +5723,11 @@ fn build_interject_params(
         "text": text,
         "interjectionId": interjection_id,
     });
-    if let Some(blocks) = blocks {
-        params["content"] = serde_json::to_value(blocks)
-            .expect("serialize interject content");
+    if let Some(blocks) = blocks && let Some(obj) = params.as_object_mut() {
+        obj.insert(
+            "content".into(),
+            serde_json::to_value(blocks).expect("serialize interject content"),
+        );
     }
     params
 }
