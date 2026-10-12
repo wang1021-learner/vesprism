@@ -94,11 +94,7 @@ pub async fn restart_tab(tab_id: String, state: State<'_, AppState>) -> Result<(
 fn pty_allowed_roots(state: &AppState, tab_id: &str) -> Vec<PathBuf> {
     let mut roots = vec![scratch_dir()];
     if let Some(cwd) = state.tab_cwd(tab_id) {
-        let writing = crate::writing_store::is_writing_cwd(&cwd.to_string_lossy());
         roots.push(cwd);
-        if writing {
-            roots.push(crate::writing_store::writing_root());
-        }
     }
     if let Ok(bind) = state.sandbox_binds.lock() {
         if let Some(b) = bind.get(tab_id) {
@@ -121,7 +117,7 @@ pub fn start_pty(
     let requested = PathBuf::from(&cwd);
     let roots = pty_allowed_roots(&state, &tab_id);
     if !crate::security::pty_cwd_is_allowed(&requested, &roots) {
-        return Err("终端只能开在当前对话目录、闲聊工作区或写台".into());
+        return Err("终端只能开在当前对话目录或闲聊工作区".into());
     }
     state.pty.start(&tab_id, &cwd, cols, rows, app)
 }
@@ -393,8 +389,7 @@ fn plan_session_cwd(
     origin: &str,
     state: &AppState,
 ) -> Result<(String, Option<String>), String> {
-    // 写台 cwd 不是 git 仓库。全局若是沙箱模式，worktree 会直接失败，书在引擎不在。
-    if crate::writing_store::is_writing_cwd(origin) || !tab_wants_sandbox(tab_id, origin, state) {
+    if !tab_wants_sandbox(tab_id, origin, state) {
         teardown_tab_sandbox(tab_id, state);
         return Ok((origin.to_string(), None));
     }

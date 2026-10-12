@@ -299,17 +299,10 @@ describe('Tab 活动灯', () => {
     expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
   })
 
-  it('findTabByUtilityKind 可复用 writing-desk 专用 Tab', () => {
-    createTab('tab-writing', { utilityKind: 'writing-desk', chatTitle: '写台' })
-    expect(findTabByUtilityKind('writing-desk')).toBe('tab-writing')
-    expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
-    expect(isWorkbenchUtility('writing-desk')).toBe(true)
-  })
-
   it('findTabByUtilityKind 可复用 office-desk 专用 Tab', () => {
     createTab('tab-office', { utilityKind: 'office-desk', chatTitle: '办公桌' })
     expect(findTabByUtilityKind('office-desk')).toBe('tab-office')
-    expect(findTabByUtilityKind('writing-desk')).toBeUndefined()
+    expect(findTabByUtilityKind('flow-canvas')).toBeUndefined()
     expect(isWorkbenchUtility('office-desk')).toBe(true)
   })
 

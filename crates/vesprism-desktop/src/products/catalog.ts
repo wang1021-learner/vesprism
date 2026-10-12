@@ -19,7 +19,6 @@ export type ProductNavKind =
   | 'agents'
   | 'memory'
   | 'plugins'
-  | 'writing-desk'
   | 'office-desk'
 
 export type ProductSidebarEntry = {
@@ -50,14 +49,14 @@ export type ProductDef = {
   /**
    * home：当前 Tab 不属于本产品时显示入口页（工作台）。
    * stay：切过来时尽量落到已有对话 Tab（编码）。
-   * panel：只有一个专用面板，切过来就打开它，不再套一层入口页（写完）。
+   * panel：只有一个专用面板，切过来就打开它，不再套一层入口页（办公）。
    */
   emptyView: 'home' | 'stay' | 'panel'
   showRightPanel: boolean
   showNewChat: boolean
   showTabPlus: boolean
   showAddProject: boolean
-  /** projects=按仓库分组；product=本产品干活会话一组；none=不列引擎会话（写完用书库）。 */
+  /** projects=按仓库分组；product=本产品干活会话一组；none=不列引擎会话。 */
   sessionList: 'projects' | 'product' | 'none'
   /** sessionList=product 时侧栏分组 key */
   sessionGroupKey?: string
@@ -144,24 +143,6 @@ export const PRODUCTS: readonly ProductDef[] = [
     ],
   },
   {
-    id: 'writing',
-    label: '写完',
-    utilityKinds: ['writing-desk'],
-    emptyView: 'panel',
-    showRightPanel: false,
-    showNewChat: false,
-    showTabPlus: true,
-    showAddProject: false,
-    sessionList: 'none',
-    sessionGroupKey: '__writing__',
-    sidebarNavLabel: '写作入口',
-    sidebarListLabel: '书',
-    emptyHint: '还没有书。点 + 新建一本。',
-    emptyTitle: '从左边打开一本书',
-    emptyLead: '书在左侧。没有就点 +。',
-    sidebarEntries: [{ kind: 'writing-desk', label: '写台' }],
-  },
-  {
     id: 'office',
     label: '办公',
     utilityKinds: ['office-desk'],
@@ -222,7 +203,7 @@ export function isProductSessionGroup(cwdKey: string): boolean {
   return productSessionGroupKeys().includes(cwdKey)
 }
 
-/** 写完列书，不列引擎会话。sessionList=none 时侧栏禁止走项目/干活会话，展开和收起都不画能力入口。 */
+/** sessionList=none 时侧栏不列引擎会话，展开和收起都不画能力入口。 */
 export function usesEngineSessionList(product: ProductDef): boolean {
   return product.sessionList !== 'none'
 }

@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 pub const MAX_IMPORT_BYTES: u64 = 8 * 1024 * 1024;
 pub const MAX_SIDECAR_RHAI_BYTES: usize = 512 * 1024;
-pub const MAX_BOOK_JSON_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_ENV_VALUE_BYTES: usize = 64 * 1024;
 
 /// 密钥值：拒绝换行 / NUL，避免 `.env` 被拆成第二行注入。
@@ -103,7 +102,7 @@ pub fn path_is_within_root(child: &Path, root: &Path) -> bool {
     c == r || c.starts_with(&format!("{r}/"))
 }
 
-/// PTY cwd 必须落在已登记的根（当前 Tab cwd / scratch / 写台）之内。
+/// PTY cwd 必须落在已登记的根（当前 Tab cwd / scratch）之内。
 pub fn pty_cwd_is_allowed(requested: &Path, allowed_roots: &[PathBuf]) -> bool {
     let Ok(req) = requested.canonicalize() else {
         return false;

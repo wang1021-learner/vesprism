@@ -32,16 +32,6 @@ function WorkbenchIcon() {
   )
 }
 
-function WritingIcon() {
-  return (
-    <svg {...icon}>
-      <path d="M7 4h8l3 3v13H7z" />
-      <path d="M15 4v3h3" />
-      <path d="M10 11h6M10 15h4" />
-    </svg>
-  )
-}
-
 function OfficeIcon() {
   return (
     <svg {...icon}>
@@ -55,7 +45,6 @@ function OfficeIcon() {
 function iconForProduct(id: string) {
   if (id === 'coding') return CodingIcon
   if (id === 'workbench') return WorkbenchIcon
-  if (id === 'writing') return WritingIcon
   if (id === 'office') return OfficeIcon
   return CodingIcon
 }

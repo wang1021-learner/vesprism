@@ -356,7 +356,7 @@ pub struct AppState {
     >,
     /// 每 Tab 交互式 PTY（关 Tab 杀；关应用 Job/drop 回收）
     pub pty: std::sync::Arc<crate::pty::PtyManager>,
-    /// tab → 会话 origin cwd（PTY / 写台锁模式用）
+    /// tab → 会话 origin cwd（PTY 用）
     pub tab_cwds: std::sync::Arc<std::sync::Mutex<HashMap<TabId, std::path::PathBuf>>>,
     /// 流程导入：只接受本进程 file dialog 刚选中的路径。
     pub pending_flow_import: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
@@ -1794,12 +1794,6 @@ async fn handle_command(
                 let _ = reply.send(Err("会话未启动".into()));
                 return;
             };
-            if crate::writing_store::is_writing_cwd(s.cwd()) && mode_id != "ask" {
-                let _ = reply.send(Err(
-                    "写台会话锁定为只答模式（ask），不能切到可改文件的模式".into(),
-                ));
-                return;
-            }
             match s.set_session_mode(mode_id).await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
@@ -1882,11 +1876,6 @@ async fn handle_command(
                     )
                     .await;
                     replay_composition_on_session(&s, &sid, &load_cwd).await;
-                    if crate::writing_store::is_writing_cwd(&load_cwd) {
-                        if let Err(e) = s.set_session_mode("ask").await {
-                            eprintln!("[vesprism] 写台未能锁定 ask 模式: {e}");
-                        }
-                    }
                     *session = Some(s);
                     emit(
                         app,
@@ -2092,13 +2081,6 @@ async fn begin_fresh_session(
                 );
             } else {
                 emit(app, tab_id, FrontendEvent::SandboxDeactivated);
-            }
-            if crate::writing_store::is_writing_cwd(&persist_cwd) {
-                if let Some(s) = session.as_ref() {
-                    if let Err(e) = s.set_session_mode("ask").await {
-                        eprintln!("[vesprism] 写台未能锁定 ask 模式: {e}");
-                    }
-                }
             }
             let _ = reply.send(Ok(()));
         }

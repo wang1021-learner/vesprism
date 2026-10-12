@@ -26,7 +26,7 @@ export type OpenChatTabOpts = {
   title?: string
   /** 专用面板：mcp / tools / skills / workflows / flow-canvas / agents；普通对话省略 */
   utilityKind?: UtilityKind | null
-  /** 只开面板、不启引擎（试跑详情；写台稍后按书自己 `startSession`；办公桌 demo 永不 `startSession`） */
+  /** 只开面板、不启引擎（试跑详情；办公桌 demo 永不 `startSession`） */
   skipSession?: boolean
   /** 跳过「同类型面板复用」，画布「新建」要并列开新 Tab */
   forceNew?: boolean
@@ -118,7 +118,6 @@ async function openNewChatTab(
     if (
       !opts.skipSession &&
       utilityKind !== 'flow-run' &&
-      utilityKind !== 'writing-desk' &&
       utilityKind !== 'office-desk'
     ) {
       await startSession(tabId, cwd, {

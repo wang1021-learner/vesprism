@@ -41,7 +41,6 @@ import {
   respondUserQuestion,
   sessionCaps,
   setCurrentModel,
-  setSessionMode,
   startSession,
 } from '../bridge'
 import {
@@ -66,7 +65,6 @@ import {
 } from './permissionMemory'
 import { evaluatePermission } from './executionPolicy'
 import { applyModeUpdate, parseSessionMode } from './planMode'
-import { writingMustStayAsk } from '../writing/isolate'
 import { keepTail } from './terminalCards'
 import { notifyChatsChanged, upsertLiveChat } from './recordSessionInSidebar'
 import { cleanSessionTitle } from './sessionTitle'
@@ -394,11 +392,7 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
     case 'current_mode_update': {
       const st = getTabState(tabId)
       const next = applyModeUpdate(ev.mode_id || '', st?.planPhase ?? 'off')
-      let sessionMode = parseSessionMode(ev.mode_id)
-      if (writingMustStayAsk(st?.cwd) && sessionMode !== 'ask') {
-        sessionMode = 'ask'
-        void setSessionMode(tabId, 'ask').catch(() => {})
-      }
+      const sessionMode = parseSessionMode(ev.mode_id)
       const patch: Parameters<typeof patchTab>[1] = { planPhase: next, sessionMode }
       if (next === 'off' && !st?.planApproval) {
         patch.planPreviewOpen = false
@@ -739,12 +733,8 @@ export function handleSessionEvent(ev: import('../bridge').SessionEventPayload) 
             })
             .catch(() => {})
         }
-        // 工具面板（画布/编制等）会话不进主聊天历史；写台要进「写完」分组，不当工具会话藏掉
-        if (
-          prev?.utilityKind &&
-          prev.utilityKind !== 'writing-desk' &&
-          prev.utilityKind !== 'office-desk'
-        ) {
+        // 工具面板（画布/编制等）会话不进主聊天历史。办公桌 demo 也不当工具会话藏掉。
+        if (prev?.utilityKind && prev.utilityKind !== 'office-desk') {
           void markToolSession(ev.session_id).catch(() => {})
         }
       }

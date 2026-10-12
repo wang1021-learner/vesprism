@@ -89,16 +89,6 @@ export function AgentsIcon() {
   )
 }
 
-export function WritingDeskIcon() {
-  return (
-    <svg {...iconProps}>
-      <path d="M7 4h8l3 3v13H7z" />
-      <path d="M15 4v3h3" />
-      <path d="M10 11h6M10 15h4" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 export function OfficeDeskIcon() {
   return (
     <svg {...iconProps}>

@@ -236,7 +236,6 @@ export type UtilityKind =
   | 'agents'
   | 'memory'
   | 'plugins'
-  | 'writing-desk'
   | 'office-desk'
 
 export function emptyTabState(): TabState {
