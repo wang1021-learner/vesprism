@@ -2133,6 +2133,7 @@ fn official_xai_model_dtos() -> Vec<ModelEntryDto> {
     let Some(arr) = root.get("models").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
+    let base_url = xai_grok_shell::agent::config::EndpointsConfig::default().xai_api_base_url;
     arr.iter()
         .filter_map(|m| {
             if m.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -2179,7 +2180,7 @@ fn official_xai_model_dtos() -> Vec<ModelEntryDto> {
                 id,
                 name,
                 model: model.to_string(),
-                base_url: xai_grok_shell::agent::config::XAI_API_BASE_URL_DEFAULT.to_string(),
+                base_url: base_url.clone(),
                 env_key: String::new(),
                 context_window: m
                     .get("context_window")

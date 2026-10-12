@@ -1539,7 +1539,7 @@ impl Client for GuiClient {
                         }))
                         .await;
                 }
-                xai_grok_shell::extensions::notification::SessionUpdate::MemoryFiles { files } => {
+                xai_grok_shell::extensions::notification::SessionUpdate::MemoryFiles { files, .. } => {
                     let files = files
                         .into_iter()
                         .map(|f| MemoryFileDto {
@@ -2740,6 +2740,10 @@ impl GrokSession {
         let memory_config = agent_config.memory_config.clone();
 
         tokio::task::spawn_local(async move {
+            // 官方 1.0.45：keepalive 让 agent 活过 LocalSet 拆卸。
+            let keepalive = std::rc::Rc::new(std::cell::RefCell::new(
+                None::<std::rc::Rc<xai_grok_shell::agent::MvpAgent>>,
+            ));
             let handle_io = spawn_agent_local(
                 agent_config,
                 auth_manager,
@@ -2748,6 +2752,7 @@ impl GrokSession {
                 memory_config,
                 compat_tx,
                 compat_rx,
+                &keepalive,
             );
             if let Err(e) = handle_io.await {
                 eprintln!("Agent 运行时错误: {:?}", e);
@@ -2855,6 +2860,10 @@ impl GrokSession {
         // 同 start_inner：记忆注入；boot=None（不预热 remote settings / 模型目录）。
         let memory_config = agent_config.memory_config.clone();
         tokio::task::spawn_local(async move {
+            // 官方 1.0.45：keepalive 让 agent 活过 LocalSet 拆卸。
+            let keepalive = std::rc::Rc::new(std::cell::RefCell::new(
+                None::<std::rc::Rc<xai_grok_shell::agent::MvpAgent>>,
+            ));
             let handle_io = spawn_agent_local(
                 agent_config,
                 auth_manager,
@@ -2863,6 +2872,7 @@ impl GrokSession {
                 memory_config,
                 compat_tx,
                 compat_rx,
+                &keepalive,
             );
             if let Err(e) = handle_io.await {
                 eprintln!("Agent 运行时错误: {:?}", e);
