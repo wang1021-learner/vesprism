@@ -2245,13 +2245,10 @@ fn desktop_has_xai_credentials() -> bool {
         .unwrap_or(false)
 }
 
-/// 已登录 / 有 XAI_API_KEY 时，把官方目录补进列表。用户 `[model.*]` 同 id 覆盖。
-fn merge_official_xai_models(user: Vec<ModelEntryDto>) -> Vec<ModelEntryDto> {
-    if !desktop_has_xai_credentials() {
-        return user;
-    }
+/// 用户 `[model.*]` 同 id 覆盖官方行。
+fn merge_model_lists(user: Vec<ModelEntryDto>, official: Vec<ModelEntryDto>) -> Vec<ModelEntryDto> {
     let user_ids: std::collections::HashSet<String> = user.iter().map(|m| m.id.clone()).collect();
-    let mut out: Vec<ModelEntryDto> = official_xai_model_dtos()
+    let mut out: Vec<ModelEntryDto> = official
         .into_iter()
         .filter(|m| !user_ids.contains(&m.id))
         .collect();
@@ -2259,9 +2256,70 @@ fn merge_official_xai_models(user: Vec<ModelEntryDto>) -> Vec<ModelEntryDto> {
     out
 }
 
+fn dto_from_catalog(row: xai_grok_shell::agent::remote_config::AccountCatalogModel) -> ModelEntryDto {
+    ModelEntryDto {
+        id: row.id,
+        name: row.name,
+        model: row.model,
+        base_url: row.base_url,
+        env_key: String::new(),
+        context_window: row.context_window,
+        system_prompt_label: row.system_prompt_label,
+        api_backend: row.api_backend,
+        description: row.description,
+        temperature: None,
+        top_p: None,
+        max_completion_tokens: None,
+        extra_headers: Default::default(),
+        query_params: Default::default(),
+        env_http_headers: Default::default(),
+        api_base_url: String::new(),
+        max_retries: 0,
+        inference_idle_timeout_secs: 0,
+        stream_tool_calls: None,
+        agent_type: row.agent_type,
+        use_concise: false,
+        auto_compact_threshold_percent: row.auto_compact_threshold_percent,
+        supports_reasoning_effort: row.supports_reasoning_effort,
+        reasoning_effort: row.reasoning_effort,
+        hidden: false,
+        supported_in_api: true,
+        laziness_enabled: false,
+        laziness_max_nudges: 0,
+        compactions_remaining: String::new(),
+        compaction_at_tokens: String::new(),
+        source: "official".into(),
+        reasoning_efforts: row.reasoning_efforts,
+    }
+}
+
+fn dtos_from_catalog(
+    rows: Vec<xai_grok_shell::agent::remote_config::AccountCatalogModel>,
+) -> Vec<ModelEntryDto> {
+    rows.into_iter().map(dto_from_catalog).collect()
+}
+
+/// 已登录时用账号当前的 `/v1/models`。拉不到才退回安装包里的 default_models.json。
+async fn official_models_for_settings() -> Vec<ModelEntryDto> {
+    if !desktop_has_xai_credentials() {
+        return Vec::new();
+    }
+    let live = tokio::task::spawn_blocking(
+        xai_grok_shell::agent::remote_config::fetch_account_catalog_blocking,
+    )
+    .await
+    .ok()
+    .flatten();
+    match live {
+        Some(rows) if !rows.is_empty() => dtos_from_catalog(rows),
+        _ => official_xai_model_dtos(),
+    }
+}
+
 /// 读取桌面 `config.toml` 中的模型列表与默认模型。
+/// 已登录时官方行来自账号的 `/v1/models`，不是安装包里的旧名单。
 #[tauri::command]
-pub fn get_model_settings() -> Result<ModelSettings, String> {
+pub async fn get_model_settings() -> Result<ModelSettings, String> {
     let path = desktop_config_path();
     let config_path = path.display().to_string();
     let (mut default_id, models) = if path.exists() {
@@ -2280,7 +2338,7 @@ pub fn get_model_settings() -> Result<ModelSettings, String> {
     } else {
         (String::new(), Vec::new())
     };
-    let models = merge_official_xai_models(models);
+    let models = merge_model_lists(models, official_models_for_settings().await);
     if default_id.is_empty() {
         default_id = models
             .iter()
@@ -2876,6 +2934,24 @@ fn parse_model_ids_from_list(body: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// 让每个已开会话重读 auth.json 并重新拉取 `/v1/models`。
+/// 没开会话时直接返回；名单本身由 `get_model_settings` 再读一次。
+#[tauri::command]
+pub async fn refresh_account_models(state: State<'_, AppState>) -> Result<(), String> {
+    let tab_ids: Vec<String> = {
+        let guard = state.tabs.lock().map_err(|_| "tabs 锁损坏".to_string())?;
+        guard.keys().cloned().collect()
+    };
+    for id in tab_ids {
+        match send_value(&state, &id, |reply| ActorCommand::AdoptDiskAuth { reply }).await {
+            Ok(_) => {}
+            Err(e) if e.contains("会话未启动") || e.contains("tab 不存在") => {}
+            Err(e) => eprintln!("登录后刷新模型目录失败 ({id}): {e}"),
+        }
+    }
+    Ok(())
 }
 
 /// 热重载运行中 agent 的模型目录（写盘后调用，无需 restart_session）。
@@ -4238,7 +4314,7 @@ mod deepseek_preset_tests {
 
 #[cfg(test)]
 mod official_xai_catalog_tests {
-    use super::official_xai_model_dtos;
+    use super::{merge_model_lists, official_xai_model_dtos, ModelEntryDto};
 
     #[test]
     fn embeds_grok_46_and_45() {
@@ -4255,5 +4331,85 @@ mod official_xai_catalog_tests {
         assert_eq!(g.reasoning_efforts, vec!["xhigh", "high", "medium", "low"]);
         let g45 = models.iter().find(|m| m.id == "grok-4.5").unwrap();
         assert_eq!(g45.reasoning_efforts, vec!["high", "medium", "low"]);
+    }
+
+    #[test]
+    fn user_row_covers_same_id_in_the_live_list() {
+        let user = vec![ModelEntryDto {
+            id: "grok-new".into(),
+            name: "mine".into(),
+            model: "grok-new".into(),
+            base_url: "https://example.test/v1".into(),
+            env_key: String::new(),
+            context_window: 1,
+            system_prompt_label: "mine".into(),
+            source: "custom".into(),
+            ..blank_model()
+        }];
+        let official = vec![ModelEntryDto {
+            id: "grok-new".into(),
+            name: "Grok New".into(),
+            model: "grok-new".into(),
+            base_url: "https://api.x.ai/v1".into(),
+            env_key: String::new(),
+            context_window: 8,
+            system_prompt_label: "Grok New".into(),
+            source: "official".into(),
+            ..blank_model()
+        }, ModelEntryDto {
+            id: "grok-next".into(),
+            name: "Grok Next".into(),
+            model: "grok-next".into(),
+            base_url: "https://api.x.ai/v1".into(),
+            env_key: String::new(),
+            context_window: 8,
+            system_prompt_label: "Grok Next".into(),
+            source: "official".into(),
+            ..blank_model()
+        }];
+        let merged = merge_model_lists(user, official);
+        assert_eq!(
+            merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["grok-next", "grok-new"]
+        );
+        assert_eq!(merged[1].name, "mine");
+        assert_eq!(merged[1].source, "custom");
+    }
+
+    fn blank_model() -> ModelEntryDto {
+        ModelEntryDto {
+            id: String::new(),
+            name: String::new(),
+            model: String::new(),
+            base_url: String::new(),
+            env_key: String::new(),
+            context_window: 1,
+            system_prompt_label: String::new(),
+            api_backend: "responses".into(),
+            description: String::new(),
+            temperature: None,
+            top_p: None,
+            max_completion_tokens: None,
+            extra_headers: Default::default(),
+            query_params: Default::default(),
+            env_http_headers: Default::default(),
+            api_base_url: String::new(),
+            max_retries: 0,
+            inference_idle_timeout_secs: 0,
+            stream_tool_calls: None,
+            agent_type: "grok-build".into(),
+            use_concise: false,
+            auto_compact_threshold_percent: 0,
+            supports_reasoning_effort: false,
+            reasoning_effort: String::new(),
+            hidden: false,
+            supported_in_api: true,
+            laziness_enabled: false,
+            laziness_max_nudges: 0,
+            compactions_remaining: String::new(),
+            compaction_at_tokens: String::new(),
+            source: "custom".into(),
+            reasoning_efforts: Vec::new(),
+        }
     }
 }

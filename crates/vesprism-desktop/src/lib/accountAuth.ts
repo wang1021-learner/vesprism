@@ -3,7 +3,7 @@ import {
   accountLogout,
   accountStatus,
   getModelSettings,
-  reloadModels,
+  refreshAccountModels,
   type AccountStatus,
 } from '../bridge'
 import { formatEngineError } from './errorMessage'
@@ -16,16 +16,17 @@ import {
   pushToast,
 } from '../store'
 
-/** 登录/退出后重拉设置页模型目录（官方 Grok 在已登录时并进列表）。 */
+/** 登录/退出后重拉设置页模型目录。已登录时官方行来自账号的 `/v1/models`。 */
 async function refreshModelCatalog(): Promise<void> {
   try {
+    // 先让运行中的会话换上新凭证。reload_models 只重读 config.toml，不拉账号目录。
+    await refreshAccountModels().catch(() => {})
     const settings = await getModelSettings()
     $models.set(settings.models)
     const def = settings.default_id || settings.models[0]?.id || ''
     if (def) $settingsDefaultModelId.set(def)
     const tabId = $activeTabId.get()
     if (!tabId) return
-    void reloadModels(tabId).catch(() => {})
     const st = getTabState(tabId)
     if (st && !st.modelId.trim() && def) {
       patchTab(tabId, { modelId: def })

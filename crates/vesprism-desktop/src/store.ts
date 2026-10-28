@@ -237,6 +237,7 @@ export type UtilityKind =
   | 'memory'
   | 'plugins'
   | 'office-desk'
+  | 'drama-canvas'
 
 export function emptyTabState(): TabState {
   return {

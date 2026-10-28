@@ -42,10 +42,21 @@ function OfficeIcon() {
   )
 }
 
+function DramaIcon() {
+  return (
+    <svg {...icon}>
+      <rect x="4" y="5" width="16" height="14" rx="1.5" />
+      <path d="M4 9h16M8 5v4M12 5v4M16 5v4" />
+      <path d="m10.5 12 4 2.5-4 2.5z" />
+    </svg>
+  )
+}
+
 function iconForProduct(id: string) {
   if (id === 'coding') return CodingIcon
   if (id === 'workbench') return WorkbenchIcon
   if (id === 'office') return OfficeIcon
+  if (id === 'drama') return DramaIcon
   return CodingIcon
 }
 

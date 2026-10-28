@@ -1,0 +1,18 @@
+{
+  "app": {
+    "security": {
+      "csp": {
+        "img-src": "'self' asset: http://asset.localhost blob: data: https:",
+        "media-src": "'self' asset: http://asset.localhost"
+      },
+      "devCsp": {
+        "img-src": "'self' asset: http://asset.localhost blob: data: https: http://127.0.0.1:9527",
+        "media-src": "'self' asset: http://asset.localhost"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$TEMP/vesprism-paste/**", "$HOME/.vesprism/drama/*/assets/**"]
+      }
+    }
+  }
+}

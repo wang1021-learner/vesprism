@@ -3,6 +3,8 @@ mod catalog;
 mod commands;
 mod computer;
 mod computer_mcp;
+#[cfg(feature = "drama")]
+mod drama;
 mod engine_prefs;
 mod perm_always;
 mod pty;
@@ -198,6 +200,8 @@ pub fn run() {
                 tab_cwds: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 pending_flow_import: std::sync::Arc::new(std::sync::Mutex::new(None)),
             });
+            #[cfg(feature = "drama")]
+            app.manage(drama::DramaState::new(drama::DramaState::default_root()));
 
             // 索引启动兜底：一次性全量重建，之后由 TurnEnded 增量 upsert 维护，list_sessions 不再反应式重建。
             tauri::async_runtime::spawn(async {
@@ -210,7 +214,7 @@ pub fn run() {
         })
         .plugin(external_link_plugin())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(with_drama(tauri::generate_handler![
             commands::open_tab,
             commands::close_tab,
             commands::restart_tab,
@@ -288,6 +292,7 @@ pub fn run() {
             account::account_logout,
             commands::env_file_location,
             commands::get_model_settings,
+            commands::refresh_account_models,
             commands::save_model_settings,
             commands::probe_model_endpoint,
             commands::reload_models,
@@ -348,7 +353,7 @@ pub fn run() {
             commands::pty_resize,
             commands::pty_detach,
             commands::stop_pty,
-        ])
+        ]))
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");
 }
@@ -377,6 +382,15 @@ mod nav_tests {
         assert!(!is_app_navigation(&u("https://127.0.0.1:9527/")));
     }
 
+    /// 默认构建不合并漫剧配置（素材目录、media-src 都不放行）。
+    #[cfg(not(feature = "drama"))]
+    #[test]
+    fn default_build_does_not_merge_drama_conf() {
+        assert!(option_env!("TAURI_CONFIG").is_none());
+        let c = include_str!("../tauri.conf.json");
+        assert!(!c.contains("media-src") && !c.contains("drama"));
+    }
+
     #[test]
     fn tauri_schemes_and_hosts_are_in_app() {
         assert!(is_app_navigation(&u("tauri://localhost/")));
@@ -385,4 +399,23 @@ mod nav_tests {
         assert!(is_app_navigation(&u("https://tauri.localhost/")));
         assert!(!is_app_navigation(&u("https://example.com/")));
     }
+}
+
+/// `drama` 开关打开时，`drama_*` 命令交给漫剧模块；关着就是原来的命令表。
+fn with_drama(
+    base: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    #[cfg(feature = "drama")]
+    {
+        let d = drama::handler();
+        move |inv: tauri::ipc::Invoke| {
+            if inv.message.command().starts_with("drama_") {
+                d(inv)
+            } else {
+                base(inv)
+            }
+        }
+    }
+    #[cfg(not(feature = "drama"))]
+    base
 }

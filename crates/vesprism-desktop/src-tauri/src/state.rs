@@ -206,6 +206,10 @@ pub enum ActorCommand {
     ReloadModels {
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// 重读 auth.json 并重新拉取账号模型目录。
+    AdoptDiskAuth {
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
     /// 获取可撤销的历史点列表
     GetRewindPoints {
         reply: oneshot::Sender<Result<Vec<grok_session::RewindPointInfo>, String>>,
@@ -1377,6 +1381,20 @@ async fn handle_command(
             match s.reload_models().await {
                 Ok(()) => {
                     let _ = reply.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = reply.send(Err(e.to_string()));
+                }
+            }
+        }
+        ActorCommand::AdoptDiskAuth { reply } => {
+            let Some(s) = session.as_ref() else {
+                let _ = reply.send(Err("会话未启动".into()));
+                return;
+            };
+            match s.adopt_disk_auth().await {
+                Ok(v) => {
+                    let _ = reply.send(Ok(v));
                 }
                 Err(e) => {
                     let _ = reply.send(Err(e.to_string()));

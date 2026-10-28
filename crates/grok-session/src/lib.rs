@@ -3789,6 +3789,30 @@ impl GrokSession {
         Ok(())
     }
 
+    /// vesprism: 重读磁盘登录态并重新拉取 `/v1/models`。
+    /// 把新的 configOptions 送进事件流，选择器不用等下一轮会话。
+    pub async fn adopt_disk_auth(&self) -> anyhow::Result<serde_json::Value> {
+        let params = serde_json::value::to_raw_value(&serde_json::json!({}))
+            .map_err(|e| anyhow::anyhow!("序列化 adopt_disk_auth 参数失败: {e}"))?;
+        let resp = self
+            .connection
+            .ext_method(ExtRequest::new(
+                "x.ai/internal/adopt_disk_auth",
+                params.into(),
+            ))
+            .await
+            .map_err(|e| anyhow::anyhow!("adopt_disk_auth 失败: {e:?}"))?;
+        let value: serde_json::Value = serde_json::from_str(resp.0.get())
+            .map_err(|e| anyhow::anyhow!("解析模型目录失败: {e}"))?;
+        if let Some(options) = value.get("configOptions").cloned() {
+            let _ = self
+                .event_tx
+                .send(SessionEvent::ConfigOptions { options })
+                .await;
+        }
+        Ok(value)
+    }
+
     /// 获取当前会话可回滚的历史点列表（x.ai/rewind/points 扩展方法）。
     /// 用于前端渲染"撤销到哪一轮"的选择器。
     pub async fn get_rewind_points(&self) -> anyhow::Result<Vec<RewindPointInfo>> {

@@ -20,6 +20,7 @@ export type ProductNavKind =
   | 'memory'
   | 'plugins'
   | 'office-desk'
+  | 'drama-canvas'
 
 export type ProductSidebarEntry = {
   kind: ProductNavKind
@@ -158,6 +159,24 @@ export const PRODUCTS: readonly ProductDef[] = [
     emptyHint: '还没有办公任务。',
     autoOpenPanel: true,
     sidebarEntries: [{ kind: 'office-desk', label: '办公桌' }],
+  },
+  {
+    // 漫剧画布。后端默认随桌面编译。
+    id: 'drama',
+    label: '漫剧',
+    utilityKinds: ['drama-canvas'],
+    emptyView: 'panel',
+    showRightPanel: false,
+    showNewChat: false,
+    showTabPlus: false,
+    showAddProject: false,
+    sessionList: 'none',
+    sidebarNavLabel: '漫剧',
+    sidebarListLabel: '项目',
+    emptyHint: '还没有漫剧项目',
+    autoOpenPanel: true,
+    sidebarEntries: [{ kind: 'drama-canvas', label: '画布' }],
+    listed: true,
   },
 ]
 

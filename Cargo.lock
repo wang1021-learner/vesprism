@@ -3243,6 +3243,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "drama-core"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "png 0.17.16",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "dtoa"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13699,6 +13712,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "dotenvy",
+ "drama-core",
  "grok-session",
  "log",
  "png 0.17.16",

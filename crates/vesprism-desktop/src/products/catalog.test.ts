@@ -65,7 +65,7 @@ describe('产品表', () => {
     expect(isRegisteredProduct('coding')).toBe(true)
     expect(isRegisteredProduct('nope')).toBe(false)
     expect(getProduct('nope').id).toBe('coding')
-    expect(listedProducts().map((p) => p.id)).toEqual(['coding', 'workbench', 'office'])
+    expect(listedProducts().map((p) => p.id)).toEqual(['coding', 'workbench', 'office', 'drama'])
   })
 
   it('干活会话分组 key 来自表，不写死壳名', () => {
@@ -95,6 +95,6 @@ describe('产品表', () => {
     expect(idx.utilityToProduct.get('flow-canvas')).toBe('workbench')
     expect(idx.byId.has('draft')).toBe(true)
     const visible = [...idx.byId.values()].filter((p) => p.listed !== false).map((p) => p.id)
-    expect(visible).toEqual(['coding', 'workbench', 'office', 'design'])
+    expect(visible).toEqual(['coding', 'workbench', 'office', 'drama', 'design'])
   })
 })

@@ -256,6 +256,23 @@ export function SettingsModal() {
     })()
   }, [open])
 
+  // 设置开着时登录/退出会改 $models。打开瞬间仍走上面的 getModelSettings，避免用旧名单盖住这次读取。
+  const catalog = useStore($models)
+  const settingsWasOpen = useRef(false)
+  useEffect(() => {
+    const alreadyOpen = settingsWasOpen.current
+    settingsWasOpen.current = open
+    if (!open || !alreadyOpen) return
+    const normalized = catalog.map((m) => normalizeModelFromDisk(m))
+    setModels(normalized)
+    setDefaultId((prev) =>
+      prev && normalized.some((m) => m.id === prev) ? prev : (normalized[0]?.id ?? ''),
+    )
+    setSelectedModelId((prev) =>
+      prev && normalized.some((m) => m.id === prev) ? prev : (normalized[0]?.id ?? ''),
+    )
+  }, [open, catalog])
+
   if (!open) return null
 
   const updateSelectedModel = (patch: Partial<ModelInfo>) => {

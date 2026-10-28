@@ -11,6 +11,11 @@ rust-version = "1.92.0"
 name = "vesprism_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["drama"]
+# 漫剧画布。默认打开，桌面端顶栏才能用。
+drama = ["dep:drama-core"]
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
@@ -38,6 +43,7 @@ portable-pty = { workspace = true }
 xai-grok-mcp = { workspace = true }
 reqwest = { workspace = true }
 png = "0.17"
+drama-core = { path = "../../drama-core", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

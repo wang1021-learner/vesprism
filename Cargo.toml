@@ -116,6 +116,7 @@ members = [
     "crates/grok-session",
     "crates/grok-gui-poc",
     "crates/vesprism-desktop/src-tauri",
+    "crates/drama-core",
 ]
 
 # 旧目录残留：已改名 vesprism-desktop，勿再当作 workspace member

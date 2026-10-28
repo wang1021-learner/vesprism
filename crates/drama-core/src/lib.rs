@@ -1,0 +1,12 @@
+//! 漫剧核心：实体、连线校验、存储、任务队列、事件契约。不依赖 Tauri。
+pub mod asset;
+pub mod bindings;
+pub mod error;
+pub mod event;
+pub mod fake_media;
+pub mod graph;
+pub mod hash;
+pub mod model;
+pub mod provider;
+pub mod queue;
+pub mod store;

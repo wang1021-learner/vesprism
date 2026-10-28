@@ -573,6 +573,8 @@ pub(crate) enum InternalMethod {
     ReloadAllMcpServers,
     ReloadModels,
     ReloadModelsCache,
+    /// vesprism: 桌面登录写的是另一份 AuthManager。运行中的 agent 要重读 auth.json 再拉 `/v1/models`。
+    AdoptDiskAuth,
     ReloadProjectMcpServers,
     ReloadSkills,
     ReloadWorkflows,
@@ -586,6 +588,7 @@ impl InternalMethod {
             Self::ReloadAllMcpServers => "x.ai/internal/reload_all_mcp_servers",
             Self::ReloadModels => "x.ai/internal/reload_models",
             Self::ReloadModelsCache => "x.ai/internal/reload_models_cache",
+            Self::AdoptDiskAuth => "x.ai/internal/adopt_disk_auth",
             Self::ReloadProjectMcpServers => "x.ai/internal/reload_project_mcp_servers",
             Self::ReloadSkills => "x.ai/internal/reload_skills",
             Self::ReloadWorkflows => "x.ai/internal/reload_workflows",

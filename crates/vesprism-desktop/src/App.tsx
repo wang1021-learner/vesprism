@@ -66,6 +66,8 @@ const FlowCanvas = lazy(() => import('./workbench/canvas'))
 const AgentsPanel = lazy(() => import('./workbench/agents/AgentsPanel'))
 const RunDetailPanel = lazy(() => import('./workbench/run-detail/RunDetailPanel'))
 const OfficeDesk = lazy(() => import('./office'))
+const DramaShell = lazy(() => import('./drama'))
+const DramaRail = lazy(() => import('./drama/DramaRail'))
 import {
   addProject,
   getModelSettings, isTauriRuntime, listSessions,
@@ -283,6 +285,8 @@ async function bootstrap() {
 function AppSidebar() {
   const collapsed = useStore($sidebarCollapsed)
   const activeId = useStore($activeChatId)
+  const shell = useStore($appShell)
+  if (shell === 'drama') return <Suspense fallback={null}><DramaRail /></Suspense>
   return <Sidebar collapsed={collapsed} activeChatId={activeId} />
 }
 
@@ -392,6 +396,13 @@ function AppMainBody() {
     return (
       <Suspense fallback={<div className="agents-panel-loading">加载 Agent 编制…</div>}>
         <AgentsPanel />
+      </Suspense>
+    )
+  }
+  if (kind === 'drama-canvas') {
+    return (
+      <Suspense fallback={null}>
+        <DramaShell />
       </Suspense>
     )
   }

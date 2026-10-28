@@ -15,6 +15,7 @@
 //! - `x.ai/internal/reload_skills`          skills file watcher fan-out
 //! - `x.ai/internal/reload_models`          model list hot-reload from config.toml
 //! - `x.ai/internal/reload_models_cache`    model catalog hot-reload from disk cache
+//! - `x.ai/internal/adopt_disk_auth`        re-read auth.json and refetch `/v1/models`
 //! - `x.ai/internal/auth_cleared`           auth hot-clear cleanup
 //! - `x.ai/plugins/reload`                  rebuild shared plugin registry
 //! - `x.ai/commands/list`                   list slash commands
@@ -72,6 +73,7 @@ async fn handle_internal(
         InternalMethod::ReloadWorkflows => handle_reload_workflows(agent),
         InternalMethod::ReloadModels => handle_reload_models(agent),
         InternalMethod::ReloadModelsCache => handle_reload_models_cache(agent),
+        InternalMethod::AdoptDiskAuth => handle_adopt_disk_auth(agent).await,
         InternalMethod::AuthCleared => handle_auth_cleared(agent),
         // Arrives as a notification, so it never reaches this request path.
         InternalMethod::EvictSessions => Err(acp::Error::method_not_found()),
@@ -814,6 +816,28 @@ fn handle_reload_models_cache(agent: &MvpAgent) -> ExtResult {
     ExtMethodResult::success(serde_json::json!({ "reloaded": true }))
         .to_ext_response()
         .map_err(|e| acp::Error::internal_error().data(e.to_string()))
+}
+
+/// vesprism: 桌面登录在另一套运行时里写 `auth.json`，这里的 AuthManager 还是旧的。
+/// 重读磁盘、作废模型缓存并重新请求 `/v1/models`，把选择器目录交回去。
+async fn handle_adopt_disk_auth(agent: &MvpAgent) -> ExtResult {
+    agent.auth_manager.force_reload_from_disk();
+    agent.models_manager.on_auth_changed().await;
+    let session_auth = agent
+        .auth_manager
+        .current_or_expired()
+        .is_some_and(|auth| auth.is_session_auth());
+    let models = crate::agent::remote_config::account_catalog_models(
+        &agent.models_manager.models(),
+        session_auth,
+    );
+    let session_id = agent.resident_ids().into_iter().next();
+    let state = agent.model_state(session_id.as_ref());
+    let config_options = agent.acp_config_options(session_id.as_ref(), &state);
+    to_raw_response(&serde_json::json!({
+        "models": models,
+        "configOptions": config_options,
+    }))
 }
 
 fn handle_auth_cleared(agent: &MvpAgent) -> ExtResult {

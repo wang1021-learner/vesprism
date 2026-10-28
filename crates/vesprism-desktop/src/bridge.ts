@@ -410,6 +410,9 @@ export const saveModelSettings = (defaultId: string, models: ModelInfo[]) =>
 
 export const reloadModels = (tabId: string) => invoke('reload_models', { tabId })
 
+/** 已开会话重读 auth.json 并重新拉取 `/v1/models`。没开会话时什么也不做。 */
+export const refreshAccountModels = () => invoke('refresh_account_models')
+
 export type ProbeModelResult = {
   ok: boolean
   status: number
